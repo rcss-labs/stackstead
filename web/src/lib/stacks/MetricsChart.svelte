@@ -46,7 +46,6 @@
   } = $props();
 
   const fmt = (v: number) => (unit === 'percent' ? formatPercent(v) : unit === 'bytes' ? formatBytes(v) : formatRate(v));
-  const colorVar = (s: string) => `var(--series-${serviceColorIndex(s, allServices ?? services) + 1})`;
 
   function latest(service: string, key: keyof SeriesPoint): number | undefined {
     const pts = series.get(service) ?? [];
@@ -87,12 +86,15 @@
 
   let host: HTMLDivElement | undefined = $state();
   let plot: PlotHandle | undefined;
-  let destroyed = false;
+  let failed = $state(false);
+  let themeTick = $state(0);
 
   const cssColor = (name: string, fallback: string) => {
     if (!host) return fallback;
     return getComputedStyle(host).getPropertyValue(name).trim() || fallback;
   };
+
+  const fmtCursor = (_u: unknown, v: number | null) => (v == null ? '–' : fmt(v));
 
   function buildOptions(width: number): uPlot.Options {
     const muted = cssColor('--muted', '#5b6472');
@@ -100,6 +102,7 @@
     const axis = { stroke: muted, grid: { stroke: grid, width: 1 }, ticks: { stroke: grid, width: 1 } };
     const lineSeries = services.map((s) => ({
       label: s,
+      value: fmtCursor,
       stroke: cssColor(`--series-${serviceColorIndex(s, allServices ?? services) + 1}`, '#2a78d6'),
       width: 2,
       spanGaps: false,
@@ -107,7 +110,10 @@
     }));
     const limitSeries = limits.map((l) => ({
       label: l.label,
-      stroke: muted,
+      value: fmtCursor,
+      stroke: l.service
+        ? cssColor(`--series-${serviceColorIndex(l.service, allServices ?? services) + 1}`, muted)
+        : muted,
       width: 1,
       dash: [6, 4],
       points: { show: false },
@@ -116,10 +122,10 @@
       width,
       height: 180,
       ms: 1,
-      legend: { show: false },
+      legend: { show: true, live: true },
       cursor: { points: { size: 8 } },
       scales: { y: { range: (_u, min, max) => (unit === 'percent' ? [0, Math.max(100, max)] : [0, Math.max(max, 1) * 1.1]) } },
-      series: [{}, ...lineSeries, ...limitSeries],
+      series: [{ label: 'Time', value: (_u: unknown, v: number | null) => (v == null ? '–' : new Date(v).toLocaleString()) }, ...lineSeries, ...limitSeries],
       axes: [axis, { ...axis, size: 70, values: (_u, ticks) => ticks.map(fmt) }],
     } as uPlot.Options;
   }
@@ -130,32 +136,53 @@
   $effect(() => {
     const el = host;
     void structure;
+    void themeTick;
     if (!el) return;
     return untrack(() => mountPlot(el));
   });
 
+  // Series colours are read from computed style at build time, so rebuild when the scheme flips.
+  $effect(() => {
+    const bump = () => themeTick++;
+    const mq = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : undefined;
+    mq?.addEventListener('change', bump);
+    const mo = typeof MutationObserver !== 'undefined' ? new MutationObserver(bump) : undefined;
+    mo?.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => {
+      mq?.removeEventListener('change', bump);
+      mo?.disconnect();
+    };
+  });
+
   function mountPlot(el: HTMLDivElement) {
-    destroyed = false;
+    // Per-mount flag: a newer mount must not un-cancel an older, still-loading one.
+    let cancelled = false;
+    let mine: PlotHandle | undefined;
     let ro: ResizeObserver | undefined;
-    const opts = buildOptions(el.clientWidth || 600);
-    const data = buildData();
-    createPlot(opts, data, el).then((p) => {
-      if (destroyed) {
-        p.destroy();
-        return;
-      }
-      plot = p;
-      p.setData(buildData()); // data may have changed while the plot was loading
-    });
+    failed = false;
+    createPlot(buildOptions(el.clientWidth || 600), buildData(), el).then(
+      (p) => {
+        if (cancelled) {
+          p.destroy();
+          return;
+        }
+        mine = plot = p;
+        p.setData(buildData()); // data may have changed while the plot was loading
+      },
+      () => {
+        if (!cancelled) failed = true;
+      },
+    );
     if (typeof ResizeObserver !== 'undefined') {
-      ro = new ResizeObserver(() => plot?.setSize({ width: el.clientWidth || 600, height: 180 }));
+      ro = new ResizeObserver(() => mine?.setSize({ width: el.clientWidth || 600, height: 180 }));
       ro.observe(el);
     }
     return () => {
-      destroyed = true;
+      cancelled = true;
       ro?.disconnect();
-      plot?.destroy();
-      plot = undefined;
+      mine?.destroy();
+      if (plot === mine) plot = undefined;
+      mine = undefined;
     };
   }
 
@@ -168,12 +195,7 @@
 <figure class="chart">
   <figcaption>{title}</figcaption>
   <div bind:this={host} class="plot" role="img" aria-label={summary}></div>
-  <ul class="legend">
-    {#each services as s (s)}
-      <li><span class="swatch" style:background={colorVar(s)} aria-hidden="true"></span>{s}</li>
-    {/each}
-    {#if limits.length > 0}<li><span class="swatch dashed" aria-hidden="true"></span>limit</li>{/if}
-  </ul>
+  {#if failed}<p class="unavailable" role="status">Chart unavailable</p>{/if}
   <details>
     <summary>Show as table</summary>
     <table>
@@ -232,26 +254,13 @@
     width: 100%;
     min-height: 180px;
   }
-  .legend {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-3);
-    list-style: none;
+  .unavailable {
+    color: var(--danger);
     margin: var(--space-2) 0 0;
-    padding: 0;
+  }
+  .plot :global(.u-legend) {
     color: var(--muted);
     font-size: 0.85rem;
-  }
-  .swatch {
-    display: inline-block;
-    width: 12px;
-    height: 3px;
-    margin-right: 6px;
-    vertical-align: middle;
-    border-radius: 2px;
-  }
-  .swatch.dashed {
-    background: repeating-linear-gradient(90deg, var(--muted) 0 4px, transparent 4px 7px);
   }
   details {
     margin-top: var(--space-2);

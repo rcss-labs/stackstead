@@ -22,23 +22,24 @@
     history: (q, signal) => api.metricsHistory(stackName, q, signal),
     open,
   });
-  const { series, range, services, status, degraded } = ctl;
+  const { series, range, services, status, degraded, loaded } = ctl;
 
-  let loaded = $state(false);
   onMount(() => {
-    void ctl.reload().finally(() => (loaded = true));
+    void ctl.reload();
   });
   onDestroy(() => ctl.close());
 
   const ranges: Range[] = ['1h', '6h', '24h', '72h'];
 
   const memLimit = $derived.by(() => {
+    // One shared line only when every service has a limit and they are all equal.
     const limits = new Set<number>();
-    for (const pts of $series.values()) {
-      const last = pts[pts.length - 1];
-      if (last && last.memLimit > 0) limits.add(last.memLimit);
+    for (const service of $services) {
+      const pts = $series.get(service) ?? [];
+      limits.add(pts.length > 0 ? pts[pts.length - 1].memLimit : 0);
     }
-    return limits.size === 1 ? [...limits][0] : undefined;
+    const [only] = limits;
+    return limits.size === 1 && only > 0 ? only : undefined;
   });
 
   const charts = [
@@ -68,7 +69,7 @@
     <span class="status">Live: {$status}</span>
   </div>
 
-  {#if !loaded}
+  {#if !$loaded}
     <Spinner label="Loading metrics" />
   {:else if $services.length === 0}
     <EmptyState title="No samples yet">The sampler records every 10 s.</EmptyState>

@@ -26,7 +26,7 @@ describe('MetricsChart', () => {
     expect(createPlot).toHaveBeenCalledTimes(1);
     const [opts, data] = createPlot.mock.calls[0] as unknown as [{ ms: number; series: { label?: string }[] }, unknown[][]];
     expect(opts.ms).toBe(1);
-    expect(opts.series.map((s) => s.label)).toEqual([undefined, 'api', 'db']);
+    expect(opts.series.map((s) => s.label)).toEqual(['Time', 'api', 'db']);
     expect(data[0]).toEqual([T0, T0 + 5000]);
     expect(data[1]).toEqual([5, 12.34]);
     expect(data[2]).toEqual([null, 40]);
@@ -99,6 +99,72 @@ describe('MetricsChart', () => {
     view.unmount();
     resolve(plot);
     await flush();
+    expect(plot.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('TestStructureChangeBeforeLoadDoesNotStackPlots', async () => {
+    const resolvers: ((p: ReturnType<typeof fakePlot>['plot']) => void)[] = [];
+    const plots = [fakePlot().plot, fakePlot().plot, fakePlot().plot];
+    const createPlot = vi.fn(() => new Promise<(typeof plots)[0]>((r) => resolvers.push(r)));
+    const view = render(MetricsChart, { title: 'CPU', series, metric: 'cpu', unit: 'percent', services: ['api'], createPlot });
+    await flush();
+    await view.rerender({ services: ['api', 'db'] });
+    await flush();
+    await view.rerender({ services: ['db'] });
+    await flush();
+    expect(createPlot).toHaveBeenCalledTimes(3);
+    resolvers.forEach((r, i) => r(plots[i]));
+    await flush();
+    expect(plots[0].destroy).toHaveBeenCalledTimes(1);
+    expect(plots[1].destroy).toHaveBeenCalledTimes(1);
+    expect(plots[2].destroy).not.toHaveBeenCalled();
+    view.unmount();
+    expect(plots[2].destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('formats hover values: time for x, unit-formatted values for series', async () => {
+    const { createPlot } = fakePlot();
+    render(MetricsChart, { title: 'CPU', series, metric: 'cpu', unit: 'percent', services: ['api'], createPlot });
+    await flush();
+    const [opts] = createPlot.mock.calls[0] as unknown as [
+      { legend: { show: boolean; live?: boolean }; series: { value?: (u: unknown, v: number | null) => string }[] },
+    ];
+    expect(opts.legend.show).toBe(true);
+    expect(opts.series[1].value!(null, 12.34)).toBe('12.3%');
+    expect(opts.series[1].value!(null, null)).toBe('–');
+    expect(opts.series[0].value!(null, T0)).toBe(new Date(T0).toLocaleString());
+  });
+
+  it('shows "Chart unavailable" when the plot cannot be created and keeps the table', async () => {
+    const createPlot = vi.fn(async () => {
+      throw new Error('chunk failed');
+    });
+    render(MetricsChart, { title: 'CPU', series, metric: 'cpu', unit: 'percent', services: ['api'], createPlot });
+    expect(await screen.findByText('Chart unavailable')).toBeTruthy();
+    expect(screen.getByRole('table', { hidden: true }).textContent).toContain('12.3%');
+  });
+
+  it('draws per-service limit lines when limits differ', async () => {
+    const { createPlot } = fakePlot();
+    render(MetricsChart, { title: 'Memory', series, metric: 'mem', unit: 'bytes', services: ['api', 'db'], createPlot });
+    await flush();
+    const [opts] = createPlot.mock.calls[0] as unknown as [{ series: { label?: string }[] }];
+    expect(opts.series.map((x) => x.label)).toEqual([expect.anything(), 'api', 'db', 'api limit', 'db limit']);
+  });
+
+  it('rebuilds the plot with new colours when the colour scheme changes', async () => {
+    const { plot, createPlot } = fakePlot();
+    let listener: () => void = () => {};
+    vi.stubGlobal('matchMedia', () => ({
+      matches: false,
+      addEventListener: (_: string, l: () => void) => (listener = l),
+      removeEventListener: vi.fn(),
+    }));
+    render(MetricsChart, { title: 'CPU', series, metric: 'cpu', unit: 'percent', services: ['api'], createPlot });
+    await flush();
+    listener();
+    await flush();
+    expect(createPlot).toHaveBeenCalledTimes(2);
     expect(plot.destroy).toHaveBeenCalledTimes(1);
   });
 });

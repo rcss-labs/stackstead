@@ -10,6 +10,7 @@ import {
   joinHistoryAndLive,
   rangeToQuery,
   type Range,
+  type SeriesPoint,
   type SeriesSet,
 } from '../metrics/series';
 
@@ -44,6 +45,8 @@ export interface MetricsController {
   status: Readable<SSEStatus>;
   /** True when the last history request failed (live data may still flow). */
   degraded: Readable<boolean>;
+  /** False until the latest (non-superseded) history load has finished. */
+  loaded: Readable<boolean>;
   reload(): Promise<void>;
   close(): void;
 }
@@ -69,7 +72,21 @@ export function createMetricsController(stackName: string, deps: MetricsDeps): M
   let generation = 0;
   let closed = false;
 
-  const publish = () => seriesStore.set(joinHistoryAndLive(history, liveSet));
+  const loaded = writable(false);
+
+  /** Joins history and live and trims everything older than the range window behind the newest point. */
+  function publish() {
+    const joined = joinHistoryAndLive(history, liveSet);
+    let newest = -Infinity;
+    for (const pts of joined.values()) if (pts.length > 0) newest = Math.max(newest, pts[pts.length - 1].t);
+    const cutoff = newest - RANGE_MS[get(range)];
+    for (const [service, pts] of joined) {
+      let drop = 0;
+      while (drop < pts.length && pts[drop].t < cutoff) drop++;
+      if (drop > 0) joined.set(service, pts.slice(drop));
+    }
+    seriesStore.set(joined);
+  }
 
   function stopStream() {
     handle?.close();
@@ -78,15 +95,17 @@ export function createMetricsController(stackName: string, deps: MetricsDeps): M
     clearTimeout(reconnectTimer);
   }
 
-  function emit(service: string, points: ReturnType<ReturnType<typeof createLiveAggregator>['flush']>) {
-    if (points.length === 0) return;
+  /** Appends points without publishing; returns whether anything was added. */
+  function emit(service: string, points: SeriesPoint[]): boolean {
     const windowMs = RANGE_MS[get(range)];
     for (const p of points) appendLive(liveSet, service, p, windowMs);
-    publish();
+    return points.length > 0;
   }
 
   function flushAll() {
-    for (const [service, agg] of aggregators) emit(service, agg.flush());
+    let changed = false;
+    for (const [service, agg] of aggregators) changed = emit(service, agg.flush()) || changed;
+    if (changed) publish();
   }
 
   function onMessage(m: { event: string; data: string }) {
@@ -108,11 +127,13 @@ export function createMetricsController(stackName: string, deps: MetricsDeps): M
       return;
     }
     const samples = Array.isArray(parsed) ? parsed : [parsed];
+    let changed = false;
     for (const s of samples) {
       let agg = aggregators.get(s.service);
       if (!agg) aggregators.set(s.service, (agg = createLiveAggregator()));
-      emit(s.service, agg.ingest([s]));
+      changed = emit(s.service, agg.ingest([s])) || changed;
     }
+    if (changed) publish();
     clearTimeout(idleTimer);
     idleTimer = setTimeout(flushAll, IDLE_FLUSH_MS);
   }
@@ -128,6 +149,7 @@ export function createMetricsController(stackName: string, deps: MetricsDeps): M
   async function reload(): Promise<void> {
     abort?.abort();
     stopStream();
+    loaded.set(false);
     const gen = ++generation;
     const ctl = (abort = new AbortController());
     const q = rangeToQuery(get(range), now());
@@ -145,6 +167,7 @@ export function createMetricsController(stackName: string, deps: MetricsDeps): M
     }
     if (gen !== generation) return;
     publish();
+    loaded.set(true);
     connect();
   }
 
@@ -163,6 +186,7 @@ export function createMetricsController(stackName: string, deps: MetricsDeps): M
     services: derived(seriesStore, (s) => [...s.keys()].sort()),
     status: { subscribe: status.subscribe },
     degraded: { subscribe: degraded.subscribe },
+    loaded: { subscribe: loaded.subscribe },
     reload,
     close() {
       closed = true;

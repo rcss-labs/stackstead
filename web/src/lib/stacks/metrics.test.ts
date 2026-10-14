@@ -137,6 +137,43 @@ describe('createMetricsController', () => {
   });
 });
 
+describe('createMetricsController publishing', () => {
+  it('publishes once per message even when it carries several services', async () => {
+    const h = harness();
+    await h.ctl.reload();
+    h.send([sample('a', 'c1', 10), sample('b', 'c2', 10)]);
+    h.send([sample('a', 'c1', 12), sample('b', 'c2', 12)]);
+    let updates = 0;
+    h.ctl.series.subscribe(() => updates++);
+    updates = 0;
+    h.send([sample('a', 'c1', 20), sample('b', 'c2', 20)]); // finalises both services' ticks
+    expect(updates).toBe(1);
+  });
+
+  it('trims history older than the range window as live data arrives', async () => {
+    const old = { ...hp('web', 0, 1), time: new Date(T0 - 2 * 3_600_000).toISOString() };
+    const h = harness([old, hp('web', 5, 2)]);
+    await h.ctl.reload();
+    h.send(sample('web', 'c1', 10));
+    h.send(sample('web', 'c1', 12));
+    expect(get(h.ctl.series).get('web')!.map((p) => p.cpu)).toEqual([2, 10]);
+  });
+
+  it('stays not-loaded while a superseded reload finishes', async () => {
+    const h = harness();
+    let releaseSecond!: () => void;
+    h.history.mockImplementationOnce((_q, sig) => new Promise((_r, rej) => sig?.addEventListener('abort', () => rej(new DOMException('x', 'AbortError')))));
+    h.history.mockImplementationOnce(() => new Promise((res) => (releaseSecond = () => res({ points: [] }))));
+    const first = h.ctl.reload();
+    const second = h.ctl.reload();
+    await first;
+    expect(get(h.ctl.loaded)).toBe(false);
+    releaseSecond();
+    await second;
+    expect(get(h.ctl.loaded)).toBe(true);
+  });
+});
+
 describe('serviceColorIndex', () => {
   it('is the position in the sorted service list, wrapping after 8 slots', () => {
     expect(serviceColorIndex('web', ['api', 'db', 'web'])).toBe(2);

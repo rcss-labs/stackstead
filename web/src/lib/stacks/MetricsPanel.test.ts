@@ -37,4 +37,13 @@ describe('MetricsPanel', () => {
     await userEvent.setup().selectOptions(screen.getByLabelText('Range'), '24h');
     await waitFor(() => expect(fake.calls.some((c) => c.path.includes('step=2m'))).toBe(true));
   });
+
+  it('closes the live stream on unmount', async () => {
+    history([]);
+    const close = vi.fn();
+    const view = render(MetricsPanel, { stackName: 'web', metricsDegraded: false, createPlot: fakePlot, open: () => ({ close, status: 'open' }) });
+    await screen.findByText(/No samples yet/);
+    view.unmount();
+    expect(close).toHaveBeenCalled();
+  });
 });
