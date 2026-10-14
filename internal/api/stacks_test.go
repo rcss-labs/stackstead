@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -402,14 +403,23 @@ func TestOversizedBodyIsRejected(t *testing.T) {
 }
 
 // sseClient opens the stream against a real server so flushing is exercised.
-type sseEvent struct{ name, data string }
+type sseEvent struct{ name, data, id string }
 
 func openStream(t *testing.T, env *testEnv, cookie *http.Cookie, ctx context.Context) (*http.Response, <-chan sseEvent) {
+	t.Helper()
+	return openStreamWithID(t, env, cookie, ctx, "")
+}
+
+// openStreamWithID is openStream sending a Last-Event-ID header when non-empty.
+func openStreamWithID(t *testing.T, env *testEnv, cookie *http.Cookie, ctx context.Context, lastID string) (*http.Response, <-chan sseEvent) {
 	t.Helper()
 	srv := httptest.NewServer(env.handler)
 	t.Cleanup(srv.Close)
 	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/api/operations/op1/stream", nil)
 	req.AddCookie(cookie)
+	if lastID != "" {
+		req.Header.Set("Last-Event-ID", lastID)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -425,6 +435,8 @@ func openStream(t *testing.T, env *testEnv, cookie *http.Cookie, ctx context.Con
 			switch {
 			case strings.HasPrefix(line, "event: "):
 				cur.name = strings.TrimPrefix(line, "event: ")
+			case strings.HasPrefix(line, "id: "):
+				cur.id = strings.TrimPrefix(line, "id: ")
 			case strings.HasPrefix(line, "data: "):
 				cur.data = strings.TrimPrefix(line, "data: ")
 			case line == ": ping":
@@ -591,5 +603,81 @@ func TestStreamEndsWhenServerIsClosing(t *testing.T) {
 		case <-time.After(3 * time.Second):
 			t.Fatal("stream did not end after the server started closing")
 		}
+	}
+}
+
+// streamLinesUntilDone returns "id=data" for every line event up to done.
+func streamLinesUntilDone(t *testing.T, events <-chan sseEvent) []string {
+	t.Helper()
+	var got []string
+	for {
+		ev := nextEvent(t, events, true)
+		switch ev.name {
+		case "line":
+			got = append(got, ev.id+"="+ev.data)
+		case "done":
+			return got
+		default:
+			t.Fatalf("unexpected event %+v", ev)
+		}
+	}
+}
+
+func finishedStream(lines ...string) *fakeStacks {
+	fake := newFakeStacks()
+	fake.replay = lines
+	fake.live = make(chan string)
+	fake.done = make(chan stacks.Operation, 1)
+	close(fake.live)
+	final := fake.op
+	final.State = stacks.OpSucceeded
+	final.ExitCode = 0
+	fake.done <- final
+	close(fake.done)
+	return fake
+}
+
+func TestStreamLastEventIDResumesAfterIndex(t *testing.T) {
+	env, cookie := newStacksEnv(t, finishedStream("l0", "l1", "l2", "l3", "l4"))
+	_, events := openStreamWithID(t, env, cookie, context.Background(), "2")
+	got := streamLinesUntilDone(t, events)
+	if want := []string{`3="l3"`, `4="l4"`}; !reflect.DeepEqual(got, want) {
+		t.Errorf("resumed lines = %v, want %v", got, want)
+	}
+}
+
+func TestStreamLinesCarryIndexIDs(t *testing.T) {
+	env, cookie := newStacksEnv(t, finishedStream("l0", "l1"))
+	_, events := openStream(t, env, cookie, context.Background())
+	got := streamLinesUntilDone(t, events)
+	if want := []string{`0="l0"`, `1="l1"`}; !reflect.DeepEqual(got, want) {
+		t.Errorf("lines = %v, want %v", got, want)
+	}
+}
+
+func TestStreamMalformedLastEventIDReplaysEverything(t *testing.T) {
+	for _, bad := range []string{"abc", "-1", "1.5"} {
+		env, cookie := newStacksEnv(t, finishedStream("l0", "l1"))
+		_, events := openStreamWithID(t, env, cookie, context.Background(), bad)
+		if got := streamLinesUntilDone(t, events); len(got) != 2 {
+			t.Errorf("Last-Event-ID %q: got %v, want full replay", bad, got)
+		}
+	}
+}
+
+func TestStreamResumeKeepsLiveIDsContinuous(t *testing.T) {
+	fake := newFakeStacks()
+	fake.replay = []string{"l0", "l1", "l2"}
+	fake.live = make(chan string, 2)
+	fake.done = make(chan stacks.Operation, 1)
+	env, cookie := newStacksEnv(t, fake)
+	_, events := openStreamWithID(t, env, cookie, context.Background(), "1")
+	fake.live <- "l3"
+	close(fake.live)
+	fake.done <- fake.op
+	close(fake.done)
+	got := streamLinesUntilDone(t, events)
+	if want := []string{`2="l2"`, `3="l3"`}; !reflect.DeepEqual(got, want) {
+		t.Errorf("lines = %v, want %v", got, want)
 	}
 }
