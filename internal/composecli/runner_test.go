@@ -303,15 +303,18 @@ func TestCancelNeverReportsSuccess(t *testing.T) {
 }
 
 func TestRunWithCancelledContextDoesNotStart(t *testing.T) {
-	// exec.CommandContext kills an already-cancelled command at Start, so
-	// without a guard the fake would normally die before writing its marker
-	// and this test could never fail. Ignoring SIGTERM is inherited by the
-	// child, which makes the fake write the marker if it is ever started.
+	// The runner uses exec.Command plus its own group-SIGTERM goroutine, not
+	// exec.CommandContext. Without a guard against an already-cancelled
+	// context the fake could be started and then killed before it writes its
+	// marker, so this test could never fail. Ignoring SIGTERM is inherited by
+	// the child, which makes the fake write the marker if it is ever started;
+	// the long Grace keeps SIGKILL from racing that.
 	// Not parallel-safe: the ignore is process-wide.
 	signal.Ignore(syscall.SIGTERM)
 	t.Cleanup(func() { signal.Reset(syscall.SIGTERM) })
 	marker := filepath.Join(t.TempDir(), "started")
 	r, file := newRunner(t, "marker", "FAKE_MARKER="+marker)
+	r.Grace = 5 * time.Second
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	err := r.Run(ctx, file, nil, nil)

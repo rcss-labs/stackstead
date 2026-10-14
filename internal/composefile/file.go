@@ -69,12 +69,26 @@ func (f *File) LocalNetworks() map[string]bool {
 		if key.Kind != yaml.ScalarNode || key.ShortTag() == "!!merge" {
 			continue
 		}
-		if ext := mappingValue(def, "external"); ext != nil && !(ext.Kind == yaml.ScalarNode && ext.Value != "true") {
+		if isExternal(mappingValue(def, "external")) {
 			continue
 		}
 		out[key.Value] = true
 	}
 	return out
+}
+
+// isExternal reports whether a network's external value marks it external: a
+// scalar that YAML resolves as boolean true (true, True, yes, ...), or the
+// mapping form (external: {name: x}). A missing or false value is not.
+func isExternal(ext *yaml.Node) bool {
+	if ext == nil {
+		return false
+	}
+	if ext.Kind != yaml.ScalarNode {
+		return true
+	}
+	var b bool
+	return ext.Decode(&b) == nil && b
 }
 
 // Services returns the service names in file order.

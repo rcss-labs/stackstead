@@ -36,9 +36,10 @@ Notes on the stacks API:
   static IPs against the Docker engine. If the engine is unreachable only the
   ports declared by other stacks are checked, and the response carries the
   header `X-Stackstead-Checks: partial`.
-- **POST needs JSON.** Every `POST` (including `actions/{action}` and
-  `operations/{id}/cancel`) requires `Content-Type: application/json`, and a
-  body, which may be just `{}`.
+- **POST needs JSON.** Every `POST` to the stacks and operations endpoints
+  (including `actions/{action}` and `operations/{id}/cancel`) requires
+  `Content-Type: application/json`, and a body, which may be just `{}`. Logout
+  takes no body.
 - **Operation stream.** `GET /api/operations/{id}/stream` is server-sent
   events: `line` (one output line, as a JSON string; earlier output is replayed
   first), `done` (the final operation as JSON, after which the stream ends) and
