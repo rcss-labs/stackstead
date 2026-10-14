@@ -28,7 +28,7 @@ const (
 // realTools are the only real binaries the scripts may call; everything else is a logging stub.
 var realTools = []string{"mkdir", "chmod", "rm"}
 
-var stubbedTools = []string{"systemctl", "useradd", "usermod", "usermod", "groupadd", "userdel", "getent", "id", "docker", "chown", "chgrp"}
+var stubbedTools = []string{"systemctl", "useradd", "usermod", "groupadd", "userdel", "getent", "id", "docker", "chown", "chgrp"}
 
 type env struct {
 	t       *testing.T

@@ -24,8 +24,9 @@ StateDirectoryMode=0700
 UMask=0007
 
 # Hardening. ProtectSystem=full makes /usr, /boot and /etc read-only and
-# PrivateTmp hides the real /tmp: compose files under /etc, /usr or /tmp cannot be
-# edited unless a drop-in (`systemctl edit stackstead`) adds ReadWritePaths=/path.
+# PrivateTmp hides the real /tmp. Compose files under /etc or /usr can only be
+# edited after a drop-in (`systemctl edit stackstead`) adds ReadWritePaths=/path;
+# files under /tmp additionally need PrivateTmp=no in that drop-in.
 # Deliberately not ProtectSystem=strict and no ProtectHome: stacks
 # are compose files the user registers anywhere on the filesystem.
 NoNewPrivileges=true
