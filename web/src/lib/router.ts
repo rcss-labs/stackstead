@@ -43,6 +43,7 @@ function current(): RouteState {
 
 const state = writable<RouteState>(current());
 
+/** Current location. `query` is shared between subscribers: copy it (new URLSearchParams(q)) before mutating. */
 export const route: Readable<RouteState> = { subscribe: state.subscribe };
 
 export function navigate(to: string, opts: { replace?: boolean } = {}): void {
@@ -66,6 +67,8 @@ export function link(node: HTMLAnchorElement): { destroy(): void } {
       return;
     }
     if (url.origin !== window.location.origin) return;
+    // Same path+query (hash-only skip links, or a link to the current page): let the browser handle it.
+    if (url.pathname === window.location.pathname && url.search === window.location.search) return;
     ev.preventDefault();
     navigate(url.pathname + url.search + url.hash);
   };

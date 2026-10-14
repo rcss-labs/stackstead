@@ -133,6 +133,28 @@ describe('link action', () => {
     expect(get(route).path).toBe('/');
   });
 
+  it('does not intercept protocol-relative or javascript: hrefs', () => {
+    a.setAttribute('href', '//evil.example/x');
+    expect(click().defaultPrevented).toBe(false);
+    a.setAttribute('href', 'javascript:void(0)');
+    expect(click().defaultPrevented).toBe(false);
+    expect(get(route).path).toBe('/');
+  });
+
+  it('leaves hash-only links to the browser', () => {
+    a.setAttribute('href', '#main');
+    const before = window.history.length;
+    expect(click().defaultPrevented).toBe(false);
+    expect(window.history.length).toBe(before);
+  });
+
+  it('does not push a duplicate entry for a link to the current URL', () => {
+    navigate('/stacks/web');
+    const before = window.history.length;
+    expect(click().defaultPrevented).toBe(false);
+    expect(window.history.length).toBe(before);
+  });
+
   it('stops intercepting after destroy', () => {
     action.destroy();
     expect(click().defaultPrevented).toBe(false);
