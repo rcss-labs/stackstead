@@ -21,8 +21,10 @@ vi.mock('./cm', () => ({
     throw new Error('chunk unavailable in this test');
   },
 }));
+vi.mock('../stores/live', () => ({ refreshStatus: vi.fn(async () => {}) }));
 vi.mock('../stores/stacks', () => ({ refreshStacks: vi.fn(async () => {}), refreshRunningOps: vi.fn() }));
 
+import { refreshStatus } from '../stores/live';
 import { refreshRunningOps, refreshStacks } from '../stores/stacks';
 import ServiceEditor from './ServiceEditor.svelte';
 
@@ -209,5 +211,57 @@ describe('ServiceEditor', () => {
     await waitFor(() => expect(ondirtychange).toHaveBeenLastCalledWith(false));
     await changeImage('nginx:2');
     await waitFor(() => expect(ondirtychange).toHaveBeenLastCalledWith(true));
+  });
+
+  const HINT = "This field uses YAML the form can't edit — open the raw YAML editor";
+
+  it('Reload re-applies the new read-only set: note shown, new original ports sent, rebase notice visible', async () => {
+    putRes = [{ status: 409, body: { error: 'compose file changed on disk' } }];
+    const roSvc: ServiceDetail = { ...svc, config: { ...svc.config, ports: ['8080:80'] }, readOnly: ['ports'] };
+    mount({ onreload: vi.fn(async () => stack('h9', roSvc)) });
+    await changeImage('nginx:2');
+    await user().click(screen.getByRole('button', { name: 'Preview changes' }));
+    await user().click(await screen.findByRole('button', { name: 'Save' }));
+    await screen.findByRole('button', { name: 'Reload' });
+    composeHash = 'h9';
+    await user().click(screen.getByRole('button', { name: 'Reload' }));
+    await waitFor(() => expect(calls('POST', '/preview')).toHaveLength(2));
+    const body = calls('POST', '/preview')[1].body as { config: { ports: string[]; image: string } };
+    expect(body.config.ports).toEqual(['8080:80']);
+    expect(body.config.image).toBe('nginx:2');
+    expect(document.body.textContent).toContain('The file changed since you opened this editor');
+    await user().click(await screen.findByRole('button', { name: 'Back to editing' }));
+    expect(screen.getByText(HINT)).toBeTruthy();
+  });
+
+  it('read-only groups are shown as such and sent unchanged', async () => {
+    const roSvc: ServiceDetail = { ...svc, readOnly: ['ports'] };
+    mount({ service: roSvc, stack: stack('h1', roSvc) });
+    expect(screen.getByText(HINT)).toBeTruthy();
+    await changeImage('nginx:2');
+    await user().click(screen.getByRole('button', { name: 'Preview changes' }));
+    await screen.findByTestId('diff-view');
+    expect((calls('POST', '/preview')[0].body as { config: { ports: string[] } }).config.ports).toEqual(['80:80']);
+  });
+
+  it('a 503 asks the live store to refresh the Docker status', async () => {
+    previewRes = [{ status: 503, body: { error: 'docker unavailable' } }];
+    mount();
+    await changeImage('nginx:2');
+    await user().click(screen.getByRole('button', { name: 'Preview changes' }));
+    await screen.findByRole('alert');
+    expect(refreshStatus).toHaveBeenCalled();
+  });
+
+  it('Apply stays disabled while its operation is running', async () => {
+    stream = installFakeStream({ '/api/operations/op1/stream': [`event: line\nid: 0\ndata: "creating"\n\n`] });
+    mount();
+    await changeImage('nginx:2');
+    await user().click(screen.getByRole('button', { name: 'Preview changes' }));
+    await user().click(await screen.findByRole('button', { name: 'Save' }));
+    await user().click(await screen.findByRole('button', { name: 'Apply' }));
+    await screen.findByRole('log');
+    await user().click(screen.getByRole('button', { name: 'Apply' }));
+    expect(calls('POST', '/actions/up')).toHaveLength(1);
   });
 });

@@ -5,6 +5,7 @@
   import Banner from '../components/Banner.svelte';
   import Button from '../components/Button.svelte';
   import { toasts } from '../stores/toasts';
+  import { refreshStatus } from '../stores/live';
   import { refreshRunningOps, refreshStacks } from '../stores/stacks';
   import type { ServiceForm as Form } from '../compose/form';
   import DiffView from './DiffView.svelte';
@@ -33,7 +34,11 @@
     onapplied?: (op: Operation) => void;
     /** Send the user to the raw YAML editor (their form values stay untouched). */
     onRawEditor: () => void;
-    /** Re-fetch the stack after a conflict or when the file moved on. */
+    /**
+     * Re-fetch the stack after a conflict or when the file moved on. The parent keys this editor by
+     * stack and service and must NOT remount it on reload: it just returns the fresh detail, and the
+     * editor lays the user's changed groups on top of it.
+     */
     onreload: () => Promise<StackDetail>;
     /** Why Apply (compose up) is unavailable, if it is. */
     lifecycleDisabledReason?: string;
@@ -45,24 +50,28 @@
   // The editor is keyed by stack and service in its parent; both are fixed for its lifetime.
   /* svelte-ignore state_referenced_locally */
   const stackName = stack.name;
+  // A 503 means Docker went away: have the status banners catch up.
+  function unavailableRefresh(e: unknown): never {
+    if (e instanceof ApiError && e.status === 503) void refreshStatus();
+    throw e;
+  }
   /* svelte-ignore state_referenced_locally */
   const serviceName = service.name;
   /* svelte-ignore state_referenced_locally */
   const edit = createServiceEdit(
-    stackName,
     serviceName,
     { config: service.config, readOnly: service.readOnly, hash: stack.hash },
     {
-      preview: async (config, hash) => (await api.previewService(stackName, serviceName, config, hash)),
+      preview: (config, hash) => api.previewService(stackName, serviceName, config, hash).catch(unavailableRefresh),
       update: async (config, hash) => {
-        const res = await api.updateService(stackName, serviceName, config, hash);
+        const res = await api.updateService(stackName, serviceName, config, hash).catch(unavailableRefresh);
         return { hash: res.data.hash, checksPartial: res.checksPartial };
       },
       compose: () => api.compose(stackName),
       reloadDetail: () => onreload(),
     },
   );
-  const { errors, phase, notice, conflictMessage, previewText, checksPartial } = edit;
+  const { errors, phase, notice, conflictMessage, previewText, checksPartial, rebased, formVersion } = edit;
   const isDirty = edit.dirty;
 
   // ServiceForm mutates its form in place, so a local reactive copy feeds it and the state machine
@@ -84,6 +93,15 @@
   function reseedForm() {
     form = structuredFormCopy();
   }
+  // The machine replaces the form on rebase/discard (new read-only set, new values): follow it.
+  let seenVersion = 0;
+  $effect(() => {
+    const v = $formVersion;
+    if (v !== seenVersion) {
+      seenVersion = v;
+      reseedForm();
+    }
+  });
 
   let root: HTMLElement | undefined = $state();
   let serviceForm: ServiceForm | undefined = $state();
@@ -93,6 +111,7 @@
   let browse: { mode: 'dir' | 'file'; cb: (path: string) => void } | undefined = $state();
   let operationId: string | undefined = $state();
   let applying = $state(false);
+  let operationRunning = $state(false);
 
   $effect(() => {
     dirty = $isDirty;
@@ -179,11 +198,12 @@
   }
 
   async function apply() {
-    if (applying || lifecycleDisabledReason) return;
+    if (applying || operationRunning || lifecycleDisabledReason) return;
     applying = true;
     try {
       const op = await api.act(stackName, 'up');
       operationId = op.id;
+      operationRunning = true;
       onapplied?.(op);
       void refreshRunningOps();
     } catch (e) {
@@ -203,6 +223,7 @@
   }
 
   function finished() {
+    operationRunning = false;
     void refreshStacks();
     refreshRunningOps();
   }
@@ -245,6 +266,11 @@
 
   {#if $phase === 'previewing' || $phase === 'saving'}
     <h3 tabindex="-1" bind:this={previewHeading}>Review changes to {serviceName}</h3>
+    {#if $rebased}
+      <Banner kind="warning" title="The file changed since you opened this editor">
+        Your changes were applied on top of the new version; review the diff.
+      </Banner>
+    {/if}
     <p class="hint">The compose file as it is now, against the file this edit would write.</p>
     {#if $previewText}
       <DiffView original={$previewText.original} modified={$previewText.modified} ariaLabel="Changes to compose.yaml" />
@@ -252,7 +278,7 @@
   {/if}
 
   <!-- Kept mounted (hidden) while previewing so focus, scroll and the form values survive. -->
-  <div hidden={$phase === 'previewing' || $phase === 'saving'}>
+  <div hidden={$phase === 'previewing' || $phase === 'saving'} inert={$phase === 'busy'}>
     <ServiceForm
       bind:this={serviceForm}
       bind:form
@@ -270,6 +296,7 @@
     {:else}
       <Button
         variant="primary"
+        loading={$phase === 'busy'}
         disabledReason={$phase === 'conflict'
           ? 'Resolve the conflict first (Reload or Discard)'
           : !$isDirty
@@ -284,7 +311,7 @@
     <section class="saved" aria-labelledby="saved-title">
       <h3 id="saved-title" tabindex="-1" bind:this={savedHeading}>Saved</h3>
       <p class="hint">The file is updated. Apply runs <code>compose up</code> so the containers match it.</p>
-      <Button variant="primary" loading={applying} disabledReason={lifecycleDisabledReason} onclick={apply}>Apply</Button>
+      <Button variant="primary" loading={applying} disabledReason={lifecycleDisabledReason ?? (operationRunning ? 'An operation is already running' : undefined)} onclick={apply}>Apply</Button>
     </section>
   {/if}
 

@@ -3,7 +3,7 @@ import { ApiError } from '../api/client';
 import type { Field, RawCompose, ServiceConfig, StackDetail } from '../api/types';
 import { fromForm, mapServerErrors, toForm, validateForm, type FormErrors, type ServiceForm } from '../compose/form';
 
-export type EditPhase = 'editing' | 'previewing' | 'saving' | 'conflict' | 'saved';
+export type EditPhase = 'editing' | 'busy' | 'previewing' | 'saving' | 'conflict' | 'saved';
 /** A message shown above the form: either "use the raw editor" or a plain failure. */
 export type EditNotice = { kind: 'rawEditor' | 'error'; message: string };
 
@@ -15,7 +15,35 @@ export interface ServiceEditDeps {
   reloadDetail: () => Promise<StackDetail>;
 }
 
-const RAW_EDITOR_RE = /raw yaml editor/i;
+// "this change needs the raw YAML editor" and the read-only-field "can only be edited as raw YAML".
+const RAW_EDITOR_RE = /raw yaml/i;
+
+// Form fields per editable group, used to tell which groups the user changed.
+const GROUPS: (keyof ServiceForm)[][] = [
+  ['source', 'image', 'buildContext', 'dockerfile'],
+  ['ports'],
+  ['volumes'],
+  ['env'],
+  ['networks'],
+  ['networkMode'],
+  ['cpus', 'memory'],
+  ['restart'],
+  ['healthcheck'],
+];
+const GROUP_NAMES: Field[][] = [['image', 'build'], ['ports'], ['volumes'], ['environment'], ['networks'], ['network_mode'], ['limits'], ['restart'], ['healthcheck']];
+
+const cloneForm = (f: ServiceForm): ServiceForm => ({ ...f, readOnly: new Set(f.readOnly) });
+
+/** New file's form with only the groups the user changed (vs. the form they started from) laid on top. */
+function rebaseForm(user: ServiceForm, seeded: ServiceForm, fresh: ServiceForm): ServiceForm {
+  const out = cloneForm(fresh);
+  GROUPS.forEach((keys, i) => {
+    if (GROUP_NAMES[i].some((g) => fresh.readOnly.has(g))) return; // cannot be edited now: the file's values win
+    const changed = keys.some((k) => JSON.stringify(user[k]) !== JSON.stringify(seeded[k]));
+    if (changed) for (const k of keys) (out as unknown as Record<string, unknown>)[k] = user[k];
+  });
+  return out;
+}
 
 // Stable text of a form for dirty checks (Sets do not survive JSON.stringify).
 const fingerprint = (f: ServiceForm) => JSON.stringify({ ...f, readOnly: [...f.readOnly].sort() });
@@ -27,7 +55,6 @@ const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * reloads the stack and calls reload()/discard().
  */
 export function createServiceEdit(
-  stack: string,
   service: string,
   initial: { config: ServiceConfig; readOnly: Field[]; hash: string },
   deps: ServiceEditDeps,
@@ -41,18 +68,22 @@ export function createServiceEdit(
   checksPartial: Readable<boolean>;
   dirty: Readable<boolean>;
   previewText: Readable<{ original: string; modified: string } | undefined>;
+  /** The file changed under the editor and the user's changes were applied on top of the new version. */
+  rebased: Readable<boolean>;
+  /** Bumped whenever the machine replaces the form itself (rebase, discard); the view re-reads `form`. */
+  formVersion: Readable<number>;
   preview(): Promise<void>;
   save(): Promise<boolean>;
   cancelPreview(): void;
   reload(detail: StackDetail): void;
   discard(detail: StackDetail): void;
 } {
-  void stack;
   let original = initial.config;
   let hashValue = initial.hash;
-  let baseline = fingerprint(toForm(initial.config, initial.readOnly));
+  let seeded = toForm(initial.config, initial.readOnly);
+  let baseline = fingerprint(seeded);
   // What the preview was computed from; the save sends exactly this.
-  let previewed: { config: ServiceConfig; hash: string } | undefined;
+  let previewed: { config: ServiceConfig; hash: string; form: ServiceForm } | undefined;
 
   const form = writable<ServiceForm>(toForm(initial.config, initial.readOnly));
   const errors = writable<FormErrors>({});
@@ -62,6 +93,8 @@ export function createServiceEdit(
   const hash = writable(hashValue);
   const checksPartial = writable(false);
   const dirty = writable(false);
+  const rebased = writable(false);
+  const formVersion = writable(0);
   const previewText = writable<{ original: string; modified: string } | undefined>(undefined);
 
   form.subscribe((f) => {
@@ -76,20 +109,23 @@ export function createServiceEdit(
     hash.set(h);
   };
 
-  function adopt(detail: StackDetail): ServiceConfig | undefined {
-    const svc = detail.services.find((s) => s.name === service);
+  /** Take the stack's new state: new original, hash and read-only set; the user's changed groups go on top. */
+  function rebase(detail: StackDetail): boolean {
+    const svc = detail.services.find((x) => x.name === service);
     if (!svc) {
       notice.set({ kind: 'error', message: `Service "${service}" no longer exists in this stack.` });
-      return undefined;
+      return false;
     }
+    const fresh = toForm(svc.config, svc.readOnly);
+    const merged = rebaseForm(get(form), seeded, fresh);
     original = svc.config;
     setHash(detail.hash);
-    return svc.config;
-  }
-
-  function adoptReadOnly(detail: StackDetail) {
-    const svc = detail.services.find((s) => s.name === service);
-    if (svc) form.update((f) => ({ ...f, readOnly: new Set<Field>(svc.readOnly) }));
+    seeded = fresh;
+    baseline = fingerprint(fresh);
+    form.set(merged);
+    formVersion.update((n) => n + 1);
+    rebased.set(true);
+    return true;
   }
 
   function fail(e: unknown) {
@@ -129,36 +165,43 @@ export function createServiceEdit(
     checksPartial: { subscribe: checksPartial.subscribe },
     dirty: { subscribe: dirty.subscribe },
     previewText: { subscribe: previewText.subscribe },
+    rebased: { subscribe: rebased.subscribe },
+    formVersion: { subscribe: formVersion.subscribe },
 
     async preview() {
       const phaseNow = get(phase);
-      if (phaseNow === 'saving' || phaseNow === 'conflict') return;
+      if (phaseNow !== 'editing' && phaseNow !== 'saved') return;
       notice.set(undefined);
-      const f = get(form);
-      const found = validateForm(f, { original });
+      const found = validateForm(get(form), { original });
       errors.set(found);
       if (Object.keys(found).length > 0) return;
+      phase.set('busy');
       try {
         let current = await deps.compose();
         if (current.hash !== hashValue) {
-          // The file moved on since this page loaded; pick up its new state before previewing.
-          const fresh = await deps.reloadDetail();
-          if (!adopt(fresh)) {
+          // The file moved on since this page loaded; lay the user's changes on top of its new state.
+          if (!rebase(await deps.reloadDetail())) {
             phase.set('editing');
             return;
           }
-          adoptReadOnly(fresh);
           current = await deps.compose();
           if (current.hash !== hashValue) {
             conflictMessage.set('The compose file changed while you were editing. Reload to continue.');
             phase.set('conflict');
             return;
           }
+          const again = validateForm(get(form), { original });
+          errors.set(again);
+          if (Object.keys(again).length > 0) {
+            phase.set('editing');
+            return;
+          }
         }
-        const config = fromForm(get(form), original);
+        const snapshot = cloneForm(get(form));
+        const config = fromForm(snapshot, original);
         const sentHash = hashValue;
         const res = await deps.preview(config, sentHash);
-        previewed = { config, hash: sentHash };
+        previewed = { config, hash: sentHash, form: snapshot };
         previewText.set({ original: current.content, modified: res.content });
         phase.set('previewing');
       } catch (e) {
@@ -183,12 +226,15 @@ export function createServiceEdit(
         const res = await deps.update(sent.config, sent.hash);
         original = sent.config;
         setHash(res.hash);
-        baseline = fingerprint(get(form));
-        dirty.set(false);
+        // The baseline is what was actually saved; edits typed during the request stay dirty.
+        seeded = sent.form;
+        baseline = fingerprint(sent.form);
+        dirty.set(fingerprint(get(form)) !== baseline);
+        rebased.set(false);
         checksPartial.set(res.checksPartial === true);
         previewText.set(undefined);
         previewed = undefined;
-        phase.set('saved');
+        phase.set(get(dirty) ? 'editing' : 'saved');
         return true;
       } catch (e) {
         fail(e);
@@ -197,9 +243,7 @@ export function createServiceEdit(
     },
 
     reload(detail) {
-      const cfg = adopt(detail);
-      if (!cfg) return;
-      adoptReadOnly(detail);
+      if (!rebase(detail)) return;
       conflictMessage.set(undefined);
       notice.set(undefined);
       previewText.set(undefined);
@@ -208,11 +252,18 @@ export function createServiceEdit(
     },
 
     discard(detail) {
-      const svc = detail.services.find((s) => s.name === service);
-      if (!adopt(detail) || !svc) return;
-      const fresh = toForm(svc.config, svc.readOnly);
-      baseline = fingerprint(fresh);
-      form.set(fresh);
+      const svc = detail.services.find((x) => x.name === service);
+      if (!svc) {
+        notice.set({ kind: 'error', message: `Service "${service}" no longer exists in this stack.` });
+        return;
+      }
+      original = svc.config;
+      setHash(detail.hash);
+      seeded = toForm(svc.config, svc.readOnly);
+      baseline = fingerprint(seeded);
+      form.set(cloneForm(seeded));
+      formVersion.update((n) => n + 1);
+      rebased.set(false);
       errors.set({});
       conflictMessage.set(undefined);
       notice.set(undefined);

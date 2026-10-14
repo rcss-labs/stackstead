@@ -8,7 +8,7 @@ import { createServiceEdit, type ServiceEditDeps } from './serviceEdit';
 const config: ServiceConfig = { image: 'nginx:1', ports: ['80:80'], volumes: ['/a:/b'], limits: {} };
 
 type Deps = ServiceEditDeps & { preview: Mock<ServiceEditDeps['preview']>; update: Mock<ServiceEditDeps['update']> };
-function setup(over: Partial<ServiceEditDeps> = {}, readOnly: ('ports' | 'volumes')[] = []) {
+function setup(over: Partial<ServiceEditDeps> = {}, readOnly: ('ports' | 'volumes')[] = [], cfg: ServiceConfig = config) {
   const deps = {
     preview: vi.fn(async (_c, h) => ({ content: 'new: yaml\n', hash: h })),
     update: vi.fn(async () => ({ hash: 'h2' })),
@@ -16,7 +16,7 @@ function setup(over: Partial<ServiceEditDeps> = {}, readOnly: ('ports' | 'volume
     reloadDetail: vi.fn(async (): Promise<StackDetail> => detail('h9', config)),
     ...over,
   } as Deps;
-  const edit = createServiceEdit('web', 'app', { config, readOnly, hash: 'h1' }, deps);
+  const edit = createServiceEdit('app', { config: cfg, readOnly, hash: 'h1' }, deps);
   return { edit, deps };
 }
 function detail(hash: string, cfg: ServiceConfig, readOnly: ('ports' | 'volumes')[] = []): StackDetail {
@@ -156,5 +156,124 @@ describe('createServiceEdit', () => {
     setImage(edit, 'nginx:2');
     await edit.preview();
     expect(deps.preview.mock.calls[0][0].ports).toEqual(config.ports);
+  });
+
+  const NOTICE = 'The file changed since you opened this editor';
+
+  it('a concurrent change to an untouched group is kept when the user edited only the image', async () => {
+    const base: ServiceConfig = { ...config, limits: { memory: '256M' } };
+    let fileHash = 'h9';
+    const { edit, deps } = setup(
+      {
+        compose: vi.fn(async () => ({ content: 'old: yaml\n', hash: fileHash })),
+        reloadDetail: vi.fn(async () => {
+          fileHash = 'h9';
+          return detail('h9', { ...base, limits: { memory: '1G' } });
+        }),
+      },
+      [],
+      base,
+    );
+    setImage(edit, 'nginx:2');
+    await edit.preview();
+    const sent = deps.preview.mock.calls[0][0];
+    expect(sent.limits.memory).toBe('1G');
+    expect(sent.image).toBe('nginx:2');
+    expect(deps.preview.mock.calls[0][1]).toBe('h9');
+    expect(get(edit.rebased)).toBe(true);
+  });
+
+  it('a group edited by both keeps the user value and flags the rebase', async () => {
+    let fileHash = 'h9';
+    const { edit, deps } = setup({
+      compose: vi.fn(async () => ({ content: 'old: yaml\n', hash: fileHash })),
+      reloadDetail: vi.fn(async () => {
+        fileHash = 'h9';
+        return detail('h9', { ...config, image: 'nginx:9' });
+      }),
+    });
+    setImage(edit, 'nginx:2');
+    await edit.preview();
+    expect(deps.preview.mock.calls[0][0].image).toBe('nginx:2');
+    expect(get(edit.rebased)).toBe(true);
+    edit.cancelPreview();
+    expect(NOTICE).toBeTruthy();
+  });
+
+  it('conflict reload applies only the groups the user changed on top of the new file', async () => {
+    const { edit } = setup({
+      update: vi.fn(async () => {
+        throw new ApiError(409, 'changed');
+      }),
+    });
+    setImage(edit, 'nginx:2');
+    await edit.preview();
+    await edit.save();
+    edit.reload(detail('h9', { ...config, image: 'nginx:9', restart: 'always' }));
+    expect(get(edit.form).image).toBe('nginx:2');
+    expect(get(edit.form).restart).toBe('always');
+    expect(get(edit.rebased)).toBe(true);
+    expect(get(edit.dirty)).toBe(true);
+  });
+
+  it('reload re-applies the new read-only set and takes the new file values for those groups', async () => {
+    let fileHash = 'h1';
+    const { edit, deps } = setup({
+      compose: vi.fn(async () => ({ content: 'old: yaml\n', hash: fileHash })),
+      update: vi.fn(async () => {
+        throw new ApiError(409, 'changed');
+      }),
+    });
+    edit.form.update((f) => ({ ...f, image: 'nginx:2', ports: ['81:81'] }));
+    await edit.preview();
+    await edit.save();
+    fileHash = 'h9';
+    edit.reload(detail('h9', { ...config, ports: ['8080:80'] }, ['ports']));
+    expect(get(edit.form).readOnly.has('ports')).toBe(true);
+    expect(get(edit.form).ports).toEqual(['8080:80']);
+    await edit.preview();
+    expect(deps.preview.mock.calls.at(-1)![0].ports).toEqual(['8080:80']);
+    expect(deps.preview.mock.calls.at(-1)![0].image).toBe('nginx:2');
+  });
+
+  it('a second preview while one is in flight starts no second chain', async () => {
+    let release!: () => void;
+    const { edit, deps } = setup({
+      compose: vi.fn(() => new Promise<{ content: string; hash: string }>((r) => (release = () => r({ content: 'old', hash: 'h1' })))),
+    });
+    setImage(edit, 'nginx:2');
+    const first = edit.preview();
+    expect(get(edit.phase)).toBe('busy');
+    const second = edit.preview();
+    release();
+    await Promise.all([first, second]);
+    expect(deps.compose).toHaveBeenCalledOnce();
+    expect(deps.preview).toHaveBeenCalledOnce();
+  });
+
+  it('edits typed while the save is in flight stay dirty afterwards', async () => {
+    let release!: () => void;
+    const { edit } = setup({
+      update: vi.fn(() => new Promise<{ hash: string }>((r) => (release = () => r({ hash: 'h2' })))),
+    });
+    setImage(edit, 'nginx:2');
+    await edit.preview();
+    const saving = edit.save();
+    setImage(edit, 'nginx:3');
+    release();
+    await saving;
+    expect(get(edit.dirty)).toBe(true);
+    expect(get(edit.phase)).toBe('editing');
+  });
+
+  it('a 422 about raw YAML (read-only field) routes to the raw editor', async () => {
+    const { edit } = setup({
+      preview: vi.fn(async () => {
+        throw new ApiError(422, 'ports can only be edited as raw YAML');
+      }),
+    });
+    setImage(edit, 'nginx:2');
+    await edit.preview();
+    expect(get(edit.notice)?.kind).toBe('rawEditor');
   });
 });
