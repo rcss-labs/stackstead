@@ -153,8 +153,8 @@
   <section class="stack" aria-labelledby="about-h">
     <h2 id="about-h">About</h2>
     <p>
-      See the README sections “Prometheus”, for reverse-proxy setup, and “Security model” for how Stackstead protects
-      access.
+      See docs/api.md (section “Prometheus”) for scraping setup, and docs/security.md for remote access through a
+      reverse proxy and how Stackstead protects access.
     </p>
   </section>
 </section>

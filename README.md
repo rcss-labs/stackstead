@@ -1,215 +1,108 @@
-# stackstead
+# Stackstead
 
-A lightweight Docker Compose management platform for home labs and small teams:
-a single Go binary with a web UI for creating, running and debugging stacks.
+**Run your Docker Compose stacks from a browser, without giving up your compose files.**
 
-Design: `docs/superpowers/specs/2026-10-14-stackstead-v1-design.md`
+Stackstead is a small, self-hosted control panel for the Docker host in your
+home lab or on your team's server. Create a service from an image or a
+Dockerfile, change its ports, volumes and limits in a form, start and stop it,
+follow its logs and watch its CPU, memory and network, all from one page.
+It ships as a single binary, with no database server to run and nothing else
+to install besides Docker.
 
-## Web UI
+Your compose files stay the source of truth. Stackstead edits them the way
+you would: it keeps your comments, your key order and anything it does not
+understand, and every stack keeps working with plain `docker compose`.
 
-The UI is a Svelte single-page app embedded in the Go binary; there is no
-separate frontend to deploy. Open the address Stackstead listens on
-(`http://127.0.0.1:8420` by default). It covers first-run setup, login, the
-live stack list, creating and importing stacks, per-service forms and a raw
-YAML editor (with a diff preview before saving and Apply), operation output,
-logs, resource charts, and a Settings page for the Prometheus token and
-password.
+## Why Stackstead
 
-- **Keyboard and screen readers.** Everything is reachable with the keyboard;
-  after a page change focus moves to the page heading. Status is never colour
-  alone (badges carry an icon and a word), toasts and operation/log status use
-  live regions, dialogs trap focus and make the page behind them inert, and
-  `prefers-reduced-motion` and the light/dark colour scheme are honoured. The
-  layout works down to 375 px wide.
-- **Assets.** Built files live under `/assets/` with content hashes and are
-  served `Cache-Control: public, max-age=31536000, immutable`; a missing
-  asset is a plain 404 (never `index.html`). Client routes such as `/settings`
-  and `/stacks/<name>` serve `index.html` with `no-cache` and a strict
-  Content-Security-Policy.
-- **Unsaved changes.** The editors ask before you navigate away, switch tabs
-  or log out with edits that are not saved.
+Running a handful of containers on one machine usually starts simple and
+gets messy:
 
-## Prerequisites
+- **"Which port was that again?"** You open five compose files and
+  `docker ps` to find out what is running where.
+- **YAML papercuts.** A wrong indent or a mistyped port mapping is only
+  discovered when `docker compose up` fails.
+- **"What happened at 3am?"** By the time you look, the container has
+  restarted and the evidence is gone.
+- **Heavy tools for a light job.** Full container platforms want their own
+  database, agents or containers, and often rewrite or take over your files.
 
-Docker Engine and the Docker Compose v2 plugin (`docker compose`) must be
-installed on the host; the systemd unit runs the service with the `docker`
-group. If Docker or the plugin is missing Stackstead still starts: read-only
-views work and lifecycle endpoints answer 503 until it is available.
+Stackstead is built for exactly this situation: one Docker host, a few to a
+few dozen containers, and someone who wants a clear view and safe edits
+without a platform to maintain.
 
-## API overview
+## What you get
 
-All routes except setup and login need a session cookie. Errors are
-`{"error": "..."}`, with `"fields": [{field, message}]` for validation.
+- **A live overview.** Every stack and service on the machine, its status,
+  health and running containers, updated the moment Docker reports a change.
+- **Forms instead of YAML.** Image or Dockerfile, ports, volumes, environment
+  variables, networks and static IPs, CPU and memory limits, restart policy
+  and healthcheck. Port and IP clashes are checked before anything is
+  written.
+- **See before you save.** Every change, from the form or the built-in YAML
+  editor, is shown as a diff before it touches the file, and the previous
+  version is kept as a `.bak`. If someone edits the file at the same time,
+  Stackstead notices and lets you merge instead of overwriting.
+- **Dockerfile first.** Build images from local Dockerfiles, not only pull
+  from a registry. Pick folders and files with a built-in file browser.
+- **Bring your existing stacks.** Import a compose file you already have,
+  where it already lives. Nothing is moved, and nothing changes until you
+  edit it.
+- **One-click lifecycle.** Up, down, restart, pull and build, with the
+  command output streamed live and kept for later.
+- **Live logs.** Follow all of a stack's containers at once, filter by
+  service or by stdout and stderr, search, and pause. After a dropped
+  connection the stream picks up where it left off.
+- **Resource history.** CPU, memory, network and disk I/O for every service,
+  live and for the last 72 hours (configurable), so you can see what
+  happened while you were away.
+- **Plays well with Grafana.** An optional Prometheus `/metrics` endpoint,
+  protected by its own token.
+- **No lock-in.** Stop using Stackstead tomorrow and your stacks are just
+  compose files in folders. Stopping Stackstead never stops your containers,
+  and removing a stack never deletes its files.
 
-| Method and path | Purpose |
-| --- | --- |
-| `GET /api/stacks`, `POST /api/stacks` | list stacks with status; create a stack from an image or Dockerfile |
-| `POST /api/stacks/import` | register an existing compose file without modifying it |
-| `GET /api/stacks/{name}` | detail with services and containers |
-| `GET`/`PUT /api/stacks/{name}/compose` | raw YAML, saved with the hash from the read (409 if stale) |
-| `PUT /api/stacks/{name}/services/{service}` | structured service edit |
-| `POST /api/stacks/{name}/services/{service}/preview` | the file a structured edit would produce, `{content, hash}`, without writing it; the save must send that same `hash` |
-| `POST /api/stacks/{name}/actions/{action}` | `up`, `down`, `restart`, `pull`, `build`; returns an operation (202) |
-| `DELETE /api/stacks/{name}?volumes=true` | `compose down` then unregister (202) |
-| `GET /api/stacks/{name}/operations` | recent operations |
-| `GET /api/operations/{id}`, `/stream`, `POST .../cancel` | output, live SSE stream, cancel |
-| `GET /api/fs?path=`, `GET /api/networks`, `GET /api/status` | file browser, Docker networks, status (`docker`, `compose`, `events`: `connected` or `disconnected` for the container event stream, `metricsDegraded`: true while samples cannot be stored) |
-| `GET /api/operations?state=running` | operations across all stacks, optionally only running ones |
-| `GET /api/stacks/{name}/logs` | live container logs (SSE); every `log` event has an `id`, and `Last-Event-ID` resumes exactly |
-| `GET /api/stacks/{name}/metrics`, `.../metrics/live` | resource history (JSON) and live samples (SSE) |
-| `GET /api/events` | container changes as they happen (SSE) |
-| `POST /api/password` | change the signed-in user's password (`{current, new}`; 204) |
-| `GET /api/settings/metrics-token` | whether a scrape token exists, `{configured}` (never the token) |
-| `POST`/`DELETE /api/settings/metrics-token` | create or rotate, or revoke, the Prometheus scrape token |
-| `GET /metrics` | Prometheus exposition, bearer token auth instead of a session |
+## Who it is for
 
-Notes on the stacks API:
+- **Home-lab owners** running media servers, home automation, monitoring and
+  side projects on a NAS, mini PC or Raspberry Pi (amd64 and arm64).
+- **Small teams** with a shared Docker host for internal tools, staging or
+  CI services, who want a friendlier way in than SSH and `vim`.
+- **Developers** who want to try a Dockerfile as a properly configured
+  service without writing compose YAML by hand.
 
-- **Partial checks.** Creating or editing a stack checks new host ports and
-  static IPs against the Docker engine. If the engine is unreachable only the
-  ports declared by other stacks are checked, and the response carries the
-  header `X-Stackstead-Checks: partial`.
-- **POST needs JSON.** Every `POST` to the stacks and operations endpoints
-  (including `actions/{action}` and `operations/{id}/cancel`) requires
-  `Content-Type: application/json`, and a body, which may be just `{}`. Logout
-  takes no body.
-- **Operation stream.** `GET /api/operations/{id}/stream` is server-sent
-  events: `line` (one output line, as a JSON string; earlier output is replayed
-  first), `done` (the final operation as JSON, after which the stream ends) and
-  `dropped` (the client was too slow and was cut off; reconnect, which replays
-  the retained output again, or fetch `GET /api/operations/{id}`).
-- **Override files are not supported yet.** Stackstead runs compose with
-  `-f <file>`, which turns off the automatic merge of `compose.override.yaml`
-  (and `.yml`, `docker-compose.override.*`). Importing a file with an override
-  next to it is refused, startup sync skips such folders with a warning, and
-  lifecycle actions and edits are refused if one appears later. Merge or
-  remove the override file.
+It deliberately does not try to be Kubernetes, a multi-host orchestrator or
+a CI system. One host, done well.
 
-Removing a stack never deletes files: the compose file and its folder stay on
-disk, and volumes are removed only when `volumes=true`. Stopping Stackstead
-never stops containers.
+## How it compares
 
-## Observability
+Tools such as Portainer, Dockge and Komodo cover parts of the same ground,
+and each is a good choice for some setups. Stackstead's angle is the
+combination: form-driven editing that preserves hand-written compose files,
+Dockerfile-first builds, built-in logs and metrics history, and a single
+small binary that runs natively on the host, with no containers or external
+database of its own.
 
-Stackstead follows Docker's event stream to keep container status current, so
-the UI does not poll `docker ps`, and samples resource usage of running
-compose containers.
+## Quick start
 
-- **Logs.** `GET /api/stacks/{name}/logs?follow=true&tail=200&since=10m&service=web`
-  is server-sent events: `log` (`service`, `container`, `stream` as `stdout`
-  or `stderr`, `time`, `text`), `error` (one container's stream failed; the
-  others continue) and `end`. `tail` is a number or `all`; `since` is an
-  RFC3339 time, a Unix timestamp or a duration. Containers with a TTY do not
-  separate stderr from stdout. **Logs are never stored by Stackstead**; they
-  are read from Docker on demand, so they are as old as Docker's own log
-  driver keeps them.
-- **Log resume.** Each `log` event carries `id: <container id, 12 hex>:<unix
-  nanoseconds>:<ordinal>`, where `ordinal` counts the lines with that exact
-  timestamp delivered so far on the stream. A client reconnects with the
-  latest id of every container, comma-separated, as `Last-Event-ID`, and the
-  server continues each container from that point without repeating or
-  skipping lines (the UI does this automatically). Containers without a cursor
-  (new replicas, malformed entries) start from the normal `tail`. Residual
-  limits come from Docker: lines already evicted by log rotation cannot be
-  replayed, a recreated container has a new id and starts from `tail`, and
-  log drivers with coarse clocks only make the ordinal do more work. Resume
-  reads the container's log from the start (`tail=all` plus `since`) and skips
-  to the cursor, so its cost grows with the log: configure log rotation
-  (for example `max-size`) on stacks you tail for long.
-- **Metrics history.** `GET /api/stacks/{name}/metrics?from=&to=&step=&service=`
-  returns `{points}` with, per service and time bucket, `cpu` (percent of one
-  core), `mem`, `memLimit` and per-second network and block I/O rates. The
-  default window is the last hour. Rates are totals across a service's
-  replicas (computed per container, then summed); `cpu`, `mem` and `memLimit`
-  are averages across replicas. The UI charts use the same formulas for live
-  samples, so history and live data join without a step.
-  Memory excludes page cache (`inactive_file` on cgroup v2, `cache` on v1),
-  like `docker stats`. `metrics/live` streams new samples as they are taken
-  (`sample` events). History and live `time` are both UTC RFC3339.
-- **Events.** `GET /api/events` sends `status` (`events`, `metricsDegraded`)
-  when it connects or changes, and `change` (`project`, `seq`) when a
-  project's containers changed; refetch the affected stack on `change`.
-  `/api/events` and `metrics/live` send `event: dropped` and then end when the
-  client falls behind; reconnect. A stack without a compose project has no
-  logs: the logs stream sends just `end`.
-
-### What is stored
-
-Every `metrics_interval` (default `10s`) one row per running compose
-container is written to the SQLite database in the data directory: CPU,
-memory and limit, and cumulative network and block I/O. Rows older than
-`metrics_retention` (default `72h`) are pruned hourly. At the default settings
-that is about 26,000 rows per container. If the database cannot be written,
-`/api/status` reports `metricsDegraded` and live data keeps working.
-
-### Prometheus
-
-`GET /metrics` serves the latest sample of every container
-(`stackstead_container_cpu_percent`, `..._memory_bytes`,
-`..._memory_limit_bytes`, `..._network_receive_bytes_total`,
-`..._network_transmit_bytes_total`, `..._blkio_read_bytes_total`,
-`..._blkio_write_bytes_total`, labelled `project`, `service`, `container`)
-and `stackstead_metrics_degraded`. It does not use the session; it needs a
-bearer token: the endpoint answers 404 until a token exists, then 401 for a
-missing or wrong one.
-
-Create (or rotate; the old token stops working) a token while logged in. The
-Settings page does this for you and shows the token once; `GET
-/api/settings/metrics-token` only reports whether one exists. The
-plaintext is shown once and only its SHA-256 is stored:
+You need a Linux or macOS machine with Docker Engine and the Docker Compose
+v2 plugin (`docker compose`).
 
 ```bash
-curl -b cookies.txt -X POST -H 'Content-Type: application/json' -d '{}' \
-  http://127.0.0.1:8420/api/settings/metrics-token       # {"token": "..."}
-curl -b cookies.txt -X DELETE http://127.0.0.1:8420/api/settings/metrics-token   # revoke
+make build                 # needs Go and Node >= 22; produces bin/stackstead
+./bin/stackstead           # listens on http://127.0.0.1:8420
 ```
 
-```yaml
-scrape_configs:
-  - job_name: stackstead
-    scrape_interval: 15s
-    static_configs:
-      - targets: ['stackstead.example.com:8420']
-    authorization:
-      type: Bearer
-      credentials: <token>           # or: credentials_file: /etc/prometheus/stackstead.token
-```
+Open http://127.0.0.1:8420 on the same machine and create your admin
+account. Then create a stack from an image, or import a compose file you
+already have.
 
-Serve `/metrics` over TLS when it leaves the host: the token is a password.
+Settings live in a small YAML file or in `STACKSTEAD_*` environment
+variables; see [`deploy/config.example.yaml`](deploy/config.example.yaml)
+for every option (listen address, stacks folder, data folder, metrics
+retention and more).
 
-## Security model
-
-Access to the UI is root-equivalent on the host (it controls the Docker
-socket). By default stackstead binds to localhost only. For remote access put
-a TLS reverse proxy in front and make it forward the original Host and client
-address, for example with nginx:
-
-```nginx
-proxy_set_header Host $host;
-proxy_set_header X-Forwarded-For $remote_addr;
-```
-
-Each open browser tab keeps an `/api/events` stream plus the active tab's own
-stream (logs, metrics or an operation). HTTP/1.1 allows only 6 connections per
-origin, so behind an HTTP/1.1 proxy more than about two tabs can starve regular
-requests. Use an HTTP/2 reverse proxy, or keep at most two tabs open.
-
-If a proxy fronts an instance that has no admin yet, complete first-run setup
-with the setup token from `journalctl -u stackstead`.
-
-## Build
-
-```bash
-make build     # build the UI (Node >= 22), then bin/stackstead
-make release   # the same for linux/amd64 and linux/arm64
-```
-
-Node is needed only to build the UI (`make ui`, `make build`, `make release`).
-The built UI is embedded from `web/dist`; without it the binary still builds
-(`go build ./cmd/stackstead`) and serves a placeholder page saying the UI was
-not built, and logs a warning.
-
-## Install (systemd)
+### Run it as a service (systemd)
 
 ```bash
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin stackstead
@@ -220,60 +113,41 @@ sudo install -m 0644 deploy/stackstead.service /etc/systemd/system/stackstead.se
 sudo systemctl daemon-reload && sudo systemctl enable --now stackstead
 ```
 
-On first start, open the UI from the same machine and create the admin
-account in the browser, or from another machine enter the setup token printed
-in `journalctl -u stackstead`. The same setup works from a shell:
+To finish setup from another machine, use the one-time setup token from
+`journalctl -u stackstead`. Ready-made installers and packages for Linux and
+macOS are planned.
 
-```bash
-curl -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"<12+ chars>","setupToken":"<token or empty on localhost>"}' \
-  http://127.0.0.1:8420/api/setup
-```
+## Good to know
 
-## Develop
+- **Security.** Controlling Docker is equivalent to root on that machine, so
+  Stackstead listens on localhost only by default and has a single admin
+  account. For remote access, put it behind a TLS reverse proxy. Details in
+  [docs/security.md](docs/security.md).
+- **Logs are not copied.** Logs are read from Docker when you look at them,
+  so they go back as far as Docker's own log settings allow.
+- **Compose override files** (`compose.override.yaml`) are not supported yet.
+  Stackstead tells you when it finds one.
+- **If Docker is down**, Stackstead keeps running, shows a banner, and
+  reconnects when Docker is back.
+- **Accessible.** The UI works with a keyboard and screen readers, follows
+  your light or dark theme and reduced-motion setting, and fits a phone
+  screen.
 
-| Command | Needs | What it does |
-| --- | --- | --- |
-| `make ui` | Node >= 22 | build the web UI into `web/dist` |
-| `make build` | Node >= 22, Go | UI, then the static binary in `bin/` |
-| `make test` | Go only | Go tests with the race detector; no Node |
-| `make check` | Node, Go | `go vet`, gofmt, UI type-check and unit tests, Go tests |
-| `make e2e` | Go, a built UI | smoke test against the real binary (see below) |
+## Documentation
 
-Dev loop: run the backend and the Vite dev server side by side. The dev
-server proxies `/api` to the backend.
+- [API and observability reference](docs/api.md): every endpoint, log
+  streaming and resume, metrics history, Prometheus setup.
+- [Security](docs/security.md): threat model, reverse proxies, first-run
+  setup, password changes.
+- [Building and development](docs/development.md): make targets, dev loop,
+  tests.
 
-```bash
-STACKSTEAD_DATA_DIR=$PWD/.dev/data STACKSTEAD_STACKS_DIR=$PWD/.dev/stacks go run ./cmd/stackstead
-cd web && npm run dev
-```
+## Status
 
-Other tests:
-
-```bash
-go test ./...
-go test -tags integration -race -timeout 300s ./...   # needs a running Docker; creates and removes itest*/stackstead-it-* resources
-```
-
-`make e2e` builds the binary, starts it on a free port with temporary data
-and stacks directories, and drives it over HTTP: serving the embedded UI and
-its assets, setup, login, metrics token and `/metrics`, and the password
-change. It also creates, starts, observes (logs ids, metrics history) and
-removes a throwaway `e2e-smoke-*` stack when Docker is available, and renders
-the login page in headless Chrome when a Chrome/Chromium is found (set
-`STACKSTEAD_E2E_CHROME` to choose one). Those two parts skip cleanly when
-Docker or Chrome is missing.
-
-**Password change.** `POST /api/password` keeps the session you are using and
-drops every other session at once, so a stolen cookie dies with the change. A
-wrong current password answers 403 (not 401, which the UI treats as "session
-gone") and counts against the same per-IP limiter as logins (429 when
-exceeded). The UI never echoes either password.
-
-**CI: deferred.** There is no CI configuration yet. `make test` needs no
-Node; `make build` does. `make e2e` does not run Node itself but needs the UI
-to be built already (`make ui`); without it the smoke test skips.
+Stackstead is young and under active development. The web UI, stack
+management, logs and metrics are in place; a command-line client and
+installers are next.
 
 ## Licence
 
-Licence: AGPL-3.0 (LICENSE file added with the installers plan).
+AGPL-3.0. The LICENSE file is added together with the installers.
