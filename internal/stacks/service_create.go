@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/rcss-labs/stackstead/internal/composefile"
+	"github.com/rcss-labs/stackstead/internal/engine"
 	"github.com/rcss-labs/stackstead/internal/fsguard"
 )
 
@@ -65,6 +66,10 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 		return Summary{}, err
 	}
 
+	if err := s.requireCompose(ctx); err != nil {
+		return Summary{}, err
+	}
+
 	// Mkdir (not MkdirAll) is the atomic "I created it" claim: it fails if the
 	// folder appeared since the check above.
 	if err := os.Mkdir(dir, 0o755); err != nil {
@@ -94,12 +99,51 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 	if err != nil {
 		return Summary{}, err
 	}
-	if err := s.reg.Add(ctx, Entry{Name: req.Name, ComposePath: path, Origin: OriginManaged, Project: project}); err != nil {
+	if err := s.projectAvailable(ctx, project, req.Name); err != nil {
+		return Summary{}, err
+	}
+	err = s.reg.Add(ctx, Entry{Name: req.Name, ComposePath: path, Origin: OriginManaged, Project: project})
+	if errors.Is(err, ErrStackExists) {
+		// Sync may have adopted our brand-new folder in the meantime; that
+		// row is exactly what we were about to write.
+		if e, gerr := s.reg.Get(ctx, req.Name); gerr == nil && e.ComposePath == path {
+			err = nil
+		}
+	}
+	if err != nil {
 		return Summary{}, err
 	}
 	ok = true
 	return Summary{Name: req.Name, Path: path, Project: project, Origin: OriginManaged,
 		Status: StatusStopped, Services: 1, ChecksPartial: partial}, nil
+}
+
+// projectAvailable refuses a project that a registered stack already uses, or
+// that exists on the host without a registered owner (importing is the way to
+// adopt it): "up --remove-orphans" in a shared project would delete the other
+// stack's containers.
+func (s *Service) projectAvailable(ctx context.Context, project, stack string) error {
+	owner, taken, err := s.projectOwner(ctx, project, stack)
+	if err != nil {
+		return err
+	}
+	if taken {
+		return projectTaken(project, owner)
+	}
+	containers, err := s.engine.Containers(ctx)
+	if err != nil {
+		if errors.Is(err, engine.ErrUnavailable) && ctx.Err() == nil {
+			return nil // the checks are partial; see ChecksPartial
+		}
+		return err
+	}
+	for _, c := range containers {
+		if c.Project() == project {
+			return &ValidationError{Fields: []FieldError{{Field: "name",
+				Message: fmt.Sprintf("compose project %s already exists on this host; import it instead", project)}}}
+		}
+	}
+	return nil
 }
 
 // prepareConfig applies build defaults and confines the build context.
@@ -164,6 +208,9 @@ func (s *Service) Import(ctx context.Context, path string) (Summary, error) {
 		return Summary{}, invalid("cannot read file: " + err.Error())
 	}
 	if _, err := parseFile(data); err != nil {
+		return Summary{}, err
+	}
+	if err := s.requireCompose(ctx); err != nil {
 		return Summary{}, err
 	}
 	if err := s.compose.Config(ctx, resolved); err != nil {

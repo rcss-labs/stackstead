@@ -116,15 +116,33 @@ func (s *Service) lockStack(name string) (unlock func()) {
 // readFile loads and parses a stack's compose file. A missing, unreadable or
 // unparseable file is reported as ErrStackUnavailable.
 func readFile(e Entry) (data []byte, hash string, f *composefile.File, err error) {
-	data, hash, err = composefile.Load(e.ComposePath)
+	data, hash, err = loadFile(e)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("%w: %v", ErrStackUnavailable, err)
+		return nil, "", nil, err
 	}
 	f, err = composefile.Parse(data)
 	if err != nil {
 		return data, hash, nil, fmt.Errorf("%w: %v", ErrStackUnavailable, err)
 	}
 	return data, hash, f, nil
+}
+
+// loadFile reads a stack's compose file; a missing or unreadable file is
+// reported as ErrStackUnavailable.
+func loadFile(e Entry) ([]byte, string, error) {
+	data, hash, err := composefile.Load(e.ComposePath)
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: %v", ErrStackUnavailable, err)
+	}
+	return data, hash, nil
+}
+
+// requireCompose fails with composecli.ErrComposeUnavailable when the compose
+// plugin is missing, so callers can answer 503 instead of a misleading
+// compose error.
+func (s *Service) requireCompose(ctx context.Context) error {
+	_, err := s.compose.Version(ctx)
+	return err
 }
 
 // parseFile parses user-supplied YAML; syntax errors count as invalid config
@@ -155,18 +173,21 @@ func (s *Service) Sync(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	have := map[string]bool{}
+	byName, byPath, byProject := map[string]bool{}, map[string]bool{}, map[string]string{}
 	for _, e := range known {
-		have[e.Name], have[e.ComposePath] = true, true
+		byName[e.Name], byPath[resolved(e.ComposePath)] = true, true
+		byProject[e.Project] = e.Name
 	}
 	var errs []error
 	for _, d := range dirs {
-		path := filepath.Join(base, d.Name(), "compose.yaml")
-		info, err := os.Stat(path) // follows symlinked folders
-		if !d.IsDir() && d.Type()&fs.ModeSymlink == 0 || err != nil || !info.Mode().IsRegular() {
+		path, err := filepath.EvalSymlinks(filepath.Join(base, d.Name(), composeFileName))
+		if err != nil {
 			continue
 		}
-		if have[d.Name()] || have[path] || ValidateName(d.Name()) != nil {
+		if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if byName[d.Name()] || byPath[path] || ValidateName(d.Name()) != nil {
 			continue
 		}
 		project, err := s.compose.ProjectName(ctx, path)
@@ -177,12 +198,45 @@ func (s *Service) Sync(ctx context.Context) error {
 			errs = append(errs, fmt.Errorf("adopt %s: %w", d.Name(), err))
 			continue
 		}
+		if owner, taken := byProject[project]; taken {
+			errs = append(errs, fmt.Errorf("skipped %s: compose project %q is already used by stack %s", d.Name(), project, owner))
+			continue
+		}
 		err = s.reg.Add(ctx, Entry{Name: d.Name(), ComposePath: path, Origin: OriginManaged, Project: project})
 		if err != nil && !errors.Is(err, ErrStackExists) {
 			errs = append(errs, err)
+			continue
 		}
+		byName[d.Name()], byPath[path], byProject[project] = true, true, d.Name()
 	}
 	return errors.Join(errs...)
+}
+
+func resolved(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return p
+}
+
+// projectOwner returns the registered stack other than exclude that uses
+// project.
+func (s *Service) projectOwner(ctx context.Context, project, exclude string) (string, bool, error) {
+	entries, err := s.reg.List(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	for _, e := range entries {
+		if e.Project == project && e.Name != exclude {
+			return e.Name, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func projectTaken(project, owner string) error {
+	return &ValidationError{Fields: []FieldError{{Field: "name",
+		Message: fmt.Sprintf("compose project %q is already used by stack %s", project, owner)}}}
 }
 
 // List summarizes every registered stack. A broken stack is reported as
@@ -278,7 +332,7 @@ func (s *Service) Raw(ctx context.Context, name string) ([]byte, string, error) 
 	if err != nil {
 		return nil, "", err
 	}
-	return composefile.Load(e.ComposePath)
+	return loadFile(e)
 }
 
 // composeArgs maps an action to its `docker compose` arguments.
@@ -303,7 +357,7 @@ func (s *Service) Act(ctx context.Context, stack, action string) (Operation, err
 	if _, _, _, err := readFile(e); err != nil {
 		return Operation{}, err
 	}
-	if err := s.engine.Ping(ctx); err != nil {
+	if err := s.requireLifecycle(ctx); err != nil {
 		return Operation{}, err
 	}
 	return s.ops.Start(stack, action, func(ctx context.Context, out func(string)) error {
@@ -311,9 +365,18 @@ func (s *Service) Act(ctx context.Context, stack, action string) (Operation, err
 	})
 }
 
+// requireLifecycle checks that both Docker and the compose plugin are usable.
+func (s *Service) requireLifecycle(ctx context.Context) error {
+	if err := s.engine.Ping(ctx); err != nil {
+		return err
+	}
+	return s.requireCompose(ctx)
+}
+
 // Remove runs `compose down` and then unregisters the stack. Files on disk
 // are never touched. If the compose file is already gone there is nothing for
-// compose to bring down, so the stale row is simply dropped.
+// compose to bring down, so the stale row is dropped, but only once the
+// engine confirms no containers of the project remain.
 func (s *Service) Remove(ctx context.Context, stack string, withVolumes bool) (Operation, error) {
 	e, err := s.reg.Get(ctx, stack)
 	if err != nil {
@@ -321,10 +384,12 @@ func (s *Service) Remove(ctx context.Context, stack string, withVolumes bool) (O
 	}
 	_, statErr := os.Stat(e.ComposePath)
 	missing := errors.Is(statErr, fs.ErrNotExist)
-	if !missing {
-		if err := s.engine.Ping(ctx); err != nil {
+	if missing {
+		if err := s.confirmNoContainers(ctx, e); err != nil {
 			return Operation{}, err
 		}
+	} else if err := s.requireLifecycle(ctx); err != nil {
+		return Operation{}, err
 	}
 	args := []string{"down"}
 	if withVolumes {
@@ -341,6 +406,26 @@ func (s *Service) Remove(ctx context.Context, stack string, withVolumes bool) (O
 		}
 		return nil
 	})
+}
+
+// confirmNoContainers refuses to unregister a stack with no compose file while
+// its containers may still exist: without the file they could never be
+// brought down through Stackstead.
+func (s *Service) confirmNoContainers(ctx context.Context, e Entry) error {
+	containers, err := s.engine.Containers(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: compose file is missing and docker cannot be queried to confirm no containers of project %s remain: %v", ErrStackUnavailable, e.Project, err)
+	}
+	n := 0
+	for _, c := range containers {
+		if e.Project != "" && c.Project() == e.Project {
+			n++
+		}
+	}
+	if n > 0 {
+		return fmt.Errorf("%w: compose file is missing but %d containers of project %s are still running; restore the file or stop them manually", ErrStackUnavailable, n, e.Project)
+	}
+	return nil
 }
 
 func (s *Service) Networks(ctx context.Context) ([]engine.Network, error) {

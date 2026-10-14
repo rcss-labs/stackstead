@@ -13,51 +13,58 @@ import (
 	"github.com/rcss-labs/stackstead/internal/engine"
 )
 
+// EditResult is the outcome of a saved edit. ChecksPartial is set when the
+// engine was unreachable so only stack-declared ports were checked.
+type EditResult struct {
+	Hash          string
+	ChecksPartial bool
+}
+
 // UpdateService applies a form edit to one service. It shares its save
 // pipeline (commit) with SaveRaw.
-func (s *Service) UpdateService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) (string, error) {
+func (s *Service) UpdateService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) (EditResult, error) {
 	e, err := s.reg.Get(ctx, stack)
 	if err != nil {
-		return "", err
+		return EditResult{}, err
 	}
 	defer s.lockStack(stack)()
 
-	data, current, err := composefile.Load(e.ComposePath)
+	data, current, err := loadFile(e)
 	if err != nil {
-		return "", err
+		return EditResult{}, err
 	}
 	if current != hash {
-		return "", composefile.ErrConflict
+		return EditResult{}, composefile.ErrConflict
 	}
 	old, err := parseFile(data)
 	if err != nil {
-		return "", err
+		return EditResult{}, err
 	}
 	edited, err := old.UpdateService(service, cfg)
 	if err != nil {
-		return "", err
+		return EditResult{}, err
 	}
 	return s.commit(ctx, e, old, edited, hash, false)
 }
 
 // SaveRaw replaces the whole compose file with content.
-func (s *Service) SaveRaw(ctx context.Context, stack string, content []byte, hash string) (string, error) {
+func (s *Service) SaveRaw(ctx context.Context, stack string, content []byte, hash string) (EditResult, error) {
 	e, err := s.reg.Get(ctx, stack)
 	if err != nil {
-		return "", err
+		return EditResult{}, err
 	}
 	defer s.lockStack(stack)()
 
-	data, current, err := composefile.Load(e.ComposePath)
+	data, current, err := loadFile(e)
 	if err != nil {
-		return "", err
+		return EditResult{}, err
 	}
 	if current != hash {
-		return "", composefile.ErrConflict
+		return EditResult{}, composefile.ErrConflict
 	}
 	edited, err := parseFile(content)
 	if err != nil {
-		return "", err
+		return EditResult{}, err
 	}
 	old, _ := parseFile(data) // a currently broken file just means every port counts as changed
 	return s.commit(ctx, e, old, edited, hash, true)
@@ -66,10 +73,10 @@ func (s *Service) SaveRaw(ctx context.Context, stack string, content []byte, has
 // commit is the save pipeline: check the ports and IPs that changed, check
 // the candidate bytes with compose, then replace the file under the loaded
 // hash and refresh the recorded project name. old may be nil.
-func (s *Service) commit(ctx context.Context, e Entry, old, edited *composefile.File, hash string, qualify bool) (string, error) {
+func (s *Service) commit(ctx context.Context, e Entry, old, edited *composefile.File, hash string, qualify bool) (EditResult, error) {
 	newServices, err := configsOf(edited)
 	if err != nil {
-		return "", err
+		return EditResult{}, err
 	}
 	cs := changeSet{stack: e.Name, project: e.Project, services: newServices, qualify: qualify}
 	if old != nil {
@@ -80,33 +87,46 @@ func (s *Service) commit(ctx context.Context, e Entry, old, edited *composefile.
 			}
 		}
 	}
-	if _, err := s.checkChanges(ctx, cs); err != nil {
-		return "", err
+	partial, err := s.checkChanges(ctx, cs)
+	if err != nil {
+		return EditResult{}, err
 	}
 
 	candidate := edited.Bytes()
-	if err := s.validateCandidate(ctx, e.ComposePath, candidate); err != nil {
-		return "", err
+	if err := s.requireCompose(ctx); err != nil {
+		return EditResult{}, err
 	}
-	if err := composefile.Save(e.ComposePath, candidate, hash); err != nil {
-		return "", err
+	project, err := s.validateCandidate(ctx, e.ComposePath, candidate)
+	if err != nil {
+		return EditResult{}, err
 	}
-	// The file is saved; a failure to re-derive the project must not turn
-	// that into an error. The next successful edit or sync refreshes it.
-	if project, err := s.compose.ProjectName(ctx, e.ComposePath); err == nil && project != e.Project {
-		if err := s.reg.SetProject(ctx, e.Name, project); err != nil && !errors.Is(err, ErrStackNotFound) {
-			return composefile.Hash(candidate), err
+	if project != e.Project {
+		// A shared project would make "up --remove-orphans" delete the
+		// other stack's containers.
+		if owner, taken, err := s.projectOwner(ctx, project, e.Name); err != nil {
+			return EditResult{}, err
+		} else if taken {
+			return EditResult{}, projectTaken(project, owner)
 		}
 	}
-	return composefile.Hash(candidate), nil
+	if err := composefile.Save(e.ComposePath, candidate, hash); err != nil {
+		return EditResult{}, err
+	}
+	if project != e.Project {
+		if err := s.reg.SetProject(ctx, e.Name, project); err != nil && !errors.Is(err, ErrStackNotFound) {
+			return EditResult{Hash: composefile.Hash(candidate), ChecksPartial: partial}, err
+		}
+	}
+	return EditResult{Hash: composefile.Hash(candidate), ChecksPartial: partial}, nil
 }
 
 // validateCandidate runs `compose config` on data placed next to the real
-// file so relative paths, .env and the project name resolve identically.
-func (s *Service) validateCandidate(ctx context.Context, realPath string, data []byte) error {
+// file so relative paths, .env and the project name resolve identically, and
+// returns the project name compose derives for it.
+func (s *Service) validateCandidate(ctx context.Context, realPath string, data []byte) (string, error) {
 	tmp, err := os.CreateTemp(filepath.Dir(realPath), ".stackstead-check-*.yaml")
 	if err != nil {
-		return fmt.Errorf("create check file: %w", err)
+		return "", fmt.Errorf("create check file: %w", err)
 	}
 	defer os.Remove(tmp.Name())
 	_, werr := tmp.Write(data)
@@ -114,9 +134,12 @@ func (s *Service) validateCandidate(ctx context.Context, realPath string, data [
 		werr = cerr
 	}
 	if werr != nil {
-		return fmt.Errorf("write check file: %w", werr)
+		return "", fmt.Errorf("write check file: %w", werr)
 	}
-	return s.compose.Config(ctx, tmp.Name())
+	if err := s.compose.Config(ctx, tmp.Name()); err != nil {
+		return "", err
+	}
+	return s.compose.ProjectName(ctx, tmp.Name())
 }
 
 func configsOf(f *composefile.File) ([]namedConfig, error) {
@@ -184,7 +207,7 @@ func (s *Service) checkChanges(ctx context.Context, cs changeSet) (partial bool,
 		return false, nil
 	}
 
-	declared, err := s.declaredPorts(ctx, cs.stack)
+	others, err := s.otherStacks(ctx, cs.stack)
 	if err != nil {
 		return false, err
 	}
@@ -195,8 +218,11 @@ func (s *Service) checkChanges(ctx context.Context, cs changeSet) (partial bool,
 		}
 		partial = true
 	}
-	inUse := append(declared, containerPorts(containers, cs.project)...)
+	inUse := append(declaredPorts(others), containerPorts(containers, cs.project)...)
 	usedIPs := containerIPs(containers, cs.project)
+	for network, uses := range declaredIPs(others, nets) {
+		usedIPs[network] = append(usedIPs[network], uses...)
+	}
 
 	var fields []FieldError
 	for _, j := range jobs {
@@ -283,14 +309,20 @@ func resolveNetwork(nets []engine.Network, project, key string) string {
 	return key
 }
 
-// declaredPorts collects the fixed host ports declared by every registered
-// stack except exclude. Unreadable stacks and long-syntax ports are skipped.
-func (s *Service) declaredPorts(ctx context.Context, exclude string) ([]PortUse, error) {
+// otherStack is a registered stack's parsed services.
+type otherStack struct {
+	Entry    Entry
+	Services []namedConfig
+}
+
+// otherStacks parses every registered stack except exclude, skipping the
+// unreadable ones.
+func (s *Service) otherStacks(ctx context.Context, exclude string) ([]otherStack, error) {
 	entries, err := s.reg.List(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var out []PortUse
+	var out []otherStack
 	for _, e := range entries {
 		if e.Name == exclude {
 			continue
@@ -303,11 +335,37 @@ func (s *Service) declaredPorts(ctx context.Context, exclude string) ([]PortUse,
 		if err != nil {
 			continue
 		}
-		for _, svc := range services {
-			out = append(out, declaredBy("stack "+e.Name, svc.Config.Ports)...)
-		}
+		out = append(out, otherStack{e, services})
 	}
 	return out, nil
+}
+
+func declaredPorts(others []otherStack) []PortUse {
+	var out []PortUse
+	for _, o := range others {
+		for _, svc := range o.Services {
+			out = append(out, declaredBy("stack "+o.Entry.Name, svc.Config.Ports)...)
+		}
+	}
+	return out
+}
+
+// declaredIPs maps engine network names to the static IPs other stacks declare.
+func declaredIPs(others []otherStack, nets []engine.Network) map[string][]IPUse {
+	out := map[string][]IPUse{}
+	for _, o := range others {
+		for _, svc := range o.Services {
+			for _, n := range svc.Config.Networks {
+				a, err := netip.ParseAddr(n.IPv4Address)
+				if err != nil {
+					continue
+				}
+				network := resolveNetwork(nets, o.Entry.Project, n.Name)
+				out[network] = append(out[network], IPUse{Addr: a, Owner: fmt.Sprintf("stack %s service %s", o.Entry.Name, svc.Name)})
+			}
+		}
+	}
+	return out
 }
 
 func declaredBy(owner string, specs []string) []PortUse {

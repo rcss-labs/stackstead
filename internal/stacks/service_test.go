@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -29,12 +30,13 @@ type fakeCompose struct {
 	configContents []string
 	projectFn      func(file string) string
 	projectErr     error
+	versionErr     error
 	runErr         error
 	runs           []runCall
 	runGate        chan struct{} // when set, Run blocks until it is closed
 }
 
-func (f *fakeCompose) Version(context.Context) (string, error) { return "2.29.0", nil }
+func (f *fakeCompose) Version(context.Context) (string, error) { return "2.29.0", f.versionErr }
 
 func (f *fakeCompose) Config(_ context.Context, file string) error {
 	data, _ := os.ReadFile(file)
@@ -417,10 +419,11 @@ func TestUpdateServiceSuccessReturnsNewHashAndKeepsBackup(t *testing.T) {
 	before, _ := os.ReadFile(h.path("web"))
 	h.compose.configFiles, h.compose.configContents = nil, nil
 
-	newHash, err := h.svc.UpdateService(context.Background(), "web", "web", composefile.ServiceConfig{Image: "nginx:2", Ports: []string{"8080:80"}}, hash)
+	res, err := h.svc.UpdateService(context.Background(), "web", "web", composefile.ServiceConfig{Image: "nginx:2", Ports: []string{"8080:80"}}, hash)
 	if err != nil {
 		t.Fatal(err)
 	}
+	newHash := res.Hash
 	data, got, _ := composefile.Load(h.path("web"))
 	if got != newHash || !strings.Contains(string(data), "nginx:2") {
 		t.Errorf("hash %q vs %q; content %s", newHash, got, data)
@@ -444,7 +447,8 @@ func TestUpdateServicePortCheckIgnoresOwnContainersButNotOthers(t *testing.T) {
 	cfg := webCfg("8080:80", "9090:90")
 
 	h.eng.containers = []engine.Container{publishing("web", 9090)}
-	newHash, err := h.svc.UpdateService(context.Background(), "web", "web", cfg, hash)
+	res, err := h.svc.UpdateService(context.Background(), "web", "web", cfg, hash)
+	newHash := res.Hash
 	if err != nil {
 		t.Fatalf("own container blocked the edit: %v", err)
 	}
@@ -502,7 +506,8 @@ func TestSaveRaw(t *testing.T) {
 
 	h.eng.containers = nil
 	want := "services:\n  web:\n    image: a\n"
-	nh, err := h.svc.SaveRaw(ctx, "web", []byte(want), hash)
+	res, err := h.svc.SaveRaw(ctx, "web", []byte(want), hash)
+	nh := res.Hash
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -751,3 +756,291 @@ func TestSyncWithMissingStacksDirIsNoop(t *testing.T) {
 }
 
 func mustPrefix(s string) netip.Prefix { return netip.MustParsePrefix(s) }
+
+// ---- Fix round 1 ----
+
+var nameLine = regexp.MustCompile(`(?m)^name: (\S+)`)
+
+// projectFromFile mimics compose: a top-level name: wins, else the folder name.
+func projectFromFile(file string) string {
+	b, _ := os.ReadFile(file)
+	if m := nameLine.FindSubmatch(b); m != nil {
+		return string(m[1])
+	}
+	return filepath.Base(filepath.Dir(file))
+}
+
+func rawWithName(name, service string) []byte {
+	return []byte("name: " + name + "\nservices:\n  " + service + ":\n    image: a\n")
+}
+
+func TestSaveRawRefusesProjectOwnedByAnotherStack(t *testing.T) {
+	h := newHarness(t)
+	h.compose.projectFn = projectFromFile
+	h.create(t, "alpha", webCfg())
+	h.create(t, "beta", webCfg())
+	_, hash, _ := h.svc.Raw(context.Background(), "beta")
+	before, _ := os.ReadFile(h.path("beta"))
+
+	_, err := h.svc.SaveRaw(context.Background(), "beta", rawWithName("alpha", "beta"), hash)
+	if fs := fieldsOf(t, err); len(fs) != 1 || fs[0].Field != "name" || !strings.Contains(fs[0].Message, `"alpha"`) {
+		t.Errorf("fields = %+v", fs)
+	}
+	if after, _ := os.ReadFile(h.path("beta")); string(after) != string(before) {
+		t.Error("file was saved despite project collision")
+	}
+	if e, _ := h.reg.Get(context.Background(), "beta"); e.Project != "beta" {
+		t.Errorf("project = %q", e.Project)
+	}
+	checkTempFilesIn(t, h, "beta")
+}
+
+func checkTempFilesIn(t *testing.T, h *harness, name string) {
+	t.Helper()
+	if m, _ := filepath.Glob(filepath.Join(h.dir, name, ".stackstead-check-*")); len(m) != 0 {
+		t.Errorf("temp files left: %v", m)
+	}
+}
+
+func TestSaveRawKeepingOwnProjectAndRenamingToFreeNameSucceed(t *testing.T) {
+	h := newHarness(t)
+	h.compose.projectFn = projectFromFile
+	h.create(t, "alpha", webCfg())
+	_, hash, _ := h.svc.Raw(context.Background(), "alpha")
+	res, err := h.svc.SaveRaw(context.Background(), "alpha", rawWithName("alpha", "alpha"), hash)
+	if err != nil {
+		t.Fatalf("keeping own project: %v", err)
+	}
+	if _, err := h.svc.SaveRaw(context.Background(), "alpha", rawWithName("gamma", "alpha"), res.Hash); err != nil {
+		t.Fatalf("free name: %v", err)
+	}
+	if e, _ := h.reg.Get(context.Background(), "alpha"); e.Project != "gamma" {
+		t.Errorf("project = %q", e.Project)
+	}
+}
+
+func TestSyncSkipsFolderWhoseProjectIsAlreadyRegistered(t *testing.T) {
+	h := newHarness(t)
+	h.compose.projectFn = projectFromFile
+	h.create(t, "alpha", webCfg())
+	os.MkdirAll(filepath.Join(h.dir, "other"), 0o755)
+	os.WriteFile(h.path("other"), rawWithName("alpha", "x"), 0o644)
+
+	err := h.svc.Sync(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "alpha") {
+		t.Errorf("want a warning naming the project, got %v", err)
+	}
+	if rows, _ := h.reg.List(context.Background()); len(rows) != 1 {
+		t.Errorf("rows = %+v", rows)
+	}
+}
+
+func TestSyncComparesResolvedPaths(t *testing.T) {
+	h := newHarness(t)
+	real := filepath.Join(filepath.Dir(h.dir), "real")
+	os.MkdirAll(real, 0o755)
+	os.WriteFile(filepath.Join(real, "compose.yaml"), []byte(externalYAML), 0o644)
+	os.MkdirAll(h.dir, 0o755)
+	if err := os.Symlink(real, filepath.Join(h.dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.Import(context.Background(), filepath.Join(real, "compose.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.Sync(context.Background()); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if rows, _ := h.reg.List(context.Background()); len(rows) != 1 {
+		t.Errorf("symlinked duplicate adopted: %+v", rows)
+	}
+}
+
+func TestSyncStoresResolvedPath(t *testing.T) {
+	h := newHarness(t)
+	real := filepath.Join(filepath.Dir(h.dir), "elsewhere")
+	os.MkdirAll(real, 0o755)
+	os.WriteFile(filepath.Join(real, "compose.yaml"), []byte(externalYAML), 0o644)
+	os.MkdirAll(h.dir, 0o755)
+	os.Symlink(real, filepath.Join(h.dir, "linked"))
+	if err := h.svc.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := h.reg.List(context.Background())
+	if len(rows) != 1 || rows[0].ComposePath != filepath.Join(real, "compose.yaml") {
+		t.Errorf("rows = %+v", rows)
+	}
+}
+
+func TestCreateRefusesProjectAlreadyRegisteredOrRunningUnregistered(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.reg.Add(ctx, stacks.Entry{Name: "x", ComposePath: "/x/compose.yaml", Origin: stacks.OriginExternal, Project: "web"})
+	_, err := h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Config: webCfg()})
+	if fs := fieldsOf(t, err); fs[0].Field != "name" || !strings.Contains(fs[0].Message, "stack x") {
+		t.Errorf("fields = %+v", fs)
+	}
+	if _, err := os.Stat(filepath.Join(h.dir, "web")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("folder left: %v", err)
+	}
+
+	h.reg.Remove(ctx, "x")
+	h.eng.containers = []engine.Container{publishing("web", 8080)}
+	_, err = h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Config: webCfg()})
+	if fs := fieldsOf(t, err); !strings.Contains(fs[0].Message, "import it instead") {
+		t.Errorf("fields = %+v", fs)
+	}
+	if _, err := os.Stat(filepath.Join(h.dir, "web")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("folder left: %v", err)
+	}
+}
+
+func TestImportAllowedForProjectWithUnregisteredContainers(t *testing.T) {
+	h := newHarness(t)
+	ext := filepath.Join(t.TempDir(), "compose.yaml")
+	os.WriteFile(ext, []byte(externalYAML), 0o644)
+	h.compose.projectFn = func(string) string { return "legacy" }
+	h.eng.containers = []engine.Container{publishing("legacy", 8080)}
+	if _, err := h.svc.Import(context.Background(), ext); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateTreatsRowAdoptedByConcurrentSyncAsSuccess(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.compose.projectFn = func(file string) string {
+		// Sync adopts our folder between ProjectName and Create's own Add.
+		h.reg.Add(ctx, stacks.Entry{Name: "web", ComposePath: file, Origin: stacks.OriginManaged, Project: "web"})
+		return "web"
+	}
+	sum, err := h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Config: webCfg()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Name != "web" {
+		t.Errorf("summary = %+v", sum)
+	}
+	if _, err := os.Stat(h.path("web")); err != nil {
+		t.Errorf("folder was rolled back: %v", err)
+	}
+}
+
+func TestRemoveMissingFileRefusedWhileProjectContainersExistOrEngineDown(t *testing.T) {
+	h := newHarness(t)
+	setupWeb(t, h)
+	os.Remove(h.path("web"))
+	ctx := context.Background()
+
+	h.eng.containers = []engine.Container{publishing("web", 8080)}
+	_, err := h.svc.Remove(ctx, "web", false)
+	if !errors.Is(err, stacks.ErrStackUnavailable) || !strings.Contains(err.Error(), "1 containers of project web") {
+		t.Errorf("containers present: err = %v", err)
+	}
+	h.eng.containers, h.eng.err = nil, engine.ErrUnavailable
+	if _, err := h.svc.Remove(ctx, "web", false); !errors.Is(err, stacks.ErrStackUnavailable) {
+		t.Errorf("engine down: err = %v", err)
+	}
+	if _, err := h.reg.Get(ctx, "web"); err != nil {
+		t.Errorf("row dropped: %v", err)
+	}
+}
+
+func TestMissingComposePluginIsErrComposeUnavailable(t *testing.T) {
+	h := newHarness(t)
+	hash := setupWeb(t, h)
+	ext := filepath.Join(t.TempDir(), "c.yaml")
+	os.WriteFile(ext, []byte(externalYAML), 0o644)
+	ctx := context.Background()
+	h.compose.versionErr = composecli.ErrComposeUnavailable
+	h.compose.configErr = &composecli.ExitError{Code: 125} // what a missing plugin looks like to Config
+
+	calls := map[string]error{}
+	_, calls["act"] = h.svc.Act(ctx, "web", "up")
+	_, calls["remove"] = h.svc.Remove(ctx, "web", false)
+	_, calls["create"] = h.svc.Create(ctx, stacks.CreateRequest{Name: "new", Config: webCfg()})
+	_, calls["import"] = h.svc.Import(ctx, ext)
+	_, calls["update"] = h.svc.UpdateService(ctx, "web", "web", composefile.ServiceConfig{Image: "x"}, hash)
+	_, calls["saveraw"] = h.svc.SaveRaw(ctx, "web", []byte("services:\n  web:\n    image: a\n"), hash)
+	for name, err := range calls {
+		if !errors.Is(err, composecli.ErrComposeUnavailable) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(h.dir, "new")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("create left a folder: %v", err)
+	}
+}
+
+func TestEditsReportPartialChecksWhenEngineDown(t *testing.T) {
+	h := newHarness(t)
+	hash := setupWeb(t, h)
+	h.eng.err = engine.ErrUnavailable
+	res, err := h.svc.UpdateService(context.Background(), "web", "web", webCfg("8080:80", "9090:90"), hash)
+	if err != nil || !res.ChecksPartial {
+		t.Fatalf("update: %+v %v", res, err)
+	}
+	res, err = h.svc.SaveRaw(context.Background(), "web", []byte("services:\n  web:\n    image: a\n    ports:\n      - \"7070:70\"\n"), res.Hash)
+	if err != nil || !res.ChecksPartial {
+		t.Fatalf("saveraw: %+v %v", res, err)
+	}
+}
+
+func TestStaticIPAlsoCheckedAgainstOtherStacksDeclaredIPs(t *testing.T) {
+	h := newHarness(t)
+	h.eng.networks = []engine.Network{{Name: "lan", Subnets: []engine.Subnet{{Prefix: mustPrefix("10.0.0.0/24")}}}}
+	cfg := func() composefile.ServiceConfig {
+		return composefile.ServiceConfig{Image: "nginx", Networks: []composefile.NetworkAttachment{{Name: "lan", IPv4Address: "10.0.0.5"}}}
+	}
+	h.create(t, "a", cfg())
+	_, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "b", Config: cfg()})
+	fs := fieldsOf(t, err)
+	if len(fs) != 1 || fs[0].Field != "networks.lan.ipv4_address" || !strings.Contains(fs[0].Message, "stack a service a") {
+		t.Errorf("fields = %+v", fs)
+	}
+}
+
+func TestMissingFileGivesErrStackUnavailableForRawAndEdits(t *testing.T) {
+	h := newHarness(t)
+	hash := setupWeb(t, h)
+	os.Remove(h.path("web"))
+	ctx := context.Background()
+	if _, _, err := h.svc.Raw(ctx, "web"); !errors.Is(err, stacks.ErrStackUnavailable) {
+		t.Errorf("Raw: %v", err)
+	}
+	if _, err := h.svc.UpdateService(ctx, "web", "web", webCfg(), hash); !errors.Is(err, stacks.ErrStackUnavailable) {
+		t.Errorf("UpdateService: %v", err)
+	}
+	if _, err := h.svc.SaveRaw(ctx, "web", []byte("services: {}\n"), hash); !errors.Is(err, stacks.ErrStackUnavailable) {
+		t.Errorf("SaveRaw: %v", err)
+	}
+}
+
+func TestConcurrentUpdatesWithSameHashExactlyOneWins(t *testing.T) {
+	h := newHarness(t)
+	hash := setupWeb(t, h)
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, errs[i] = h.svc.UpdateService(context.Background(), "web", "web",
+				composefile.ServiceConfig{Image: "nginx:" + string(rune('2'+i)), Ports: []string{"8080:80"}}, hash)
+		}()
+	}
+	wg.Wait()
+	ok, conflict := 0, 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case errors.Is(err, composefile.ErrConflict):
+			conflict++
+		default:
+			t.Errorf("unexpected err %v", err)
+		}
+	}
+	if ok != 1 || conflict != 1 {
+		t.Errorf("ok=%d conflict=%d", ok, conflict)
+	}
+}
