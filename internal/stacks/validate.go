@@ -57,24 +57,38 @@ type PortUse struct {
 }
 
 // ParsePorts expands a Compose short-syntax port spec into the host ports it
-// publishes. Specs that publish no fixed host port ("80", "127.0.0.1::80") and
-// specs containing unresolved variables ("${PORT:-80}:80") yield nil, nil:
-// they cannot conflict, or cannot be checked.
+// publishes. Specs that publish no fixed host port ("80", "127.0.0.1::80",
+// "0:80") and specs containing unresolved variables ("${PORT:-80}:80",
+// "$PORT:80") yield nil, nil: they cannot conflict, or cannot be checked.
 func ParsePorts(spec string) ([]HostPort, error) {
-	bad := func(format string, a ...any) ([]HostPort, error) {
-		return nil, fmt.Errorf("invalid port %q: %s", spec, fmt.Sprintf(format, a...))
+	p, err := parseSpec(spec)
+	return p.ports, err
+}
+
+// parsedSpec is a port spec's fixed host ports. When anyOf is set, Docker
+// binds just ONE free port out of ports ("8000-8010:80").
+type parsedSpec struct {
+	ports []HostPort
+	anyOf bool
+}
+
+func parseSpec(spec string) (parsedSpec, error) {
+	bad := func(format string, a ...any) (parsedSpec, error) {
+		return parsedSpec{}, fmt.Errorf("invalid port %q: %s", spec, fmt.Sprintf(format, a...))
 	}
 	if strings.TrimSpace(spec) == "" {
 		return bad("empty")
 	}
-	if strings.Contains(spec, "${") {
-		return nil, nil
+	if strings.Contains(spec, "$") {
+		return parsedSpec{}, nil
 	}
 
 	body, proto := spec, "tcp"
 	if i := strings.LastIndex(spec, "/"); i >= 0 {
-		body, proto = spec[:i], spec[i+1:]
+		body, proto = spec[:i], strings.ToLower(spec[i+1:])
 		switch proto {
+		case "":
+			proto = "tcp"
 		case "tcp", "udp", "sctp":
 		default:
 			return bad("unknown protocol %q", proto)
@@ -89,20 +103,22 @@ func ParsePorts(spec string) ([]HostPort, error) {
 			return bad("malformed IPv6 address")
 		}
 		ipStr, rest = rest[1:end], rest[end+2:]
+	} else if strings.Count(rest, ":") >= 2 {
+		// ip:host:container, where an unbracketed IPv6 ip may contain colons:
+		// split on the last two.
+		last := strings.LastIndex(rest, ":")
+		prev := strings.LastIndex(rest[:last], ":")
+		ipStr, rest = rest[:prev], rest[prev+1:]
 	}
-	parts := strings.Split(rest, ":")
 	var hostStr, containerStr string
-	switch {
-	case ipStr != "" && len(parts) == 2:
-		hostStr, containerStr = parts[0], parts[1]
-	case ipStr != "":
-		return bad("expected [ip]:host:container")
-	case len(parts) == 1:
+	switch parts := strings.Split(rest, ":"); len(parts) {
+	case 1:
 		containerStr = parts[0]
-	case len(parts) == 2:
+		if ipStr != "" {
+			return bad("expected [ip]:host:container")
+		}
+	case 2:
 		hostStr, containerStr = parts[0], parts[1]
-	case len(parts) == 3:
-		ipStr, hostStr, containerStr = parts[0], parts[1], parts[2]
 	default:
 		return bad("too many ':' separators")
 	}
@@ -122,8 +138,8 @@ func ParsePorts(spec string) ([]HostPort, error) {
 	if err != nil {
 		return bad("%v", err)
 	}
-	if hostStr == "" {
-		return nil, nil // random host port
+	if hostStr == "" || hostStr == "0" {
+		return parsedSpec{}, nil // random host port
 	}
 	hLo, hHi, err := parsePortRange(hostStr)
 	if err != nil {
@@ -137,7 +153,7 @@ func ParsePorts(spec string) ([]HostPort, error) {
 	for p := hLo; p <= hHi; p++ {
 		out = append(out, HostPort{IP: ip, Port: uint16(p), Proto: proto})
 	}
-	return out, nil
+	return parsedSpec{ports: out, anyOf: hHi > hLo && cHi == cLo}, nil
 }
 
 // parsePortRange parses "80" or "8000-8002" with ports in 1..65535.
@@ -168,50 +184,82 @@ func parsePort(s string) (int, error) {
 	return n, nil
 }
 
+// isWildcard reports whether ip means "all interfaces": the zero value, or
+// the unspecified 0.0.0.0 / :: that Docker reports for such bindings. Docker
+// publishes on both families, so :: also overlaps IPv4 addresses.
+func isWildcard(ip netip.Addr) bool { return !ip.IsValid() || ip.IsUnspecified() }
+
 func (a HostPort) conflictsWith(b HostPort) bool {
 	if a.Proto != b.Proto || a.Port != b.Port {
 		return false
 	}
-	return !a.IP.IsValid() || !b.IP.IsValid() || a.IP == b.IP
+	return isWildcard(a.IP) || isWildcard(b.IP) || a.IP == b.IP
 }
 
 // PortConflicts reports invalid specs and specs whose host ports are already
-// in use. field is the list's name; errors are attributed to "field[i]".
+// in use, by inUse or by an earlier entry of wanted. field is the list's name;
+// errors are attributed to "field[i]".
 func PortConflicts(field string, wanted []string, inUse []PortUse) []FieldError {
 	var errs []FieldError
+	taken := append([]PortUse(nil), inUse...)
 	for i, spec := range wanted {
 		at := fmt.Sprintf("%s[%d]", field, i)
-		ports, err := ParsePorts(spec)
+		parsed, err := parseSpec(spec)
 		if err != nil {
 			errs = append(errs, FieldError{Field: at, Message: err.Error()})
 			continue
 		}
-		if c, ok := firstConflict(ports, inUse); ok {
+		if c, ok := conflict(parsed, taken); ok {
 			errs = append(errs, FieldError{
 				Field:   at,
 				Message: fmt.Sprintf("port %d/%s is already used by %s", c.Port, c.Proto, c.Owner),
 			})
 		}
+		// A "pick any free port" range reserves nothing specific.
+		if !parsed.anyOf {
+			for _, p := range parsed.ports {
+				taken = append(taken, PortUse{HostPort: p, Owner: at})
+			}
+		}
 	}
 	return errs
 }
 
-func firstConflict(ports []HostPort, inUse []PortUse) (PortUse, bool) {
-	for _, p := range ports {
-		for _, u := range inUse {
+// conflict returns a blocking use. For an any-of range it conflicts only when
+// every port in the range is taken; otherwise any single clash is a conflict.
+func conflict(s parsedSpec, taken []PortUse) (PortUse, bool) {
+	var first PortUse
+	found := false
+	for _, p := range s.ports {
+		hit := false
+		for _, u := range taken {
 			if p.conflictsWith(u.HostPort) {
-				return u, true
+				hit = true
+				if !found {
+					first, found = u, true
+				}
+				break
 			}
 		}
+		if s.anyOf && !hit {
+			return PortUse{}, false
+		}
+		if !s.anyOf && hit {
+			return first, true
+		}
 	}
-	return PortUse{}, false
+	return first, found
+}
+
+// IPUse is an address already taken on a network.
+type IPUse struct {
+	Addr  netip.Addr
+	Owner string // e.g. "container web"; may be empty
 }
 
 // CheckStaticIP validates a static IPv4 address for a compose network.
-// used maps network name to addresses already taken; each entry is either
-// "<ip>" or "<ip> <owner>" (e.g. "192.168.50.10 container web") so the error
-// can name the owner.
-func CheckStaticIP(field, network, ip string, nets []engine.Network, used map[string][]string) []FieldError {
+// used maps network name to the addresses already taken on it.
+func CheckStaticIP(field, network, ip string, nets []engine.Network, used map[string][]IPUse) []FieldError {
 	fail := func(format string, a ...any) []FieldError {
 		return []FieldError{{Field: field, Message: fmt.Sprintf(format, a...)}}
 	}
@@ -265,13 +313,12 @@ func CheckStaticIP(field, network, ip string, nets []engine.Network, used map[st
 		return fail("%s is the gateway of network %s", ip, network)
 	}
 
-	for _, entry := range used[network] {
-		usedIP, owner, _ := strings.Cut(entry, " ")
-		if usedIP != addr.String() {
+	for _, u := range used[network] {
+		if u.Addr != addr {
 			continue
 		}
-		if owner != "" {
-			return fail("%s is already used by %s", ip, owner)
+		if u.Owner != "" {
+			return fail("%s is already used by %s", ip, u.Owner)
 		}
 		return fail("%s is already used", ip)
 	}

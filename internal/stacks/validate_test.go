@@ -57,9 +57,15 @@ func TestParsePorts(t *testing.T) {
 		{"80/udp", nil, false},
 		{"127.0.0.1::80", nil, false},
 		{"${PORT:-80}:80", nil, false},
+		{"$PORT:80", nil, false},
+		{"127.0.0.1:$PORT:80", nil, false},
+		{"8080:80/UDP", []HostPort{hp("", 8080, "udp")}, false},
+		{"8080:80/", []HostPort{hp("", 8080, "tcp")}, false},
+		{"::1:80:80", []HostPort{hp("::1", 80, "tcp")}, false},
+		{"0:80", nil, false},
+		{"0.0.0.0:8080:80", []HostPort{hp("", 8080, "tcp")}, false},
 		{"127.0.0.1:${PORT}:80", nil, false},
 		{"99999:80", nil, true},
-		{"0:80", nil, true},
 		{"a:b", nil, true},
 		{"", nil, true},
 		{"8080:80/sctpx", nil, true},
@@ -104,6 +110,16 @@ func TestPortConflicts(t *testing.T) {
 		{"random port never conflicts", []string{"80"}, []PortUse{use("", 80, "tcp", "c")}, nil, ""},
 		{"variable skipped", []string{"${PORT:-80}:80"}, []PortUse{use("", 80, "tcp", "c")}, nil, ""},
 		{"invalid reported with index", []string{"8080:80", "99999:80"}, nil, []string{"ports[1]"}, ""},
+		{"docker 0.0.0.0 blocks specific", []string{"127.0.0.1:8080:80"}, []PortUse{use("0.0.0.0", 8080, "tcp", "container x")}, []string{"ports[0]"}, "container x"},
+		{"docker :: blocks specific v4", []string{"127.0.0.1:8080:80"}, []PortUse{use("::", 8080, "tcp", "container x")}, []string{"ports[0]"}, ""},
+		{"docker :: blocks specific v6", []string{"[::1]:8080:80"}, []PortUse{use("::", 8080, "tcp", "container x")}, []string{"ports[0]"}, ""},
+		{"specific vs 0.0.0.0 other port ok", []string{"127.0.0.1:8081:80"}, []PortUse{use("0.0.0.0", 8080, "tcp", "x")}, nil, ""},
+		{"host range one port free", []string{"8000-8002:80"}, []PortUse{use("", 8000, "tcp", "a"), use("", 8001, "tcp", "b")}, nil, ""},
+		{"host range all taken", []string{"8000-8002:80"}, []PortUse{use("", 8000, "tcp", "a"), use("", 8001, "tcp", "b"), use("", 8002, "tcp", "c")}, []string{"ports[0]"}, ""},
+		{"duplicate within wanted", []string{"8080:80", "8080:81"}, nil, []string{"ports[1]"}, "ports[0]"},
+		{"duplicate different ip ok", []string{"127.0.0.1:8080:80", "10.0.0.1:8080:80"}, nil, nil, ""},
+		{"duplicate zero vs specific", []string{"8080:80", "127.0.0.1:8080:80"}, nil, []string{"ports[1]"}, ""},
+		{"duplicate different proto ok", []string{"53:53", "53:53/udp"}, nil, nil, ""},
 		{"index of conflicting entry", []string{"1:1", "8080:80"}, []PortUse{use("", 8080, "tcp", "c")}, []string{"ports[1]"}, ""},
 	}
 	for _, tc := range tests {
@@ -131,7 +147,10 @@ func TestCheckStaticIP(t *testing.T) {
 		}}},
 		{Name: "v6only"},
 	}
-	used := map[string][]string{"lan": {"192.168.50.10 container web", "192.168.50.11"}}
+	used := map[string][]IPUse{"lan": {
+		{Addr: netip.MustParseAddr("192.168.50.10"), Owner: "container web"},
+		{Addr: netip.MustParseAddr("192.168.50.11")},
+	}}
 	tests := []struct {
 		name, network, ip string
 		wantMsg           string // "" = no error
@@ -169,5 +188,30 @@ func TestCheckStaticIPPointToPointSubnet(t *testing.T) {
 	// /31 and /32 have no distinct network/broadcast addresses.
 	if got := CheckStaticIP("f", "p", "10.1.0.1", nets, nil); len(got) != 0 {
 		t.Errorf("unexpected errors: %v", got)
+	}
+}
+
+func TestCheckStaticIPMultipleSubnetsAndNoGateway(t *testing.T) {
+	nets := []engine.Network{{Name: "n", Subnets: []engine.Subnet{
+		{Prefix: netip.MustParsePrefix("10.1.0.0/24"), Gateway: netip.MustParseAddr("10.1.0.1")},
+		{Prefix: netip.MustParsePrefix("10.2.0.0/24")}, // no gateway
+	}}}
+	tests := []struct {
+		ip      string
+		wantMsg string
+	}{
+		{"10.1.0.5", ""},
+		{"10.2.0.5", ""},
+		{"10.2.0.1", ""}, // no gateway recorded for this subnet
+		{"10.1.0.1", "gateway"},
+		{"10.2.0.255", "broadcast"},
+		{"10.2.0.0", "network address"},
+		{"10.3.0.5", "not in a subnet"},
+	}
+	for _, tc := range tests {
+		got := CheckStaticIP("f", "n", tc.ip, nets, nil)
+		if tc.wantMsg == "" && len(got) != 0 || tc.wantMsg != "" && (len(got) != 1 || !strings.Contains(got[0].Message, tc.wantMsg)) {
+			t.Errorf("%s: got %v, want %q", tc.ip, got, tc.wantMsg)
+		}
 	}
 }
