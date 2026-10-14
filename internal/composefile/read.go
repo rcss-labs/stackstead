@@ -40,6 +40,15 @@ func (f *File) Service(name string) (Service, error) {
 	}
 	svc := Service{Name: name}
 
+	// An anchor on the service (or on the services mapping) means other nodes
+	// may alias it, so any edit could silently change them too.
+	if node.Anchor != "" || mappingValue(f.root, "services").Anchor != "" {
+		for _, fr := range fieldReaders {
+			svc.ReadOnly = append(svc.ReadOnly, fr.field)
+		}
+		return svc, nil
+	}
+
 	var inherited map[string]any // keys the service gets from merge keys ("<<")
 	if mappingValue(node, "<<") != nil {
 		var full map[string]any
@@ -59,7 +68,7 @@ func (f *File) Service(name string) (Service, error) {
 		default:
 			readOnly = !fr.read(v, &svc.Config)
 		}
-		if fr.field == FieldLimits && hasAnyKey(node, legacyLimitKeys) {
+		if fr.field == FieldLimits && (hasAnyKey(node, legacyLimitKeys) || hasInheritedKey(inherited, legacyLimitKeys)) {
 			svc.Config.Limits = Limits{}
 			readOnly = true
 		}
@@ -85,6 +94,15 @@ func usesAnchors(n *yaml.Node) bool {
 func hasAnyKey(m *yaml.Node, keys []string) bool {
 	for _, k := range keys {
 		if mappingValue(m, k) != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func hasInheritedKey(inherited map[string]any, keys []string) bool {
+	for _, k := range keys {
+		if _, ok := inherited[k]; ok {
 			return true
 		}
 	}
@@ -118,7 +136,7 @@ func readStringList(v *yaml.Node, dst *[]string) bool {
 	return true
 }
 
-// onlyKeys reports whether every key of mapping m is in allowed and every
+// onlyScalarKeys reports whether every key of mapping m is in allowed and every
 // value is a non-null scalar.
 func onlyScalarKeys(m *yaml.Node, allowed ...string) bool {
 	for i := 0; i+1 < len(m.Content); i += 2 {

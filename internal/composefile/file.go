@@ -34,12 +34,18 @@ func Parse(src []byte) (*File, error) {
 		}
 		return nil, fmt.Errorf("parse compose file: %w", err)
 	}
-	var extra yaml.Node
-	switch err := dec.Decode(&extra); {
-	case err == nil:
-		return nil, ErrMultipleDocuments
-	case !errors.Is(err, io.EOF):
-		return nil, fmt.Errorf("parse compose file: %w", err)
+	for {
+		var extra yaml.Node
+		err := dec.Decode(&extra)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("parse compose file: %w", err)
+		}
+		if !isEmptyDocument(&extra) { // a trailing "---" with nothing after it is harmless
+			return nil, ErrMultipleDocuments
+		}
 	}
 	if len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
 		return nil, ErrNotMapping
@@ -92,4 +98,14 @@ func mappingValue(m *yaml.Node, key string) *yaml.Node {
 		}
 	}
 	return nil
+}
+
+// isEmptyDocument reports whether doc has no content (the decoder yields an
+// empty null scalar for a bare "---").
+func isEmptyDocument(doc *yaml.Node) bool {
+	if len(doc.Content) == 0 {
+		return true
+	}
+	n := doc.Content[0]
+	return len(doc.Content) == 1 && n.Kind == yaml.ScalarNode && n.Value == "" && n.ShortTag() == "!!null"
 }

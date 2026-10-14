@@ -175,6 +175,11 @@ func TestParseRejectsNonComposeDocuments(t *testing.T) {
 		{"sequence root", "- a\n", ErrNotMapping},
 		{"two documents", "services: {}\n---\nservices: {}\n", ErrMultipleDocuments},
 	}
+	for _, src := range []string{"services: {}\n---\n", "services: {}\n---\n# comment\n"} {
+		if _, err := Parse([]byte(src)); err != nil {
+			t.Errorf("Parse(%q) = %v, want success", src, err)
+		}
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if _, err := Parse([]byte(tt.src)); !errors.Is(err, tt.want) {
@@ -190,5 +195,41 @@ func TestParseRejectsNonComposeDocuments(t *testing.T) {
 func TestServiceNotFound(t *testing.T) {
 	if _, err := mustParse(t, labCompose).Service("nope"); !errors.Is(err, ErrServiceNotFound) {
 		t.Errorf("err = %v, want ErrServiceNotFound", err)
+	}
+}
+
+func TestAnchoredServiceIsReadOnly(t *testing.T) {
+	src := `services:
+  web: &web
+    image: nginx
+    restart: always
+  web2:
+    <<: *web
+    ports: ["81:80"]
+`
+	svc, err := mustParse(t, src).Service("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Field{FieldImage, FieldBuild, FieldPorts, FieldVolumes, FieldEnvironment, FieldNetworks, FieldNetworkMode, FieldLimits, FieldRestart, FieldHealthcheck}
+	if !reflect.DeepEqual(svc.ReadOnly, want) {
+		t.Errorf("ReadOnly = %v, want %v", svc.ReadOnly, want)
+	}
+	if !reflect.DeepEqual(svc.Config, ServiceConfig{}) {
+		t.Errorf("Config = %+v, want zero", svc.Config)
+	}
+}
+
+func TestInheritedLegacyLimitsMakeLimitsReadOnly(t *testing.T) {
+	src := "x-base: &base\n  mem_limit: 512m\nservices:\n  app:\n    <<: *base\n    deploy:\n      resources:\n        limits:\n          memory: 256M\n"
+	svc, err := mustParse(t, src).Service("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(svc.ReadOnly, []Field{FieldLimits}) {
+		t.Errorf("ReadOnly = %v, want [limits]", svc.ReadOnly)
+	}
+	if svc.Config.Limits != (Limits{}) {
+		t.Errorf("Limits = %+v, want zero", svc.Config.Limits)
 	}
 }
