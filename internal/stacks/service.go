@@ -426,9 +426,36 @@ func (s *Service) Act(ctx context.Context, stack, action string) (Operation, err
 	if err := s.requireLifecycle(ctx); err != nil {
 		return Operation{}, err
 	}
+	if e, err = s.refreshProject(ctx, e); err != nil {
+		return Operation{}, err
+	}
 	return s.ops.Start(stack, action, func(ctx context.Context, out func(string)) error {
 		return s.compose.Run(ctx, e.ComposePath, args, out)
 	})
+}
+
+// refreshProject re-derives the compose project from the file on disk. The
+// file may have been edited outside Stackstead (a hand-added name:, or
+// COMPOSE_PROJECT_NAME in .env), and compose would then act on a project the
+// registry does not know. A changed project is claimed like an edit would.
+func (s *Service) refreshProject(ctx context.Context, e Entry) (Entry, error) {
+	project, err := s.compose.ProjectName(ctx, e.ComposePath)
+	if err != nil {
+		return e, err
+	}
+	if project == e.Project {
+		return e, nil
+	}
+	s.projectMu.Lock() // see Service for lock order
+	defer s.projectMu.Unlock()
+	if _, err := s.projectAvailable(ctx, project, e.Name); err != nil {
+		return e, err
+	}
+	if err := s.reg.SetProject(ctx, e.Name, project); err != nil {
+		return e, s.mapProjectTaken(ctx, err, project, e.Name)
+	}
+	e.Project = project
+	return e, nil
 }
 
 // requireLifecycle checks that both Docker and the compose plugin are usable.
@@ -457,6 +484,8 @@ func (s *Service) Remove(ctx context.Context, stack string, withVolumes bool) (O
 	} else if err := refuseOverrides(e.ComposePath); err != nil {
 		return Operation{}, err
 	} else if err := s.requireLifecycle(ctx); err != nil {
+		return Operation{}, err
+	} else if e, err = s.refreshProject(ctx, e); err != nil {
 		return Operation{}, err
 	}
 	args := []string{"down"}

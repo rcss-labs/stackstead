@@ -1345,3 +1345,42 @@ func TestFailedRevertIsJoinedWithSaveError(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestActRederivesProjectAfterOutOfBandRename(t *testing.T) {
+	h := newHarness(t)
+	h.compose.projectFn = projectFromFile
+	h.create(t, "web", webCfg())
+	h.create(t, "alpha", webCfg())
+	ctx := context.Background()
+
+	if err := os.WriteFile(h.path("web"), rawWithName("renamed", "web"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	op, err := h.svc.Act(ctx, "web", "up")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wait(t, h.ops, op.ID)
+	if e, _ := h.reg.Get(ctx, "web"); e.Project != "renamed" {
+		t.Errorf("project = %q, want renamed", e.Project)
+	}
+
+	if err := os.WriteFile(h.path("web"), rawWithName("alpha", "web"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runs := len(h.compose.runs)
+	_, err = h.svc.Act(ctx, "web", "up")
+	if fs := fieldsOf(t, err); fs[0].Field != "name" {
+		t.Errorf("fields = %+v", fs)
+	}
+	_, err = h.svc.Remove(ctx, "web", false)
+	if fs := fieldsOf(t, err); fs[0].Field != "name" {
+		t.Errorf("remove fields = %+v", fs)
+	}
+	if len(h.compose.runs) != runs {
+		t.Error("compose ran despite a project collision")
+	}
+	if e, _ := h.reg.Get(ctx, "web"); e.Project != "renamed" {
+		t.Errorf("project changed to %q", e.Project)
+	}
+}
