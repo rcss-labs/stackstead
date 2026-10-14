@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"bufio"
 	"bytes"
 	"math"
 	"regexp"
@@ -140,5 +141,40 @@ func TestFormatFloatSpecials(t *testing.T) {
 		if got := formatFloat(in); got != want {
 			t.Errorf("formatFloat(%v)=%q want %q", in, got, want)
 		}
+	}
+}
+
+func TestWriteExpositionTieBreakSorting(t *testing.T) {
+	// Out of order: same project differing only by service, and same
+	// project+service differing only by container.
+	out := render(t, []ExpositionSample{
+		{Project: "p", Service: "web", Container: "p-web-2"},
+		{Project: "p", Service: "web", Container: "p-web-1"},
+		{Project: "p", Service: "db", Container: "p-db-1"},
+	}, false)
+	var got []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "stackstead_container_cpu_percent{") {
+			got = append(got, line)
+		}
+	}
+	want := []string{
+		`stackstead_container_cpu_percent{project="p",service="db",container="p-db-1"} 0`,
+		`stackstead_container_cpu_percent{project="p",service="web",container="p-web-1"} 0`,
+		`stackstead_container_cpu_percent{project="p",service="web",container="p-web-2"} 0`,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestWriteFamilyHeaderEscapesHelp(t *testing.T) {
+	var buf bytes.Buffer
+	bw := bufio.NewWriter(&buf)
+	writeFamilyHeader(bw, "m", "a\\b\nc \"q\"", "gauge")
+	bw.Flush()
+	want := "# HELP m a\\\\b\\nc \"q\"\n# TYPE m gauge\n"
+	if buf.String() != want {
+		t.Fatalf("got %q want %q", buf.String(), want)
 	}
 }

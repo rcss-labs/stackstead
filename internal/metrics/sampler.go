@@ -14,7 +14,12 @@ const (
 	maxStatsTimeout     = 5 * time.Second
 	pruneEvery          = time.Hour
 	warnEvery           = time.Minute
-	subscriberBuffer    = 256
+	// subscriberBuffer is each subscriber's channel capacity. A subscriber is
+	// dropped when it lacks room for a whole tick's burst for its project, so
+	// a project with more than 256 sampled containers per tick drops every
+	// subscriber; in practice that means a project is limited to 256
+	// containers per tick for live streaming (storage is unaffected).
+	subscriberBuffer = 256
 )
 
 // StatsSource takes one stats reading of a container.

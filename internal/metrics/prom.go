@@ -46,6 +46,15 @@ var families = []family{
 
 var labelEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
 
+// helpEscaper escapes HELP text per the exposition format: backslash and
+// newline (double quotes are only escaped in label values).
+var helpEscaper = strings.NewReplacer(`\`, `\\`, "\n", `\n`)
+
+func writeFamilyHeader(bw *bufio.Writer, name, help, typ string) {
+	bw.WriteString("# HELP " + name + " " + helpEscaper.Replace(help) + "\n")
+	bw.WriteString("# TYPE " + name + " " + typ + "\n")
+}
+
 // formatFloat renders a float the way the Prometheus text format expects.
 func formatFloat(v float64) string {
 	switch {
@@ -77,8 +86,7 @@ func WriteExposition(w io.Writer, samples []ExpositionSample, degraded bool) err
 
 	bw := bufio.NewWriter(w)
 	for _, f := range families {
-		bw.WriteString("# HELP " + f.name + " " + f.help + "\n")
-		bw.WriteString("# TYPE " + f.name + " " + f.typ + "\n")
+		writeFamilyHeader(bw, f.name, f.help, f.typ)
 		for _, s := range sorted {
 			bw.WriteString(f.name + `{project="` + labelEscaper.Replace(s.Project) +
 				`",service="` + labelEscaper.Replace(s.Service) +
@@ -89,8 +97,7 @@ func WriteExposition(w io.Writer, samples []ExpositionSample, degraded bool) err
 	if degraded {
 		d = "1"
 	}
-	bw.WriteString("# HELP stackstead_metrics_degraded 1 if metrics collection is degraded (store write failures), else 0.\n")
-	bw.WriteString("# TYPE stackstead_metrics_degraded gauge\n")
+	writeFamilyHeader(bw, "stackstead_metrics_degraded", "1 if metrics collection is degraded (store write failures), else 0.", "gauge")
 	bw.WriteString("stackstead_metrics_degraded " + d + "\n")
 	return bw.Flush()
 }
