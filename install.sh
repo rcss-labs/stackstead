@@ -33,6 +33,7 @@ Options:
   --force             reinstall the same version or an older one
   --base-url URL      release repository URL (default https://github.com/rcss-labs/stackstead);
                       env STACKSTEAD_BASE_URL
+  --from-pkg          macOS: finish a .pkg installation (per-user setup only; the .pkg runs it)
   --root DIR          stage into DIR (DESTDIR style); no root needed; service and account
                       commands are printed, not run
   --yes               macOS: confirm --purge without asking (it removes your stacks)
@@ -126,6 +127,8 @@ PURGE=
 PRINT_PATHS=
 USER_ARG=
 YES=
+FROM_PKG=
+PAYLOAD_DIR=
 LABEL=$DEFAULT_LABEL
 
 need_value() { # option remaining-arg-count
@@ -156,6 +159,8 @@ parse_args() {
 		--print-paths) PRINT_PATHS=1; shift ;;
 		--user) need_value "$1" $#; USER_ARG=$2; shift 2 ;;
 		--user=*) USER_ARG=${1#*=}; shift ;;
+		--from-pkg) FROM_PKG=1; shift ;;
+		--payload-dir) need_value "$1" $#; PAYLOAD_DIR=$2; shift 2 ;;
 		--label) need_value "$1" $#; LABEL=$2; shift 2 ;;
 		--label=*) LABEL=${1#*=}; shift ;;
 		--yes | -y) YES=1; shift ;;
@@ -191,6 +196,17 @@ setup_paths() {
 	*[!A-Za-z0-9/._+-]*) usage_error "--prefix may only contain letters, digits and / . _ + -: $PREFIX" ;;
 	esac
 	PREFIX=${PREFIX%/}
+	if [ -n "$FROM_PKG" ]; then
+		[ -z "$UNINSTALL" ] || usage_error "--from-pkg cannot be combined with --uninstall"
+		[ -z "$VERSION_ARG" ] || usage_error "--from-pkg installs the files the package already placed; --version does not apply"
+	fi
+	if [ -n "$PAYLOAD_DIR" ]; then
+		[ -n "$FROM_PKG" ] || usage_error "--payload-dir only makes sense with --from-pkg"
+		case $PAYLOAD_DIR in
+		/*) ;;
+		*) usage_error "--payload-dir must be an absolute path: $PAYLOAD_DIR" ;;
+		esac
+	fi
 	case $LABEL in
 	"" | *[!A-Za-z0-9._-]*) usage_error "--label may only contain letters, digits and . _ -: $LABEL" ;;
 	esac
@@ -1186,6 +1202,11 @@ install_files_darwin() {
 	fi
 	user_put_file "$STAGE/plist.rendered" "$(rp "$PLIST")" 0644
 
+	if [ -n "$FROM_PKG" ]; then
+		# the package payload already holds the binary and the helper files
+		say "Using $(rp "$BIN") from the package"
+		return 0
+	fi
 	priv_put_file "$STAGE/launchagent.plist.in" "$(rp "$HELPER_DIR")/launchagent.plist.in" 0644
 	if [ -f "$STAGE/install.sh" ]; then
 		priv_put_file "$STAGE/install.sh" "$(rp "$HELPER")" 0755
@@ -1197,6 +1218,37 @@ install_files_darwin() {
 	fi
 	priv_put_file "$STAGE/stackstead" "$(rp "$BIN")" 0755
 	say "Installed $(rp "$BIN")"
+}
+
+# stage_from_pkg: --from-pkg (used by the .pkg postinstall; shown in --help only as
+# "finish a .pkg installation"). No download: the binary is already under the prefix.
+# The two templates come from one of two places:
+#  - --payload-dir DIR: the pkg's own scripts directory, which installer extracts into
+#    a root-only temp dir; root reads them itself (regular files only, no symlinks).
+#  - otherwise (an admin re-running it from /usr/local/share/stackstead): that
+#    directory may be controlled by a non-root user (Homebrew on Intel Macs), so the
+#    files are read AS the target user, never by root: a swapped directory or a hard
+#    link to a root-only file yields nothing root-specific.
+# The per-user steps then run exactly as in the normal flow. An existing plist marks an
+# upgrade (the binary is the new one already, so its version says nothing).
+stage_from_pkg() {
+	TMP=$(mktemp -d "${TMPDIR:-/tmp}/stackstead-install.XXXXXX") || die 1 "cannot create a temporary directory"
+	STAGE=$TMP/stage
+	mkdir -p "$STAGE"
+	{ [ -f "$(rp "$BIN")" ] && [ -x "$(rp "$BIN")" ] && [ ! -L "$(rp "$BIN")" ]; } || die 7 "the package payload is incomplete: no executable $(rp "$BIN")"
+	for sf_f in launchagent.plist.in config.example.yaml; do
+		if [ -n "$PAYLOAD_DIR" ]; then
+			{ [ -f "$PAYLOAD_DIR/$sf_f" ] && [ ! -L "$PAYLOAD_DIR/$sf_f" ]; } || die 7 "the package scripts are incomplete or unsafe: $PAYLOAD_DIR/$sf_f"
+			cp "$PAYLOAD_DIR/$sf_f" "$STAGE/$sf_f" || die 7 "cannot read $PAYLOAD_DIR/$sf_f"
+		else
+			sf_src=$(rp "$HELPER_DIR")/$sf_f
+			as_fs cat "$sf_src" >"$STAGE/$sf_f" || die 7 "cannot read $sf_src as $TARGET_USER"
+			[ -s "$STAGE/$sf_f" ] || die 7 "$sf_src is empty"
+		fi
+	done
+	if as_fs test -e "$(rp "$PLIST")"; then
+		UPGRADE=1
+	fi
 }
 
 agent_loaded() {
@@ -1243,7 +1295,7 @@ docker_check_darwin() {
 do_install_darwin() {
 	PHASE=install
 	say "Installing for $TARGET_USER"
-	if [ -z "$ROOT" ] && [ -z "$AS_ROOT" ]; then
+	if [ -z "$ROOT" ] && [ -z "$AS_ROOT" ] && [ -z "$FROM_PKG" ]; then
 		have sudo || die 4 "need sudo to write to $PREFIX (or run as root)"
 		note "sudo is used only for $PREFIX; you may be asked for your password"
 	fi
@@ -1374,7 +1426,10 @@ main() {
 		print_paths
 		exit 0
 	fi
-	[ -n "$UNINSTALL" ] || check_base_url
+	[ -n "$UNINSTALL" ] || [ -n "$FROM_PKG" ] || check_base_url
+	if [ -n "$FROM_PKG" ] && [ "$OS" != darwin ]; then
+		usage_error "--from-pkg is only for the macOS package"
+	fi
 	require_root
 	refuse_package_install
 
@@ -1388,10 +1443,14 @@ main() {
 		exit 0
 	fi
 
-	check_tools
-	resolve_and_download
-	check_installed
-	download_and_verify
+	if [ -n "$FROM_PKG" ]; then
+		stage_from_pkg
+	else
+		check_tools
+		resolve_and_download
+		check_installed
+		download_and_verify
+	fi
 	if [ -n "$DRY_RUN" ]; then
 		print_plan
 		exit 0

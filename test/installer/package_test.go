@@ -30,8 +30,15 @@ var (
 	pkgArch string // Go architecture of the docker server the packages are built for
 )
 
+// extraCleanups are run by TestMain after the tests (used by other files of this
+// package that build once per run, such as the macOS .pkg).
+var extraCleanups []func()
+
 func TestMain(m *testing.M) {
 	code := m.Run()
+	for _, f := range extraCleanups {
+		f()
+	}
 	if pkgRoot != "" {
 		_ = os.RemoveAll(pkgRoot)
 	}

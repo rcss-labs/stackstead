@@ -1,6 +1,6 @@
 # Stackstead build entry point. Only `ui`, `build`, `release`, `ui-check`,
 # `ui-test` and `check` need Node; `test` and `e2e` do not build the UI.
-.PHONY: help ui ui-check ui-test build build-go binaries release dist verify-release dist-clean packages package-lint lint-image print-lint-image test check e2e clean
+.PHONY: help ui ui-check ui-test build build-go binaries release dist verify-release dist-clean packages pkg pkg-skip package-lint lint-image print-lint-image test check e2e clean
 
 BIN := bin
 
@@ -71,9 +71,10 @@ binaries: $(if $(filter 1,$(SKIP_UI)),,ui) ## Build every RELEASE_TARGETS binary
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(BIN)/stackstead-$$os-$$arch ./cmd/stackstead || exit 1; \
 	done
 
-# Order matters: binaries, then packages, then release (which writes SHA256SUMS over
-# everything in dist/). Plan 7 T7 adds the macOS `pkg` step between packages and release.
-dist: binaries packages release ## Build binaries, deb/rpm and release archives with checksums (full release build)
+# Order matters: binaries, then packages, then the macOS pkg (darwin hosts only), then release
+# (which writes SHA256SUMS over everything in dist/).
+UNAME_S ?= $(shell uname -s)
+dist: binaries packages $(if $(filter Darwin,$(UNAME_S)),pkg,pkg-skip) release ## Build binaries, deb/rpm, macOS pkg (on macOS) and release archives with checksums (full release build)
 .NOTPARALLEL: dist
 
 release: binaries ## Build release tarballs + SHA256SUMS in dist/ (run after packages/pkg; unsigned unless SIGNING_KEY is set)
@@ -110,6 +111,8 @@ packages: ## Build deb + rpm into dist/ from the binaries made by `make binaries
 	done; \
 	mkdir -p $(DIST); \
 	pkgver=$$(printf '%s' "$$info" | cut -f2); pre=$$(printf '%s' "$$info" | cut -f3); \
+	ver=$$(printf '%s' "$$info" | cut -f1); \
+	$(CHECK_BIN_VERSION); for arch in $(PKG_ARCHES); do chk "$(BIN)/stackstead-linux-$$arch" "$$ver"; done; \
 	for arch in $(PKG_ARCHES); do \
 		case $$arch in amd64) rpmarch=x86_64;; arm64) rpmarch=aarch64;; *) echo "unsupported arch $$arch"; exit 1;; esac; \
 		for fmt in deb rpm; do \
@@ -176,3 +179,78 @@ e2e: ## Smoke test against the real binary (needs a built UI)
 clean: ## Remove build output
 	rm -rf $(BIN)
 	find web/dist -mindepth 1 ! -name .gitignore -delete 2>/dev/null || true
+
+# --- macOS .pkg (unsigned flow is the deliverable; signing/notarization is optional and
+# off by default). Needs a macOS host and the binaries from `make binaries`.
+# Nondeterminism: the universal binary and its ad-hoc signature are reproducible for the same
+# inputs, but pkgbuild/productbuild stamp creation times into the xar table of contents, so the
+# .pkg bytes differ between rebuilds. The SHA256SUMS entry is computed over the file as built
+# once; publish that exact file (do not rebuild after `make release`).
+PKG_IDENTIFIER := io.github.rcss-labs.stackstead
+PKG_SIGN_COUNT = $(words $(if $(strip $(MACOS_APP_IDENTITY)),x) $(if $(strip $(MACOS_INSTALLER_IDENTITY)),x) $(if $(strip $(NOTARY_PROFILE)),x))
+MACOS_APP_IDENTITY ?=
+MACOS_INSTALLER_IDENTITY ?=
+NOTARY_PROFILE ?=
+
+# CHECK_BIN_VERSION defines chk FILE VERSION for a recipe: refuse a stale bin/. A binary this host
+# cannot run (another OS or architecture, or an old CLI without version --short) is skipped.
+define CHECK_BIN_VERSION
+chk() { got=$$("$$1" version --short 2>/dev/null </dev/null) || return 0; \
+	case $$got in v$$2|$$2) ;; *) echo "stale binary $$1 reports $$got but the release is $$2: run make binaries"; exit 1;; esac; }
+endef
+
+pkg-skip:
+	@echo "skipping the macOS .pkg: it can only be built on a macOS host (uname -s is $(UNAME_S))"
+
+pkg: ## Build dist/stackstead_<ver>_darwin.pkg (macOS host; unsigned unless all of MACOS_APP_IDENTITY, MACOS_INSTALLER_IDENTITY, NOTARY_PROFILE are set)
+	@set -e; \
+	[ "$(UNAME_S)" = Darwin ] || { echo "make pkg builds the macOS package and needs a macOS host (uname -s is $(UNAME_S))"; exit 1; }; \
+	case $(PKG_SIGN_COUNT) in 0|3) ;; *) \
+		echo "partial signing configuration: set all three of MACOS_APP_IDENTITY, MACOS_INSTALLER_IDENTITY and NOTARY_PROFILE for a signed and notarized pkg, or none of them for the unsigned pkg"; exit 1;; esac; \
+	signed=; [ $(PKG_SIGN_COUNT) -eq 3 ] && signed=1; \
+	for tool in lipo codesign pkgbuild productbuild; do command -v $$tool >/dev/null || { echo "missing $$tool (install the Xcode command line tools)"; exit 1; }; done; \
+	for arch in amd64 arm64; do [ -f "$(BIN)/stackstead-darwin-$$arch" ] || { echo "missing binary $(BIN)/stackstead-darwin-$$arch: run make binaries first"; exit 1; }; done; \
+	info=$$(go run ./tools/mkrelease -version '$(RELEASE_VERSION)' $(if $(filter 1,$(ALLOW_DEV_RELEASE)),-allow-dev) -print-version) \
+		|| { echo "cannot build the pkg: $(RELEASE_VERSION) is a dev version (tag the commit, or set ALLOW_DEV_RELEASE=1)"; exit 1; }; \
+	ver=$$(printf '%s' "$$info" | cut -f1); pkgver=$$(printf '%s' "$$info" | cut -f2); pkgver=$${pkgver%%~*}; \
+	$(CHECK_BIN_VERSION); chk "$(BIN)/stackstead-darwin-amd64" "$$ver"; chk "$(BIN)/stackstead-darwin-arm64" "$$ver"; \
+	mkdir -p "$(DIST)"; out="$(abspath $(DIST))/stackstead_$${ver}_darwin.pkg"; \
+	work=$$(mktemp -d "$${TMPDIR:-/tmp}/stackstead-pkg.XXXXXX"); trap 'rm -rf "$$work"' EXIT; \
+	root="$$work/pkgroot"; mkdir -p "$$root/usr/local/bin" "$$root/usr/local/share/stackstead" "$$work/res" "$$work/pkgs"; \
+	lipo -create -output "$$root/usr/local/bin/stackstead" "$(BIN)/stackstead-darwin-amd64" "$(BIN)/stackstead-darwin-arm64"; \
+	if [ -n "$$signed" ]; then codesign --force --sign "$$MACOS_APP_IDENTITY" --options runtime --timestamp "$$root/usr/local/bin/stackstead"; \
+	else codesign --force --sign - "$$root/usr/local/bin/stackstead"; fi; \
+	chmod 755 "$$root/usr/local/bin/stackstead"; \
+	install -m 755 install.sh "$$root/usr/local/share/stackstead/install.sh"; \
+	install -m 644 deploy/macos/launchagent.plist.in deploy/config.example.yaml LICENSE "$$root/usr/local/share/stackstead/"; \
+	stamp=$$(TZ=UTC date -r '$(SOURCE_DATE_EPOCH)' +%Y%m%d%H%M.%S); \
+	find "$$root" -exec touch -h -t "$$stamp" {} +; \
+	xattr -cr "$$root" 2>/dev/null || true; \
+	scripts="$$work/scripts"; mkdir -p "$$scripts"; \
+	install -m 755 deploy/macos/scripts/postinstall install.sh "$$scripts/"; \
+	install -m 644 deploy/macos/launchagent.plist.in deploy/config.example.yaml "$$scripts/"; \
+	pkgbuild --root "$$root" --identifier $(PKG_IDENTIFIER) --version "$$pkgver" --install-location / \
+		--ownership recommended --scripts "$$scripts" "$$work/pkgs/stackstead-component.pkg" >/dev/null; \
+	sed -e "s|@IDENTIFIER@|$(PKG_IDENTIFIER)|g" -e "s|@VERSION@|$$pkgver|g" -e "s|@COMPONENT@|stackstead-component.pkg|g" deploy/macos/distribution.xml.in >"$$work/distribution.xml"; \
+	cp deploy/macos/resources/welcome.html deploy/macos/resources/conclusion.html "$$work/res/"; \
+	rm -f "$$out"; \
+	if [ -n "$$signed" ]; then \
+		productbuild --distribution "$$work/distribution.xml" --resources "$$work/res" --package-path "$$work/pkgs" --sign "$$MACOS_INSTALLER_IDENTITY" "$$out" >/dev/null; \
+	else \
+		productbuild --distribution "$$work/distribution.xml" --resources "$$work/res" --package-path "$$work/pkgs" "$$out" >/dev/null; \
+	fi; \
+	if [ -n "$$signed" ]; then \
+		xcrun notarytool submit "$$out" --keychain-profile "$$NOTARY_PROFILE" --wait; \
+		xcrun stapler staple "$$out"; \
+		echo "built, signed and notarized $$out"; \
+	else \
+		echo "built $$out (universal binary, ad-hoc codesigned; the pkg itself is unsigned)"; \
+		echo ""; \
+		echo "Gatekeeper note (paste into the release notes): this package is not signed with an Apple"; \
+		echo "Developer ID. Double-clicking it shows \"cannot be opened because it is from an unidentified"; \
+		echo "developer\"; right-click the package and choose Open, or run"; \
+		echo "  sudo installer -pkg stackstead_$${ver}_darwin.pkg -target /"; \
+		echo "from a terminal. spctl --assess --type install reports \"rejected\" for an unsigned package;"; \
+		echo "that is expected. The installed binary runs normally (it is ad-hoc signed, and neither"; \
+		echo "installer nor curl sets a quarantine attribute)."; \
+	fi
