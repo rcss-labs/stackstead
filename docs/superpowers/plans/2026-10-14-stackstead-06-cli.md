@@ -452,7 +452,7 @@ func (c *Client) StreamEvents(ctx, opts StreamOptions, fn func(Event) error) err
 package cli
 // Secrets: exactly one of the sources; never a flag value.
 type secretSource struct { Stdin bool; File string }
-func readSecret(env *Env, src secretSource, prompt string, confirm bool) (string, error)
+func readSecret(ctx context.Context, env *Env, src secretSource, prompt string, confirm bool) (string, error)   // ctx: Ctrl-C at the hidden prompt restores the terminal and returns ctx.Err() (exit 130)
 //   Stdin: read one line from env.Stdin, strip one trailing "\r\n"/"\n", reject empty.
 //   File: read the file, same trimming. Refuse a file with group/other permission bits? No: just read (the user owns it); but reject a directory.
 //   Neither: if env.IsTerminal(stdin) → term.ReadPassword with the prompt on Stderr, and when confirm, a second prompt that must match (ExitValidation "passwords do not match"); else ExitUsage "stdin is not a terminal: use --password-stdin or --password-file".
