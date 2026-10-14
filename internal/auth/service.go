@@ -30,6 +30,7 @@ var (
 	ErrWeakPassword       = fmt.Errorf("password must be at least %d characters", MinPasswordLength)
 	ErrInvalidCredentials = errors.New("invalid username or password")
 	ErrInvalidSession     = errors.New("invalid or expired session")
+	ErrSamePassword       = errors.New("new password must differ from the current one")
 )
 
 type User struct {
@@ -187,6 +188,54 @@ func (s *Service) Authenticate(ctx context.Context, token string) (User, error) 
 func (s *Service) Logout(ctx context.Context, token string) error {
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash = ?`, hashToken(token)); err != nil {
 		return fmt.Errorf("delete session: %w", err)
+	}
+	return nil
+}
+
+// ChangePassword verifies current for userID, stores the argon2id hash of next,
+// and deletes every session of the user except keepToken's, so a leaked cookie
+// dies with the old password while the browser in use stays signed in.
+// Errors: ErrInvalidCredentials (wrong current), ErrWeakPassword, ErrSamePassword.
+func (s *Service) ChangePassword(ctx context.Context, userID int64, current, next, keepToken string) error {
+	var hash string
+	if err := s.db.QueryRowContext(ctx, `SELECT password_hash FROM users WHERE id = ?`, userID).Scan(&hash); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrInvalidCredentials
+		}
+		return fmt.Errorf("look up user: %w", err)
+	}
+	ok, err := s.verify(ctx, hash, current)
+	if err != nil {
+		return fmt.Errorf("verify password: %w", err)
+	}
+	if !ok {
+		return ErrInvalidCredentials
+	}
+	if utf8.RuneCountInString(next) < MinPasswordLength {
+		return ErrWeakPassword
+	}
+	if next == current {
+		return ErrSamePassword
+	}
+	newHash, err := s.hash(ctx, next)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	// The store has a single connection: only the two statements run while the
+	// transaction is open.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin password change: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, newHash, userID); err != nil {
+		return fmt.Errorf("update password: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND token_hash != ?`, userID, hashToken(keepToken)); err != nil {
+		return fmt.Errorf("delete other sessions: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit password change: %w", err)
 	}
 	return nil
 }
