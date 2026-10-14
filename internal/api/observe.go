@@ -42,7 +42,7 @@ type ObserveAPI interface {
 	SubscribeSamples(project string) (<-chan metrics.Sample, func())
 	Latest() []metrics.ExpositionSample
 	Degraded() bool
-	Query(ctx context.Context, project, service string, from, to time.Time, step time.Duration) ([]metrics.Point, error)
+	QueryContainers(ctx context.Context, project, service string, from, to time.Time, step time.Duration) ([]metrics.ContainerBucket, error)
 	TokenHash(ctx context.Context) (string, error)
 	SetTokenHash(ctx context.Context, hash string) error
 }
@@ -82,8 +82,8 @@ func (o ObserveSources) SubscribeSamples(project string) (<-chan metrics.Sample,
 }
 func (o ObserveSources) Latest() []metrics.ExpositionSample { return o.Sampler.Latest() }
 func (o ObserveSources) Degraded() bool                     { return o.Sampler.Degraded() }
-func (o ObserveSources) Query(ctx context.Context, project, service string, from, to time.Time, step time.Duration) ([]metrics.Point, error) {
-	return o.Store.Query(ctx, project, service, from, to, step)
+func (o ObserveSources) QueryContainers(ctx context.Context, project, service string, from, to time.Time, step time.Duration) ([]metrics.ContainerBucket, error) {
+	return o.Store.QueryContainers(ctx, project, service, from, to, step)
 }
 func (o ObserveSources) TokenHash(ctx context.Context) (string, error) {
 	return o.Store.TokenHash(ctx)
@@ -387,8 +387,8 @@ type metricPointDTO struct {
 	CPU      float64 `json:"cpu"`
 	Mem      uint64  `json:"mem"`
 	MemLimit uint64  `json:"memLimit"`
-	// Rates are bytes per second between this point and the service's
-	// previous one; absent on a service's first point.
+	// Rates are bytes per second, summed across the service's replicas;
+	// absent when no replica has a previous bucket to diff against.
 	NetRx    *float64 `json:"netRxBytesPerSec,omitempty"`
 	NetTx    *float64 `json:"netTxBytesPerSec,omitempty"`
 	BlkRead  *float64 `json:"blkReadBytesPerSec,omitempty"`
@@ -448,19 +448,13 @@ func metricsWindow(r *http.Request) (from, to time.Time, step time.Duration, err
 	return from, to, step, nil
 }
 
-func rate(cur, prev uint64, seconds float64) *float64 {
-	var v float64
-	if cur > prev { // a drop means the container restarted and its counter reset
-		v = float64(cur-prev) / seconds
-	}
-	return &v
-}
-
 // handleMetricsHistory returns {points}: per service and time bucket the
-// averaged gauges (cpu, mem, memLimit) and counter rates. The store keeps
-// cumulative counters and buckets them with MAX across a service's replicas,
-// so rates reflect the busiest replica, not the sum. A negative delta
-// (container restart) is reported as 0.
+// gauges (cpu, mem, memLimit), averaged across the service's replicas, and
+// network and block-I/O rates, which are TOTALS across replicas. Rates are
+// computed per container from its cumulative counters between its own
+// consecutive buckets (a drop, i.e. a restart, counts as 0; a container's
+// first bucket, or the first after a gap of more than 3 buckets, adds
+// nothing) and then summed; see metrics.AggregateServices.
 func (s *server) handleMetricsHistory(w http.ResponseWriter, r *http.Request) {
 	from, to, step, err := metricsWindow(r)
 	if err != nil {
@@ -472,23 +466,16 @@ func (s *server) handleMetricsHistory(w http.ResponseWriter, r *http.Request) {
 		s.writeStackError(w, r, err)
 		return
 	}
-	pts, err := s.opts.Observe.Query(r.Context(), detail.Project, r.URL.Query().Get("service"), from, to, step)
+	rows, err := s.opts.Observe.QueryContainers(r.Context(), detail.Project, r.URL.Query().Get("service"), from, to, step)
 	if err != nil {
 		s.writeStackError(w, r, err)
 		return
 	}
+	pts := metrics.AggregateServices(rows, step)
 	out := make([]metricPointDTO, 0, len(pts))
-	prev := map[string]metrics.Point{}
 	for _, p := range pts {
-		dto := metricPointDTO{Time: p.TS.UTC().Format(time.RFC3339), Service: p.Service, CPU: p.CPU, Mem: p.Mem, MemLimit: p.MemLimit}
-		if last, ok := prev[p.Service]; ok {
-			if dt := p.TS.Sub(last.TS).Seconds(); dt > 0 {
-				dto.NetRx, dto.NetTx = rate(p.NetRx, last.NetRx, dt), rate(p.NetTx, last.NetTx, dt)
-				dto.BlkRead, dto.BlkWrite = rate(p.BlkRead, last.BlkRead, dt), rate(p.BlkWrite, last.BlkWrite, dt)
-			}
-		}
-		prev[p.Service] = p
-		out = append(out, dto)
+		out = append(out, metricPointDTO{Time: p.TS.UTC().Format(time.RFC3339), Service: p.Service, CPU: p.CPU, Mem: p.Mem, MemLimit: p.MemLimit,
+			NetRx: p.NetRx, NetTx: p.NetTx, BlkRead: p.BlkRead, BlkWrite: p.BlkWrite})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"points": out})
 }

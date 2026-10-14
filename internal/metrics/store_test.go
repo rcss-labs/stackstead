@@ -218,3 +218,35 @@ func TestInsertBatchCancelledContextWritesNothing(t *testing.T) {
 		t.Errorf("rows = %d, want 0", n)
 	}
 }
+
+func TestQueryContainersBucketsPerContainer(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	b := base.Truncate(time.Minute)
+	two := sample(b.Add(10*time.Second), "p", "web", 10, 100, 50)
+	two.Container = "web-2"
+	err := s.InsertBatch(ctx, []metrics.Sample{
+		sample(b.Add(10*time.Second), "p", "web", 10, 100, 5),
+		sample(b.Add(20*time.Second), "p", "web", 30, 300, 9),
+		two,
+		sample(b.Add(70*time.Second), "p", "web", 50, 500, 12),
+		sample(b.Add(10*time.Second), "other", "web", 99, 99, 99),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.QueryContainers(ctx, "p", "", b, b.Add(2*time.Minute), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ordered by service, container, ts: web-1@0, web-1@1m, web-2@0
+	if len(rows) != 3 || rows[0].Container != "web-1" || rows[1].Container != "web-1" || rows[2].Container != "web-2" || !rows[0].TS.Before(rows[1].TS) {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if r := rows[0]; r.Samples != 2 || r.CPUSum != 40 || r.MemSum != 400 || r.MemLimitSum != 2000 || r.NetRx != 9 {
+		t.Errorf("web-1 bucket 0 = %+v", r)
+	}
+	if r := rows[2]; r.Samples != 1 || r.NetRx != 50 {
+		t.Errorf("web-2 bucket 0 = %+v", r)
+	}
+}

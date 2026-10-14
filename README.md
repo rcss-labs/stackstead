@@ -79,9 +79,8 @@ compose containers.
 - **Metrics history.** `GET /api/stacks/{name}/metrics?from=&to=&step=&service=`
   returns `{points}` with, per service and time bucket, `cpu` (percent of one
   core), `mem`, `memLimit` and per-second network and block I/O rates. The
-  default window is the last hour. Counters are bucketed with MAX across a
-  service's replicas, so the rates in history reflect the busiest replica, not
-  the sum. Memory excludes page cache (`inactive_file` on cgroup v2, `cache` on
+  default window is the last hour. Rates are totals across a service's
+  replicas (computed per container, then summed); CPU and memory are averages. Memory excludes page cache (`inactive_file` on cgroup v2, `cache` on
   v1), like `docker stats`. `metrics/live` streams new samples as they are taken
   (`sample` events). History and live `time` are both UTC RFC3339.
 - **Events.** `GET /api/events` sends `status` (`events`, `metricsDegraded`)
