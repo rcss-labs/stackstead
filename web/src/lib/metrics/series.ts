@@ -118,7 +118,7 @@ export function createLiveAggregator() {
       .sort((a, b) => a.t - b.t);
     const out: SeriesPoint[] = [];
     for (const { s, t } of timed) {
-      if (pending.size > 0 && t - pendingT >= 1000) out.push(...finalize());
+      if (pending.size > 0 && Math.abs(t - pendingT) >= 1000) out.push(...finalize());
       if (pending.size === 0) pendingT = t;
       pending.set(s.container, s);
     }
