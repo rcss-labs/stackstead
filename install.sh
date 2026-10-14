@@ -126,6 +126,7 @@ PURGE=
 PRINT_PATHS=
 USER_ARG=
 YES=
+FROM_PKG=
 LABEL=$DEFAULT_LABEL
 
 need_value() { # option remaining-arg-count
@@ -156,6 +157,7 @@ parse_args() {
 		--print-paths) PRINT_PATHS=1; shift ;;
 		--user) need_value "$1" $#; USER_ARG=$2; shift 2 ;;
 		--user=*) USER_ARG=${1#*=}; shift ;;
+		--from-pkg) FROM_PKG=1; shift ;;
 		--label) need_value "$1" $#; LABEL=$2; shift 2 ;;
 		--label=*) LABEL=${1#*=}; shift ;;
 		--yes | -y) YES=1; shift ;;
@@ -191,6 +193,10 @@ setup_paths() {
 	*[!A-Za-z0-9/._+-]*) usage_error "--prefix may only contain letters, digits and / . _ + -: $PREFIX" ;;
 	esac
 	PREFIX=${PREFIX%/}
+	if [ -n "$FROM_PKG" ]; then
+		[ -z "$UNINSTALL" ] || usage_error "--from-pkg cannot be combined with --uninstall"
+		[ -z "$VERSION_ARG" ] || usage_error "--from-pkg installs the files the package already placed; --version does not apply"
+	fi
 	case $LABEL in
 	"" | *[!A-Za-z0-9._-]*) usage_error "--label may only contain letters, digits and . _ -: $LABEL" ;;
 	esac
@@ -1186,6 +1192,11 @@ install_files_darwin() {
 	fi
 	user_put_file "$STAGE/plist.rendered" "$(rp "$PLIST")" 0644
 
+	if [ -n "$FROM_PKG" ]; then
+		# the package payload already holds the binary and the helper files
+		say "Using $(rp "$BIN") from the package"
+		return 0
+	fi
 	priv_put_file "$STAGE/launchagent.plist.in" "$(rp "$HELPER_DIR")/launchagent.plist.in" 0644
 	if [ -f "$STAGE/install.sh" ]; then
 		priv_put_file "$STAGE/install.sh" "$(rp "$HELPER")" 0755
@@ -1197,6 +1208,27 @@ install_files_darwin() {
 	fi
 	priv_put_file "$STAGE/stackstead" "$(rp "$BIN")" 0755
 	say "Installed $(rp "$BIN")"
+}
+
+# stage_from_pkg: --from-pkg (used by the .pkg postinstall, hidden from --help).
+# No download: the binary and the helper files are already under the prefix, put
+# there by the installer as root. The two templates are copied into the private
+# stage dir (refusing symlinks and non-regular files) and the per-user steps run
+# exactly as in the normal flow, as the target user. An existing plist marks an
+# upgrade (the binary is the new one already, so its version says nothing).
+stage_from_pkg() {
+	TMP=$(mktemp -d "${TMPDIR:-/tmp}/stackstead-install.XXXXXX") || die 1 "cannot create a temporary directory"
+	STAGE=$TMP/stage
+	mkdir -p "$STAGE"
+	sf_dir=$(rp "$HELPER_DIR")
+	{ [ -f "$(rp "$BIN")" ] && [ -x "$(rp "$BIN")" ] && [ ! -L "$(rp "$BIN")" ]; } || die 7 "the package payload is incomplete: no executable $(rp "$BIN")"
+	for sf_f in launchagent.plist.in config.example.yaml; do
+		{ [ -f "$sf_dir/$sf_f" ] && [ ! -L "$sf_dir/$sf_f" ]; } || die 7 "the package payload is incomplete or unsafe: $sf_dir/$sf_f"
+		cp "$sf_dir/$sf_f" "$STAGE/$sf_f" || die 7 "cannot read $sf_dir/$sf_f"
+	done
+	if as_fs test -e "$(rp "$PLIST")"; then
+		UPGRADE=1
+	fi
 }
 
 agent_loaded() {
@@ -1243,7 +1275,7 @@ docker_check_darwin() {
 do_install_darwin() {
 	PHASE=install
 	say "Installing for $TARGET_USER"
-	if [ -z "$ROOT" ] && [ -z "$AS_ROOT" ]; then
+	if [ -z "$ROOT" ] && [ -z "$AS_ROOT" ] && [ -z "$FROM_PKG" ]; then
 		have sudo || die 4 "need sudo to write to $PREFIX (or run as root)"
 		note "sudo is used only for $PREFIX; you may be asked for your password"
 	fi
@@ -1374,7 +1406,10 @@ main() {
 		print_paths
 		exit 0
 	fi
-	[ -n "$UNINSTALL" ] || check_base_url
+	[ -n "$UNINSTALL" ] || [ -n "$FROM_PKG" ] || check_base_url
+	if [ -n "$FROM_PKG" ] && [ "$OS" != darwin ]; then
+		usage_error "--from-pkg is only for the macOS package"
+	fi
 	require_root
 	refuse_package_install
 
@@ -1388,10 +1423,14 @@ main() {
 		exit 0
 	fi
 
-	check_tools
-	resolve_and_download
-	check_installed
-	download_and_verify
+	if [ -n "$FROM_PKG" ]; then
+		stage_from_pkg
+	else
+		check_tools
+		resolve_and_download
+		check_installed
+		download_and_verify
+	fi
 	if [ -n "$DRY_RUN" ]; then
 		print_plan
 		exit 0

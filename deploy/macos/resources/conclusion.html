@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Stackstead</title></head>
+<body style="font-family: -apple-system, Helvetica, sans-serif; font-size: 13px;">
+<h2>Stackstead is installed</h2>
+<p>Open <a href="http://127.0.0.1:8420">http://127.0.0.1:8420</a> in your browser to create the admin account.</p>
+<p>If nobody was logged in at this Mac during the installation, set up the service for a user with:</p>
+<pre>sudo /usr/local/share/stackstead/install.sh --from-pkg --user NAME</pre>
+<p>Logs are in <code>~/Library/Logs/Stackstead/stackstead.log</code>. To remove Stackstead (your configuration, data and stacks are kept):</p>
+<pre>sudo /usr/local/share/stackstead/install.sh --uninstall</pre>
+<h3>About the security prompt</h3>
+<p>This package is not signed with an Apple Developer ID. If macOS says it is from an
+<b>unidentified developer</b>, right-click the package and choose Open, or install it from a terminal with
+<code>sudo installer -pkg stackstead_&lt;version&gt;_darwin.pkg -target /</code>. The installed program runs normally.</p>
+</body>
+</html>
