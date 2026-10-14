@@ -517,19 +517,19 @@ func TestWriteCancelledMidWriteIsNotLoggedOrDegraded(t *testing.T) {
 	}
 }
 
-func TestPerCallTimeoutEqualsIntervalWhenShorterThanFiveSeconds(t *testing.T) {
+func TestPerCallTimeoutEqualsIntervalWithinBounds(t *testing.T) {
 	stats := &fakeStats{}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	st := &fakeSampleStore{insert: func(context.Context, int) error { return nil }}
-	_, ticks, fin := newFakeStoreSampler(t, 2*time.Second, st, stats, io.Discard, &clock{t: base}, ctx)
+	_, ticks, fin := newFakeStoreSampler(t, 4*time.Second, st, stats, io.Discard, &clock{t: base}, ctx)
 	ticks <- base
 	<-fin
 	stats.mu.Lock()
 	d := stats.deadline
 	stats.mu.Unlock()
-	if d <= 500*time.Millisecond || d > 2*time.Second {
-		t.Errorf("deadline = %v, want about 2s (the interval)", d)
+	if d <= 3*time.Second || d > 4*time.Second {
+		t.Errorf("deadline = %v, want about 4s (the interval)", d)
 	}
 	cancel()
 }
@@ -558,4 +558,18 @@ func TestWriteErrorLogIsRateLimitedToOncePerMinute(t *testing.T) {
 		t.Fatalf("logs after a minute = %d, want 2", n)
 	}
 	cancel()
+}
+
+// Docker takes about a second to compute the CPU delta, so a short interval
+// must not shrink the per-call timeout to the point where every read fails.
+func TestStatsTimeoutNeverBelowDockerCPUWindow(t *testing.T) {
+	for interval, want := range map[time.Duration]time.Duration{
+		time.Second:      3 * time.Second,
+		10 * time.Second: 5 * time.Second,
+		4 * time.Second:  4 * time.Second,
+	} {
+		if got := metrics.StatsTimeout(interval); got != want {
+			t.Errorf("StatsTimeout(%s) = %s, want %s", interval, got, want)
+		}
+	}
 }

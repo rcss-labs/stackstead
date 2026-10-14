@@ -564,3 +564,16 @@ func TestLogsRawTTYStreamWithTTYFalseIsDetected(t *testing.T) {
 		check(t, got, nil)
 	})
 }
+
+// Docker takes about a second (two on Docker Desktop) to compute the CPU
+// delta, so a stats read must outlive a short client timeout.
+func TestStatsOutlivesShortClientTimeout(t *testing.T) {
+	body := readTestdata(t, "stats_v2.json")
+	sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(1500 * time.Millisecond)
+		w.Write([]byte(body))
+	}))
+	if _, err := New(sock, time.Second).Stats(ctx(t), "abc"); err != nil {
+		t.Fatalf("Stats with a 1s client timeout and a 1.5s response: %v", err)
+	}
+}

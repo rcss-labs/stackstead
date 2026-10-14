@@ -25,6 +25,9 @@ type Event struct {
 	Time                      time.Time
 }
 
+// statsWindow is the extra time a stats call gets for Docker to compute the CPU delta.
+const statsWindow = 5 * time.Second
+
 // Stats is one point-in-time resource reading of a container.
 type Stats struct {
 	Read               time.Time
@@ -194,10 +197,11 @@ type apiCPU struct {
 	Online uint64 `json:"online_cpus"`
 }
 
-// Stats takes one reading. Docker computes the CPU delta over about a second,
-// so the call is bounded by the client timeout like any other request.
+// Stats takes one reading. Docker computes the CPU delta over a sampling
+// window of one to two seconds, so the call gets the client timeout plus
+// statsWindow; callers bound it further through ctx.
 func (c *Client) Stats(ctx context.Context, containerID string) (Stats, error) {
-	body, err := c.get(ctx, "/containers/"+url.PathEscape(containerID)+"/stats?stream=false&one-shot=false")
+	body, err := c.getWithin(ctx, "/containers/"+url.PathEscape(containerID)+"/stats?stream=false&one-shot=false", c.timeout+statsWindow)
 	if err != nil {
 		return Stats{}, err
 	}
