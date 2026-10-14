@@ -1,0 +1,4 @@
+{"read":"2026-10-14T10:00:01Z","cpu_stats":{"cpu_usage":{"total_usage":500,"percpu_usage":[1,2]},"system_cpu_usage":2000},
+ "precpu_stats":{"cpu_usage":{"total_usage":300},"system_cpu_usage":1000},
+ "memory_stats":{"usage":900,"limit":2000,"stats":{"cache":400,"total_inactive_file":123}},
+ "blkio_stats":{"io_service_bytes_recursive":null}}
