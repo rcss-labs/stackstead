@@ -54,10 +54,16 @@ func loadLocalConfig(env *Env, lf localFlags) (config.Config, string, error) {
 		}
 	}
 	cfg, err := config.Load(path, env.Getenv)
-	if err != nil {
-		return config.Config{}, path, &ExitError{Code: ExitValidation, Err: err}
+	var pathErr *fs.PathError
+	switch {
+	case err == nil:
+		return cfg, path, nil
+	case errors.Is(err, fs.ErrPermission):
+		return config.Config{}, path, &ExitError{Code: ExitAuth, Err: err}
+	case errors.As(err, &pathErr): // could not read the file: not a validation problem
+		return config.Config{}, path, &ExitError{Code: ExitGeneral, Err: err}
 	}
-	return cfg, path, nil
+	return config.Config{}, path, &ExitError{Code: ExitValidation, Err: err}
 }
 
 func dbPathOf(cfg config.Config) string { return filepath.Join(cfg.DataDir, "stackstead.db") }
@@ -171,4 +177,14 @@ func syncDir(dir string) {
 		d.Sync()
 		d.Close()
 	}
+}
+
+// syncDirChecked fsyncs a directory and reports the failure.
+func syncDirChecked(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }

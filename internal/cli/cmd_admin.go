@@ -179,11 +179,16 @@ func setPassword(ctx context.Context, env *Env, cfg config.Config, username stri
 	return nil
 }
 
-// readSecretLine reads the first line and strips its line ending.
+const maxSecretBytes = 64 << 10
+
+// readSecretLine reads the first line (at most 64 KiB) and strips its line ending.
 func readSecretLine(r io.Reader) (string, error) {
-	line, err := bufio.NewReader(r).ReadString('\n')
+	line, err := bufio.NewReader(io.LimitReader(r, maxSecretBytes+1)).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return "", err
+	}
+	if len(line) > maxSecretBytes {
+		return "", exitf(ExitValidation, "password is too long (limit %d bytes)", maxSecretBytes)
 	}
 	return strings.TrimRight(line, "\r\n"), nil
 }

@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -90,7 +92,7 @@ func configCommand() *Command {
 
 // configInit renders and validates the template, then writes it atomically.
 func configInit(env *Env, cfg config.Config, path string, force bool) error {
-	if _, err := os.Stat(path); err == nil && !force {
+	if _, err := os.Lstat(path); err == nil && !force {
 		return exitf(ExitConflict, "%s already exists (use --force to overwrite)", path)
 	}
 	data, err := config.Template(cfg)
@@ -124,7 +126,14 @@ func configInit(env *Env, cfg config.Config, path string, force bool) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	if force {
+		if err := os.Rename(tmp.Name(), path); err != nil {
+			return err
+		}
+	} else if err := os.Link(tmp.Name(), path); err != nil { // never replaces what appeared since the check
+		if errors.Is(err, fs.ErrExist) {
+			return exitf(ExitConflict, "%s already exists (use --force to overwrite)", path)
+		}
 		return err
 	}
 	fmt.Fprintln(env.Stdout, path)

@@ -2,10 +2,10 @@ package cli
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -79,6 +79,10 @@ func dbCommand() *Command {
 func dbInit(env *Env, cfg config.Config) error {
 	if err := checkOwnership(cfg); err != nil {
 		return err
+	}
+	if _, err := os.Stat(cfg.DataDir); errors.Is(err, fs.ErrNotExist) && geteuid() == 0 {
+		// Root would create the directory root-owned and lock the service out.
+		return exitf(ExitAuth, "%s does not exist; create it as the service user: sudo -u <service user> stackstead db init …", cfg.DataDir)
 	}
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
@@ -158,6 +162,9 @@ func dbCheck(ctx context.Context, env *Env, g *globalFlags, cfg config.Config) e
 }
 
 func dbBackup(ctx context.Context, env *Env, cfg config.Config, dest string, force bool) error {
+	if err := refuseLiveDestination(cfg, dest); err != nil {
+		return err
+	}
 	db, err := openLocalDB(env, cfg, store.OpenOptions{ReadOnly: true})
 	if err != nil {
 		return err
@@ -230,10 +237,11 @@ func dbRestore(ctx context.Context, env *Env, cfg config.Config, src string, yes
 	}
 	current := dbPathOf(cfg)
 	return withExclusiveLock(cfg, func() error {
-		schema, err := validateRestoreSource(ctx, src)
+		srcDB, err := openRestoreSource(ctx, src)
 		if err != nil {
 			return err
 		}
+		defer srcDB.Close()
 		if !yes {
 			if !stdinIsTerminal(env) {
 				return exitf(ExitUsage, "restore replaces %s; pass --yes to confirm", current)
@@ -243,7 +251,20 @@ func dbRestore(ctx context.Context, env *Env, cfg config.Config, src string, yes
 				return exitf(ExitGeneral, "restore cancelled")
 			}
 		}
-		bak, err := swapInDatabase(env, current, src)
+		// The copy is made by SQLite from the validated connection, so it is
+		// self-contained (a -wal next to src is folded in) and what is checked
+		// below is exactly what gets installed.
+		tmp := current + ".restore-tmp"
+		os.Remove(tmp)
+		defer os.Remove(tmp) // no-op once renamed into place
+		if err := store.Backup(ctx, srcDB, tmp); err != nil {
+			return fmt.Errorf("copy backup: %w", err)
+		}
+		schema, _, err := verifyDatabaseFile(ctx, tmp)
+		if err != nil {
+			return err
+		}
+		bak, err := swapInDatabase(env, current, tmp)
 		if err != nil {
 			return err
 		}
@@ -255,88 +276,116 @@ func dbRestore(ctx context.Context, env *Env, cfg config.Config, src string, yes
 	})
 }
 
-// validateRestoreSource refuses anything that is not a healthy database this
-// binary can run: older is fine (the server migrates at start), newer is not.
-func validateRestoreSource(ctx context.Context, src string) (int, error) {
+// openRestoreSource opens src read-only and refuses anything that is not a
+// healthy database this binary can run: older is fine (the server migrates at
+// start), newer is not.
+func openRestoreSource(ctx context.Context, src string) (*sql.DB, error) {
 	db, err := store.OpenExisting(src, store.OpenOptions{ReadOnly: true, AllowOlderSchema: true})
 	var mismatch *store.SchemaMismatchError
 	switch {
 	case errors.Is(err, store.ErrNoDatabase):
-		return 0, exitf(ExitNotFound, "no such backup file: %s", src)
+		return nil, exitf(ExitNotFound, "no such backup file: %s", src)
 	case errors.As(err, &mismatch):
-		return 0, &ExitError{Code: ExitValidation, Err: err}
+		return nil, &ExitError{Code: ExitValidation, Err: err}
 	case err != nil:
-		return 0, exitf(ExitGeneral, "%s is not a usable database: %v", src, err)
+		return nil, exitf(ExitGeneral, "%s is not a usable database: %v", src, err)
 	}
-	defer db.Close()
 	problems, err := store.QuickCheck(ctx, db)
+	if err == nil && len(problems) > 0 {
+		err = fmt.Errorf("failed quick_check: %s", strings.Join(problems, "; "))
+	}
 	if err != nil {
-		return 0, exitf(ExitGeneral, "%s is not a usable database: %v", src, err)
+		db.Close()
+		return nil, exitf(ExitGeneral, "%s is not a usable database: %v", src, err)
 	}
-	if len(problems) > 0 {
-		return 0, exitf(ExitGeneral, "%s failed quick_check: %s", src, strings.Join(problems, "; "))
-	}
-	return store.SchemaVersion(ctx, db)
+	return db, nil
 }
 
-// swapInDatabase copies src next to the current database, then renames. Any
-// failure before the final rename leaves the current database in place.
-// It returns the path the previous database was kept at ("" when there was none).
-func swapInDatabase(env *Env, current, src string) (string, error) {
-	tmp := current + ".restore-tmp"
-	if err := copyFileSynced(src, tmp); err != nil {
-		os.Remove(tmp)
-		return "", fmt.Errorf("copy backup: %w", err)
-	}
-	bak := ""
-	if _, err := os.Stat(current); err == nil {
+// swapInDatabase installs the verified file tmp as the current database. The
+// database path always exists: the old file is hard-linked to its .bak name
+// and tmp is renamed over it, so any failure before that rename leaves the
+// current database (and its -wal) as it was. It returns the path the previous
+// database was kept at ("" when there was none).
+func swapInDatabase(env *Env, current, tmp string) (bak string, err error) {
+	_, statErr := os.Stat(current)
+	hadDB := statErr == nil
+	wal, shm := current+"-wal", current+"-shm"
+
+	// Sidecars first: a stale WAL must never be replayed into the new file. A
+	// WAL left by a crash belongs to the old file, so it is kept with it.
+	walMoved := false
+	if hadDB {
 		bak = fmt.Sprintf("%s.bak-%s", current, env.Now().UTC().Format("20060102T150405Z"))
-		if err := renameFile(current, bak); err != nil {
-			os.Remove(tmp)
+		if err := renameFile(wal, bak+"-wal"); err == nil {
+			walMoved = true
+		} else if !errors.Is(err, fs.ErrNotExist) {
 			return "", err
 		}
-		// A WAL left by a crash belongs to the old file; keep it with it.
-		if _, err := os.Stat(current + "-wal"); err == nil {
-			renameFile(current+"-wal", bak+"-wal")
+	} else if err := os.Remove(wal); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	undo := func(cause error) (string, error) {
+		errs := []error{cause}
+		if walMoved {
+			if err := renameFile(bak+"-wal", wal); err != nil {
+				errs = append(errs, fmt.Errorf("could not put %s back: %w", wal, err))
+			}
+		}
+		return "", errors.Join(errs...)
+	}
+	if err := os.Remove(shm); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return undo(err)
+	}
+	if hadDB {
+		if err := os.Link(current, bak); err != nil {
+			return undo(err)
 		}
 	}
 	if err := renameFile(tmp, current); err != nil {
-		if bak != "" {
-			renameFile(bak, current)
-			renameFile(bak+"-wal", current+"-wal")
+		if hadDB {
+			if rerr := os.Remove(bak); rerr != nil {
+				err = errors.Join(err, rerr)
+			}
 		}
-		os.Remove(tmp)
-		return "", err
+		return undo(err)
 	}
-	// The restored file is self-contained; leftover sidecars would be replayed
-	// into it.
-	for _, suffix := range []string{"-wal", "-shm"} {
-		if err := os.Remove(current + suffix); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return bak, err
-		}
+	if err := syncDirChecked(filepath.Dir(current)); err != nil {
+		return bak, err
 	}
-	syncDir(filepath.Dir(current))
 	return bak, nil
 }
 
-func copyFileSynced(src, dest string) (err error) {
-	in, err := os.Open(src)
+// resolvePath makes p absolute and resolves symlinks as far as they exist.
+func resolvePath(p string) string {
+	abs, err := filepath.Abs(p)
 	if err != nil {
-		return err
+		return filepath.Clean(p)
 	}
-	defer in.Close()
-	os.Remove(dest)
-	out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
+	if full, err := filepath.EvalSymlinks(abs); err == nil {
+		return full
 	}
-	defer func() {
-		if cerr := out.Close(); err == nil {
-			err = cerr
+	if dir, err := filepath.EvalSymlinks(filepath.Dir(abs)); err == nil {
+		return filepath.Join(dir, filepath.Base(abs))
+	}
+	return abs
+}
+
+// refuseLiveDestination keeps a backup from being written over the live
+// database, its WAL/SHM sidecars or the server lock, however it is spelled
+// (relative, through a symlink or a hard link).
+func refuseLiveDestination(cfg config.Config, dest string) error {
+	db := dbPathOf(cfg)
+	protected := []string{db, db + "-wal", db + "-shm", filepath.Join(cfg.DataDir, "stackstead.lock")}
+	resolved := resolvePath(dest)
+	destInfo, destErr := os.Stat(dest)
+	for _, p := range protected {
+		same := resolved == resolvePath(p)
+		if info, err := os.Stat(p); err == nil && destErr == nil && os.SameFile(destInfo, info) {
+			same = true
 		}
-	}()
-	if _, err := io.Copy(out, in); err != nil {
-		return err
+		if same {
+			return exitf(ExitUsage, "%s is the live database or one of its files; choose another destination", dest)
+		}
 	}
-	return out.Sync()
+	return nil
 }
