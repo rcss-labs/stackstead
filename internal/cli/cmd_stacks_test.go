@@ -598,7 +598,7 @@ func TestComposeEditNoChanges(t *testing.T) {
 
 func TestComposeEditSavesWithOriginalHash(t *testing.T) {
 	var got apitypes.RawCompose
-	te, tmp := t8EditSetup(t, t8Editor(t, `echo "# edited" >> "$1"; stat -f %Lp "$1" > "$1.mode" 2>/dev/null || stat -c %a "$1" > "$1.mode"`), func(w http.ResponseWriter, r *http.Request) {
+	te, tmp := t8EditSetup(t, t8Editor(t, `echo "# edited" >> "$1"; stat -c %a "$1" > "$1.mode" 2>/dev/null || stat -f %Lp "$1" > "$1.mode"`), func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&got)
 		t8JSON(w, 200, apitypes.HashResponse{Hash: "h2"})
 	})
