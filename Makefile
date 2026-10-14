@@ -121,7 +121,7 @@ package-lint: ## Run lintian and rpmlint over the packages in dist/ in a contain
 		-v "$(abspath $(DIST))":/dist:ro -v "$(abspath deploy/pkg)":/pkg:ro $(LINT_IMAGE) \
 		sh -c 'set -eu; \
 		set -- /dist/*.deb; if [ -e "$$1" ]; then lintian --fail-on error,warning --tag-display-limit 0 "$$@"; fi; \
-		set -- /dist/*.rpm; if [ -e "$$1" ]; then rpmlint -c /pkg/rpmlint.toml -r /pkg/rpmlintrc "$$@"; fi'
+		set -- /dist/*.rpm; if [ -e "$$1" ]; then rpmlint --strict -c /pkg/rpmlint.toml -r /pkg/rpmlintrc "$$@"; fi'
 
 verify-release: ## Verify dist/SHA256SUMS (and SHA256SUMS.sig when SIGNERS=<allowed_signers> is given)
 	@cd $(DIST) && test -s SHA256SUMS || { echo "$(DIST)/SHA256SUMS is missing or empty"; exit 1; }; \

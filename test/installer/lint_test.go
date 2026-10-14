@@ -493,7 +493,29 @@ test ! -e /usr/bin/stackstead && echo "NOTHING-LANDED-IN-USR-BIN"`)
 	if strings.Contains(out, "no-binary") {
 		t.Errorf("rpmlint still reports no-binary (payload not extracted)\n%s", out)
 	}
+	// a positive marker: an rpmlint crash or an empty run must not pass
+	if !strings.Contains(out, "statically-linked-binary /usr/bin/stackstead") {
+		t.Errorf("rpmlint did not inspect the binary in the payload\n%s", out)
+	}
 	if !strings.Contains(out, "NOTHING-LANDED-IN-USR-BIN") {
 		t.Errorf("rpmlint extraction wrote into the container's /usr/bin\n%s", out)
+	}
+}
+
+// rpmlint exits 0 on warnings unless --strict is given, so a warning would slip through.
+func TestPackageLintRunsRpmlintStrict(t *testing.T) {
+	d := newLintDirs(t)
+	if err := os.MkdirAll(d.dist, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(d.dist, "x.rpm"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := lintMake(t, d.args("-n", "package-lint")...)
+	if err != nil {
+		t.Fatalf("make -n package-lint: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "rpmlint --strict") {
+		t.Errorf("package-lint must run rpmlint --strict\n%s", out)
 	}
 }
