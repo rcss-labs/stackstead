@@ -90,3 +90,32 @@ func TestConfigShowSources(t *testing.T) {
 	wantCode(t, runLocal(table, "config", "show", "--config", h.cfgPath), ExitOK)
 	mustContain(t, "table", table.Out.String(), "KEY", "VALUE", "SOURCE", "listen")
 }
+
+func TestConfigInitDoesNotReplaceDanglingSymlink(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.Symlink(filepath.Join(dir, "elsewhere"), path); err != nil {
+		t.Fatal(err)
+	}
+	err := runLocal(newTestEnv(t, nil), "config", "init", "--path", path)
+	wantCode(t, err, ExitConflict)
+	if target, err := os.Readlink(path); err != nil || target != filepath.Join(dir, "elsewhere") {
+		t.Errorf("the symlink was replaced (%q, %v)", target, err)
+	}
+}
+
+func TestLoadConfigMapsIOErrorsAwayFromValidation(t *testing.T) {
+	dir := t.TempDir()
+	err := runLocal(newTestEnv(t, nil), "config", "validate", "--config", dir) // a directory
+	wantCode(t, err, ExitGeneral)
+
+	if os.Geteuid() != 0 {
+		unreadable := filepath.Join(dir, "secret.yaml")
+		os.WriteFile(unreadable, []byte("listen: 127.0.0.1:1\n"), 0o000)
+		wantCode(t, runLocal(newTestEnv(t, nil), "config", "validate", "--config", unreadable), ExitAuth)
+	}
+	// Parse and value problems stay validation errors.
+	bad := filepath.Join(dir, "bad.yaml")
+	os.WriteFile(bad, []byte("listen: [\n"), 0o600)
+	wantCode(t, runLocal(newTestEnv(t, nil), "config", "validate", "--config", bad), ExitValidation)
+}
