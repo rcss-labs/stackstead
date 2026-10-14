@@ -4,7 +4,7 @@
   import Banner from '../lib/components/Banner.svelte';
   import Button from '../lib/components/Button.svelte';
   import Field from '../lib/components/Field.svelte';
-  import { navigate } from '../lib/router';
+  import { link, navigate } from '../lib/router';
   import FileBrowser from '../lib/stacks/FileBrowser.svelte';
   import { refreshRunningOps, refreshStacks } from '../lib/stores/stacks';
   import { toasts } from '../lib/stores/toasts';
@@ -22,7 +22,8 @@
 
   const focusPath = async () => {
     await tick();
-    document.getElementById('import-path')?.focus();
+    const target = composeError ? document.querySelector<HTMLElement>('.compose-error') : document.getElementById('import-path');
+    target?.focus();
   };
 
   async function submit(event: SubmitEvent) {
@@ -51,6 +52,7 @@
       if (!(err instanceof ApiError)) pathError = 'Could not reach the server. Check your connection and try again.';
       else if (err.status === 422) composeError = err.message;
       else if (err.status === 503) unavailable = err.message;
+      else if (err.status === 400 && err.fields.length > 0) pathError = err.fields.map((f) => f.message).join('; ');
       else pathError = err.message;
       await focusPath();
     } finally {
@@ -84,7 +86,7 @@
     {/if}
     <div class="actions">
       <Button variant="primary" type="submit" loading={pending}>Import stack</Button>
-      <a href="/">Cancel</a>
+      <a href="/" use:link>Cancel</a>
     </div>
   </form>
 </main>

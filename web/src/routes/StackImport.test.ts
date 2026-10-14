@@ -72,6 +72,25 @@ describe('StackImport', () => {
     });
   }
 
+  it('400 with a path field error shows it under the path', async () => {
+    routes({ 'POST /api/stacks/import': { status: 400, body: { error: 'invalid', fields: [{ field: 'path', message: 'file does not exist' }] } } });
+    const user = userEvent.setup();
+    render(StackImport);
+    await user.type(screen.getByLabelText('Compose file path'), '/srv/x.yaml');
+    await submit(user);
+    expect(await screen.findByText('file does not exist')).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Compose file path')));
+  });
+
+  it('Cancel is a router link', () => {
+    routes();
+    render(StackImport);
+    const a = screen.getByRole('link', { name: 'Cancel' });
+    a.addEventListener('click', (e) => e.preventDefault());
+    a.click();
+    expect(get(route).path).toBe('/');
+  });
+
   it('422 shows the compose error verbatim', async () => {
     routes({ 'POST /api/stacks/import': { status: 422, body: { error: 'yaml: line 3\n  bad' } } });
     const user = userEvent.setup();
@@ -80,6 +99,7 @@ describe('StackImport', () => {
     await submit(user);
     const el = await screen.findByText(/yaml: line 3/);
     expect(el.textContent).toBe('yaml: line 3\n  bad');
+    await waitFor(() => expect(document.activeElement).toBe(el));
   });
 
   it('browse picks a file into the input', async () => {

@@ -5,7 +5,7 @@
   import Button from '../lib/components/Button.svelte';
   import Field from '../lib/components/Field.svelte';
   import { emptyForm, fromForm, mapServerErrors, validateForm, type FormErrors } from '../lib/compose/form';
-  import { navigate } from '../lib/router';
+  import { link, navigate } from '../lib/router';
   import FileBrowser from '../lib/stacks/FileBrowser.svelte';
   import NetworkPicker from '../lib/stacks/NetworkPicker.svelte';
   import ServiceForm from '../lib/stacks/ServiceForm.svelte';
@@ -35,7 +35,8 @@
 
   // Errors for the field group that is no longer on screen would only confuse.
   $effect(() => {
-    if (form.source === 'build') delete errors.image;
+    const stale = form.source === 'build' ? (k: string) => k === 'image' : (k: string) => k.startsWith('build.');
+    for (const key of Object.keys(errors)) if (stale(key)) delete errors[key];
   });
 
   $effect(() => {
@@ -49,8 +50,9 @@
             mode,
             // A Dockerfile inside the build context is stored relative to it, otherwise absolute.
             cb: (path) => {
-              const ctx = form.buildContext.trim().replace(/\/+$/, '');
-              cb(ctx && path.startsWith(`${ctx}/`) ? path.slice(ctx.length + 1) : path);
+              const raw = form.buildContext.trim();
+              const base = raw.replace(/\/+$/, ''); // '' for the root context "/"
+              cb(raw && path.startsWith(`${base}/`) ? path.slice(base.length + 1) : path);
             },
           }
         : { mode, cb };
@@ -58,7 +60,8 @@
 
   async function focusFirstError() {
     await tick();
-    if (stackNameError) document.getElementById('stack-name')?.focus();
+    if (unavailable) document.getElementById('create-unavailable')?.focus();
+    else if (stackNameError) document.getElementById('stack-name')?.focus();
     else serviceFormRef?.focusFirstError();
   }
 
@@ -107,7 +110,7 @@
         stackNameError = err.message;
         errors = {};
       } else if (err.status === 403) {
-        errors = form.source === 'build' ? { 'build.context': err.message } : { _form: err.message };
+        errors = { _form: err.message };
       } else if (err.status === 503) {
         unavailable = err.message;
         errors = {};
@@ -124,7 +127,9 @@
 <main class="container">
   <h1>Create stack</h1>
   {#if unavailable}
-    <Banner kind="danger" title="Docker/compose unavailable: the stack was not created">{unavailable}</Banner>
+    <div id="create-unavailable" tabindex="-1">
+      <Banner kind="danger" title="Docker/compose unavailable: the stack was not created">{unavailable}</Banner>
+    </div>
   {/if}
   <form class="stack" onsubmit={submit} novalidate>
     <Field
@@ -153,7 +158,7 @@
 
     <div class="actions">
       <Button variant="primary" type="submit" loading={pending}>Create stack</Button>
-      <a href="/">Cancel</a>
+      <a href="/" use:link>Cancel</a>
     </div>
   </form>
 </main>

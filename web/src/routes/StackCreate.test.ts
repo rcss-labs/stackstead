@@ -38,6 +38,16 @@ const submit = (user: ReturnType<typeof userEvent.setup>) => user.click(screen.g
 const post = () => fake.calls.find((c) => c.method === 'POST' && c.path === '/api/stacks');
 
 describe('StackCreate', () => {
+  it('Cancel is a router link', () => {
+    routes();
+    render(StackCreate);
+    const a = screen.getByRole('link', { name: 'Cancel' });
+    a.addEventListener('click', (e) => e.preventDefault());
+    navigate('/stacks/new');
+    a.click();
+    expect(get(route).path).toBe('/');
+  });
+
   it('posts the request, starts up and navigates to the operation', async () => {
     routes();
     const user = userEvent.setup();
@@ -112,8 +122,8 @@ describe('StackCreate', () => {
     expect(alert.textContent).toBe('services.web.image: invalid\nline two');
   });
 
-  it('403 marks the build context', async () => {
-    routes({ 'POST /api/stacks': { status: 403, body: { error: 'path is outside the allowed roots' } } });
+  it('400 on build.context lands on the Build context field', async () => {
+    routes({ 'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'build.context', message: 'path is outside the allowed roots' }] } } });
     const user = userEvent.setup();
     render(StackCreate);
     await user.type(screen.getByLabelText('Stack name'), 'web');
@@ -122,6 +132,45 @@ describe('StackCreate', () => {
     await submit(user);
     expect(await screen.findByText('path is outside the allowed roots')).toBeTruthy();
     await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Build context')));
+  });
+
+  it('403 (filesystem permission) is shown under the form', async () => {
+    routes({ 'POST /api/stacks': { status: 403, body: { error: 'permission denied' } } });
+    const user = userEvent.setup();
+    render(StackCreate);
+    await fillImage(user);
+    await submit(user);
+    const alert = await screen.findByText('permission denied');
+    expect(alert.getAttribute('role')).toBe('alert');
+  });
+
+  it('a stale build error is dropped when switching back to image', async () => {
+    routes({ 'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'build.context', message: 'bad context' }] } } });
+    const user = userEvent.setup();
+    render(StackCreate);
+    await user.type(screen.getByLabelText('Stack name'), 'web');
+    await user.click(screen.getByLabelText('From build'));
+    await user.type(screen.getByLabelText('Build context'), '/etc');
+    await submit(user);
+    await screen.findByText('bad context');
+    await user.click(screen.getByLabelText('From image'));
+    await user.click(screen.getByLabelText('From build'));
+    expect(screen.queryByText('bad context')).toBeNull();
+  });
+
+  it('a Dockerfile picked in a root context is stored relative', async () => {
+    routes({
+      'GET /api/fs': { body: [{ name: '/', isDir: true, size: 0 }] },
+      'GET /api/fs?path=%2F': { body: [{ name: 'Dockerfile', isDir: false, size: 5 }] },
+    });
+    const user = userEvent.setup();
+    render(StackCreate);
+    await user.click(screen.getByLabelText('From build'));
+    await user.type(screen.getByLabelText('Build context'), '/');
+    await user.click(screen.getByRole('button', { name: 'Browse for Dockerfile' }));
+    await user.click(await screen.findByRole('button', { name: '/' }));
+    await user.click(await screen.findByRole('button', { name: /^Dockerfile/ }));
+    await waitFor(() => expect((screen.getByLabelText('Dockerfile') as HTMLInputElement).value).toBe('Dockerfile'));
   });
 
   it('400 field errors land on their fields', async () => {
@@ -141,7 +190,8 @@ describe('StackCreate', () => {
     render(StackCreate);
     await fillImage(user);
     await submit(user);
-    expect(await screen.findByText(/the stack was not created/)).toBeTruthy();
+    const banner = await screen.findByText(/the stack was not created/);
+    await waitFor(() => expect(document.activeElement?.contains(banner)).toBe(true));
     expect(get(route).path).toBe('/stacks/new');
   });
 
