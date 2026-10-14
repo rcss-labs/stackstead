@@ -32,14 +32,14 @@ function sample(over: Partial<Sample> & { container: string }, sec = 0): Sample 
 const pt = (t: number, cpu = 1): SeriesPoint => ({ t, cpu, mem: 0, memLimit: 0 });
 
 describe('rangeToQuery', () => {
-  const now = new Date('2026-10-14T10:00:00.789Z');
+  const now = new Date('2026-10-14T10:03:47.789Z');
   it.each([
-    ['1h', '2026-10-14T09:00:00Z', '5s'],
-    ['6h', '2026-10-14T04:00:00Z', '30s'],
-    ['24h', '2026-10-13T10:00:00Z', '2m'],
-    ['72h', '2026-10-11T10:00:00Z', '6m'],
-  ] as const)('%s', (range, from, step) => {
-    expect(rangeToQuery(range, now)).toEqual({ from, to: '2026-10-14T10:00:00Z', step });
+    ['1h', '2026-10-14T09:03:45Z', '2026-10-14T10:03:45Z', '5s'],
+    ['6h', '2026-10-14T04:03:30Z', '2026-10-14T10:03:30Z', '30s'],
+    ['24h', '2026-10-13T10:02:00Z', '2026-10-14T10:02:00Z', '2m'],
+    ['72h', '2026-10-11T10:00:00Z', '2026-10-14T10:00:00Z', '6m'],
+  ] as const)('%s aligns to when the step', (range, from, to, step) => {
+    expect(rangeToQuery(range, now)).toEqual({ from, to, step });
   });
 });
 
@@ -61,55 +61,88 @@ describe('historyToSeries', () => {
 });
 
 describe('createLiveAggregator', () => {
-  it('has no rate for the first sample of a container', () => {
+  /** ingest each tick then a later sample so the pending tick is emitted */
+  function run(agg: ReturnType<typeof createLiveAggregator>, ...ticks: Sample[][]): SeriesPoint[] {
+    const out: SeriesPoint[] = [];
+    for (const t of ticks) out.push(...agg.ingest(t));
+    out.push(...agg.flush());
+    return out;
+  }
+
+  it('has no rate for the first tick of a service', () => {
     const agg = createLiveAggregator();
-    const [p] = agg.ingest([sample({ container: 'a', cpu: 4, mem: 8, memLimit: 16, netRx: 1000 })]);
+    const [p] = run(agg, [sample({ container: 'a', cpu: 4, mem: 8, memLimit: 16, netRx: 1000 })]);
     expect(p).toMatchObject({ t: T0, cpu: 4, mem: 8, memLimit: 16 });
     expect(p.netRx).toBeUndefined();
   });
 
   it('TestCounterResetGivesZeroRate', () => {
     const agg = createLiveAggregator();
-    agg.ingest([sample({ container: 'a', netRx: 5000, blkRead: 900 }, 0)]);
-    const [p] = agg.ingest([sample({ container: 'a', netRx: 100, blkRead: 100 }, 2)]);
+    const [, p] = run(
+      agg,
+      [sample({ container: 'a', netRx: 5000, blkRead: 900 }, 0)],
+      [sample({ container: 'a', netRx: 100, blkRead: 100 }, 2)],
+    );
     expect(p.netRx).toBe(0);
     expect(p.blkRead).toBe(0);
   });
 
-  it('computes per-second rates from consecutive samples', () => {
+  it('computes per-second rates between consecutive ticks', () => {
     const agg = createLiveAggregator();
-    agg.ingest([sample({ container: 'a', netRx: 1000, netTx: 0, blkWrite: 10 }, 0)]);
-    const [p] = agg.ingest([sample({ container: 'a', netRx: 3000, netTx: 500, blkWrite: 10 }, 2)]);
+    const [, p] = run(
+      agg,
+      [sample({ container: 'a', netRx: 1000, netTx: 0, blkWrite: 10 }, 0)],
+      [sample({ container: 'a', netRx: 3000, netTx: 500, blkWrite: 10 }, 2)],
+    );
     expect(p).toMatchObject({ netRx: 1000, netTx: 250, blkWrite: 0 });
   });
 
   it('TestReplicaAggregationMatchesServer', () => {
     const agg = createLiveAggregator();
-    agg.ingest([
-      sample({ container: 'a', cpu: 10, mem: 100, memLimit: 500, netRx: 0 }, 0),
-      sample({ container: 'b', cpu: 30, mem: 300, memLimit: 800, netRx: 0 }, 0),
-    ]);
-    const out = agg.ingest([
-      sample({ container: 'a', cpu: 10, mem: 100, memLimit: 500, netRx: 200 }, 1),
-      sample({ container: 'b', cpu: 30, mem: 300, memLimit: 800, netRx: 900 }, 1),
-    ]);
-    expect(out).toHaveLength(1);
-    expect(out[0]).toMatchObject({ t: T0 + 1000, cpu: 20, mem: 200, memLimit: 800, netRx: 900 });
+    const out = run(
+      agg,
+      [
+        sample({ container: 'a', cpu: 10, mem: 100, memLimit: 500, netRx: 0 }, 0),
+        sample({ container: 'b', cpu: 30, mem: 300, memLimit: 800, netRx: 0 }, 0),
+      ],
+      [
+        sample({ container: 'a', cpu: 10, mem: 100, memLimit: 500, netRx: 200 }, 1),
+        sample({ container: 'b', cpu: 30, mem: 300, memLimit: 800, netRx: 900 }, 1),
+      ],
+    );
+    expect(out).toHaveLength(2);
+    // gauges (including memLimit) averaged; rate from max cumulative (900) over previous max (0)
+    expect(out[1]).toMatchObject({ t: T0 + 1000, cpu: 20, mem: 200, memLimit: 650, netRx: 900 });
   });
 
-  it('ignores a restarted replica for the max when it resets, keeps others', () => {
+  it('rates come from the per-service max of cumulative counters, like the server', () => {
     const agg = createLiveAggregator();
-    agg.ingest([
-      sample({ container: 'a', netRx: 10_000 }, 0),
-      sample({ container: 'b', netRx: 0 }, 0),
-    ]);
-    const [p] = agg.ingest([sample({ container: 'a', netRx: 5 }, 1), sample({ container: 'b', netRx: 40 }, 1)]);
-    expect(p.netRx).toBe(40);
+    const [, p] = run(
+      agg,
+      [sample({ container: 'a', netRx: 10_000 }, 0), sample({ container: 'b', netRx: 0 }, 0)],
+      [sample({ container: 'a', netRx: 5 }, 1), sample({ container: 'b', netRx: 40 }, 1)],
+    );
+    // max(5,40)=40 is below previous max(10000,0)=10000
+    expect(p.netRx).toBe(0);
   });
 
-  it('emits one point per service and joins samples less than 1s apart into one tick', () => {
+  it('merges per-container sample events of one tick into one point', () => {
     const agg = createLiveAggregator();
-    const out = agg.ingest([
+    const out = [
+      ...agg.ingest([sample({ container: 'a', cpu: 10, netRx: 0 }, 0)]),
+      ...agg.ingest([sample({ container: 'b', cpu: 30, netRx: 0 }, 0)]),
+    ];
+    expect(out).toEqual([]);
+    const next = agg.ingest([sample({ container: 'a', cpu: 1 }, 1)]);
+    expect(next).toHaveLength(1);
+    expect(next[0]).toMatchObject({ t: T0, cpu: 20 });
+    expect(agg.flush()).toHaveLength(1);
+    expect(agg.flush()).toEqual([]);
+  });
+
+  it('emits one point per service per tick and joins samples less than 1s apart', () => {
+    const agg = createLiveAggregator();
+    const out = run(agg, [
       sample({ container: 'a', service: 'web' }, 0),
       sample({ container: 'b', service: 'db' }, 0),
       { ...sample({ container: 'c', service: 'web' }, 0), time: '2026-10-14T10:00:00.4Z' },
@@ -117,11 +150,24 @@ describe('createLiveAggregator', () => {
     expect(out).toHaveLength(2);
   });
 
-  it('reset forgets previous counters', () => {
+  it('a tick with no later time and dt <= 0 gives no rate and keeps previous state', () => {
+    const agg = createLiveAggregator();
+    const out = run(
+      agg,
+      [sample({ container: 'a', netRx: 0 }, 5)],
+      [sample({ container: 'a', netRx: 500 }, 3)],
+      [sample({ container: 'a', netRx: 1500 }, 6)],
+    );
+    expect(out[1].netRx).toBeUndefined();
+    expect(out[2].netRx).toBe(1500);
+  });
+
+  it('reset forgets previous counters and the pending tick', () => {
     const agg = createLiveAggregator();
     agg.ingest([sample({ container: 'a', netRx: 0 }, 0)]);
     agg.reset();
-    const [p] = agg.ingest([sample({ container: 'a', netRx: 9000 }, 1)]);
+    expect(agg.flush()).toEqual([]);
+    const [p] = run(agg, [sample({ container: 'a', netRx: 9000 }, 1)]);
     expect(p.netRx).toBeUndefined();
   });
 });

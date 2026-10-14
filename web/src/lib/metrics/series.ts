@@ -17,19 +17,23 @@ export interface SeriesPoint {
 /** service name -> points sorted by t ascending */
 export type SeriesSet = Map<string, SeriesPoint[]>;
 
-const RANGES: Record<Range, { ms: number; step: string }> = {
-  '1h': { ms: 3_600_000, step: '5s' },
-  '6h': { ms: 6 * 3_600_000, step: '30s' },
-  '24h': { ms: 24 * 3_600_000, step: '2m' },
-  '72h': { ms: 72 * 3_600_000, step: '6m' },
+const RANGES: Record<Range, { ms: number; step: string; stepSec: number }> = {
+  '1h': { ms: 3_600_000, step: '5s', stepSec: 5 },
+  '6h': { ms: 6 * 3_600_000, step: '30s', stepSec: 30 },
+  '24h': { ms: 24 * 3_600_000, step: '2m', stepSec: 120 },
+  '72h': { ms: 72 * 3_600_000, step: '6m', stepSec: 360 },
 };
 
 const wholeSecondsUTC = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
 
-/** Query for the history endpoint; step keeps range/step at or below 720 points. */
+/**
+ * Query for the history endpoint. `to` is aligned down to a multiple of the
+ * step so the last bucket is complete (no rate dip at the live seam) and the
+ * point count is at most range/step <= 720.
+ */
 export function rangeToQuery(range: Range, now: Date): { from: string; to: string; step: string } {
-  const { ms, step } = RANGES[range];
-  const toMs = Math.floor(now.getTime() / 1000) * 1000;
+  const { ms, step, stepSec } = RANGES[range];
+  const toMs = Math.floor(now.getTime() / 1000 / stepSec) * stepSec * 1000;
   return { from: wholeSecondsUTC(toMs - ms), to: wholeSecondsUTC(toMs), step };
 }
 
@@ -49,8 +53,9 @@ export function historyToSeries(points: MetricPoint[]): SeriesSet {
   return set;
 }
 
-type Counters = Pick<Sample, 'netRx' | 'netTx' | 'blkRead' | 'blkWrite'>;
 const COUNTERS = ['netRx', 'netTx', 'blkRead', 'blkWrite'] as const;
+type Counter = (typeof COUNTERS)[number];
+type Counters = Record<Counter, number>;
 
 interface Prev {
   t: number;
@@ -58,64 +63,77 @@ interface Prev {
 }
 
 /**
- * Turns raw per-container samples into per-service points the way the server
- * buckets history: gauges averaged across containers, counter rates computed
- * per container then MAX across replicas, a counter decrease (restart) -> 0.
+ * Turns raw per-container samples into per-service points exactly as the
+ * server's history does: per service per tick, gauges (cpu, mem, memLimit) are
+ * averaged across containers and each cumulative counter is the MAX across
+ * containers; a rate is then taken between consecutive ticks of the service,
+ * and is 0 when the counter did not increase (restart).
+ *
+ * The live stream sends one event per container, so the current tick is held
+ * back until a sample at least 1s later arrives (or flush() is called). Points
+ * are therefore emitted one tick late.
  */
 export function createLiveAggregator() {
-  const prev = new Map<string, Prev>();
+  const prev = new Map<string, Prev>(); // by service
+  let pendingT = 0;
+  let pending = new Map<string, Sample>(); // by container
+
+  function finalize(): SeriesPoint[] {
+    if (pending.size === 0) return [];
+    const byService = new Map<string, Sample[]>();
+    for (const s of pending.values()) {
+      const list = byService.get(s.service);
+      if (list) list.push(s);
+      else byService.set(s.service, [s]);
+    }
+    const out: SeriesPoint[] = [];
+    for (const [service, list] of byService) {
+      const n = list.length;
+      const p: SeriesPoint = {
+        t: pendingT,
+        cpu: list.reduce((a, s) => a + s.cpu, 0) / n,
+        mem: list.reduce((a, s) => a + s.mem, 0) / n,
+        memLimit: list.reduce((a, s) => a + s.memLimit, 0) / n,
+      };
+      const counters = {} as Counters;
+      for (const k of COUNTERS) counters[k] = Math.max(...list.map((s) => s[k]));
+      const before = prev.get(service);
+      const dt = before ? (pendingT - before.t) / 1000 : 0;
+      if (before && dt > 0) {
+        for (const k of COUNTERS) {
+          p[k] = counters[k] > before.counters[k] ? (counters[k] - before.counters[k]) / dt : 0;
+        }
+      }
+      if (!before || dt > 0) prev.set(service, { t: pendingT, counters });
+      out.push(p);
+    }
+    pending = new Map();
+    return out;
+  }
 
   function ingest(samples: Sample[]): SeriesPoint[] {
     const timed = samples
       .map((s) => ({ s, t: Date.parse(s.time) }))
       .filter((x) => Number.isFinite(x.t))
       .sort((a, b) => a.t - b.t);
-
     const out: SeriesPoint[] = [];
-    let i = 0;
-    while (i < timed.length) {
-      const tickT = timed[i].t;
-      let j = i;
-      while (j < timed.length && timed[j].t - tickT < 1000) j++;
-      out.push(...aggregateTick(tickT, timed.slice(i, j).map((x) => ({ s: x.s, t: x.t }))));
-      i = j;
+    for (const { s, t } of timed) {
+      if (pending.size > 0 && t - pendingT >= 1000) out.push(...finalize());
+      if (pending.size === 0) pendingT = t;
+      pending.set(s.container, s);
     }
     return out;
   }
 
-  function aggregateTick(tickT: number, items: { s: Sample; t: number }[]): SeriesPoint[] {
-    const byService = new Map<string, { n: number; p: SeriesPoint }>();
-    for (const { s, t } of items) {
-      let agg = byService.get(s.service);
-      if (!agg) {
-        agg = { n: 0, p: { t: tickT, cpu: 0, mem: 0, memLimit: 0 } };
-        byService.set(s.service, agg);
-      }
-      agg.n++;
-      agg.p.cpu += s.cpu;
-      agg.p.mem += s.mem;
-      agg.p.memLimit = Math.max(agg.p.memLimit, s.memLimit);
-
-      const before = prev.get(s.container);
-      const dt = before ? (t - before.t) / 1000 : 0;
-      if (before && dt > 0) {
-        for (const key of COUNTERS) {
-          const delta = s[key] - before.counters[key];
-          const rate = delta < 0 ? 0 : delta / dt;
-          agg.p[key] = Math.max(agg.p[key] ?? 0, rate);
-        }
-      }
-      if (!before || dt > 0) {
-        prev.set(s.container, {
-          t,
-          counters: { netRx: s.netRx, netTx: s.netTx, blkRead: s.blkRead, blkWrite: s.blkWrite },
-        });
-      }
-    }
-    return [...byService.values()].map(({ n, p }) => ({ ...p, cpu: p.cpu / n, mem: p.mem / n }));
-  }
-
-  return { ingest, reset: () => prev.clear() };
+  return {
+    ingest,
+    /** Emit the pending tick (e.g. when the stream ends). */
+    flush: finalize,
+    reset() {
+      prev.clear();
+      pending = new Map();
+    },
+  };
 }
 
 /**
