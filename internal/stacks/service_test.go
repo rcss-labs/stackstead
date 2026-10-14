@@ -1317,3 +1317,31 @@ func TestStaticIPOnProjectLocalNetworkIsAcceptedBeforeFirstUp(t *testing.T) {
 		}
 	})
 }
+
+func TestFailedSaveRevertsProjectEvenWhenRequestContextIsCancelled(t *testing.T) {
+	h := newHarness(t)
+	setupWeb(t, h)
+	bg := context.Background()
+	old, _ := h.reg.Get(bg, "web")
+	if err := h.reg.SetProject(bg, "web", "claimed"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(bg)
+	cancel()
+	saveErr := errors.New("save failed")
+	if err := h.svc.RevertProject(ctx, old, saveErr); !errors.Is(err, saveErr) {
+		t.Fatalf("err = %v", err)
+	}
+	if e, _ := h.reg.Get(bg, "web"); e.Project != old.Project {
+		t.Errorf("project = %q, want %q", e.Project, old.Project)
+	}
+}
+
+func TestFailedRevertIsJoinedWithSaveError(t *testing.T) {
+	h := newHarness(t)
+	saveErr := errors.New("save failed")
+	err := h.svc.RevertProject(context.Background(), stacks.Entry{Name: "ghost", Project: "p"}, saveErr)
+	if !errors.Is(err, saveErr) || !errors.Is(err, stacks.ErrStackNotFound) {
+		t.Errorf("err = %v", err)
+	}
+}

@@ -136,8 +136,7 @@ func (s *Service) commit(ctx context.Context, e Entry, old, edited *composefile.
 			return EditResult{}, s.mapProjectTaken(ctx, err, project, e.Name)
 		}
 		if err := composefile.Save(e.ComposePath, candidate, hash); err != nil {
-			s.reg.SetProject(ctx, e.Name, e.Project)
-			return EditResult{}, err
+			return EditResult{}, s.revertProject(ctx, e, err)
 		}
 		return EditResult{Hash: composefile.Hash(candidate), ChecksPartial: partial}, nil
 	}
@@ -145,6 +144,16 @@ func (s *Service) commit(ctx context.Context, e Entry, old, edited *composefile.
 		return EditResult{}, err
 	}
 	return EditResult{Hash: composefile.Hash(candidate), ChecksPartial: partial}, nil
+}
+
+// revertProject hands the claimed project back after a failed save and returns
+// saveErr, joined with the revert's own error if that fails too.
+func (s *Service) revertProject(ctx context.Context, e Entry, saveErr error) error {
+	// Not the request context: a cancelled request must not leave the claim behind.
+	if err := s.reg.SetProject(context.WithoutCancel(ctx), e.Name, e.Project); err != nil {
+		return errors.Join(saveErr, fmt.Errorf("revert project of stack %s to %s: %w", e.Name, e.Project, err))
+	}
+	return saveErr
 }
 
 // validateCandidate runs `compose config` on data placed next to the real
