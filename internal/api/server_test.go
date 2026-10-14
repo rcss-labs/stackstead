@@ -46,7 +46,7 @@ func newEnvWith(t *testing.T, setupToken string, tweak func(*api.Options)) *test
 	}
 	t.Cleanup(func() { db.Close() })
 	clock := &fakeClock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
-	svc, err := auth.NewService(db, clock.Now)
+	svc, err := auth.NewService(db, clock.Now, auth.WithFastHashingForTests())
 	if err != nil {
 		t.Fatal(err)
 	}
