@@ -1,0 +1,5 @@
+{"read":"2026-10-14T10:00:01.5Z","cpu_stats":{"cpu_usage":{"total_usage":2000000000},"system_cpu_usage":20000000000,"online_cpus":4},
+ "precpu_stats":{"cpu_usage":{"total_usage":1000000000},"system_cpu_usage":10000000000,"online_cpus":4},
+ "memory_stats":{"usage":300000000,"limit":1000000000,"stats":{"anon":1,"inactive_file":50000000,"active_file":7}},
+ "networks":{"eth0":{"rx_bytes":1000,"tx_bytes":2000},"eth1":{"rx_bytes":10,"tx_bytes":20}},
+ "blkio_stats":{"io_service_bytes_recursive":[{"major":8,"minor":0,"op":"read","value":4096},{"major":8,"minor":0,"op":"write","value":8192},{"major":8,"minor":16,"op":"Read","value":1},{"major":8,"minor":16,"op":"WRITE","value":2},{"major":8,"minor":0,"op":"Total","value":99}]}}
