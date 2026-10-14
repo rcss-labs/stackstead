@@ -1,0 +1,82 @@
+# nfpm definition for the deb and rpm packages. Version, prerelease and arch
+# are templated from the environment by `make packages` (see the Makefile):
+#   ARCH=amd64|arm64  VERSION=X.Y.Z  PRERELEASE=<empty or rc1 etc.>  BIN=<built binary path>
+name: stackstead
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+prerelease: ${PRERELEASE}
+release: "1"
+maintainer: Stackstead maintainers <noreply@users.noreply.github.com>
+description: |
+  Docker stack manager with a web UI.
+  Manages Docker Compose stacks, their logs and metrics from a single binary.
+homepage: https://github.com/rcss-labs/stackstead
+license: AGPL-3.0-only
+section: admin
+priority: optional
+
+# /opt/stacks is deliberately not in the payload: lintian rejects files in /opt and
+# dpkg/rpm would delete the empty directory on remove. postinst/%post create it
+# (2775 stackstead:docker).
+
+# Docker is a weak dependency: Stackstead starts without it and reports that
+# Docker is missing, and Docker is often installed from Docker's own repository.
+recommends:
+  - docker-ce | docker.io
+
+contents:
+  - src: ${BIN}
+    dst: /usr/bin/stackstead
+    expand: true
+    file_info:
+      mode: 0755
+  - src: deploy/systemd/stackstead.service
+    dst: /usr/lib/systemd/system/stackstead.service
+    file_info:
+      mode: 0644
+  - src: deploy/config.example.yaml
+    dst: /etc/stackstead/config.yaml
+    type: config|noreplace
+    file_info:
+      mode: 0640
+      owner: root
+      group: stackstead
+  - dst: /var/lib/stackstead
+    type: dir
+    file_info:
+      mode: 0700
+      owner: stackstead
+      group: stackstead
+  - src: deploy/pkg/lintian-overrides
+    dst: /usr/share/lintian/overrides/stackstead
+    file_info:
+      mode: 0644
+    packager: deb
+  - src: deploy/pkg/copyright
+    dst: /usr/share/doc/stackstead/copyright
+    file_info:
+      mode: 0644
+    packager: deb
+  - src: LICENSE
+    dst: /usr/share/licenses/stackstead/LICENSE
+    type: license
+    file_info:
+      mode: 0644
+    packager: rpm
+
+overrides:
+  deb:
+    scripts:
+      preinstall: deploy/pkg/deb/preinst
+      postinstall: deploy/pkg/deb/postinst
+      preremove: deploy/pkg/deb/prerm
+      postremove: deploy/pkg/deb/postrm
+  rpm:
+    recommends:
+      - docker-ce
+    scripts:
+      preinstall: deploy/pkg/rpm/pre
+      postinstall: deploy/pkg/rpm/post
+      preremove: deploy/pkg/rpm/preun
+      postremove: deploy/pkg/rpm/postun

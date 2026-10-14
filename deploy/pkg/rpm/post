@@ -1,0 +1,62 @@
+#!/bin/sh
+# rpm %post: 1 = fresh install (enable+start), 2 = upgrade (try-restart).
+set -e
+
+R="${STACKSTEAD_PKG_ROOT:-}"
+UNIT=stackstead.service
+
+# systemctl is only usable on a host booted with systemd (not in chroots or
+# container image builds); every call is best-effort so a package operation
+# never fails because of the service manager.
+have_systemd() {
+    command -v systemctl >/dev/null 2>&1 && [ -d "$R/run/systemd/system" ]
+}
+
+svc() {
+    if have_systemd; then
+        systemctl "$@" || true
+    fi
+}
+
+ensure_dirs() {
+    mkdir -p "$R/opt/stacks"
+    chown stackstead:docker "$R/opt/stacks"
+    chmod 2775 "$R/opt/stacks"
+    mkdir -p "$R/var/lib/stackstead"
+    chown stackstead:stackstead "$R/var/lib/stackstead"
+    chmod 0700 "$R/var/lib/stackstead"
+    if [ -f "$R/etc/stackstead/config.yaml" ]; then
+        chgrp stackstead "$R/etc/stackstead/config.yaml"
+        chmod 0640 "$R/etc/stackstead/config.yaml"
+    fi
+}
+
+print_fresh_install_hints() {
+    printf '%s\n' \
+        'Stackstead is installed and started. Finish setup in a browser on this host:' \
+        '  http://127.0.0.1:8420' \
+        'To set it up from another machine, use the one-time setup token from:' \
+        '  journalctl -u stackstead' \
+        'Config: /etc/stackstead/config.yaml (restart the service after editing).'
+}
+
+warn_if_no_docker() {
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "Warning: Docker was not found on this host. Stackstead starts without it" >&2
+        echo "but cannot manage stacks until Docker Engine and the compose plugin are installed." >&2
+    fi
+}
+
+svc daemon-reload
+ensure_dirs
+case "${1:-1}" in
+    1)
+        svc enable --now "$UNIT"
+        print_fresh_install_hints
+        ;;
+    *)
+        svc try-restart "$UNIT"
+        ;;
+esac
+warn_if_no_docker
+exit 0
