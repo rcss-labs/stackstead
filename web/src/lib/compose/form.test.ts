@@ -57,7 +57,7 @@ describe('toForm / fromForm', () => {
   });
 
   it('uses build and omits an empty dockerfile when source is build', () => {
-    const f = form({ source: 'build', buildContext: '.', image: 'ignored' });
+    const f = form({ source: 'build', buildContext: '.', image: '' });
     expect(fromForm(f)).toEqual({ build: { context: '.' }, limits: {} });
   });
 
@@ -146,12 +146,12 @@ describe('validateForm', () => {
   describe('source', () => {
     it('image required', () => bad(form({ image: ' ' }), 'image'));
     it('build context required', () => bad(form({ source: 'build', buildContext: '' }), 'build.context'));
-    it('build ignores image', () => ok(form({ source: 'build', buildContext: '.', image: '' })));
+    it('build does not require an image', () => ok(form({ source: 'build', buildContext: '.', image: '' })));
     it('is skipped when image or build is read-only', () => ok(form({ image: '', readOnly: new Set(['build']) })));
   });
 
   describe('ports', () => {
-    const good = ['8080:80', '127.0.0.1:8080:80', '8000-8002:80-82', '53:53/udp', '[::1]:80:80', '80', '${PORT:-80}:80', '$P:80', '127.0.0.1::80', '0:80', '8000-8010:80', '80-82', '::1:80:80', '53:53/SCTP'];
+    const good = ['[fe80::1%eth0]:80:80', '8080:80', '127.0.0.1:8080:80', '8000-8002:80-82', '53:53/udp', '[::1]:80:80', '80', '${PORT:-80}:80', '$P:80', '127.0.0.1::80', '0:80', '8000-8010:80', '80-82', '::1:80:80', '53:53/SCTP'];
     for (const p of good) it(`accepts ${p}`, () => ok(form({ ports: [p] })));
     const rejected = ['65536:80', '80:0', 'abc', '8000-8002:80-81', '8002-8000:80', '1.2.3.4:80', '[::1:80:80', '999.1.1.1:80:80', '80/foo', '-1:80'];
     for (const p of rejected) it(`rejects "${p}"`, () => bad(form({ ports: ['80', p] }), 'ports[1]'));
@@ -161,8 +161,8 @@ describe('validateForm', () => {
   });
 
   describe('env', () => {
-    for (const n of ['A', '_x', 'A1_b']) it(`accepts ${n}`, () => ok(form({ env: [{ name: n, value: '' }] })));
-    for (const n of ['1A', 'a-b', 'a b', 'A=B']) it(`rejects ${n}`, () => bad(form({ env: [{ name: n, value: '' }] }), 'env[0].name'));
+    for (const n of ['A', '_x', 'A1_b', 'discovery.type', 'a-b', '1A']) it(`accepts ${n}`, () => ok(form({ env: [{ name: n, value: '' }] })));
+    for (const n of ['a b', 'A=B', 'a\tb', 'a\u0001']) it(`rejects ${n}`, () => bad(form({ env: [{ name: n, value: '' }] }), 'env[0].name'));
     it('flags the second duplicate only', () => {
       const e = validateForm(form({ env: [{ name: 'A', value: '1' }, { name: 'B', value: '' }, { name: 'A', value: '2' }] }), {});
       expect(Object.keys(e)).toEqual(['env[2].name']);
@@ -174,14 +174,15 @@ describe('validateForm', () => {
   describe('limits', () => {
     for (const c of ['0.5', '2', '.5', '1.25']) it(`cpus accepts ${c}`, () => ok(form({ cpus: c })));
     for (const c of ['0', '0.0', '-1', 'a', '1.', '1e3', '1,5']) it(`cpus rejects ${c}`, () => bad(form({ cpus: c }), 'limits.cpus'));
-    for (const m of ['512', '512M', '1g', '1.5G', '64k', '10MB', '2Gb']) it(`memory accepts ${m}`, () => ok(form({ memory: m })));
-    for (const m of ['M', '-5M', '1TB', 'abc', '1 G', '1.G']) it(`memory rejects ${m}`, () => bad(form({ memory: m }), 'limits.memory'));
+    for (const m of ['512', '512M', '1g', '1.5G', '64k', '10MB', '2Gb', '1GiB', '512Mi', '1TB', '512 M', '1pb']) it(`memory accepts ${m}`, () => ok(form({ memory: m })));
+    for (const m of ['M', '-5M', 'abc', '1.G', '1  G', '1X']) it(`memory rejects ${m}`, () => bad(form({ memory: m }), 'limits.memory'));
   });
 
   describe('networks', () => {
     for (const ip of ['10.0.0.5', '255.255.255.255', '0.0.0.0']) it(`accepts ${ip}`, () => ok(form({ networks: [{ name: 'lan', ipv4Address: ip }] })));
     for (const ip of ['10.0.0', '256.0.0.1', '10.0.0.5.1', 'a.b.c.d', '01.0.0.1', '::1', '10.0.0.-1']) it(`rejects ${ip}`, () => bad(form({ networks: [{ name: 'a' }, { name: 'lan', ipv4Address: ip }].map((n) => ({ ipv4Address: '', ...n })) }), 'networks[1].ipv4Address'));
-    it('ignores the ip when the row has no name', () => ok(form({ networks: [{ name: '', ipv4Address: 'garbage' }] })));
+    it('flags an ip without a network name', () => bad(form({ networks: [{ name: '', ipv4Address: '10.0.0.5' }] }), 'networks[0].name'));
+    it('blank row is fine', () => ok(form({ networks: [{ name: '', ipv4Address: '' }] })));
     it('flags a duplicate network name', () => {
       bad(form({ networks: [{ name: 'a', ipv4Address: '' }, { name: 'a', ipv4Address: '' }] }), 'networks[1].name');
     });
@@ -189,9 +190,9 @@ describe('validateForm', () => {
 
   describe('healthcheck', () => {
     it('is not validated when disabled', () => ok(form({ healthcheck: { ...hc({ test: '', interval: 'x', retries: '-1' }), enabled: false } })));
-    it('requires a test', () => bad(form({ healthcheck: hc({ test: '  ' }) }), 'healthcheck.test'));
-    for (const d of ['30s', '500ms', '2m', '1h']) it(`accepts duration ${d}`, () => ok(form({ healthcheck: hc({ interval: d, timeout: d, startPeriod: d }) })));
-    for (const d of ['30', 's', '1.5s', '1m30s', '-1s', '1d']) {
+    it('does not require a test (timing-only is valid compose)', () => ok(form({ healthcheck: hc({ test: '', interval: '5s' }) })));
+    for (const d of ['30s', '500ms', '2m', '1h', '1m30s', '1.5s', '2h45m', '0s', '0', '10us', '5ns']) it(`accepts duration ${d}`, () => ok(form({ healthcheck: hc({ interval: d, timeout: d, startPeriod: d }) })));
+    for (const d of ['30', 's', '1d', '1 s', 'abc']) {
       it(`rejects duration ${d}`, () => {
         const e = validateForm(form({ healthcheck: hc({ interval: d, timeout: d, startPeriod: d }) }), {});
         expect(Object.keys(e).sort()).toEqual(['healthcheck.interval', 'healthcheck.startPeriod', 'healthcheck.timeout']);
@@ -223,6 +224,11 @@ describe('mapServerErrors', () => {
     expect(m('name')).toEqual({ name: 'boom' });
     expect(m('build.context')).toEqual({ 'build.context': 'boom' });
     expect(m('image')).toEqual({ image: 'boom' });
+  });
+  it('handles dotted service names and ignores other services', () => {
+    expect(mapServerErrors([{ field: 'services.a.b.ports[0]', message: 'x' }], f, 'a.b')).toEqual({ 'ports[0]': 'x' });
+    expect(mapServerErrors([{ field: 'services.other.ports[0]', message: 'x' }], f, 'web')).toEqual({});
+    expect(mapServerErrors([{ field: 'services.web.ports[0]', message: 'x' }], f, 'web')).toEqual({ 'ports[0]': 'x' });
   });
   it('strips a services.<name>. prefix', () => {
     expect(m('services.web.ports[0]')).toEqual({ 'ports[0]': 'boom' });
@@ -258,4 +264,58 @@ describe('fieldOf', () => {
     ['unknown', 'name'],
   ];
   for (const [path, group] of cases) it(`${path} -> ${group}`, () => expect(fieldOf(path)).toBe(group));
+});
+
+describe('round-trip identity of real-world shapes', () => {
+  const same = (cfg: ServiceConfig, ro: import('../api/types').Field[] = []) => expect(fromForm(toForm(cfg, ro))).toEqual(cfg);
+
+  it('keeps image alongside build', () => same({ image: 'me/app:1', build: { context: '.' }, limits: {} }));
+  it('keeps exec-form args containing spaces', () =>
+    same({ image: 'a', limits: {}, healthcheck: { test: ['CMD', 'sh', '-c', 'curl -f http://x || exit 1'] } }));
+  it('keeps folded shell text that has surrounding whitespace', () =>
+    same({ image: 'a', limits: {}, healthcheck: { test: ['CMD-SHELL', 'curl -f http://x\n'] } }));
+  it('keeps a restart policy outside the simple union', () => same({ image: 'a', limits: {}, restart: 'on-failure:3' }));
+  it('keeps unusual but valid values', () =>
+    same({
+      image: 'a',
+      limits: { memory: '1GiB' },
+      environment: [{ name: 'discovery.type', value: 'single-node' }],
+      healthcheck: { interval: '1m30s', timeout: '1.5s', retries: 0 },
+    }));
+
+  it('passes validation', () => {
+    const f = toForm(
+      {
+        image: 'a',
+        limits: { memory: '1GiB' },
+        environment: [{ name: 'discovery.type', value: 'single-node' }],
+        healthcheck: { interval: '1m30s', timeout: '1.5s' },
+      },
+      [],
+    );
+    expect(validateForm(f, {})).toEqual({});
+  });
+
+  it('does not block unchanged legacy values the stricter rules would reject', () => {
+    const f = toForm({ image: 'a', limits: { cpus: '0' }, ports: ['bogus:thing'] }, []);
+    expect(validateForm(f, {})).toEqual({});
+    f.ports.push('bogus2');
+    expect(Object.keys(validateForm(f, {}))).toEqual(['ports[1]']);
+  });
+
+  describe('original config', () => {
+    const cfg: ServiceConfig = { image: 'app', limits: { memory: '1G' }, ports: ['8080:80'] };
+    it('survives only when passed explicitly after a structuredClone', () => {
+      const copy = structuredClone(toForm(cfg, ['ports', 'limits']));
+      expect(() => fromForm(copy)).toThrow(/original/);
+      expect(fromForm(copy, cfg)).toEqual(cfg);
+    });
+    it('throws on a copy lacking the original when read-only groups exist, not silently clearing', () => {
+      const copy = { ...toForm(cfg, ['ports']) };
+      expect(() => fromForm(copy)).toThrow();
+    });
+    it('needs no original without read-only groups', () => {
+      expect(fromForm(structuredClone(toForm(cfg, [])))).toEqual(cfg);
+    });
+  });
 });

@@ -12,7 +12,8 @@ export interface ServiceForm {
   networkMode: string;
   cpus: string;
   memory: string;
-  restart: '' | 'no' | 'always' | 'unless-stopped' | 'on-failure';
+  /** Usually '', 'no', 'always', 'unless-stopped' or 'on-failure'; any other value (e.g. 'on-failure:3') is kept as is. */
+  restart: string;
   healthcheck: {
     enabled: boolean;
     test: string;
@@ -30,10 +31,11 @@ const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 // Same wording as the server so a client-side and a server-side name error read alike.
 const NAME_MSG =
   "name must start with a lowercase letter or digit, contain only lowercase letters, digits, '-' and '_', and be at most 63 characters";
-const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const MEMORY_RE = /^\d+(\.\d+)?[kKmMgG]?[bB]?$/;
+// go-units RAMInBytes, as used by compose.
+const MEMORY_RE = /^(\d+(\.\d+)*) ?([kKmMgGtTpP])?[iI]?[bB]?$/;
 const CPUS_RE = /^(\d+(\.\d+)?|\.\d+)$/;
-const DURATION_RE = /^\d+(ms|s|m|h)$/;
+// Go time.ParseDuration syntax.
+const DURATION_RE = /^(0|[+-]?((\d+(\.\d*)?|\.\d+)(ns|us|µs|μs|ms|s|m|h))+)$/;
 const RETRIES_RE = /^\d+$/;
 
 /** The unedited config, kept off the enumerable keys so read-only groups can be copied through on save. */
@@ -77,7 +79,7 @@ export function toForm(cfg: ServiceConfig, readOnly: Field[]): ServiceForm {
   f.networkMode = cfg.networkMode ?? '';
   f.cpus = cfg.limits?.cpus ?? '';
   f.memory = cfg.limits?.memory ?? '';
-  f.restart = (cfg.restart ?? '') as ServiceForm['restart'];
+  f.restart = cfg.restart ?? '';
   if (cfg.healthcheck) {
     const h = cfg.healthcheck;
     f.healthcheck = {
@@ -103,8 +105,20 @@ function textToHealthcheckTest(text: string): string[] {
   return ['CMD-SHELL', t];
 }
 
-export function fromForm(f: ServiceForm): ServiceConfig {
-  const orig: ServiceConfig | undefined = (f as unknown as Record<string, ServiceConfig | undefined>)[ORIG];
+function origOf(f: ServiceForm, explicit?: ServiceConfig): ServiceConfig | undefined {
+  return explicit ?? (f as unknown as Record<string, ServiceConfig | undefined>)[ORIG];
+}
+
+/**
+ * `original` defaults to the config `toForm` stored on the form. That hidden copy does not survive
+ * structuredClone, spread or reactive snapshots, so a form with read-only groups and no original
+ * throws instead of silently clearing those groups on save.
+ */
+export function fromForm(f: ServiceForm, original?: ServiceConfig): ServiceConfig {
+  const orig = origOf(f, original);
+  if (f.readOnly.size > 0 && !orig) {
+    throw new Error('fromForm: the original config is required when the form has read-only fields (pass it explicitly)');
+  }
   const ro = (g: Field) => f.readOnly.has(g);
   const cfg: ServiceConfig = { limits: {} };
   const set = <K extends keyof ServiceConfig>(k: K, v: ServiceConfig[K] | undefined) => {
@@ -117,6 +131,8 @@ export function fromForm(f: ServiceForm): ServiceConfig {
   } else if (f.source === 'build') {
     const context = f.buildContext.trim();
     if (context) cfg.build = f.dockerfile.trim() ? { context, dockerfile: f.dockerfile.trim() } : { context };
+    // compose allows image alongside build (the tag to give the built image); never drop it.
+    if (f.image.trim()) cfg.image = f.image.trim();
   } else if (f.image.trim()) {
     cfg.image = f.image.trim();
   }
@@ -155,7 +171,9 @@ export function fromForm(f: ServiceForm): ServiceConfig {
   } else if (f.healthcheck.enabled) {
     const h = f.healthcheck;
     const out: NonNullable<ServiceConfig['healthcheck']> = {};
-    if (h.test.trim()) out.test = textToHealthcheckTest(h.test);
+    const origTest = orig?.healthcheck?.test;
+    if (origTest && h.test === healthcheckToText(origTest)) out.test = [...origTest];
+    else if (h.test.trim()) out.test = textToHealthcheckTest(h.test);
     if (h.interval.trim()) out.interval = h.interval.trim();
     if (h.timeout.trim()) out.timeout = h.timeout.trim();
     if (h.startPeriod.trim()) out.startPeriod = h.startPeriod.trim();
@@ -173,6 +191,7 @@ function isIPv4(s: string): boolean {
 }
 
 function isIPv6(s: string): boolean {
+  s = s.replace(/%.+$/, ''); // zone, e.g. fe80::1%eth0
   if (!s.includes(':') || !/^[0-9a-fA-F:.]+$/.test(s)) return false;
   const doubles = s.split('::').length - 1;
   if (doubles > 1 || s.includes(':::')) return false;
@@ -252,9 +271,14 @@ function checkPort(spec: string): string | null {
   return null;
 }
 
-export function validateForm(f: ServiceForm, opts: { name?: string; requireName?: boolean }): FormErrors {
+export function validateForm(f: ServiceForm, opts: { name?: string; requireName?: boolean; original?: ServiceConfig }): FormErrors {
   const errors: FormErrors = {};
   const ro = (g: Field) => f.readOnly.has(g);
+  // Like the server, only complain about what the user changed: values already in the file are not ours to block.
+  const orig = origOf(f, opts.original);
+  const origPorts = new Set(orig?.ports ?? []);
+  const origEnv = new Set((orig?.environment ?? []).map((e) => `${e.name}\0${e.value}`));
+  const origNets = new Set((orig?.networks ?? []).map((n) => `${n.name}\0${n.ipv4Address ?? ''}`));
 
   if (opts.requireName || opts.name !== undefined) {
     const name = opts.name ?? '';
@@ -272,8 +296,9 @@ export function validateForm(f: ServiceForm, opts: { name?: string; requireName?
 
   if (!ro('ports')) {
     f.ports.forEach((p, i) => {
-      if (p.trim() === '') return;
-      const msg = checkPort(p.trim());
+      const spec = p.trim();
+      if (spec === '' || origPorts.has(spec)) return;
+      const msg = checkPort(spec);
       if (msg) errors[`ports[${i}]`] = msg;
     });
   }
@@ -283,9 +308,10 @@ export function validateForm(f: ServiceForm, opts: { name?: string; requireName?
     f.env.forEach((e, i) => {
       if (e.name === '' && e.value === '') return;
       const at = `env[${i}].name`;
+      const unchanged = origEnv.has(`${e.name}\0${e.value}`);
       if (e.name === '') errors[at] = 'variable name is required';
-      else if (!ENV_NAME_RE.test(e.name)) errors[at] = 'name must start with a letter or underscore and contain only letters, digits and underscores';
-      else if (seen.has(e.name)) errors[at] = `duplicate variable ${e.name}`;
+      else if (!unchanged && /[=\s\p{Cc}]/u.test(e.name)) errors[at] = "name must not contain '=', whitespace or control characters";
+      else if (!unchanged && seen.has(e.name)) errors[at] = `duplicate variable ${e.name}`;
       seen.add(e.name);
     });
   }
@@ -294,33 +320,44 @@ export function validateForm(f: ServiceForm, opts: { name?: string; requireName?
     const seen = new Set<string>();
     f.networks.forEach((n, i) => {
       const name = n.name.trim();
-      if (name === '') return;
+      const ip = n.ipv4Address.trim();
+      if (name === '') {
+        if (ip !== '') errors[`networks[${i}].name`] = 'network name is required when an IP address is set';
+        return;
+      }
       if (seen.has(name)) errors[`networks[${i}].name`] = `duplicate network ${name}`;
       seen.add(name);
-      const ip = n.ipv4Address.trim();
-      if (ip !== '' && !isIPv4(ip)) errors[`networks[${i}].ipv4Address`] = `"${ip}" is not a valid IPv4 address`;
+      if (ip !== '' && !origNets.has(`${name}\0${ip}`) && !isIPv4(ip)) {
+        errors[`networks[${i}].ipv4Address`] = `"${ip}" is not a valid IPv4 address`;
+      }
     });
   }
 
   if (!ro('limits')) {
     const cpus = f.cpus.trim();
-    if (cpus !== '' && (!CPUS_RE.test(cpus) || Number(cpus) <= 0)) errors['limits.cpus'] = 'cpus must be a positive number, e.g. 0.5';
+    if (cpus !== '' && cpus !== orig?.limits?.cpus && (!CPUS_RE.test(cpus) || Number(cpus) <= 0)) {
+      errors['limits.cpus'] = 'cpus must be a positive number, e.g. 0.5';
+    }
     const memory = f.memory.trim();
-    if (memory !== '' && !MEMORY_RE.test(memory)) errors['limits.memory'] = 'memory must look like 512M or 1.5G';
+    if (memory !== '' && memory !== orig?.limits?.memory && !MEMORY_RE.test(memory)) {
+      errors['limits.memory'] = 'memory must look like 512M, 1.5G or 1GiB';
+    }
   }
 
   if (!ro('healthcheck') && f.healthcheck.enabled) {
     const h = f.healthcheck;
-    if (!h.test.trim()) errors['healthcheck.test'] = 'a health check command is required';
-    const durations: [string, string][] = [
-      ['interval', h.interval],
-      ['timeout', h.timeout],
-      ['startPeriod', h.startPeriod],
+    const o = orig?.healthcheck;
+    const durations: [string, string, string | undefined][] = [
+      ['interval', h.interval, o?.interval],
+      ['timeout', h.timeout, o?.timeout],
+      ['startPeriod', h.startPeriod, o?.startPeriod],
     ];
-    for (const [key, v] of durations) {
-      if (v.trim() !== '' && !DURATION_RE.test(v.trim())) errors[`healthcheck.${key}`] = 'use a duration like 30s, 500ms, 2m or 1h';
+    for (const [key, v, was] of durations) {
+      const t = v.trim();
+      if (t !== '' && t !== was && !DURATION_RE.test(t)) errors[`healthcheck.${key}`] = 'use a duration like 30s, 1m30s, 500ms or 1h';
     }
-    if (h.retries.trim() !== '' && !RETRIES_RE.test(h.retries.trim())) errors['healthcheck.retries'] = 'retries must be a whole number, 0 or more';
+    const r = h.retries.trim();
+    if (r !== '' && r !== String(o?.retries) && !RETRIES_RE.test(r)) errors['healthcheck.retries'] = 'retries must be a whole number, 0 or more';
   }
   return errors;
 }
@@ -336,8 +373,7 @@ function rowIndex(rows: boolean[], serverIndex: number): number | null {
   return null;
 }
 
-function mapPath(field: string, f: ServiceForm): string | null {
-  const path = field.replace(/^services\.[^.]+\./, '');
+function mapPath(field: string, f: ServiceForm, path: string): string | null {
   let m = /^(ports|volumes)\[(\d+)\]$/.exec(path);
   if (m) {
     const rows = f[m[1] as 'ports' | 'volumes'].map((p) => p.trim() !== '');
@@ -363,10 +399,22 @@ function mapPath(field: string, f: ServiceForm): string | null {
   return null;
 }
 
-export function mapServerErrors(fields: FieldError[], f: ServiceForm): FormErrors {
+/**
+ * `service` is the service being edited: errors qualified with `services.<service>.` are mapped,
+ * errors qualified with another service are ignored. Without it any `services.<x>.` prefix is stripped.
+ */
+export function mapServerErrors(fields: FieldError[], f: ServiceForm, service?: string): FormErrors {
   const errors: FormErrors = {};
   for (const fe of fields) {
-    const path = mapPath(fe.field, f) ?? '_form';
+    let local = fe.field;
+    if (service !== undefined) {
+      const prefix = `services.${service}.`;
+      if (local.startsWith(prefix)) local = local.slice(prefix.length);
+      else if (local.startsWith('services.')) continue;
+    } else {
+      local = local.replace(/^services\.[^.]+\./, '');
+    }
+    const path = mapPath(fe.field, f, local) ?? '_form';
     errors[path] = errors[path] ? `${errors[path]}; ${fe.message}` : fe.message;
   }
   return errors;
