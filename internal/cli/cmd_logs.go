@@ -19,16 +19,20 @@ import (
 	"github.com/rcss-labs/stackstead/internal/client"
 )
 
-// liveStreamBackoff is the reconnect backoff of logs, metrics --live and
-// events; tests shrink it.
-var liveStreamBackoff = struct{ Min, Max time.Duration }{time.Second, 30 * time.Second}
+// streamBackoff is the reconnect backoff of every stream command (operation
+// streams, logs, metrics --live, events); tests shrink it.
+var streamBackoff = struct{ Min, Max time.Duration }{time.Second, 30 * time.Second}
 
-// liveStreamOptions builds the stream options shared by every streaming
-// command: the backoff, an optional resume id, and a reconnect note on stderr.
-func liveStreamOptions(env *Env, lastID func() string) client.StreamOptions {
+// streamOptions builds the stream options shared by every streaming command:
+// the backoff, an optional resume id, and a reconnect note on stderr (omitted
+// when quiet, for machine-readable output).
+func streamOptions(env *Env, lastID func() string, quiet bool) client.StreamOptions {
 	opts := client.StreamOptions{LastEventID: lastID}
-	opts.Backoff.Min, opts.Backoff.Max = liveStreamBackoff.Min, liveStreamBackoff.Max
+	opts.Backoff.Min, opts.Backoff.Max = streamBackoff.Min, streamBackoff.Max
 	opts.OnReconnect = func(attempt int, err error) {
+		if quiet {
+			return
+		}
 		if err != nil {
 			fmt.Fprintf(env.Stderr, "stream interrupted (%s); reconnecting (attempt %d)\n", cleanText(err.Error()), attempt)
 			return
@@ -150,7 +154,7 @@ func logsCommand() *Command {
 			q := client.LogsQuery{Follow: follow, Tail: tail, Since: since, Service: service}
 			return withAPI(env, g, func(c *client.Client, _ string, _ Context) error {
 				var cursors logCursors
-				opts := liveStreamOptions(env, cursors.String)
+				opts := streamOptions(env, cursors.String, false)
 				err := c.StreamLogs(ctx, args[0], q, opts, func(ev client.Event) error {
 					return handleLogEvent(env, p, &cursors, ev, timestamps, raw)
 				})

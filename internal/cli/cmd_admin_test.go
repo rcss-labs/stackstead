@@ -236,3 +236,24 @@ func TestRevokeSessionsCount(t *testing.T) {
 	wantCode(t, runLocal(env, "admin", "revoke-sessions", "--config", h.cfgPath), ExitOK)
 	mustContain(t, "stdout", env.Out.String(), "3")
 }
+
+func TestSetPasswordPromptsWithConfirmOnTTY(t *testing.T) {
+	h := newLocalHost(t, true)
+	env := newTestEnv(t, nil)
+	env.IsTerminal = func(uintptr) bool { return true }
+	stubPasswords(t, goodPassword, goodPassword)
+	wantCode(t, runLocal(env, "admin", "set-password", "--config", h.cfgPath), ExitOK)
+	mustContain(t, "stdout", env.Out.String(), "created")
+	mustContain(t, "prompt", env.Err.String(), "Password", "Confirm")
+}
+
+func TestSetPasswordTTYMismatchExits6AndChangesNothing(t *testing.T) {
+	h := newLocalHost(t, true)
+	env := newTestEnv(t, nil)
+	env.IsTerminal = func(uintptr) bool { return true }
+	stubPasswords(t, goodPassword, goodPassword+"x")
+	wantCode(t, runLocal(env, "admin", "set-password", "--config", h.cfgPath), ExitValidation)
+	if countUsers(t, h.dbPath) != 0 {
+		t.Error("a mismatched confirmation still created the admin")
+	}
+}

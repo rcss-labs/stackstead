@@ -19,7 +19,7 @@ import (
 
 const t9Session = "T9-SESSION-VALUE-0123456789"
 
-func init() { liveStreamBackoff.Min, liveStreamBackoff.Max = time.Millisecond, 2*time.Millisecond }
+func init() { streamBackoff.Min, streamBackoff.Max = time.Millisecond, 2*time.Millisecond }
 
 func t9Root() *Command {
 	return &Command{Name: "stackstead", Sub: []*Command{logsCommand(), metricsCommand(), eventsCommand()}}

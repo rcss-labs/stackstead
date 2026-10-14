@@ -247,8 +247,10 @@ func dbRestore(ctx context.Context, env *Env, cfg config.Config, src string, yes
 			if !stdinIsTerminal(env) {
 				return exitf(ExitUsage, "restore replaces %s; pass --yes to confirm", current)
 			}
-			prompt := fmt.Sprintf("Replace %s with %s? The current database is kept as a .bak file; sessions will be whatever the backup holds.", current, src)
-			if !askYesNo(env, prompt) {
+			question := fmt.Sprintf("Replace %s with %s? The current database is kept as a .bak file; sessions will be whatever the backup holds.", current, src)
+			if ok, err := confirm(env, question, false); err != nil {
+				return err
+			} else if !ok {
 				return exitf(ExitGeneral, "restore cancelled")
 			}
 		}

@@ -32,7 +32,7 @@ type healthReport struct {
 func healthCommand() *Command {
 	var lf localFlags
 	return &Command{
-		Name: "health", Short: "Check config, database, server, Docker and compose", Usage: "health [--config P]",
+		Name: "health", Short: "Check config, database, server, Docker and compose", Usage: "health [--config P] [-o json]",
 		Long:  "Exit 0 when everything is fine, 7 when the server, Docker or compose is unreachable, 1 for a config or database problem.",
 		Flags: lf.register,
 		Run: func(ctx context.Context, env *Env, g *globalFlags, _ []string) error {

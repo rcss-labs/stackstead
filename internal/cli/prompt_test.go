@@ -167,8 +167,12 @@ func TestReadSecretNonTTYWithoutSourceIsUsageError(t *testing.T) {
 	if c := exitCodeOf(t, err); c != ExitUsage {
 		t.Fatalf("code %d", c)
 	}
+	if !strings.Contains(err.Error(), "--password-stdin") || strings.Contains(err.Error(), "--password-file") {
+		t.Errorf("message %q must suggest --password-stdin only (the command has no --password-file)", err)
+	}
+	_, err = readSecret(context.Background(), e.Env, secretSource{AllowFile: true}, "Password: ", false)
 	if !strings.Contains(err.Error(), "--password-stdin or --password-file") {
-		t.Errorf("message %q", err)
+		t.Errorf("message %q must suggest both when the command has --password-file", err)
 	}
 }
 

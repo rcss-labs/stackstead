@@ -33,8 +33,8 @@ func adminCommand() *Command {
 	return &Command{
 		Name: "admin", Short: "Admin account and token commands (run as the service user)",
 		Sub: []*Command{
-			{Name: "set-password", Short: "Create the admin or reset its password", Usage: "admin set-password [--username U] (--password-stdin | --password-file F) [--config P]",
-				Long: "Works while the server runs. Resetting signs out every session. The password is read from one line of stdin or from a file; an interactive prompt is not available yet.",
+			{Name: "set-password", Short: "Create the admin or reset its password", Usage: "admin set-password [--username U] [--password-stdin | --password-file F] [--config P]",
+				Long: "Works while the server runs. Resetting signs out every session. The password is typed at the prompt (twice), or read from one line of stdin or from a file.",
 				Flags: func(fs *flag.FlagSet) {
 					lf.register(fs)
 					fs.StringVar(&username, "username", "", "admin username (default: the existing admin, else admin)")
@@ -128,24 +128,31 @@ func withMetricsStore(env *Env, cfg config.Config, fn func(*metrics.Store) error
 }
 
 func setPassword(ctx context.Context, env *Env, cfg config.Config, username string, fromStdin bool, file string) error {
-	switch {
-	case fromStdin && file != "":
+	if fromStdin && file != "" {
 		return exitf(ExitUsage, "use only one of --password-stdin and --password-file")
-	case !fromStdin && file == "":
-		return exitf(ExitUsage, "give the password with --password-stdin or --password-file")
 	}
-	var src io.Reader = env.Stdin
-	if file != "" {
-		f, err := os.Open(file)
-		if err != nil {
+	var password string
+	var err error
+	if !fromStdin && file == "" {
+		if !stdinIsTerminal(env) {
+			return exitf(ExitUsage, "give the password with --password-stdin or --password-file")
+		}
+		if password, err = readSecret(ctx, env, secretSource{AllowFile: true}, "Password: ", true); err != nil {
 			return err
 		}
-		defer f.Close()
-		src = f
-	}
-	password, err := readSecretLine(src)
-	if err != nil {
-		return err
+	} else {
+		var src io.Reader = env.Stdin
+		if file != "" {
+			f, err := os.Open(file)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			src = f
+		}
+		if password, err = readSecretLine(src); err != nil {
+			return err
+		}
 	}
 
 	db, err := openLocalDB(env, cfg, store.OpenOptions{})

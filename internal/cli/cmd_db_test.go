@@ -281,3 +281,16 @@ func TestRestoreAsksOnTTY(t *testing.T) {
 		t.Error("restore did not run after confirmation")
 	}
 }
+
+func TestRestoreConfirmationUsesSharedPromptOnStderr(t *testing.T) {
+	h := newLocalHost(t, true)
+	snap := snapshot(t, h)
+	env := newTestEnv(t, nil)
+	env.Stdin = strings.NewReader("n\n")
+	env.IsTerminal = func(uintptr) bool { return true }
+	wantCode(t, runLocal(env, "db", "restore", snap, "--config", h.cfgPath), ExitGeneral)
+	mustContain(t, "stderr", env.Err.String(), "[y/N]")
+	if env.Out.String() != "" {
+		t.Errorf("the question must not pollute stdout: %q", env.Out.String())
+	}
+}

@@ -19,6 +19,7 @@ import (
 	"github.com/rcss-labs/stackstead/internal/composecli"
 	"github.com/rcss-labs/stackstead/internal/config"
 	"github.com/rcss-labs/stackstead/internal/engine"
+	"github.com/rcss-labs/stackstead/internal/lockfile"
 	"github.com/rcss-labs/stackstead/internal/metrics"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 	"github.com/rcss-labs/stackstead/internal/state"
@@ -94,6 +95,17 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
 	}
+	// One server per data directory; db restore takes the same lock. Held until
+	// serve returns, after the database is closed.
+	lock, err := lockfile.Acquire(filepath.Join(cfg.DataDir, "stackstead.lock"))
+	if err != nil {
+		var held *lockfile.HeldError
+		if errors.As(err, &held) {
+			return exitf(ExitConflict, "another stackstead server is running (pid %d)", held.PID)
+		}
+		return err
+	}
+	defer lock.Release()
 	db, err := store.Open(filepath.Join(cfg.DataDir, "stackstead.db"))
 	if err != nil {
 		return err
@@ -186,6 +198,7 @@ func serve(ctx context.Context, env *Env, args []string) error {
 			FSRoots:    cfg.AllowedRoots,
 			Status:     dockerStatus,
 			Closing:    closing,
+			Version:    version.Get().Version,
 			Observe: api.ObserveSources{
 				Cache: cache, Sampler: sampler, Store: metricsStore, Engine: dockerEngine,
 			},
