@@ -136,7 +136,9 @@ func TestRestoreRollsBackWhenFinalRenameFails(t *testing.T) {
 	h := newLocalHost(t, true)
 	snap := snapshot(t, h)
 	addAdmin(t, h.dbPath, "admin")
-	os.WriteFile(h.dbPath+"-wal", []byte("stale-wal"), 0o600)
+	// The pre-restore checkpoint folds any WAL into the main file, so the
+	// database is compared after it has settled.
+	wantCode(t, runLocal(newTestEnv(t, nil), "db", "check", "--config", h.cfgPath), ExitOK)
 	dbBefore := readFile(t, h.dbPath)
 
 	orig := renameFile
@@ -154,9 +156,6 @@ func TestRestoreRollsBackWhenFinalRenameFails(t *testing.T) {
 	}
 	if readFile(t, h.dbPath) != dbBefore {
 		t.Error("the current database changed")
-	}
-	if readFile(t, h.dbPath+"-wal") != "stale-wal" {
-		t.Error("the current database's -wal was not put back")
 	}
 	for _, pattern := range []string{".restore-tmp", ".bak-*"} {
 		if m, _ := filepath.Glob(h.dbPath + pattern); len(m) != 0 {
@@ -274,4 +273,110 @@ func TestSetPasswordRejectsHugeInput(t *testing.T) {
 	err := runLocal(env, "admin", "set-password", "--password-stdin", "--config", h.cfgPath)
 	wantCode(t, err, ExitValidation)
 	mustContain(t, "error", errMessage(err), "too long")
+}
+
+func TestRestoreKeepsCommittedWalDataInBak(t *testing.T) {
+	h := newLocalHost(t, true)
+	snap := snapshot(t, h) // no users
+
+	// Reproduce a crashed server: a user committed only to the -wal.
+	live, err := store.OpenExisting(h.dbPath, store.OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := live.Exec("PRAGMA wal_autocheckpoint = 0"); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := auth.NewService(live, newTestEnv(t, nil).Now, auth.WithFastHashingForTests())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.CreateAdmin(context.Background(), "admin", "a-long-enough-password"); err != nil {
+		t.Fatal(err)
+	}
+	mainBytes, walBytes := readFile(t, h.dbPath), readFile(t, h.dbPath+"-wal")
+	live.Close() // checkpoints and removes the -wal; put the crashed state back
+	if len(walBytes) == 0 {
+		t.Fatal("setup: no WAL content")
+	}
+	os.Remove(h.dbPath + "-shm")
+	os.WriteFile(h.dbPath, []byte(mainBytes), 0o600)
+	os.WriteFile(h.dbPath+"-wal", []byte(walBytes), 0o600)
+
+	wantCode(t, runLocal(newTestEnv(t, nil), "db", "restore", snap, "--yes", "--config", h.cfgPath), ExitOK)
+	baks, _ := filepath.Glob(h.dbPath + ".bak-*")
+	var bak string
+	for _, b := range baks {
+		if !strings.HasSuffix(b, "-wal") {
+			bak = b
+		}
+	}
+	if bak == "" {
+		t.Fatal("no .bak- file kept")
+	}
+	alone := filepath.Join(t.TempDir(), "alone.db") // without any -wal beside it
+	if err := os.WriteFile(alone, []byte(readFile(t, bak)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if n := countUsers(t, alone); n != 1 {
+		t.Errorf("the kept database alone holds %d users, want 1 (committed WAL data was orphaned)", n)
+	}
+}
+
+func TestRestoreVerifiesTheTempCopy(t *testing.T) {
+	h := newLocalHost(t, true)
+	snap := snapshot(t, h)
+	addAdmin(t, h.dbPath, "admin")
+	dbBefore := readFile(t, h.dbPath)
+
+	orig := verifyDatabase
+	verifyDatabase = func(ctx context.Context, path string) (int, int64, error) {
+		if strings.HasSuffix(path, ".restore-tmp") {
+			return 0, 0, errors.New("quick_check failed (injected)")
+		}
+		return orig(ctx, path)
+	}
+	t.Cleanup(func() { verifyDatabase = orig })
+
+	err := runLocal(newTestEnv(t, nil), "db", "restore", snap, "--yes", "--config", h.cfgPath)
+	if codeFor(err) == ExitOK {
+		t.Fatal("restore reported success with an unverified copy")
+	}
+	if readFile(t, h.dbPath) != dbBefore || countUsers(t, h.dbPath) != 1 {
+		t.Error("the current database was replaced")
+	}
+	for _, pattern := range []string{".restore-tmp", ".bak-*"} {
+		if m, _ := filepath.Glob(h.dbPath + pattern); len(m) != 0 {
+			t.Errorf("leftover %v", m)
+		}
+	}
+}
+
+func TestRestoreAbortsWhenWalCannotBeMoved(t *testing.T) {
+	h := newLocalHost(t, true)
+	snap := snapshot(t, h)
+	addAdmin(t, h.dbPath, "admin")
+	dbBefore := readFile(t, h.dbPath)
+
+	orig := renameFile
+	renameFile = func(from, to string) error {
+		if from == h.dbPath+"-wal" {
+			return errors.New("injected -wal move failure")
+		}
+		return orig(from, to)
+	}
+	t.Cleanup(func() { renameFile = orig })
+
+	err := runLocal(newTestEnv(t, nil), "db", "restore", snap, "--yes", "--config", h.cfgPath)
+	if codeFor(err) == ExitOK {
+		t.Fatal("restore reported success although the -wal could not be moved")
+	}
+	if readFile(t, h.dbPath) != dbBefore || countUsers(t, h.dbPath) != 1 {
+		t.Error("the current database was replaced")
+	}
+	for _, pattern := range []string{".restore-tmp", ".bak-*"} {
+		if m, _ := filepath.Glob(h.dbPath + pattern); len(m) != 0 {
+			t.Errorf("leftover %v", m)
+		}
+	}
 }

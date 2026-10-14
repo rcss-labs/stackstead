@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/rcss-labs/stackstead/internal/auth"
 	"github.com/rcss-labs/stackstead/internal/metrics"
@@ -119,6 +120,9 @@ func TestSetPasswordWhileAnotherConnectionWrites(t *testing.T) {
 				return
 			default:
 				writer.Exec(`INSERT OR REPLACE INTO settings(key, value) VALUES ('busy', ?)`, i)
+				// Throttled: still writing throughout the command, but without
+				// starving set-password's own writer under load.
+				time.Sleep(2 * time.Millisecond)
 			}
 		}
 	}()

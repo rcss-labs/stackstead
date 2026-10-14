@@ -260,8 +260,11 @@ func dbRestore(ctx context.Context, env *Env, cfg config.Config, src string, yes
 		if err := store.Backup(ctx, srcDB, tmp); err != nil {
 			return fmt.Errorf("copy backup: %w", err)
 		}
-		schema, _, err := verifyDatabaseFile(ctx, tmp)
+		schema, _, err := verifyDatabase(ctx, tmp)
 		if err != nil {
+			return err
+		}
+		if err := checkpointCurrent(ctx, current); err != nil {
 			return err
 		}
 		bak, err := swapInDatabase(env, current, tmp)
@@ -299,6 +302,29 @@ func openRestoreSource(ctx context.Context, src string) (*sql.DB, error) {
 		return nil, exitf(ExitGeneral, "%s is not a usable database: %v", src, err)
 	}
 	return db, nil
+}
+
+// checkpointCurrent folds a WAL left by a crashed server into the current
+// database file, so committed rows live in the main file that is kept as the
+// .bak and are not orphaned in a -wal if the swap is interrupted. A missing
+// database is fine (nothing to protect).
+func checkpointCurrent(ctx context.Context, current string) error {
+	if _, err := os.Stat(current); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	db, err := store.OpenExisting(current, store.OpenOptions{AllowOlderSchema: true})
+	if err != nil {
+		return fmt.Errorf("open the current database to checkpoint it: %w", err)
+	}
+	defer db.Close()
+	var busy, logFrames, checkpointed int
+	if err := db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &logFrames, &checkpointed); err != nil {
+		return fmt.Errorf("checkpoint the current database before restoring: %w", err)
+	}
+	if busy != 0 {
+		return fmt.Errorf("checkpoint the current database before restoring: database is busy (is the server still running?)")
+	}
+	return nil
 }
 
 // swapInDatabase installs the verified file tmp as the current database. The
