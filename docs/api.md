@@ -5,11 +5,12 @@ too. Back to the [README](../README.md).
 
 ## API overview
 
-All routes except setup and login need a session cookie. Errors are
+All routes except health, setup and login need a session cookie. Errors are
 `{"error": "..."}`, with `"fields": [{field, message}]` for validation.
 
 | Method and path | Purpose |
 | --- | --- |
+| `GET /api/health` | liveness, no authentication: `{"ok": true}` (used by installers and monitors) |
 | `GET /api/stacks`, `POST /api/stacks` | list stacks with status; create a stack from an image or Dockerfile |
 | `POST /api/stacks/import` | register an existing compose file without modifying it |
 | `GET /api/stacks/{name}` | detail with services and containers |
@@ -20,7 +21,7 @@ All routes except setup and login need a session cookie. Errors are
 | `DELETE /api/stacks/{name}?volumes=true` | `compose down` then unregister (202) |
 | `GET /api/stacks/{name}/operations` | recent operations |
 | `GET /api/operations/{id}`, `/stream`, `POST .../cancel` | output, live SSE stream, cancel |
-| `GET /api/fs?path=`, `GET /api/networks`, `GET /api/status` | file browser, Docker networks, status (`docker`, `compose`, `events`: `connected` or `disconnected` for the container event stream, `metricsDegraded`: true while samples cannot be stored) |
+| `GET /api/fs?path=`, `GET /api/networks`, `GET /api/status` | file browser, Docker networks, status (`version` of the server, `docker`, `compose`, `events`: `connected` or `disconnected` for the container event stream, `metricsDegraded`: true while samples cannot be stored) |
 | `GET /api/operations?state=running` | operations across all stacks, optionally only running ones |
 | `GET /api/stacks/{name}/logs` | live container logs (SSE); every `log` event has an `id`, and `Last-Event-ID` resumes exactly |
 | `GET /api/stacks/{name}/metrics`, `.../metrics/live` | resource history (JSON) and live samples (SSE) |

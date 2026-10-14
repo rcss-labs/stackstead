@@ -361,7 +361,7 @@ func TestNetworksAndStatus(t *testing.T) {
 		t.Fatalf("networks = %d %s", rec.Code, rec.Body)
 	}
 	rec = env.do(t, "GET", "/api/status", "", withCookie(cookie))
-	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"docker":"ok","compose":"v2.30.0","events":"disconnected","metricsDegraded":false}` {
+	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"docker":"ok","compose":"v2.30.0","events":"disconnected","metricsDegraded":false,"version":""}` {
 		t.Fatalf("status = %d %s", rec.Code, rec.Body)
 	}
 }

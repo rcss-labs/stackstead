@@ -3,13 +3,9 @@ package api
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"math"
 	"net/http"
 	"sort"
@@ -18,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rcss-labs/stackstead/internal/apitypes"
 	"github.com/rcss-labs/stackstead/internal/engine"
 	"github.com/rcss-labs/stackstead/internal/metrics"
 	"github.com/rcss-labs/stackstead/internal/stacks"
@@ -128,19 +125,14 @@ func (s *server) sseWriteTimeout() time.Duration {
 
 // ---- logs ----
 
-type logEventDTO struct {
-	Service   string    `json:"service"`
-	Container string    `json:"container"`
-	Stream    string    `json:"stream"`
-	Time      time.Time `json:"time"`
-	Text      string    `json:"text"`
-}
-
-type logErrorDTO struct {
-	Service   string `json:"service"`
-	Container string `json:"container"`
-	Error     string `json:"error"`
-}
+type (
+	logEventDTO    = apitypes.LogEvent
+	logErrorDTO    = apitypes.LogError
+	metricPointDTO = apitypes.MetricPoint
+	sampleDTO      = apitypes.Sample
+	statusFlagsDTO = apitypes.StatusFlags
+	changeDTO      = apitypes.Change
+)
 
 type logItem struct {
 	id        string // SSE event id (a logCursor), empty when the line has no usable timestamp
@@ -381,20 +373,6 @@ func (s *server) handleLogs(w http.ResponseWriter, r *http.Request) {
 
 // ---- metrics history ----
 
-type metricPointDTO struct {
-	Time     string  `json:"time"`
-	Service  string  `json:"service"`
-	CPU      float64 `json:"cpu"`
-	Mem      uint64  `json:"mem"`
-	MemLimit uint64  `json:"memLimit"`
-	// Rates are bytes per second, summed across the service's replicas;
-	// absent when no replica has a previous bucket to diff against.
-	NetRx    *float64 `json:"netRxBytesPerSec,omitempty"`
-	NetTx    *float64 `json:"netTxBytesPerSec,omitempty"`
-	BlkRead  *float64 `json:"blkReadBytesPerSec,omitempty"`
-	BlkWrite *float64 `json:"blkWriteBytesPerSec,omitempty"`
-}
-
 func ceilSeconds(d time.Duration) time.Duration {
 	return ((d + time.Second - 1) / time.Second) * time.Second
 }
@@ -480,19 +458,6 @@ func (s *server) handleMetricsHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"points": out})
 }
 
-type sampleDTO struct {
-	Time      string  `json:"time"`
-	Service   string  `json:"service"`
-	Container string  `json:"container"`
-	CPU       float64 `json:"cpu"`
-	Mem       uint64  `json:"mem"`
-	MemLimit  uint64  `json:"memLimit"`
-	NetRx     uint64  `json:"netRx"`
-	NetTx     uint64  `json:"netTx"`
-	BlkRead   uint64  `json:"blkRead"`
-	BlkWrite  uint64  `json:"blkWrite"`
-}
-
 // handleMetricsLive streams "sample" events (raw per-container readings with
 // cumulative counters) for the stack's project. A subscriber the sampler
 // dropped for being slow gets "dropped" and the stream ends; the client
@@ -521,11 +486,6 @@ func (s *server) handleMetricsLive(w http.ResponseWriter, r *http.Request) {
 
 // ---- status events ----
 
-type statusFlagsDTO struct {
-	Events          string `json:"events"`
-	MetricsDegraded bool   `json:"metricsDegraded"`
-}
-
 func (s *server) statusFlags() statusFlagsDTO {
 	flags := statusFlagsDTO{Events: "disconnected"}
 	if o := s.opts.Observe; o != nil {
@@ -535,11 +495,6 @@ func (s *server) statusFlags() statusFlagsDTO {
 		flags.MetricsDegraded = o.Degraded()
 	}
 	return flags
-}
-
-type changeDTO struct {
-	Project string `json:"project"`
-	Seq     uint64 `json:"seq"`
 }
 
 type eventItem struct {
@@ -652,20 +607,32 @@ func (s *server) handleListOperations(w http.ResponseWriter, r *http.Request) {
 
 // ---- /metrics and its token ----
 
-// tokenHash returns the stored token hash, reading the store once and then
-// serving it from memory: /metrics is unauthenticated, so a flood of bad
-// requests must not turn into database reads. The token endpoints update the
-// cache, and they are the only writers.
+// tokenTTL bounds how stale the cached token hash may be.
+const tokenTTL = 5 * time.Second
+
+// tokenHash returns the stored token hash from a cache with a 5 s TTL, checked
+// on every call: /metrics is unauthenticated, so request volume must not turn
+// into database reads (at most one read per TTL), yet a token rotated or
+// cleared offline by `stackstead admin metrics-token` stops working within the
+// TTL even while requests keep matching. The token endpoints write through the
+// cache. If a refresh fails, the last cached hash keeps being used (and the
+// failure is logged at most once per TTL); only a failed first load is an error.
 func (s *server) tokenHash(ctx context.Context) (string, error) {
 	s.tokenMu.Lock()
 	defer s.tokenMu.Unlock()
-	if !s.tokenLoaded {
-		h, err := s.opts.Observe.TokenHash(ctx)
-		if err != nil {
+	if s.tokenLoaded && s.opts.Now().Sub(s.tokenLoadAt) < tokenTTL {
+		return s.tokenCache, nil
+	}
+	h, err := s.opts.Observe.TokenHash(ctx)
+	if err != nil {
+		if !s.tokenLoaded {
 			return "", err
 		}
-		s.tokenCache, s.tokenLoaded = h, true
+		s.tokenLoadAt = s.opts.Now() // back off: retry after the next TTL
+		s.opts.Logger.Warn("metrics token refresh failed, using cached hash", "err", err)
+		return s.tokenCache, nil
 	}
+	s.tokenCache, s.tokenLoaded, s.tokenLoadAt = h, true, s.opts.Now()
 	return s.tokenCache, nil
 }
 
@@ -675,13 +642,8 @@ func (s *server) setTokenHash(ctx context.Context, hash string) error {
 	if err := s.opts.Observe.SetTokenHash(ctx, hash); err != nil {
 		return err
 	}
-	s.tokenCache, s.tokenLoaded = hash, true
+	s.tokenCache, s.tokenLoaded, s.tokenLoadAt = hash, true, s.opts.Now()
 	return nil
-}
-
-func hashToken(token string) []byte {
-	sum := sha256.Sum256([]byte(token))
-	return sum[:]
 }
 
 // handlePrometheus serves the exposition format behind a bearer token. With no
@@ -697,10 +659,7 @@ func (s *server) handlePrometheus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	scheme, token, found := strings.Cut(r.Header.Get("Authorization"), " ")
-	want, decodeErr := hex.DecodeString(stored)
-	if !found || !strings.EqualFold(scheme, "Bearer") || token == "" || decodeErr != nil ||
-		subtle.ConstantTimeCompare(hashToken(strings.TrimSpace(token)), want) != 1 {
+	if !bearerMatches(r, stored) {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="stackstead"`)
 		writeError(w, http.StatusUnauthorized, "invalid or missing bearer token")
 		return
@@ -721,18 +680,30 @@ func (s *server) handleCreateMetricsToken(w http.ResponseWriter, r *http.Request
 	if !decodeJSON(w, r, &empty) {
 		return
 	}
-	var raw [32]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		s.internalError(w, r, fmt.Errorf("generate metrics token: %w", err))
+	token, hash, err := metrics.NewToken()
+	if err != nil {
+		s.internalError(w, r, err)
 		return
 	}
-	token := base64.RawURLEncoding.EncodeToString(raw[:])
-	if err := s.setTokenHash(r.Context(), hex.EncodeToString(hashToken(token))); err != nil {
+	if err := s.setTokenHash(r.Context(), hash); err != nil {
 		s.internalError(w, r, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]string{"token": token})
+}
+
+// bearerMatches reports whether the request carries a bearer token whose
+// SHA-256 equals the stored hex hash, compared in constant time.
+func bearerMatches(r *http.Request, storedHex string) bool {
+	scheme, token, found := strings.Cut(r.Header.Get("Authorization"), " ")
+	want, err := hex.DecodeString(storedHex)
+	token = strings.TrimSpace(token)
+	if !found || !strings.EqualFold(scheme, "Bearer") || token == "" || err != nil {
+		return false
+	}
+	got, _ := hex.DecodeString(metrics.HashToken(token))
+	return subtle.ConstantTimeCompare(got, want) == 1
 }
 
 // handleMetricsTokenStatus reports only whether a token hash is stored, from

@@ -62,6 +62,7 @@ type fakeObserve struct {
 	latest     []metrics.ExpositionSample
 	tokenHash  string
 	tokenReads int
+	tokenErr   error
 }
 
 func newFakeObserve() *fakeObserve {
@@ -114,6 +115,9 @@ func (f *fakeObserve) TokenHash(context.Context) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.tokenReads++
+	if f.tokenErr != nil {
+		return "", f.tokenErr
+	}
 	return f.tokenHash, nil
 }
 func (f *fakeObserve) SetTokenHash(_ context.Context, h string) error {

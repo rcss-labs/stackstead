@@ -90,7 +90,7 @@ v2 plugin (`docker compose`).
 
 ```bash
 make build                 # needs Go and Node >= 22; produces bin/stackstead
-./bin/stackstead           # listens on http://127.0.0.1:8420
+./bin/stackstead serve     # listens on http://127.0.0.1:8420
 ```
 
 Open http://127.0.0.1:8420 on the same machine and create your admin
@@ -105,17 +105,41 @@ retention and more).
 ### Run it as a service (systemd)
 
 ```bash
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin stackstead
-sudo install -m 0755 bin/stackstead /usr/local/bin/stackstead
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin --groups docker stackstead
+sudo install -m 0755 bin/stackstead /usr/bin/stackstead
 sudo install -d /etc/stackstead && sudo install -m 0644 deploy/config.example.yaml /etc/stackstead/config.yaml
 sudo install -d -o stackstead -g stackstead /opt/stacks
-sudo install -m 0644 deploy/stackstead.service /etc/systemd/system/stackstead.service
+sudo install -m 0644 deploy/systemd/stackstead.service /etc/systemd/system/stackstead.service
 sudo systemctl daemon-reload && sudo systemctl enable --now stackstead
 ```
 
 To finish setup from another machine, use the one-time setup token from
 `journalctl -u stackstead`. Ready-made installers and packages for Linux and
 macOS are planned.
+
+### Command line
+
+The same binary is a command-line client for a running server, and a set of
+host-side admin commands:
+
+```bash
+stackstead login https://stacks.example.com   # saves a session as a context
+stackstead stacks ls
+stackstead stacks up web                      # follows the operation live
+stackstead logs web -f --tail 100
+stackstead metrics web --from 2h
+stackstead stacks ls -o json                  # scriptable output
+sudo -u stackstead stackstead db backup /backups/stackstead.db
+sudo -u stackstead stackstead admin set-password   # forgot the admin password
+sudo -u stackstead stackstead health         # config, database, server, Docker
+```
+
+Exit codes are stable (`0` ok, `3` not logged in, `4` not found, `9` operation
+failed, and so on). The session lives in `~/.config/stackstead/contexts.json`,
+a file that deserves the same care as an SSH key. Online admin commands
+(`set-password`, `revoke-sessions`, `metrics-token`, `db backup`, `db check`) do
+not take the server lock, so do not run them while a `db restore` is in
+progress. Full reference: [docs/cli.md](docs/cli.md).
 
 ## Good to know
 
@@ -137,6 +161,8 @@ macOS are planned.
 
 - [API and observability reference](docs/api.md): every endpoint, log
   streaming and resume, metrics history, Prometheus setup.
+- [Command line](docs/cli.md): every command, exit codes, host administration,
+  backup and restore.
 - [Security](docs/security.md): threat model, reverse proxies, first-run
   setup, password changes.
 - [Building and development](docs/development.md): make targets, dev loop,
@@ -145,8 +171,8 @@ macOS are planned.
 ## Status
 
 Stackstead is young and under active development. The web UI, stack
-management, logs and metrics are in place; a command-line client and
-installers are next.
+management, logs, metrics and a command-line client are in place; installers
+are next.
 
 ## Licence
 

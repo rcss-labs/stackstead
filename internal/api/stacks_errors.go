@@ -7,6 +7,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/rcss-labs/stackstead/internal/apitypes"
 	"github.com/rcss-labs/stackstead/internal/composecli"
 	"github.com/rcss-labs/stackstead/internal/composefile"
 	"github.com/rcss-labs/stackstead/internal/engine"
@@ -14,9 +15,11 @@ import (
 	"github.com/rcss-labs/stackstead/internal/stacks"
 )
 
+// fieldErrorBody differs from apitypes.ErrorBody only in always carrying
+// "fields" (an empty list, not omitted), which is what the API has always sent.
 type fieldErrorBody struct {
-	Error  string              `json:"error"`
-	Fields []stacks.FieldError `json:"fields"`
+	Error  string                `json:"error"`
+	Fields []apitypes.FieldError `json:"fields"`
 }
 
 // writeStackError maps domain errors to HTTP statuses. Unknown errors are
@@ -29,9 +32,9 @@ func (s *server) writeStackError(w http.ResponseWriter, r *http.Request, err err
 	)
 	switch {
 	case errors.As(err, &validation):
-		fields := validation.Fields
-		if fields == nil {
-			fields = []stacks.FieldError{}
+		fields := make([]apitypes.FieldError, 0, len(validation.Fields))
+		for _, f := range validation.Fields {
+			fields = append(fields, apitypes.FieldError(f))
 		}
 		writeJSON(w, http.StatusBadRequest, fieldErrorBody{Error: validation.Error(), Fields: fields})
 	case errors.As(err, &exit):
