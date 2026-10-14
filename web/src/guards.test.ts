@@ -17,7 +17,7 @@ function sourceFiles(dir: string): string[] {
 
 function findHtmlTag(files: Record<string, string>): string[] {
   return Object.entries(files)
-    .filter(([, text]) => text.includes('{@html'))
+    .filter(([, text]) => /\{\s*@html\b/.test(text))
     .map(([name]) => name);
 }
 
@@ -34,7 +34,15 @@ function findRangedVersions(pkg: Record<string, unknown>): string[] {
 
 describe('guards: detectors', () => {
   it('flags raw HTML interpolation', () => {
-    expect(findHtmlTag({ 'a.svelte': '<p>{@html x}</p>', 'b.svelte': '<p>{x}</p>' })).toEqual(['a.svelte']);
+    expect(
+      findHtmlTag({
+        'a.svelte': '<p>{@html x}</p>',
+        'b.svelte': '<p>{x}</p>',
+        'c.svelte': '<p>{ @html x}</p>',
+        'd.svelte': '<p>{\n@html x}</p>',
+        'e.svelte': '<p>{\t\n  @html\ty}</p>',
+      }),
+    ).toEqual(['a.svelte', 'c.svelte', 'd.svelte', 'e.svelte']);
   });
   it('flags anything that is not an exact version', () => {
     const bad = findRangedVersions({

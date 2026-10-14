@@ -158,6 +158,11 @@ export interface MetricPoint {
   blkWriteBytesPerSec?: number;
 }
 
+/** GET /api/stacks/{name}/metrics response. */
+export interface MetricsHistory {
+  points: MetricPoint[];
+}
+
 /** Raw per-container sample from the live metrics stream (counters are cumulative). */
 export interface Sample {
   time: string;

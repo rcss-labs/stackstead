@@ -97,23 +97,41 @@ export interface FakeStreamRequest {
   signal?: AbortSignal | null;
 }
 
+/** One scripted answer. Without `status` (or with 200) it is an open SSE stream delivering `chunks`. */
+export interface StreamResponse {
+  status?: number;
+  headers?: Record<string, string>;
+  /** Text delivered as soon as the client connects (200 only). */
+  chunks?: string[];
+  /** JSON body for non-200 answers. */
+  body?: unknown;
+}
+
+/** A path maps to initial chunks (every request gets a 200 stream) or to a script consumed one response per request. */
+export type StreamRoutes = Record<string, string[] | { responses: StreamResponse[] }>;
+
 export interface FakeStream {
   /** Every request made to a fake stream URL, in order (reconnects included). */
   requests: FakeStreamRequest[];
-  /** Enqueue text on the most recent open stream for `path`. */
+  /** Enqueue text on the open stream for `path`. Streams are keyed by path: the newest wins. */
   push(path: string, chunk: string): void;
-  /** End the most recent stream for `path` normally. */
+  /** End the newest stream for `path` normally. */
   close(path: string): void;
-  /** Fail the most recent stream for `path`. */
+  /** Fail the newest stream for `path`. */
   error(path: string, err: unknown): void;
   restore: () => void;
 }
 
-/** Paths map to the chunks delivered as soon as a client connects. */
-export function installFakeStream(initial: Record<string, string[]>): FakeStream {
+/**
+ * Fakes SSE endpoints. Paths not listed pass through to the fetch that was
+ * installed before (e.g. installFakeFetch). A scripted path answers 404 once
+ * its responses are used up.
+ */
+export function installFakeStream(routes: StreamRoutes): FakeStream {
   const original = globalThis.fetch;
   const requests: FakeStreamRequest[] = [];
   const controllers = new Map<string, ReadableStreamDefaultController<Uint8Array>>();
+  const cursors = new Map<string, number>();
   const enc = new TextEncoder();
 
   const live = (path: string) => {
@@ -124,14 +142,29 @@ export function installFakeStream(initial: Record<string, string[]>): FakeStream
 
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const r = splitRequest(input, init);
-    const chunks = initial[r.pathname];
-    if (!chunks) return jsonResponse({ status: 404, body: { error: 'no fake stream' } });
+    const route = routes[r.pathname];
+    if (!route) return original(input, init);
     requests.push({ path: r.path, headers: r.headers, signal: r.signal });
+
+    let response: StreamResponse;
+    if (Array.isArray(route)) {
+      response = { chunks: route };
+    } else {
+      const n = cursors.get(r.pathname) ?? 0;
+      cursors.set(r.pathname, n + 1);
+      const scripted = route.responses[n];
+      if (!scripted) return jsonResponse({ status: 404, body: { error: 'fake stream script exhausted' } });
+      response = scripted;
+    }
+    const status = response.status ?? 200;
+    if (status !== 200) return jsonResponse({ status, body: response.body, headers: response.headers });
+
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
         controllers.set(r.pathname, controller);
-        for (const chunk of chunks) controller.enqueue(enc.encode(chunk));
+        for (const chunk of response.chunks ?? []) controller.enqueue(enc.encode(chunk));
         r.signal?.addEventListener('abort', () => {
+          if (controllers.get(r.pathname) === controller) controllers.delete(r.pathname);
           try {
             controller.error(r.signal?.reason ?? new DOMException('aborted', 'AbortError'));
           } catch {
@@ -140,7 +173,10 @@ export function installFakeStream(initial: Record<string, string[]>): FakeStream
         });
       },
     });
-    return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    return new Response(body, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream', ...response.headers },
+    });
   }) as typeof fetch;
 
   return {

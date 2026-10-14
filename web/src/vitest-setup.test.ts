@@ -81,4 +81,54 @@ describe('installFakeStream', () => {
     fake.error('/s', new Error('boom'));
     await expect(reader.read()).rejects.toThrow('boom');
   });
+
+  it('plays scripted responses in order: 503, then a stream, then 401', async () => {
+    const fake = installFakeStream({
+      '/api/events': {
+        responses: [
+          { status: 503, body: { error: 'down' } },
+          { chunks: ['data: 1\n\n'] },
+          { status: 401, body: { error: 'unauthorized' } },
+        ],
+      },
+    });
+    restore = fake.restore;
+    const first = await fetch('/api/events');
+    expect(first.status).toBe(503);
+    expect(await first.json()).toEqual({ error: 'down' });
+    const second = await fetch('/api/events');
+    expect(second.status).toBe(200);
+    expect(second.headers.get('content-type')).toContain('text/event-stream');
+    const third = await fetch('/api/events');
+    expect(third.status).toBe(401);
+    expect(fake.requests).toHaveLength(3);
+  });
+
+  it('answers 404 once the script is exhausted', async () => {
+    const fake = installFakeStream({ '/s': { responses: [{ status: 403 }] } });
+    restore = fake.restore;
+    expect((await fetch('/s')).status).toBe(403);
+    expect((await fetch('/s')).status).toBe(404);
+  });
+
+  it('passes unmatched paths through to the previously installed fetch', async () => {
+    const outer = installFakeFetch({ 'GET /api/status': { body: { docker: 'ok' } } });
+    const fake = installFakeStream({ '/api/events': [] });
+    const res = await fetch('/api/status');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ docker: 'ok' });
+    expect(outer.calls).toHaveLength(1);
+    fake.restore();
+    outer.restore();
+  });
+
+  it('drops the controller when the client aborts so push() reports no open stream', async () => {
+    const fake = installFakeStream({ '/s': [] });
+    restore = fake.restore;
+    const ac = new AbortController();
+    const reader = (await fetch('/s', { signal: ac.signal })).body!.getReader();
+    ac.abort();
+    await expect(reader.read()).rejects.toBeDefined();
+    expect(() => fake.push('/s', 'x')).toThrow('no open fake stream');
+  });
 });
