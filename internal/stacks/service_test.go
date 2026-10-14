@@ -1605,3 +1605,36 @@ func TestStatusUnknownWhenSourceUnavailable(t *testing.T) {
 		t.Errorf("status = %v, want unknown", s.Status)
 	}
 }
+
+// Validation must ask the engine, not the (possibly stale or unavailable)
+// status source, because a wrong "free" answer would start a conflicting stack.
+func TestValidationUsesEngineNotStatusSource(t *testing.T) {
+	src := &fakeSource{err: fmt.Errorf("%w: not synced", engine.ErrUnavailable)}
+	h := newSourceHarness(t, src)
+	ctx := context.Background()
+
+	// A container of another project publishes 8080 on the engine only.
+	h.eng.containers = []engine.Container{publishing("other", 8080)}
+	_, err := h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Config: webCfg("8080:80")})
+	if fs := fieldsOf(t, err); len(fs) == 0 {
+		t.Fatalf("port conflict not detected: %v", err)
+	}
+
+	// An unregistered host project is visible on the engine only.
+	h.eng.containers = []engine.Container{publishing("web", 9090)}
+	_, err = h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Config: webCfg()})
+	if fs := fieldsOf(t, err); !strings.Contains(fs[0].Message, "import it instead") {
+		t.Errorf("host project not detected: %+v", fs)
+	}
+
+	// Remove of a stack whose file vanished checks the engine for containers.
+	h.eng.containers = nil
+	h.create(t, "gone", webCfg("8082:80"))
+	os.Remove(h.path("gone"))
+	c := publishing("gone", 8082)
+	h.eng.containers = []engine.Container{c}
+	if _, err := h.svc.Remove(ctx, "gone", false); !errors.Is(err, stacks.ErrStackUnavailable) ||
+		!strings.Contains(err.Error(), "still exist") {
+		t.Errorf("Remove err = %v", err)
+	}
+}
