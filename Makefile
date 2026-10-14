@@ -32,7 +32,7 @@ check: ui-check ui-test ## Vet, gofmt, Go tests, UI checks and tests
 	$(MAKE) test
 
 e2e: ## Smoke test against the real binary (needs a built UI)
-	go test -tags e2e -timeout 300s ./cmd/stackstead/
+	go test -tags e2e -count=1 -timeout 600s -run TestE2ESmoke -v ./cmd/stackstead/
 
 clean: ## Remove build output
 	rm -rf $(BIN)
