@@ -1,13 +1,15 @@
-package main
+package cli
 
 import (
 	"context"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/rcss-labs/stackstead/internal/config"
+	"github.com/rcss-labs/stackstead/internal/version"
 )
 
 func TestBuildRunnerAlwaysPinsDockerHostToConfiguredSocket(t *testing.T) {
@@ -88,5 +90,41 @@ func TestShutdownOrder(t *testing.T) {
 	want := []string{"http", "ops", "background"}
 	if !slices.Equal(order, want) {
 		t.Errorf("order = %v, want %v", order, want)
+	}
+}
+
+func TestServeLogsVersion(t *testing.T) {
+	dir := t.TempDir()
+	origConfig := defaultConfigPath
+	defaultConfigPath = dir + "/no-such-config.yaml"
+	t.Cleanup(func() { defaultConfigPath = origConfig })
+	te := newTestEnv(t, map[string]string{
+		"STACKSTEAD_LISTEN":        "127.0.0.1:0",
+		"STACKSTEAD_DATA_DIR":      dir + "/data",
+		"STACKSTEAD_STACKS_DIR":    dir + "/stacks",
+		"STACKSTEAD_DOCKER_SOCKET": dir + "/nonexistent.sock",
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	serveCtx, stop := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- serve(serveCtx, te.Env, nil) }()
+
+	deadline := time.After(15 * time.Second)
+	for !strings.Contains(te.Err.String(), "stackstead listening") {
+		select {
+		case err := <-done:
+			t.Fatalf("serve exited early: %v\n%s", err, te.Err.String())
+		case <-deadline:
+			t.Fatalf("no listening line:\n%s", te.Err.String())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	stop()
+	if err := <-done; err != nil {
+		t.Errorf("serve returned %v after cancel", err)
+	}
+	if want := "version=" + version.Get().Version; !strings.Contains(te.Err.String(), want) {
+		t.Errorf("startup log lacks %s:\n%s", want, te.Err.String())
 	}
 }
