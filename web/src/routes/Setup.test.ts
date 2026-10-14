@@ -6,6 +6,7 @@ import { installFakeFetch, type FakeFetch } from '../vitest-setup';
 import { onUnauthorized } from '../lib/api/client';
 import { bootstrapSession, expireSession, session } from '../lib/api/session';
 import { navigate, route } from '../lib/router';
+import { toasts } from '../lib/stores/toasts';
 import Setup from './Setup.svelte';
 
 let fake: FakeFetch;
@@ -104,5 +105,56 @@ describe('Setup', () => {
     render(Setup);
     expireSession();
     await waitFor(() => expect(get(route).path).toBe('/login'));
+  });
+
+  it('409 means setup is already complete: toast and go to /login', async () => {
+    await needsSetup();
+    fake.restore();
+    toasts.reset();
+    fake = installFakeFetch({ 'POST /api/setup': { status: 409, body: { error: 'already set up' } } });
+    render(Setup);
+    const u = await fillForm();
+    await submit(u);
+    await waitFor(() => expect(get(route).path).toBe('/login'));
+    expect(get(toasts).some((t) => /already complete/i.test(t.message))).toBe(true);
+  });
+
+  it('setup ok but login fails: toast and go to /login', async () => {
+    await needsSetup();
+    fake.restore();
+    toasts.reset();
+    fake = installFakeFetch({
+      'POST /api/setup': { body: {} },
+      'POST /api/login': { status: 500, body: { error: 'boom' } },
+    });
+    render(Setup);
+    const u = await fillForm();
+    await submit(u);
+    await waitFor(() => expect(get(route).path).toBe('/login'));
+    expect(get(toasts).some((t) => /account was created/i.test(t.message))).toBe(true);
+  });
+
+  it('focuses the first invalid field on client-side failure', async () => {
+    await needsSetup();
+    render(Setup);
+    let u = await fillForm({ pw: 'short', confirm: 'short' });
+    await submit(u);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Password')));
+  });
+
+  it('focuses the confirm field on mismatch', async () => {
+    await needsSetup();
+    render(Setup);
+    const u = await fillForm({ confirm: 'something-else-entirely' });
+    await submit(u);
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Confirm password')));
+  });
+
+  it('counts password length in characters, not UTF-16 units', async () => {
+    await needsSetup();
+    render(Setup);
+    const u = await fillForm({ pw: '😀'.repeat(6), confirm: '😀'.repeat(6) });
+    await submit(u);
+    expect(screen.getByText('Password must be at least 12 characters.')).toBeTruthy();
   });
 });

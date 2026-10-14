@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { ApiError } from '../lib/api/client';
-  import { session, setup } from '../lib/api/session';
+  import { tick } from 'svelte';
+  import { api, ApiError } from '../lib/api/client';
+  import { login, session } from '../lib/api/session';
+  import { toasts } from '../lib/stores/toasts';
   import Button from '../lib/components/Button.svelte';
   import Field from '../lib/components/Field.svelte';
   import { navigate } from '../lib/router';
@@ -16,8 +18,10 @@
   let error = $state('');
   let submitted = $state(false);
 
+  // Count characters (code points), matching the server, not UTF-16 units.
+  const passwordTooShort = $derived([...password].length < MIN_PASSWORD);
   const passwordError = $derived(
-    submitted && password.length < MIN_PASSWORD ? `Password must be at least ${MIN_PASSWORD} characters.` : '',
+    submitted && passwordTooShort ? `Password must be at least ${MIN_PASSWORD} characters.` : '',
   );
   const confirmError = $derived(submitted && password !== confirm ? 'Passwords do not match.' : '');
 
@@ -35,12 +39,29 @@
     if (pending) return;
     submitted = true;
     error = '';
-    if (password.length < MIN_PASSWORD || password !== confirm) return;
+    if (passwordTooShort || password !== confirm) {
+      await tick();
+      document.getElementById(passwordTooShort ? 'setup-password' : 'setup-confirm')?.focus();
+      return;
+    }
     pending = true;
+    let created = false;
     try {
-      await setup(username, password, token.trim() || undefined);
+      await api.setup(username, password, token.trim() || undefined);
+      created = true;
+      await login(username, password);
       navigate('/', { replace: true });
     } catch (err) {
+      if (created) {
+        toasts.push({ kind: 'warning', message: 'Your account was created, but signing in failed. Please sign in.' });
+        navigate('/login', { replace: true });
+        return;
+      }
+      if (err instanceof ApiError && err.status === 409) {
+        toasts.push({ kind: 'info', message: 'Setup is already complete — sign in' });
+        navigate('/login', { replace: true });
+        return;
+      }
       password = '';
       confirm = '';
       submitted = false;
@@ -90,7 +111,7 @@
       hint="Needed unless you open this page from the machine itself."
     >
       {#snippet children(c)}
-        <input {...c} type="text" autocomplete="off" bind:value={token} />
+        <input {...c} type="text" autocomplete="off" spellcheck="false" autocapitalize="off" bind:value={token} />
       {/snippet}
     </Field>
     <Button variant="primary" type="submit" loading={pending}>Create account</Button>

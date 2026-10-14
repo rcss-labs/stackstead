@@ -9,11 +9,12 @@
     // eslint-disable-next-line no-control-regex
     if (/[\\\u0000-\u001f\u007f]/.test(next)) return '/';
     try {
-      if (new URL(next, window.location.origin).origin !== window.location.origin) return '/';
+      const url = new URL(next, window.location.origin);
+      if (url.origin !== window.location.origin) return '/';
+      return url.pathname + url.search + url.hash;
     } catch {
       return '/';
     }
-    return next;
   }
 </script>
 

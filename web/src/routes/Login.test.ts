@@ -25,6 +25,7 @@ describe('safeNext', () => {
   it('keeps same-origin paths', () => {
     expect(safeNext('/stacks/web')).toBe('/stacks/web');
     expect(safeNext('/stacks?x=1#a')).toBe('/stacks?x=1#a');
+    expect(safeNext('/%2f%2fevil')).toBe('/%2f%2fevil'); // still a path on this origin
   });
   it.each([
     'https://evil',
@@ -35,6 +36,9 @@ describe('safeNext', () => {
     'stacks',
     '/\t/evil',
     '/a\\b',
+    '/\n/evil',
+    'JAVASCRIPT:alert(1)',
+    'data:text/html,x',
     '',
     null,
   ])('rejects %j', (v) => {
