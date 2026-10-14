@@ -1680,6 +1680,21 @@ func TestPreviewReturnsCandidateWithoutWriting(t *testing.T) {
 	}
 }
 
+func TestPreviewRefusesOverrideLikeSave(t *testing.T) {
+	h := newHarness(t)
+	hash := setupWeb(t, h)
+	name := writeOverride(t, h.path("web"))
+	cfg := composefile.ServiceConfig{Image: "nginx:2"}
+	_, saveErr := h.svc.UpdateService(context.Background(), "web", "web", cfg, hash)
+	_, previewErr := h.svc.PreviewService(context.Background(), "web", "web", cfg, hash)
+	if !errors.Is(previewErr, stacks.ErrStackUnavailable) || !strings.Contains(previewErr.Error(), name) {
+		t.Fatalf("preview err = %v, want ErrStackUnavailable naming %s", previewErr, name)
+	}
+	if saveErr == nil || saveErr.Error() != previewErr.Error() {
+		t.Errorf("preview err %q differs from save err %q", previewErr, saveErr)
+	}
+}
+
 func TestPreviewStaleHashConflicts(t *testing.T) {
 	h := newHarness(t)
 	setupWeb(t, h)
