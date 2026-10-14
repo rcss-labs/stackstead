@@ -183,4 +183,5 @@
   pre { overflow-x: auto; padding: var(--space-3); background: var(--surface-raised); border-radius: var(--radius-md); }
   dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-1) var(--space-4); }
   dt { font-weight: 600; }
+  dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 </style>

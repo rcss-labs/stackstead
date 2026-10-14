@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { api, onUnauthorized } from '$lib/api/client';
   import { bootstrapSession, expireSession, logout, session } from '$lib/api/session';
   import Banner from '$lib/components/Banner.svelte';
@@ -25,7 +25,6 @@
   // The session store may hold a previous state; nothing is decided until this page load has asked the server.
   let booted = $state(false);
   let loggingOut = false;
-  let navHost: HTMLElement | undefined = $state();
   let pendingHref = $state<string | undefined>();
   let pendingLogout = $state(false);
 
@@ -113,11 +112,22 @@
       .catch(() => {});
   });
 
-  // Nav is a shared component with plain anchors; give them client-side navigation.
+  // A client-side navigation does not move focus by itself, so keyboard and screen-reader users would
+  // stay on the clicked link. Move it to the new page's heading (or the main region) after the route renders.
+  let mainEl: HTMLElement | undefined = $state();
+  let lastPath: string | undefined;
   $effect(() => {
-    if (!navHost) return;
-    const actions = [...navHost.querySelectorAll<HTMLAnchorElement>('a[href]')].map((a) => link(a));
-    return () => actions.forEach((a) => a.destroy());
+    const p = path;
+    if (!mainEl) return;
+    const previous = lastPath;
+    lastPath = p;
+    if (previous === undefined || previous === p) return;
+    void tick().then(() => {
+      if (!mainEl || mainEl.contains(document.activeElement)) return; // the page already placed focus
+      const target = mainEl.querySelector<HTMLElement>('h1') ?? mainEl;
+      target.setAttribute('tabindex', '-1');
+      target.focus({ preventScroll: true });
+    });
   });
 
   const dockerDown = $derived($live.events === 'disconnected' || $live.docker === 'unavailable');
@@ -176,9 +186,7 @@
 {:else}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="layout" onclickcapture={guardLinks}>
-    <div bind:this={navHost}>
-      <Nav username={$session.username} onlogout={requestLogout} {runningOps} current={path} />
-    </div>
+    <Nav username={$session.username} onlogout={requestLogout} {runningOps} current={path} />
     <div class="banners container">
       {#if dockerDown}
         <Banner kind="danger" title="Docker is unreachable">
@@ -201,7 +209,7 @@
         </Banner>
       {/if}
     </div>
-    <main class="container">
+    <main class="container" bind:this={mainEl}>
       {#if view === 'list'}
         <StackList />
       {:else if view === 'create'}

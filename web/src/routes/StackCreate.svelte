@@ -124,7 +124,7 @@
   }
 </script>
 
-<main class="container">
+<div>
   <h1>Create stack</h1>
   {#if unavailable}
     <div id="create-unavailable" tabindex="-1">
@@ -161,7 +161,7 @@
       <a href="/" use:link>Cancel</a>
     </div>
   </form>
-</main>
+</div>
 
 <FileBrowser
   open={browser !== null}

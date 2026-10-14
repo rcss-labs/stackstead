@@ -193,6 +193,15 @@ describe('ServiceForm', () => {
     expect(screen.getByRole('status').textContent).not.toBe(before);
   });
 
+  it('announces errors by field label, not by raw path', () => {
+    render(Host, {
+      initial: { ports: ['x', 'y'], env: [{ name: '', value: '' }] },
+      errors: { image: 'a', 'ports[1]': 'b', 'env[0].name': 'c', 'limits.cpus': 'd' },
+    });
+    const text = screen.getByRole('status').textContent ?? '';
+    expect(text).toBe('4 fields have errors: Image, Port 2, Variable 1 name, CPUs');
+  });
+
   it('focuses the first invalid control, or the form alert, via focusFirstError', async () => {
     const { component, rerender } = render(Host, {
       initial: { image: '', ports: ['x'] },

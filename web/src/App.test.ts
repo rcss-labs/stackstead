@@ -50,6 +50,42 @@ afterEach(() => {
 const user = () => userEvent.setup();
 const at = (path: string) => navigate(path, { replace: true });
 
+describe('App landmarks', () => {
+  it.each(['/', '/stacks/new', '/stacks/import', '/settings', '/nope'])('has exactly one main landmark on %s', async (path) => {
+    at(path);
+    render(App);
+    await screen.findByRole('navigation', { name: 'Main' });
+    await screen.findByRole('heading', { level: 1 }).catch(() => undefined);
+    expect(screen.getAllByRole('main')).toHaveLength(1);
+  });
+
+  it('has exactly one main landmark on Login and Setup', async () => {
+    me = { status: 401, body: { error: 'unauthorized' } };
+    at('/');
+    const view = render(App);
+    await screen.findByLabelText('Username');
+    expect(screen.getAllByRole('main')).toHaveLength(1);
+    view.unmount();
+    setupStatus = true;
+    at('/');
+    render(App);
+    await screen.findByRole('heading', { name: /set up/i });
+    expect(screen.getAllByRole('main')).toHaveLength(1);
+  });
+});
+
+describe('App focus on navigation', () => {
+  it('moves focus to the page heading after a client-side navigation, not on first load', async () => {
+    at('/');
+    render(App);
+    await screen.findByRole('heading', { name: 'Stacks' });
+    expect(document.activeElement).toBe(document.body);
+    await user().click(screen.getByRole('link', { name: 'Settings' }));
+    const h1 = await screen.findByRole('heading', { level: 1, name: 'Settings' });
+    await waitFor(() => expect(document.activeElement).toBe(h1));
+  });
+});
+
 describe('App routing and session', () => {
   it('anonymous users land on Login carrying next', async () => {
     me = { status: 401, body: { error: 'unauthorized' } };

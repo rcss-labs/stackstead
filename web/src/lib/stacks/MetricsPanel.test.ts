@@ -46,4 +46,23 @@ describe('MetricsPanel', () => {
     view.unmount();
     expect(close).toHaveBeenCalled();
   });
+
+  it('keeps the charts on screen while a range change reloads', async () => {
+    let release: (() => void) | undefined;
+    let calls = 0;
+    installFakeFetch({
+      'GET /api/stacks/web/metrics': async () => {
+        calls++;
+        if (calls > 1) await new Promise<void>((r) => (release = r));
+        return { body: { points: [{ time: '2026-10-14T10:00:00Z', service: 'web', cpu: 3, mem: 10, memLimit: 100 }] } };
+      },
+    });
+    render(MetricsPanel, { stackName: 'web', metricsDegraded: false, createPlot: fakePlot, open: () => ({ close() {}, status: 'open' }) });
+    await screen.findByText('CPU (avg %)');
+    await userEvent.setup().selectOptions(screen.getByLabelText('Range'), '24h');
+    await waitFor(() => expect(release).toBeDefined());
+    expect(screen.getByText('CPU (avg %)')).toBeTruthy();
+    expect(screen.queryByText('Loading metrics')).toBeNull();
+    release?.();
+  });
 });

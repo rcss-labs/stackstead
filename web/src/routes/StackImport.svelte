@@ -61,7 +61,7 @@
   }
 </script>
 
-<main class="container">
+<div>
   <h1>Import stack</h1>
   {#if unavailable}
     <Banner kind="danger" title="Docker/compose unavailable: the stack was not imported">{unavailable}</Banner>
@@ -89,7 +89,7 @@
       <a href="/" use:link>Cancel</a>
     </div>
   </form>
-</main>
+</div>
 
 <FileBrowser
   open={browsing}
