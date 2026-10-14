@@ -509,19 +509,21 @@ limited() {
 # Older binaries ignore unknown arguments and start the server, so nothing but
 # --help (which never serves) is run until the help text shows a `version`
 # command; then `version --short`, then `version -o json`.
+# A macOS root run probes as the target user: the prefix binary may be
+# user-writable (Intel Homebrew owns /usr/local), so root never executes it.
 installed_version() {
 	bin=$(rp "$BIN")
 	[ -x "$bin" ] || return 0
 	probe=$TMP/probe.out
-	limited 5 "$probe" "$bin" --help || true
+	limited_as_user 5 "$probe" "$bin" --help || true
 	grep -qw version "$probe" 2>/dev/null || return 0
-	limited 5 "$probe" "$bin" version --short || true
+	limited_as_user 5 "$probe" "$bin" version --short || true
 	v=$(head -n 1 "$probe")
 	if valid_version "$v"; then
 		printf '%s' "$v"
 		return 0
 	fi
-	limited 5 "$probe" "$bin" version -o json || true
+	limited_as_user 5 "$probe" "$bin" version -o json || true
 	v=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$probe" | head -n 1)
 	if valid_version "$v"; then
 		printf '%s' "$v"
@@ -1148,12 +1150,13 @@ agent_cmd() {
 	fi
 }
 
-# limited_as_user SECONDS OUTFILE CMD...: limited(), as the target user.
+# limited_as_user SECONDS OUTFILE CMD...: limited(), as the target user (like
+# as_user, a staged --root run acts directly on its own tree).
 limited_as_user() {
 	lau_secs=$1
 	lau_out=$2
 	shift 2
-	if [ "$OS" = darwin ] && [ -n "$AS_ROOT" ]; then
+	if [ "$OS" = darwin ] && [ -n "$AS_ROOT" ] && [ -z "$ROOT" ]; then
 		limited "$lau_secs" "$lau_out" sudo -H -u "$TARGET_USER" env "PATH=$USER_PATH" "$@"
 	else
 		limited "$lau_secs" "$lau_out" "$@"

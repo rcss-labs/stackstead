@@ -876,6 +876,33 @@ func TestDarwinRootSimRunsUserWorkAsTheUser(t *testing.T) {
 		}
 	})
 
+	t.Run("InstalledVersionProbeRunsAsTheUser", func(t *testing.T) {
+		// the binary under the prefix may be user-writable (Homebrew's /usr/local on
+		// Intel): root must not execute it, not even for --help or version
+		f, _, prefix, env := rootSim(t)
+		for i := 0; i < 2; i++ { // the second run finds an installed binary to probe
+			out, errOut, code := runRootSim(t, f, env, prefix)
+			mustExit(t, code, 0, out, errOut)
+		}
+		bin := filepath.Join(prefix, "bin", "stackstead")
+		for _, probe := range []string{"--help", "version --short"} {
+			var direct, asUser int
+			for _, l := range strings.Split(string(readFile(t, env["FAKE_STACKSTEAD_LOG"])), "\n") {
+				if l == probe {
+					direct++
+				}
+			}
+			for _, l := range sudoLines(f) {
+				if strings.HasPrefix(l, "-H -u alice env PATH=") && strings.HasSuffix(l, " "+bin+" "+probe) {
+					asUser++
+				}
+			}
+			if direct == 0 || asUser != direct {
+				t.Errorf("stackstead %s ran %d times, only %d of them as 'sudo -H -u alice env PATH=...':\n%s", probe, direct, asUser, stubLog(f.stubD, "sudo"))
+			}
+		}
+	})
+
 	t.Run("UninstallAndPurgeRemoveThroughTheUser", func(t *testing.T) {
 		f, home, prefix, env := rootSim(t)
 		out, errOut, code := runRootSim(t, f, env, prefix)
