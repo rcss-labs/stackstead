@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -86,7 +87,8 @@ func darwinStubs(asRoot bool) map[string]string {
 	return map[string]string{
 		"uname": `case "$1" in -m) echo "${FAKE_UNAME_M:-arm64}" ;; *) echo Darwin ;; esac`,
 		"id":    idBody,
-		"dscl":  `echo "NFSHomeDirectory: ${FAKE_HOME:-/Users/alice}"`,
+		// real dscl prints the value on an indented second line when it contains a space
+		"dscl": `if [ -n "${FAKE_DSCL_MULTILINE:-}" ]; then echo "NFSHomeDirectory:"; echo " ${FAKE_HOME:-/Users/alice}"; else echo "NFSHomeDirectory: ${FAKE_HOME:-/Users/alice}"; fi`,
 		"docker": `[ -z "${FAKE_DOCKER_FAIL:-}" ] || exit 1
 case "$1 $2" in
 "context inspect") echo "${FAKE_DOCKER_ENDPOINT:-unix:///Users/alice/.docker/run/docker.sock}" ;;
@@ -492,8 +494,11 @@ func TestDarwinRealMode(t *testing.T) {
 
 	t.Run("SudoOnlyForThePrefixAndReadinessProbe", func(t *testing.T) {
 		f, home, prefix, env := setup(t)
+		// the first probe is the installer's check that nobody else holds the port, made before it
+		// starts the agent; the service "comes up" after that
+		var probes atomic.Int32
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			if req.URL.Path == "/api/health" {
+			if req.URL.Path == "/api/health" && probes.Add(1) > 1 {
 				_, _ = io.WriteString(w, `{"ok":true}`)
 				return
 			}
@@ -801,7 +806,12 @@ func TestDarwinRootSimRunsUserWorkAsTheUser(t *testing.T) {
 
 	t.Run("HealthRunsAsTheUser", func(t *testing.T) {
 		f, home, prefix, env := rootSim(t)
+		var probes atomic.Int32 // the first probe is the installer's pre-start port check
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if probes.Add(1) == 1 {
+				http.NotFound(w, req)
+				return
+			}
 			_, _ = io.WriteString(w, `{"ok":true}`)
 		}))
 		t.Cleanup(srv.Close)
@@ -829,6 +839,9 @@ func TestDarwinRootSimRunsUserWorkAsTheUser(t *testing.T) {
 		}
 		if !hasSudoLine(f, "-H -u alice cmp ", " "+plist) {
 			t.Errorf("the installed plist was not compared as the user (sudo -H -u alice cmp ... plist):\n%s", stubLog(f.stubD, "sudo"))
+		}
+		if !hasSudoLine(f, "-H -u alice test -e ", " "+cfg) {
+			t.Errorf("the config existence check must run as the user:\n%s", stubLog(f.stubD, "sudo"))
 		}
 		if !hasSudoLine(f, "-H -u alice test -f ", " "+plist) {
 			t.Errorf("the plist existence check must run as the user:\n%s", stubLog(f.stubD, "sudo"))
@@ -873,6 +886,36 @@ func TestDarwinRootIgnoresHomeBinInIncomingPATH(t *testing.T) {
 	if fileExists(marker) {
 		t.Errorf("a tool from the home bin directory ran: %s", readFile(t, marker))
 	}
+}
+
+// A home with a space: dscl prints the value on a second, indented line.
+func TestDarwinHomeWithASpaceFromDscl(t *testing.T) {
+	f := newDarwinFixture(t, true, "1.0.0")
+	f.stubD = stubPath(t, f.stubs)
+	out, errOut, code := runScript(t, []string{"--print-paths", "--root", "/r"}, map[string]string{
+		"STUBS_DIR": f.stubD, "SUDO_USER": "alice", "FAKE_HOME": "/Users/Jane Doe", "FAKE_DSCL_MULTILINE": "1"}, nil)
+	mustExit(t, code, 0, out, errOut)
+	contains(t, "paths", out, "CONFIG=/r/Users/Jane Doe/Library/Application Support/Stackstead/config.yaml")
+}
+
+// Something else already answering on the listen address must not be reported as our service.
+func TestDarwinWarnsWhenAnotherProcessHoldsThePort(t *testing.T) {
+	requireNonRoot(t)
+	r := newRun(t)
+	dist := publishRelease(t, r, "1.0.0", "darwin", nil, nil)
+	f := fixtureFromDist(t, r, dist, "1.0.0", darwinStubs(false))
+	delete(f.stubs, "id")
+	home := filepath.Join(r.Dir, "home")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { _, _ = io.WriteString(w, `{"ok":true}`) }))
+	t.Cleanup(srv.Close)
+	u, _ := url.Parse(srv.URL)
+	writeFile(t, filepath.Join(home, "Library", "Application Support", "Stackstead", "config.yaml"), []byte("listen: "+u.Host+"\n"), 0o600)
+	f.stubD = stubPath(t, f.stubs)
+	env := map[string]string{"STUBS_DIR": f.stubD, "TMPDIR": f.tmpDir, "FAKE_HOME": home, "FAKE_STACKSTEAD_LOG": filepath.Join(r.Dir, "ss.log")}
+	out, errOut, code := runScript(t, []string{"--base-url", f.base, "--prefix", filepath.Join(r.Dir, "prefix")}, env, nil)
+	mustExit(t, code, 0, out, errOut)
+	contains(t, "stderr", errOut, "already answering on "+u.Host)
+	notContains(t, "stdout", out, "Stackstead is running")
 }
 
 func TestDarwinRefusesUIDZeroTarget(t *testing.T) {

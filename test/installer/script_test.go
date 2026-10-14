@@ -934,3 +934,33 @@ func TestDocsNameTheUnitBinaryPath(t *testing.T) {
 		}
 	}
 }
+
+// install.sh pins PATH before anything else runs when it is root on macOS, where sudo passes
+// the user's PATH on (Homebrew's user-owned bin directory ahead of /usr/bin). The runtime effect
+// cannot be tested without real root (rootSim fakes id), so this checks the source: the first
+// executable lines use absolute /usr/bin/id and /usr/bin/uname and set a system-only PATH before
+// the script defines or runs anything else. Linux is deliberately not pinned: sudo there applies
+// secure_path, and a root login shell with a user-writable PATH is the administrator's own problem.
+func TestScriptPinsRootPATHOnMacFirst(t *testing.T) {
+	src := string(readFile(t, installScript(t)))
+	pin := strings.Index(src, "PATH=/usr/bin:/bin:/usr/sbin:/sbin")
+	first := strings.Index(src, "\nDEFAULT_BASE_URL=")
+	if pin < 0 || first < 0 || pin > first {
+		t.Fatalf("PATH is not pinned before the script's first definition (pin at %d, DEFAULT_BASE_URL at %d)", pin, first)
+	}
+	head := src[:first]
+	for _, want := range []string{`/usr/bin/id -u`, `/usr/bin/uname -s`, "Darwin"} {
+		if !strings.Contains(head, want) {
+			t.Errorf("the PATH pin must use %q", want)
+		}
+	}
+	for _, l := range strings.Split(head, "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") || strings.HasPrefix(l, "set -") {
+			continue
+		}
+		if strings.Contains(l, "id -u") && !strings.Contains(l, "/usr/bin/id") || strings.Contains(l, "uname") && !strings.Contains(l, "/usr/bin/uname") {
+			t.Errorf("PATH lookup before the pin: %q", l)
+		}
+	}
+}

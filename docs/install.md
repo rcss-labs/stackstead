@@ -87,7 +87,9 @@ journalctl -u stackstead | grep setup_token
 ```
 
 Installers never create the admin account or ask for a password. If you lose the password later:
-`sudo -u stackstead stackstead admin set-password` (see [cli.md](cli.md)).
+`sudo -u stackstead /usr/bin/stackstead admin set-password --config /etc/stackstead/config.yaml` (script installs:
+`/usr/local/bin/stackstead`, which RHEL and Rocky leave out of sudo's `secure_path`, hence the full path). On macOS:
+`stackstead admin set-password --config ~/Library/Application\ Support/Stackstead/config.yaml`. See [cli.md](cli.md).
 
 Private registries: the service reads Docker credentials from its own home, so log in as that user:
 
@@ -136,8 +138,9 @@ the unit file itself.
 
 ## Uninstall and purge
 
-Nothing here ever removes your compose files (`/opt/stacks` or elsewhere), images, containers, networks
-or volumes.
+On Linux nothing here ever removes your compose files (`/opt/stacks` or elsewhere), images, containers,
+networks or volumes. On macOS, `--purge` deletes `~/Library/Application Support/Stackstead`, which includes
+its default stacks folder (it asks for `--yes`); stacks you registered elsewhere are never touched.
 
 | Installed with | Remove (keeps config, data, user) | Purge |
 |---|---|---|
@@ -161,8 +164,8 @@ curl -fsSL https://raw.githubusercontent.com/rcss-labs/stackstead/main/install.s
 ```
 
 or the universal `stackstead_<version>_darwin.pkg` from the release page (one download for Intel and Apple
-silicon). Run the script from your own account with `sudo`: it uses `sudo` only for `/usr/local` and puts
-everything else in your home, owned by you. A plain root login without `SUDO_USER` is refused (exit 8).
+silicon). Run the script from your own account (`| sh`, or `| sudo sh`): root is used only for `/usr/local`, and
+everything in your home is written as you. A plain root login without `SUDO_USER` is refused (exit 8).
 
 **Unsigned package.** The `.pkg` is not signed with an Apple Developer ID yet, so macOS Gatekeeper will say
 it "cannot be opened because it is from an unidentified developer" (`spctl --assess --type install` reports

@@ -144,6 +144,9 @@ package-lint: ## Run lintian and rpmlint over the packages in dist/ in a contain
 installer-test: ## Run the installer tests (host and, with Docker, container suites; never cached)
 	go vet -tags installer ./...
 	go test -tags installer -count=1 -parallel 4 -timeout 1800s ./test/installer/ ./deploy/... ./tools/...
+	@if command -v dash >/dev/null 2>&1; then echo "host tests again under dash"; \
+		STACKSTEAD_TEST_SHELL=dash go test -tags installer -count=1 -timeout 1800s -skip InContainer ./test/installer/; \
+	else echo "dash not installed: skipping the dash run"; fi
 
 verify-release: ## Verify dist/SHA256SUMS (and SHA256SUMS.sig when SIGNERS=<allowed_signers> is given)
 	@cd $(DIST) && test -s SHA256SUMS || { echo "$(DIST)/SHA256SUMS is missing or empty"; exit 1; }; \

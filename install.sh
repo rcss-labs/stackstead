@@ -10,6 +10,17 @@
 # Re-running upgrades in place; config, data and stacks are never touched.
 set -eu
 
+# Root on macOS must not run anything from a user-writable directory: `sudo sh` passes the
+# invoking user's PATH on, and Homebrew's bin directories (user-owned, ahead of /usr/bin) would
+# supply sed, tar, awk, shasum... to a root process. So the very first thing is a system-only
+# PATH, found with absolute-path id and uname. Linux is deliberately left alone: sudo applies
+# secure_path there, and a root login shell with a writable PATH is the administrator's own
+# business. safe_path (below) stays as a second layer for the per-user directories.
+if [ "$(/usr/bin/id -u 2>/dev/null)" = 0 ] && [ "$(/usr/bin/uname -s 2>/dev/null)" = Darwin ]; then
+	PATH=/usr/bin:/bin:/usr/sbin:/sbin
+	export PATH
+fi
+
 DEFAULT_BASE_URL=https://github.com/rcss-labs/stackstead
 SERVICE_USER=stackstead
 SERVICE_NAME=stackstead
@@ -827,6 +838,7 @@ configure_service() {
 			STARTED=1
 		fi
 	else
+		note_port_taken
 		svc systemctl enable --now "$SERVICE_NAME"
 		STARTED=1
 	fi
@@ -857,16 +869,39 @@ health_summary() {
 	note "stackstead health exit code: $hrc (informational)"
 }
 
+# listen_addr: where to probe the service (a wildcard address becomes loopback).
+listen_addr() {
+	la=$(config_value listen "$DEFAULT_LISTEN")
+	case $la in
+	:* | 0.0.0.0:* | \[::\]:*) la=127.0.0.1:${la##*:} ;;
+	esac
+	printf '%s' "$la"
+}
+
+# note_port_taken: call right before a fresh start. Something already answering on the listen
+# address (another Stackstead, say) would make the readiness probe succeed for the wrong
+# process, so remember it, warn, and stop claiming the service is running.
+PORT_TAKEN=
+note_port_taken() {
+	[ -z "$ROOT" ] || return 0
+	npt=$(listen_addr)
+	if http_ok "http://$npt/api/health"; then
+		PORT_TAKEN=$npt
+		warn "something is already answering on $npt (another Stackstead?); the new service cannot listen there until it is stopped, or change listen: in $(rp "$CONFIG")"
+	fi
+}
+
 wait_ready() {
 	[ -n "$STARTED" ] && [ -z "$ROOT" ] || return 0
-	listen=$(config_value listen "$DEFAULT_LISTEN")
-	case $listen in
-	:* | 0.0.0.0:* | \[::\]:*) listen=127.0.0.1:${listen##*:} ;;
-	esac
+	listen=$(listen_addr)
 	say "Waiting for the service on http://$listen"
 	i=0
 	while [ "$i" -lt 15 ]; do
 		if http_ok "http://$listen/api/health" || http_ok "http://$listen/api/setup/status"; then
+			if [ -n "$PORT_TAKEN" ]; then
+				warn "the answer on $listen may come from the process that already held it, not from the new service; check it with: $(if [ "$OS" = darwin ]; then echo "launchctl print gui/$TARGET_UID/$LABEL"; else echo "systemctl status $SERVICE_NAME"; fi)"
+				return 0
+			fi
 			if [ "$OS" = darwin ]; then
 				health_summary limited_as_user
 				say "Stackstead is running"
@@ -976,10 +1011,19 @@ resolve_target_user() {
 	# user's directories from a root run's PATH
 	TARGET_HOME=
 	dscl_out=$(dscl . -read "/Users/$TARGET_USER" NFSHomeDirectory 2>/dev/null) || dscl_out=
+	dscl_next=
 	while read -r dscl_key dscl_val; do
-		if [ "$dscl_key" = "NFSHomeDirectory:" ]; then
-			TARGET_HOME=$dscl_val
+		if [ -n "$dscl_next" ]; then
+			# the value of a home with a space sits alone on the next line
+			TARGET_HOME=$dscl_key${dscl_val:+ $dscl_val}
 			break
+		fi
+		if [ "$dscl_key" = "NFSHomeDirectory:" ]; then
+			if [ -n "$dscl_val" ]; then
+				TARGET_HOME=$dscl_val
+				break
+			fi
+			dscl_next=1
 		fi
 	done <<EOF
 $dscl_out
@@ -1013,10 +1057,11 @@ darwin_paths() {
 }
 
 # safe_path: drop empty, relative and home-directory entries from PATH. Only a
-# root run needs it (sudo may pass the user's PATH on, and root must not run a
-# tool from a directory the user can write). It runs after the home lookup
-# because it needs TARGET_HOME, so that lookup avoids PATH tools beyond id and
-# dscl. When the invoker is the target user nothing runs as anyone else, so
+# root run needs it. The first lines of the script already replace PATH with
+# the system directories for root on macOS; this is the second layer, kept for
+# --user runs and anything that re-extends PATH, and it needs TARGET_HOME so it
+# runs after the home lookup (which therefore avoids PATH tools beyond id and
+# dscl). When the invoker is the target user nothing runs as anyone else, so
 # their own PATH is theirs to control and is left alone.
 safe_path() {
 	sp_out=
@@ -1293,6 +1338,7 @@ configure_service_darwin() {
 		return 0
 	fi
 	agent_cmd launchctl bootout "$gui/$LABEL" || true
+	note_port_taken
 	if agent_cmd launchctl bootstrap "$gui" "$PLIST"; then
 		STARTED=1
 	else

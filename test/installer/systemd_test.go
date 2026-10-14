@@ -19,8 +19,10 @@ import (
 // by the real .deb. This is the one place the hardened unit, the service user, the docker group
 // and the maintainer scripts meet a live service manager; every other test uses a fake.
 //
-// It needs --privileged, --cgroupns=host and the host's cgroup tree mounted read-write, which
-// works on Docker Desktop (cgroup v2) and on Linux hosts. Nothing is published to the host: the
+// It needs --privileged (systemd as PID 1 manages its own cgroup subtree; with cgroup v2 the
+// container's default private cgroup namespace is enough, no host cgroup mount), which works on
+// Docker Desktop and on Linux hosts with cgroup v2. A cgroup v1 host would need --cgroupns=host
+// and a rw /sys/fs/cgroup mount; that is not supported here. Nothing is published to the host: the
 // service listens on 127.0.0.1:8420 inside the container (a private network namespace shared
 // only with the release server container), so a stackstead already running on the host cannot
 // clash. Containers and networks follow the usual stackstead-itest-<run> naming and labels.
@@ -42,8 +44,7 @@ func requireSystemdOptIn(t *testing.T) {
 func bootedRunOpts(o runOpts) runOpts {
 	o.Privileged = true
 	o.NoInit = true
-	o.ExtraArgs = append(o.ExtraArgs, "--cgroupns=host", "--tmpfs", "/run", "--tmpfs", "/run/lock", "--tmpfs", "/tmp")
-	o.Mounts = append(o.Mounts, "/sys/fs/cgroup:/sys/fs/cgroup:rw")
+	o.ExtraArgs = append(o.ExtraArgs, "--tmpfs", "/run", "--tmpfs", "/run/lock", "--tmpfs", "/tmp")
 	return o
 }
 

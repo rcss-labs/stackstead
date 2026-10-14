@@ -15,8 +15,9 @@ needs a key, a certificate or a notarization profile.
 - `gh`, authenticated to the repository.
 - Network access the first time: `go run` fetches the pinned nfpm (`NFPM_VERSION` in the Makefile, verified
   by the Go checksum database).
-- A clean checkout of the commit to release: an untracked or modified file makes the version `-dirty`, and
-  dirty and untagged versions are refused (see "Version strings").
+- A clean checkout of the commit to release: `git status --porcelain` prints nothing. A modified tracked file makes
+  the version `-dirty` (refused, see "Version strings"), but `git describe` ignores untracked files, so check those
+  yourself: they could be packaged without any warning.
 
 ## Version strings
 
@@ -64,7 +65,7 @@ The git tag `vX.Y.Z` (or `vX.Y.Z-rc.N`) becomes artifact version `X.Y.Z` (`X.Y.Z
    ```
 
    The second one boots systemd in a privileged container and installs the real binary and the real `.deb`; it needs
-   Docker with `--privileged` and `--cgroupns=host` (Docker Desktop on cgroup v2 and Linux hosts work). Always run
+   Docker with `--privileged` on a cgroup v2 host (Docker Desktop and current Linux hosts work). Always run
    with `-count=1`: these tests drive `make`, `install.sh` and `deploy/` in subprocesses that Go's test cache cannot see.
 7. **Test the macOS package for real** (needs `sudo`; see the next section).
 8. **Publish.**
@@ -132,14 +133,22 @@ first so your own `/usr/local` stays untouched:
 ```sh
 hdiutil create -size 200m -fs APFS -volname sstest -attach /tmp/sstest.dmg
 STACKSTEAD_PKG_TEST_VOLUME=/Volumes/sstest go test -count=1 -tags installer -run TestPkgInstallOnTestVolume -timeout 600s ./test/installer/
-hdiutil detach /Volumes/sstest
+hdiutil detach /Volumes/sstest && rm /tmp/sstest.dmg
 ```
 
-Then, for the real thing on a Mac you can afford to change: note `ls -ld /usr/local/bin /usr/local/share`,
+If `installer` complains that ownership is ignored on the volume, run `sudo diskutil enableOwnership /Volumes/sstest`
+and retry. Run `go test` as yourself, not under sudo: the test calls `sudo` itself and prompts for the password.
+
+Then, for the real thing on a Mac you can afford to change: first stop any other Stackstead on port 8420
+(`lsof -nP -iTCP:8420 -sTCP:LISTEN` must print nothing), or pre-create
+`~/Library/Application Support/Stackstead/config.yaml` with `listen: 127.0.0.1:8421`; the installer only warns when
+something else answers there. Note `ls -ld /usr/local/bin /usr/local/share`,
 run `sudo installer -pkg dist/stackstead_<ver>_darwin.pkg -target /`, open `http://127.0.0.1:8420/`, check
-`launchctl print gui/$(id -u)/io.github.rcss-labs.stackstead`, compare `ls -ld /usr/local/bin /usr/local/share`
+`launchctl print gui/$(id -u)/io.github.rcss-labs.stackstead` (its `pid` must be the process that
+`lsof -nP -iTCP:<port> -sTCP:LISTEN` shows), compare `ls -ld /usr/local/bin /usr/local/share`
 (owner and mode must not change; only `stackstead` and `share/stackstead` are added), and remove it with
-`sudo /usr/local/share/stackstead/install.sh --uninstall --purge --yes`.
+`sudo /usr/local/share/stackstead/install.sh --uninstall --purge --yes`. Careful: `--purge --yes` deletes
+`~/Library/Application Support/Stackstead`, including any stacks in its `stacks/` folder.
 
 ## Dry run
 
