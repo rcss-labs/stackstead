@@ -6,10 +6,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	_ "modernc.org/sqlite"
 )
@@ -159,8 +161,11 @@ func (e *SchemaMismatchError) Error() string {
 
 // OpenOptions tunes OpenExisting.
 type OpenOptions struct {
-	// ReadOnly opens with mode=ro so the connection can never write or
-	// create -wal/-shm files.
+	// ReadOnly opens with mode=ro so the connection can never write the
+	// database. It is not a guarantee that no files are touched: reading a
+	// WAL-mode database may still create the -wal/-shm files, which as root
+	// would leave them owned by root. Callers running as root must refuse
+	// before opening (the CLI's ownership check does).
 	ReadOnly bool
 	// AllowOlderSchema accepts a database older than this binary (it is
 	// never migrated); a newer one is always refused.
@@ -268,8 +273,8 @@ func Backup(ctx context.Context, db *sql.DB, dest string) (err error) {
 	if err = syncPath(tmp); err != nil {
 		return fmt.Errorf("sync backup: %w", err)
 	}
-	if err = os.Link(tmp, dest); err != nil {
-		return fmt.Errorf("publish backup: %w", err)
+	if err = publish(tmp, dest); err != nil {
+		return err
 	}
 	os.Remove(tmp)
 	if d, openErr := os.Open(filepath.Dir(dest)); openErr == nil {
@@ -277,6 +282,52 @@ func Backup(ctx context.Context, db *sql.DB, dest string) (err error) {
 		d.Close()
 	}
 	return nil
+}
+
+// linkFile is a seam so tests can simulate a filesystem without hard links.
+var linkFile = os.Link
+
+// publish moves tmp to dest without ever overwriting dest. A hard link is
+// atomic; on filesystems that cannot link (FAT, some network mounts) it falls
+// back to an exclusive create plus copy, removing the partial dest on failure.
+func publish(tmp, dest string) error {
+	err := linkFile(tmp, dest)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, syscall.EPERM) && !errors.Is(err, syscall.ENOTSUP) && !errors.Is(err, syscall.EOPNOTSUPP) {
+		return fmt.Errorf("publish backup: %w", err)
+	}
+	if err := copyExclusive(tmp, dest); err != nil {
+		return fmt.Errorf("publish backup (destination filesystem does not support hard links): %w", err)
+	}
+	return nil
+}
+
+func copyExclusive(src, dest string) (err error) {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			os.Remove(dest)
+		}
+	}()
+	if _, err = io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	if err = out.Sync(); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 func syncPath(path string) error {

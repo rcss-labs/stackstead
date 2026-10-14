@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +16,16 @@ import (
 	"github.com/rcss-labs/stackstead/internal/store"
 	_ "modernc.org/sqlite"
 )
+
+// olderDB builds a database with the real first n migrations.
+func olderDB(t *testing.T, n int) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "old.db")
+	if err := store.CreateAtVersionForTest(path, n); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
 
 // rawDBAtVersion creates a database file at the given user_version without
 // going through store.Open, so no migration runs.
@@ -36,6 +47,20 @@ func rawDBAtVersion(t *testing.T, version int) string {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+func hasTable(t *testing.T, path, name string) bool {
+	t.Helper()
+	raw, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	var n int
+	if err := raw.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name = ?`, name).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n > 0
+}
 
 func userVersion(t *testing.T, path string) int {
 	t.Helper()
@@ -66,7 +91,7 @@ func TestOpenExistingNeverCreatesOrMigrates(t *testing.T) {
 	})
 
 	t.Run("older schema refused and untouched", func(t *testing.T) {
-		path := rawDBAtVersion(t, 2)
+		path := olderDB(t, 2)
 		_, err := store.OpenExisting(path, store.OpenOptions{})
 		var mm *store.SchemaMismatchError
 		if !errors.As(err, &mm) || mm.Found != 2 || mm.Supported != supported {
@@ -78,7 +103,7 @@ func TestOpenExistingNeverCreatesOrMigrates(t *testing.T) {
 	})
 
 	t.Run("older schema allowed but not migrated", func(t *testing.T) {
-		path := rawDBAtVersion(t, 2)
+		path := olderDB(t, 2)
 		db, err := store.OpenExisting(path, store.OpenOptions{AllowOlderSchema: true})
 		if err != nil {
 			t.Fatalf("OpenExisting: %v", err)
@@ -90,6 +115,9 @@ func TestOpenExistingNeverCreatesOrMigrates(t *testing.T) {
 		}
 		if v := userVersion(t, path); v != 2 {
 			t.Fatalf("user_version = %d, want 2", v)
+		}
+		if hasTable(t, path, "metric_samples") {
+			t.Fatal("migration 4 was applied to an older database")
 		}
 	})
 
@@ -136,15 +164,6 @@ func TestOpenExistingReadOnlyRefusesWrites(t *testing.T) {
 	if _, err := writer.Exec(`INSERT INTO settings (key, value) VALUES ('a', 'b')`); err != nil {
 		t.Fatal(err)
 	}
-	tx, err := writer.Begin() // a writer mid-transaction must not block readers
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`INSERT INTO settings (key, value) VALUES ('c', 'd')`); err != nil {
-		t.Fatal(err)
-	}
-
 	ro, err := store.OpenExisting(path, store.OpenOptions{ReadOnly: true})
 	if err != nil {
 		t.Fatalf("OpenExisting ro: %v", err)
@@ -154,8 +173,25 @@ func TestOpenExistingReadOnlyRefusesWrites(t *testing.T) {
 	if err := ro.QueryRow(`SELECT COUNT(*) FROM settings`).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("read = %d, %v; want 1 committed row", n, err)
 	}
-	if _, err := ro.Exec(`INSERT INTO settings (key, value) VALUES ('x', 'y')`); err == nil {
+	_, err = ro.Exec(`INSERT INTO settings (key, value) VALUES ('x', 'y')`)
+	if err == nil {
 		t.Fatal("INSERT on a read-only connection succeeded")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "readonly") {
+		t.Fatalf("INSERT failed for the wrong reason: %v", err)
+	}
+
+	// Readers are not blocked by a writer that is mid-transaction.
+	tx, err := writer.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT INTO settings (key, value) VALUES ('c', 'd')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := ro.QueryRow(`SELECT COUNT(*) FROM settings`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("read during writer tx = %d, %v; want 1", n, err)
 	}
 }
 
@@ -216,6 +252,17 @@ func TestBackupUnderConcurrentWrites(t *testing.T) {
 	if info, err := os.Stat(dest); err != nil || info.Mode().Perm() != 0o600 {
 		t.Errorf("dest mode = %v, %v; want 0600", info.Mode().Perm(), err)
 	}
+	assertOnlyFile(t, filepath.Dir(dest), "copy.db")
+	header := make([]byte, 20)
+	f, err := os.Open(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.ReadAt(header, 0)
+	f.Close()
+	if header[18] != 1 || header[19] != 1 {
+		t.Errorf("header journal bytes = %d/%d, want 1/1 (not WAL mode)", header[18], header[19])
+	}
 }
 
 func TestBackupRefusesExistingDest(t *testing.T) {
@@ -256,5 +303,115 @@ func TestBackupCleansTempOnError(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(ro); len(entries) != 0 {
 		t.Errorf("left files in unwritable dir: %v", entries)
+	}
+}
+
+func TestQuickCheckReportsCorruption(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bad.db")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2000; i++ {
+		if _, err := db.Exec(`INSERT INTO metric_samples (ts, project, service, container, cpu, mem, mem_limit, net_rx, net_tx, blk_read, blk_write)
+			VALUES (?, 'p', 's', 'c', 0, 0, 0, 0, 0, 0, 0)`, i); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Zero one data page in the middle of the file: the page header becomes
+	// invalid, which quick_check reports as problem rows.
+	const pageSize = 4096
+	mid := (len(data) / pageSize / 2) * pageSize
+	for i := mid; i < mid+pageSize; i++ {
+		data[i] = 0
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bad, err := store.OpenExisting(path, store.OpenOptions{ReadOnly: true})
+	if err != nil {
+		t.Fatalf("open corrupt db: %v", err)
+	}
+	defer bad.Close()
+	problems, err := store.QuickCheck(context.Background(), bad)
+	if err != nil || len(problems) == 0 {
+		t.Fatalf("QuickCheck = %v, %v; want problem rows", problems, err)
+	}
+}
+
+func TestBackupFallsBackWhenHardLinksUnsupported(t *testing.T) {
+	db := openTemp(t)
+	restore := store.SetLinkFileForTest(func(_, _ string) error {
+		return &os.LinkError{Op: "link", Err: syscall.EPERM}
+	})
+	defer restore()
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "copy.db")
+	if err := store.Backup(context.Background(), db, dest); err != nil {
+		t.Fatalf("Backup with fallback: %v", err)
+	}
+	copyDB, err := store.OpenExisting(dest, store.OpenOptions{ReadOnly: true})
+	if err != nil {
+		t.Fatalf("open fallback copy: %v", err)
+	}
+	copyDB.Close()
+	assertOnlyFile(t, dir, "copy.db")
+	if info, _ := os.Stat(dest); info.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestBackupFallbackNeverOverwrites(t *testing.T) {
+	db := openTemp(t)
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "copy.db")
+	restore := store.SetLinkFileForTest(func(_, newname string) error {
+		// Simulate a destination that appears between the check and the publish.
+		if err := os.WriteFile(newname, []byte("keep me"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return &os.LinkError{Op: "link", Err: syscall.EPERM}
+	})
+	defer restore()
+	if err := store.Backup(context.Background(), db, dest); err == nil {
+		t.Fatal("Backup overwrote or ignored an existing destination")
+	}
+	if got, _ := os.ReadFile(dest); string(got) != "keep me" {
+		t.Errorf("destination was modified: %q", got)
+	}
+}
+
+func TestBackupOtherLinkErrorIsReported(t *testing.T) {
+	db := openTemp(t)
+	restore := store.SetLinkFileForTest(func(_, _ string) error {
+		return &os.LinkError{Op: "link", Err: syscall.EIO}
+	})
+	defer restore()
+	dir := t.TempDir()
+	if err := store.Backup(context.Background(), db, filepath.Join(dir, "x.db")); err == nil {
+		t.Fatal("Backup succeeded despite a link failure that is not 'unsupported'")
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Errorf("left files: %v", entries)
+	}
+}
+
+func assertOnlyFile(t *testing.T, dir, name string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != name {
+		t.Errorf("directory has %v, want only %s (no temp file)", entries, name)
 	}
 }
