@@ -22,6 +22,13 @@ var migrations = []string{
 		user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		expires_at INTEGER NOT NULL
 	);`,
+	`CREATE TABLE stacks (
+		name         TEXT    NOT NULL PRIMARY KEY,
+		compose_path TEXT    NOT NULL UNIQUE,
+		origin       TEXT    NOT NULL CHECK (origin IN ('managed', 'external')),
+		project      TEXT    NOT NULL,
+		created_at   INTEGER NOT NULL
+	);`,
 }
 
 // Open opens (or creates) the database at path and migrates it to the latest schema.

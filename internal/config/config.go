@@ -23,6 +23,8 @@ type Config struct {
 	MetricsRetention time.Duration `yaml:"metrics_retention"`
 	MetricsInterval  time.Duration `yaml:"metrics_interval"`
 	OperationTimeout time.Duration `yaml:"operation_timeout"`
+	DockerSocket     string        `yaml:"docker_socket"`
+	ShutdownGrace    time.Duration `yaml:"shutdown_grace"`
 }
 
 func Defaults() Config {
@@ -33,6 +35,8 @@ func Defaults() Config {
 		MetricsRetention: 72 * time.Hour,
 		MetricsInterval:  10 * time.Second,
 		OperationTimeout: 15 * time.Minute,
+		DockerSocket:     "/var/run/docker.sock",
+		ShutdownGrace:    30 * time.Second,
 	}
 }
 
@@ -71,7 +75,7 @@ func Load(path string, getenv func(string) string) (Config, error) {
 	return cfg, nil
 }
 
-var durationKeys = []string{"metrics_retention", "metrics_interval", "operation_timeout"}
+var durationKeys = []string{"metrics_retention", "metrics_interval", "operation_timeout", "shutdown_grace"}
 
 // rejectBareDurations gives a clear error for `operation_timeout: 900`, which
 // YAML would otherwise report without the key name (or read as 900ns).
@@ -90,9 +94,10 @@ func rejectBareDurations(data []byte) error {
 
 func applyEnv(cfg *Config, getenv func(string) string) error {
 	for key, dst := range map[string]*string{
-		"STACKSTEAD_LISTEN":     &cfg.Listen,
-		"STACKSTEAD_STACKS_DIR": &cfg.StacksDir,
-		"STACKSTEAD_DATA_DIR":   &cfg.DataDir,
+		"STACKSTEAD_LISTEN":        &cfg.Listen,
+		"STACKSTEAD_STACKS_DIR":    &cfg.StacksDir,
+		"STACKSTEAD_DATA_DIR":      &cfg.DataDir,
+		"STACKSTEAD_DOCKER_SOCKET": &cfg.DockerSocket,
 	} {
 		if v := getenv(key); v != "" {
 			*dst = v
@@ -102,6 +107,7 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 		"STACKSTEAD_METRICS_RETENTION": &cfg.MetricsRetention,
 		"STACKSTEAD_METRICS_INTERVAL":  &cfg.MetricsInterval,
 		"STACKSTEAD_OPERATION_TIMEOUT": &cfg.OperationTimeout,
+		"STACKSTEAD_SHUTDOWN_GRACE":    &cfg.ShutdownGrace,
 	} {
 		if v := getenv(key); v != "" {
 			d, err := time.ParseDuration(v)
@@ -126,7 +132,7 @@ func (c Config) validate() error {
 	if c.Listen == "" {
 		return errors.New("listen must not be empty")
 	}
-	for name, p := range map[string]string{"stacks_dir": c.StacksDir, "data_dir": c.DataDir} {
+	for name, p := range map[string]string{"stacks_dir": c.StacksDir, "data_dir": c.DataDir, "docker_socket": c.DockerSocket} {
 		if !filepath.IsAbs(p) {
 			return fmt.Errorf("%s must be an absolute path, got %q", name, p)
 		}
@@ -140,6 +146,7 @@ func (c Config) validate() error {
 		"metrics_retention": c.MetricsRetention,
 		"metrics_interval":  c.MetricsInterval,
 		"operation_timeout": c.OperationTimeout,
+		"shutdown_grace":    c.ShutdownGrace,
 	} {
 		if d < time.Second {
 			return fmt.Errorf("%s must be at least 1s (use units, e.g. 15m), got %s", name, d)

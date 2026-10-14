@@ -39,6 +39,8 @@ func TestLoadWithoutFileUsesDefaults(t *testing.T) {
 		MetricsRetention: 72 * time.Hour,
 		MetricsInterval:  10 * time.Second,
 		OperationTimeout: 15 * time.Minute,
+		DockerSocket:     "/var/run/docker.sock",
+		ShutdownGrace:    30 * time.Second,
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("got  %+v\nwant %+v", cfg, want)
@@ -78,6 +80,8 @@ func TestEnvOverridesFile(t *testing.T) {
 		"STACKSTEAD_LISTEN":            "127.0.0.1:7000",
 		"STACKSTEAD_OPERATION_TIMEOUT": "30m",
 		"STACKSTEAD_ALLOWED_ROOTS":     "/srv/a, /srv/b",
+		"STACKSTEAD_DOCKER_SOCKET":     "/run/user/1000/docker.sock",
+		"STACKSTEAD_SHUTDOWN_GRACE":    "5s",
 	}))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -90,6 +94,12 @@ func TestEnvOverridesFile(t *testing.T) {
 	}
 	if want := []string{"/srv/a", "/srv/b"}; !reflect.DeepEqual(cfg.AllowedRoots, want) {
 		t.Errorf("AllowedRoots = %v, want %v", cfg.AllowedRoots, want)
+	}
+	if cfg.DockerSocket != "/run/user/1000/docker.sock" {
+		t.Errorf("DockerSocket = %q, want env value", cfg.DockerSocket)
+	}
+	if cfg.ShutdownGrace != 5*time.Second {
+		t.Errorf("ShutdownGrace = %s, want 5s", cfg.ShutdownGrace)
 	}
 }
 
@@ -115,6 +125,8 @@ func TestLoadRejectsInvalidConfig(t *testing.T) {
 		{name: "relative stacks dir", env: map[string]string{"STACKSTEAD_STACKS_DIR": "stacks"}, wantErr: "stacks_dir"},
 		{name: "relative allowed root", file: "allowed_roots: [rel]\n", wantErr: "allowed_roots"},
 		{name: "zero interval", env: map[string]string{"STACKSTEAD_METRICS_INTERVAL": "0s"}, wantErr: "metrics_interval"},
+		{name: "relative docker socket", file: "docker_socket: docker.sock\n", wantErr: "docker_socket"},
+		{name: "zero shutdown grace", file: "shutdown_grace: 0s\n", wantErr: "shutdown_grace"},
 		{name: "bare integer duration", file: "operation_timeout: 900\n", wantErr: "operation_timeout"},
 		{name: "sub-second duration", env: map[string]string{"STACKSTEAD_OPERATION_TIMEOUT": "900ns"}, wantErr: "operation_timeout must be at least 1s"},
 		{name: "unparseable duration", env: map[string]string{"STACKSTEAD_METRICS_RETENTION": "three days"}, wantErr: "STACKSTEAD_METRICS_RETENTION"},

@@ -20,3 +20,10 @@ data_dir: /var/lib/stackstead
 metrics_retention: 72h
 metrics_interval: 10s
 operation_timeout: 15m
+
+# Docker Engine API socket (must be an absolute path).
+# docker_socket: /var/run/docker.sock
+
+# How long a cancelled or shutdown-interrupted operation gets after SIGTERM
+# before it is killed.
+# shutdown_grace: 30s

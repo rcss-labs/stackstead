@@ -101,3 +101,56 @@ func TestDeletingUserDeletesSessions(t *testing.T) {
 		t.Errorf("sessions = %d after deleting user, want 0 (foreign keys not enforced?)", n)
 	}
 }
+
+func TestOpenCreatesStacksTableAtLatestVersion(t *testing.T) {
+	db := openTemp(t)
+	var version int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 2 {
+		t.Errorf("user_version = %d, want 2", version)
+	}
+	if _, err := db.Exec(`INSERT INTO stacks (name, compose_path, origin, project, created_at) VALUES ('a', '/a/compose.yaml', 'managed', 'a', 0)`); err != nil {
+		t.Fatalf("insert stack: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO stacks (name, compose_path, origin, project, created_at) VALUES ('b', '/b/compose.yaml', 'bogus', 'b', 0)`); err == nil {
+		t.Error("inserting a stack with an unknown origin succeeded, want CHECK failure")
+	}
+}
+
+func TestOpenUpgradesVersion1Database(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "stackstead.db")
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Exactly the schema migration 1 produced, stamped as version 1.
+	for _, stmt := range []string{
+		`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, created_at INTEGER NOT NULL)`,
+		`CREATE TABLE sessions (token_hash TEXT NOT NULL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at INTEGER NOT NULL)`,
+		`INSERT INTO users (id, username, password_hash, created_at) VALUES (1, 'admin', 'x', 0)`,
+		`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ('t', 1, 0)`,
+		`PRAGMA user_version = 1`,
+	} {
+		if _, err := raw.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	raw.Close()
+
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open v1 database: %v", err)
+	}
+	defer db.Close()
+	if n := count(t, db, "users"); n != 1 {
+		t.Errorf("users = %d after upgrade, want 1", n)
+	}
+	if n := count(t, db, "sessions"); n != 1 {
+		t.Errorf("sessions = %d after upgrade, want 1", n)
+	}
+	if n := count(t, db, "stacks"); n != 0 {
+		t.Errorf("stacks = %d after upgrade, want 0", n)
+	}
+}
