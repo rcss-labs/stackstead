@@ -37,13 +37,24 @@ export async function login(username: string, password: string): Promise<void> {
   store.set({ state: 'authenticated', username: me.username });
 }
 
-export async function logout(): Promise<void> {
+/** Drops local session state without a request (for the 401 redirect handler). */
+export function expireSession(): void {
+  store.set({ state: 'anonymous' });
+}
+
+/**
+ * Always ends anonymous. Resolves {ok:false} when the server may not have
+ * ended the session (anything but success or 401), so the UI can warn.
+ */
+export async function logout(): Promise<{ ok: boolean }> {
+  let ok = true;
   try {
     await api.logout();
-  } catch {
-    // The cookie may already be gone; the browser is logged out either way.
+  } catch (err) {
+    ok = (err as { status?: number }).status === 401;
   }
   store.set({ state: 'anonymous' });
+  return { ok };
 }
 
 export async function setup(username: string, password: string, token?: string): Promise<void> {

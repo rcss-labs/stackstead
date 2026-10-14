@@ -61,7 +61,7 @@ export function rearmUnauthorized(): void {
 }
 
 // These answer 401 for reasons other than "your session is gone".
-const AUTH_PATHS = ['/api/login', '/api/setup', '/api/me'];
+const AUTH_PATHS = ['/api/login', '/api/logout', '/api/setup', '/api/me'];
 
 function isAuthPath(path: string): boolean {
   const p = path.split('?')[0];
@@ -100,6 +100,7 @@ export async function request<T>(
   try {
     res = await fetch(path, init);
   } catch (err) {
+    if (opts.signal?.aborted) throw opts.signal.reason ?? err;
     if (err instanceof DOMException && err.name === 'AbortError') throw err;
     throw new ApiError(0, 'network error');
   }
@@ -110,7 +111,12 @@ export async function request<T>(
   let parsed: unknown;
   try {
     parsed = await res.json();
-  } catch {
+  } catch (err) {
+    if (res.ok) {
+      // A successful status with an unreadable body is not a success.
+      if (opts.signal?.aborted) throw opts.signal.reason ?? err;
+      throw new ApiError(res.status, 'invalid response');
+    }
     parsed = undefined;
   }
 
@@ -150,8 +156,8 @@ export const api = {
   stacks: () => get<StackSummary[]>('/api/stacks'),
   stack: (name: string) => get<StackDetail>(`/api/stacks/${seg(name)}`),
   /** Resolves with the result plus whether port/IP checks ran without the engine. */
-  createStack: (req: CreateStackRequest) => request<StackDetail>('POST', '/api/stacks', req),
-  importStack: (path: string) => request<StackDetail>('POST', '/api/stacks/import', { path } satisfies ImportRequest),
+  createStack: (req: CreateStackRequest) => request<StackSummary>('POST', '/api/stacks', req),
+  importStack: (path: string) => request<StackSummary>('POST', '/api/stacks/import', { path } satisfies ImportRequest),
   compose: (name: string) => get<RawCompose>(`/api/stacks/${seg(name)}/compose`),
   saveCompose: (name: string, content: string, hash: string) =>
     request<HashResponse>('PUT', `/api/stacks/${seg(name)}/compose`, { content, hash } satisfies RawCompose),
@@ -170,7 +176,7 @@ export const api = {
     request<Operation>('DELETE', `/api/stacks/${seg(name)}${withVolumes ? '?volumes=true' : ''}`).then((r) => r.data),
   stackOperations: (name: string) => get<Operation[]>(`/api/stacks/${seg(name)}/operations`),
   operation: (id: string) => get<OperationDetail>(`/api/operations/${seg(id)}`),
-  cancel: (id: string) => post<void>(`/api/operations/${seg(id)}/cancel`),
+  cancel: (id: string) => post<Operation>(`/api/operations/${seg(id)}/cancel`),
   runningOperations: () => get<Operation[]>('/api/operations?state=running'),
 
   fs: (path?: string) => get<FSEntry[]>(`/api/fs${query({ path })}`),

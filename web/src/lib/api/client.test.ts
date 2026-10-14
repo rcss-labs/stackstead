@@ -24,6 +24,49 @@ describe('request', () => {
     expect(init[0].redirect).toBe('error');
   });
 
+  it('passes the abort signal to fetch', async () => {
+    fake = installFakeFetch({ 'GET /api/stacks': { body: [] } });
+    const ac = new AbortController();
+    await request('GET', '/api/stacks', undefined, { signal: ac.signal });
+    expect(fake.calls[0].signal).toBe(ac.signal);
+  });
+
+  it('rejects a 2xx with a non-JSON body', async () => {
+    fake = installFakeFetch({
+      'GET /api/stacks': { body: 'not json', headers: { 'content-type': 'text/plain' } },
+    });
+    const err = await request('GET', '/api/stacks').catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.message).toBe('invalid response');
+  });
+
+  it('rethrows the abort reason when the body read is aborted', async () => {
+    fake = installFakeFetch({});
+    const ac = new AbortController();
+    const reason = new Error('custom reason');
+    globalThis.fetch = (async () => {
+      const body = new ReadableStream({
+        start(c) {
+          ac.signal.addEventListener('abort', () => c.error(reason));
+        },
+      });
+      return new Response(body, { status: 200 });
+    }) as typeof fetch;
+    const p = request('GET', '/api/stacks', undefined, { signal: ac.signal }).catch((e) => e);
+    ac.abort(reason);
+    expect(await p).toBe(reason);
+  });
+
+  it('rethrows a custom abort reason from fetch instead of network error', async () => {
+    fake = installFakeFetch({});
+    const ac = new AbortController();
+    const reason = new Error('custom');
+    ac.abort(reason);
+    globalThis.fetch = (() => Promise.reject(new TypeError('x'))) as typeof fetch;
+    const err = await request('GET', '/api/stacks', undefined, { signal: ac.signal }).catch((e) => e);
+    expect(err).toBe(reason);
+  });
+
   it('sends {} for body-less POSTs such as act', async () => {
     fake = installFakeFetch({ 'POST /api/stacks/web/actions/up': { status: 202, body: { id: '1' } } });
     await api.act('web', 'up');
@@ -33,7 +76,7 @@ describe('request', () => {
 
   it('sends {} for cancel and createMetricsToken', async () => {
     fake = installFakeFetch({
-      'POST /api/operations/7/cancel': { status: 204 },
+      'POST /api/operations/7/cancel': { status: 202, body: { id: '7' } },
       'POST /api/settings/metrics-token': { body: { token: 't' } },
     });
     await api.cancel('7');
@@ -175,12 +218,13 @@ describe('401 handling', () => {
     const handler = vi.fn();
     onUnauthorized(handler);
     fake = installFakeFetch({
+      'POST /api/logout': { status: 401, body: { error: 'x' } },
       'POST /api/login': { status: 401, body: { error: 'bad credentials' } },
       'GET /api/setup/status': { status: 401, body: { error: 'x' } },
       'POST /api/setup': { status: 401, body: { error: 'x' } },
       'GET /api/me': { status: 401, body: { error: 'x' } },
     });
-    await Promise.allSettled([api.login('a', 'b'), api.setupStatus(), api.setup('a', 'b'), api.me()]);
+    await Promise.allSettled([api.login('a', 'b'), api.logout(), api.setupStatus(), api.setup('a', 'b'), api.me()]);
     expect(handler).not.toHaveBeenCalled();
   });
 

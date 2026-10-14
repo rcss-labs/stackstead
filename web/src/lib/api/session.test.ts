@@ -2,7 +2,7 @@ import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installFakeFetch, type FakeFetch } from '../../vitest-setup';
 import { api, onUnauthorized } from './client';
-import { bootstrapSession, login, logout, session, setup } from './session';
+import { bootstrapSession, expireSession, login, logout, session, setup } from './session';
 
 let fake: FakeFetch;
 afterEach(() => fake?.restore());
@@ -102,5 +102,31 @@ describe('login/logout/setup', () => {
     await login('ann', 'pw');
     await api.stacks().catch(() => {});
     expect(handler).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('logout result and expireSession', () => {
+  it('401 on logout is a silent success', async () => {
+    fake = installFakeFetch({ 'POST /api/logout': { status: 401, body: { error: 'x' } } });
+    expect(await logout()).toEqual({ ok: true });
+    expect(get(session).state).toBe('anonymous');
+  });
+
+  it('other failures go anonymous but report ok:false', async () => {
+    fake = installFakeFetch({ 'POST /api/logout': { status: 500, body: { error: 'x' } } });
+    expect(await logout()).toEqual({ ok: false });
+    expect(get(session).state).toBe('anonymous');
+  });
+
+  it('expireSession sets anonymous without a network call', async () => {
+    fake = installFakeFetch({
+      'POST /api/login': { status: 204 },
+      'GET /api/me': { body: { username: 'ann' } },
+    });
+    await login('ann', 'pw');
+    const before = fake.calls.length;
+    expireSession();
+    expect(get(session).state).toBe('anonymous');
+    expect(fake.calls.length).toBe(before);
   });
 });
