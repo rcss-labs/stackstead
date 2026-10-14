@@ -73,6 +73,7 @@ func TestFreshInstallLayoutInContainer(t *testing.T) {
 				"/opt/stacks":                 "2775 stackstead:docker",
 				"/var/lib/stackstead":         "700 stackstead:",
 				"/etc/stackstead/config.yaml": "640 root:stackstead",
+				"/etc/stackstead":             "755 root:",
 				"/usr/local/bin/stackstead":   "755 root:root",
 			} {
 				got := strings.TrimSpace(s.shOK("stat -c '%a %U:%G' " + path))
@@ -199,7 +200,7 @@ func TestUninstallAndPurgeInContainer(t *testing.T) {
 
 	stdout, stderr, code = s.install("--uninstall")
 	expectCode(t, "uninstall", code, 0, stdout, stderr)
-	s.shOK("test ! -e /usr/local/bin/stackstead && test ! -e /etc/systemd/system/stackstead.service && test ! -e /usr/local/share/stackstead && test ! -e /etc/systemd/system/multi-user.target.wants/stackstead.service")
+	s.shOK("test ! -e /usr/local/bin/stackstead && test ! -e /etc/systemd/system/stackstead.service && test ! -e /usr/local/share/stackstead && test ! -L /etc/systemd/system/multi-user.target.wants/stackstead.service")
 	s.shOK("test -f /etc/stackstead/config.yaml && test -f /var/lib/stackstead/stackstead.db && getent passwd stackstead")
 	s.shOK("test -f /opt/stacks/keep/compose.yaml")
 
@@ -207,6 +208,27 @@ func TestUninstallAndPurgeInContainer(t *testing.T) {
 	expectCode(t, "purge", code, 0, stdout, stderr)
 	s.shOK("test ! -e /etc/stackstead && test ! -e /var/lib/stackstead && ! getent passwd stackstead")
 	s.shOK("test -f /opt/stacks/keep/compose.yaml")
+}
+
+func TestUninstallStopsServiceInContainer(t *testing.T) {
+	t.Parallel()
+	s := newScenario(t, "debian", scenarioOpts{FakeSystemd: true})
+	stdout, stderr, code := s.install("--version", "v1.0.0")
+	expectCode(t, "install", code, 0, stdout, stderr)
+	s.shOK("curl -fsS http://127.0.0.1:8420/api/health && : > /var/log/fake-systemctl.log")
+
+	stdout, stderr, code = s.install("--uninstall")
+	expectCode(t, "uninstall", code, 0, stdout, stderr)
+	calls := s.shOK("cat /var/log/fake-systemctl.log")
+	disable := strings.Index(calls, "disable --now stackstead")
+	reload := strings.LastIndex(calls, "daemon-reload")
+	if disable < 0 || reload < 0 || disable > reload {
+		t.Fatalf("want disable --now stackstead then daemon-reload, got:\n%s", calls)
+	}
+	s.shOK("test ! -e /run/fake-stackstead.pid && test ! -L /etc/systemd/system/multi-user.target.wants/stackstead.service")
+	if _, c := s.sh("curl -fsS -m 2 http://127.0.0.1:8420/api/health"); c == 0 {
+		t.Fatal("the service still answers after uninstall")
+	}
 }
 
 func TestDryRunInContainer(t *testing.T) {
@@ -351,7 +373,7 @@ func TestUpgradeDoesNotStartStoppedServiceInContainer(t *testing.T) {
 	calls := s.shOK("cat /var/log/fake-systemctl.log")
 	expectNotContains(t, "systemctl calls", calls, "restart")
 	expectNotContains(t, "systemctl calls", calls, "enable")
-	s.shOK("test ! -e /etc/systemd/system/multi-user.target.wants/stackstead.service")
+	s.shOK("test ! -L /etc/systemd/system/multi-user.target.wants/stackstead.service")
 	expectNotContains(t, "stdout", stdout, "Stackstead is running")
 }
 
@@ -570,7 +592,7 @@ func dockerBuildImage(t *testing.T, r *run, dockerfile string) string {
 		return tag
 	}
 	if _, _, code := docker("image", "inspect", tag); code != 0 {
-		out, errOut, code := docker("build", "--label", "stackstead.test=image-cache", "-t", tag, "-f", filepath.Join(dir, dockerfile), dir)
+		out, errOut, code := docker("build", "--label", "stackstead.test=image", "-t", tag, "-f", filepath.Join(dir, dockerfile), dir)
 		if code != 0 {
 			t.Fatalf("docker build %s failed:\n%s\n%s", dockerfile, out, errOut)
 		}
@@ -709,6 +731,11 @@ func serveReleaseTampered(t *testing.T, r *run, dist, network string, tamper fun
 	serversMu.Lock()
 	releaseServers[network] = server
 	serversMu.Unlock()
+	t.Cleanup(func() {
+		serversMu.Lock()
+		delete(releaseServers, network)
+		serversMu.Unlock()
+	})
 	base := "http://127.0.0.1:" + serverPort
 	url := base + "/releases/latest/download/SHA256SUMS"
 	for i := 0; ; i++ {
@@ -847,8 +874,11 @@ start() {
 	echo $! > "$PIDF"
 }
 stop() {
-	if alive; then kill -s TERM -- "-$(cat "$PIDF")" 2>/dev/null || true; fi
+	old=
+	if alive; then old=$(cat "$PIDF"); kill -s TERM -- "-$old" 2>/dev/null || true; fi
 	rm -f "$PIDF"
+	i=0
+	while [ -n "$old" ] && kill -0 "$old" 2>/dev/null && [ "$i" -lt 50 ]; do i=$((i + 1)); sleep 0.1; done
 }
 now=
 verb=
