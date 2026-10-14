@@ -878,3 +878,59 @@ func TestShellcheckClean(t *testing.T) {
 		}
 	}
 }
+
+// codesInHelp returns the exit codes install.sh --help lists.
+func codesInHelp(t *testing.T) []string {
+	t.Helper()
+	out, errOut, code := runScript(t, []string{"--help"}, nil, defaultStubs())
+	mustExit(t, code, 0, out, errOut)
+	_, tail, ok := strings.Cut(out, "Exit codes:")
+	if !ok {
+		t.Fatalf("--help has no Exit codes section:\n%s", out)
+	}
+	var codes []string
+	for _, l := range strings.Split(tail, "\n") {
+		if m := regexp.MustCompile(`^\s+(\d+)\s`).FindStringSubmatch(l); m != nil {
+			codes = append(codes, m[1])
+		}
+	}
+	sort.Strings(codes)
+	return codes
+}
+
+// The exit-code table in docs/install.md and the codes in install.sh --help are the same set.
+func TestInstallDocExitCodesMatchHelp(t *testing.T) {
+	doc := string(readFile(t, filepath.Join(repoRoot(t), "docs", "install.md")))
+	_, section, ok := strings.Cut(doc, "## Exit codes")
+	if !ok {
+		t.Fatal("docs/install.md has no '## Exit codes' section")
+	}
+	if i := strings.Index(section, "\n## "); i >= 0 {
+		section = section[:i]
+	}
+	var docCodes []string
+	for _, l := range strings.Split(section, "\n") {
+		if m := regexp.MustCompile(`^\|\s*(\d+)\s*\|`).FindStringSubmatch(l); m != nil {
+			docCodes = append(docCodes, m[1])
+		}
+	}
+	sort.Strings(docCodes)
+	help := codesInHelp(t)
+	if strings.Join(docCodes, ",") != strings.Join(help, ",") {
+		t.Errorf("docs/install.md exit codes %v differ from install.sh --help %v", docCodes, help)
+	}
+}
+
+// The binary path the docs give for packaged installs is the one the shipped unit runs.
+func TestDocsNameTheUnitBinaryPath(t *testing.T) {
+	root := repoRoot(t)
+	m := regexp.MustCompile(`(?m)^ExecStart=(\S+) serve`).FindSubmatch(readFile(t, filepath.Join(root, "deploy", "systemd", "stackstead.service")))
+	if m == nil {
+		t.Fatal("no ExecStart=<bin> serve in the unit")
+	}
+	for _, doc := range []string{"README.md", "docs/install.md", "docs/cli.md"} {
+		if !strings.Contains(string(readFile(t, filepath.Join(root, doc))), string(m[1])) {
+			t.Errorf("%s does not mention the unit's binary path %s", doc, m[1])
+		}
+	}
+}
