@@ -83,6 +83,8 @@ func (s *server) handleStreamOperation(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-s.opts.Closing: // nil channel (never ready) when unset
+			return
 		case <-ticker.C:
 			if !send(": ping\n\n") {
 				return

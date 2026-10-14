@@ -337,7 +337,7 @@ func TestLifecycleAndOperations(t *testing.T) {
 		t.Errorf("bad volumes flag = %d", rec.Code)
 	}
 	rec = env.do(t, "GET", "/api/operations/op1", "", withCookie(cookie))
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"lines":["a","b"]`) || !strings.Contains(rec.Body.String(), `"exitCode":-1`) {
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"lines":["a","b"]`) || strings.Contains(rec.Body.String(), `"exitCode"`) {
 		t.Fatalf("operation = %d %s", rec.Code, rec.Body)
 	}
 	rec = env.do(t, "POST", "/api/operations/op1/cancel", "{}", withCookie(cookie))
@@ -536,3 +536,57 @@ func TestStreamUnknownOperation(t *testing.T) {
 }
 
 func mustPrefix(s string) netip.Prefix { return netip.MustParsePrefix(s) }
+
+func TestOperationExitCodeExposure(t *testing.T) {
+	cases := []struct {
+		name  string
+		state stacks.OpState
+		code  int
+		want  string // "" means the field must be absent
+	}{
+		{"running", stacks.OpRunning, -1, ""},
+		{"succeeded", stacks.OpSucceeded, -1, `"exitCode":0`},
+		{"failed with code", stacks.OpFailed, 3, `"exitCode":3`},
+		{"failed without code", stacks.OpFailed, -1, ""},
+		{"cancelled", stacks.OpCancelled, -1, ""},
+		{"timed out", stacks.OpTimedOut, -1, ""},
+	}
+	for _, c := range cases {
+		fake := newFakeStacks()
+		fake.op.State, fake.op.ExitCode = c.state, c.code
+		env, cookie := newStacksEnv(t, fake)
+		body := env.do(t, "GET", "/api/operations/op1", "", withCookie(cookie)).Body.String()
+		if c.want == "" && strings.Contains(body, "exitCode") {
+			t.Errorf("%s: exitCode must be omitted: %s", c.name, body)
+		}
+		if c.want != "" && !strings.Contains(body, c.want) {
+			t.Errorf("%s: want %s in %s", c.name, c.want, body)
+		}
+	}
+}
+
+func TestStreamEndsWhenServerIsClosing(t *testing.T) {
+	fake := newFakeStacks()
+	fake.live = make(chan string)
+	fake.done = make(chan stacks.Operation, 1)
+	closing := make(chan struct{})
+	env := newEnvWith(t, "", func(o *api.Options) {
+		o.Stacks, o.Operations, o.FSRoots, o.Status = fake, fakeOps{fake}, fake.roots, fake.status
+		o.SSEHeartbeat = 20 * time.Millisecond
+		o.Closing = closing
+	})
+	env.createAdmin(t)
+	_, events := openStream(t, env, env.login(t), context.Background())
+	nextEvent(t, events, false) // handler is in its loop
+	close(closing)
+	for {
+		select {
+		case _, ok := <-events:
+			if !ok {
+				return
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("stream did not end after the server started closing")
+		}
+	}
+}

@@ -94,11 +94,7 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	}
 
 	dockerEngine := engine.New(cfg.DockerSocket, engineTimeout)
-	runner := &composecli.Runner{}
-	if cfg.DockerSocket != config.Defaults().DockerSocket {
-		// Keep compose on the same engine as the API client.
-		runner.Env = []string{"DOCKER_HOST=unix://" + cfg.DockerSocket}
-	}
+	runner := buildRunner(cfg)
 	// Docker or compose being unavailable is not fatal: the service starts
 	// and lifecycle endpoints answer 503 until they come back.
 	dockerStatus := func(ctx context.Context) (docker, compose string) {
@@ -136,6 +132,7 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 		logger.Warn("stack sync reported problems", "err", err)
 	}
 
+	closing := make(chan struct{})
 	srv := &http.Server{
 		Addr: cfg.Listen,
 		Handler: api.New(api.Options{
@@ -148,12 +145,17 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 			Operations: ops,
 			FSRoots:    cfg.AllowedRoots,
 			Status:     dockerStatus,
+			Closing:    closing,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       readTimeout,
 		IdleTimeout:       idleTimeout,
 		// WriteTimeout stays unset: SSE streams (Plan 4) need long-lived writes.
 	}
+
+	// Ends SSE streams as soon as Shutdown starts; they would otherwise
+	// hold it until the grace expires.
+	srv.RegisterOnShutdown(func() { close(closing) })
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.ListenAndServe() }()
@@ -180,4 +182,23 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	defer cancelOps()
 	ops.Shutdown(opsCtx)
 	return httpErr
+}
+
+const (
+	maxComposeGrace = 10 * time.Second
+	minComposeGrace = 500 * time.Millisecond
+)
+
+// buildRunner makes docker_socket the single source of truth: compose talks
+// to the same engine as the API client, regardless of an inherited
+// DOCKER_HOST or the CLI's current context. The SIGTERM-to-SIGKILL delay is
+// kept within half of shutdown_grace so that a shutdown that only waits
+// shutdown_grace still gets to SIGKILL compose's process groups.
+func buildRunner(cfg config.Config) *composecli.Runner {
+	grace := min(maxComposeGrace, cfg.ShutdownGrace/2)
+	grace = max(grace, minComposeGrace)
+	return &composecli.Runner{
+		Env:   []string{"DOCKER_HOST=unix://" + cfg.DockerSocket},
+		Grace: grace,
+	}
 }

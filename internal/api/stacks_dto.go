@@ -184,13 +184,23 @@ type operationDTO struct {
 	State     string     `json:"state"`
 	StartedAt time.Time  `json:"startedAt"`
 	EndedAt   *time.Time `json:"endedAt,omitempty"`
-	ExitCode  int        `json:"exitCode"`
+	ExitCode  *int       `json:"exitCode,omitempty"`
 	Error     string     `json:"error,omitempty"`
 }
 
 func toOperation(o stacks.Operation) operationDTO {
 	dto := operationDTO{ID: o.ID, Stack: o.Stack, Action: o.Action, State: string(o.State),
-		StartedAt: o.StartedAt, ExitCode: o.ExitCode, Error: o.Error}
+		StartedAt: o.StartedAt, Error: o.Error}
+	// The internal -1 means "no exit code"; only report real ones. A
+	// succeeded operation ran compose to exit 0.
+	switch {
+	case o.State == stacks.OpSucceeded:
+		zero := 0
+		dto.ExitCode = &zero
+	case o.State == stacks.OpFailed && o.ExitCode >= 0:
+		code := o.ExitCode
+		dto.ExitCode = &code
+	}
 	if !o.EndedAt.IsZero() {
 		t := o.EndedAt
 		dto.EndedAt = &t

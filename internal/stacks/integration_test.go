@@ -75,6 +75,9 @@ func newITEnv(t *testing.T) *itEnv {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker CLI not installed")
 	}
+	if out, err := exec.Command("docker", "compose", "version").CombinedOutput(); err != nil {
+		t.Skipf("docker compose plugin unavailable: %v: %s", err, out)
+	}
 	raw := make([]byte, 3)
 	if _, err := rand.Read(raw); err != nil {
 		t.Fatal(err)
@@ -320,11 +323,30 @@ func leftoverProcesses(needle string) []string {
 	return found
 }
 
+// dockerProcs snapshots the docker compose and buildx processes on the host
+// (pid -> command line).
+func dockerProcs() map[string]string {
+	procs := map[string]string{}
+	out, err := exec.Command("ps", "-axo", "pid=,command=").Output()
+	if err != nil {
+		return procs
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "docker-buildx") || strings.Contains(line, "docker-compose") || strings.Contains(line, "docker compose") {
+			pid, cmd, _ := strings.Cut(line, " ")
+			procs[pid] = strings.TrimSpace(cmd)
+		}
+	}
+	return procs
+}
+
 func TestCancelBuild(t *testing.T) {
 	e := newITEnv(t)
 	name := e.prefix + "-slow"
 	e.createBuilt(name, "FROM busybox\nRUN sleep 120\n")
 
+	preexisting := dockerProcs()
 	op, err := e.svc.Act(context.Background(), name, "build")
 	if err != nil {
 		t.Fatal(err)
@@ -342,10 +364,21 @@ func TestCancelBuild(t *testing.T) {
 		t.Fatalf("state = %s (%s), want cancelled; output:\n%s", final.State, final.Error, strings.Join(lines, "\n"))
 	}
 	// Everything of ours lives under e.root, so its path identifies the processes.
+	// Also catch children that do not mention our path: any compose/buildx
+	// process that did not exist before the build must be gone too.
+	leftovers := func() []string {
+		left := leftoverProcesses(e.root)
+		for pid, cmd := range dockerProcs() {
+			if _, old := preexisting[pid]; !old {
+				left = append(left, pid+" "+cmd)
+			}
+		}
+		return left
+	}
 	var left []string
 	deadline := time.Now().Add(15 * time.Second)
 	for {
-		if left = leftoverProcesses(e.root); len(left) == 0 || time.Now().After(deadline) {
+		if left = leftovers(); len(left) == 0 || time.Now().After(deadline) {
 			break
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -358,27 +391,30 @@ func TestCancelBuild(t *testing.T) {
 func TestStaticIPConflict(t *testing.T) {
 	e := newITEnv(t)
 	netName := e.prefix + "-net"
-	var subnet string
-	for attempt := 0; attempt < 8; attempt++ {
-		b := make([]byte, 1)
+	e.teardown = append(e.teardown, func() { e.docker("network", "rm", netName) })
+	var subnet, lastOut string
+	created := false
+	for attempt := 0; attempt < 8 && !created; attempt++ {
+		b := make([]byte, 2)
 		if _, err := rand.Read(b); err != nil {
 			t.Fatal(err)
 		}
-		subnet = fmt.Sprintf("10.%d.%d.0/24", 100+int(b[0])%100, 1+int(b[0])%250)
-		if out, err := e.docker("network", "create", "--subnet", subnet, netName); err == nil {
-			subnet = strings.TrimSuffix(subnet, ".0/24")
-			break
-		} else if attempt == 7 {
-			t.Skipf("cannot create a test network: %s", out)
+		prefix := fmt.Sprintf("10.%d.%d", 100+int(b[0])%100, 1+int(b[1])%250)
+		out, err := e.docker("network", "create", "--subnet", prefix+".0/24", netName)
+		if err == nil {
+			subnet, created = prefix, true
 		}
+		lastOut = out
 	}
-	e.teardown = append(e.teardown, func() { e.docker("network", "rm", netName) })
+	if !created {
+		t.Fatalf("could not create a test network after 8 attempts: %s", lastOut)
+	}
 	holder := e.prefix + "-holder"
+	e.teardown = append(e.teardown, func() { e.docker("rm", "-f", holder) }) // registered before run so a half-started container is still removed
 	taken := subnet + ".10"
 	if out, err := e.docker("run", "-d", "--name", holder, "--network", netName, "--ip", taken, "busybox", "sleep", "3600"); err != nil {
 		t.Fatalf("start holder: %v\n%s", err, out)
 	}
-	e.teardown = append(e.teardown, func() { e.docker("rm", "-f", holder) })
 
 	name := e.prefix + "-ip"
 	_, err := e.svc.Create(context.Background(), stacks.CreateRequest{

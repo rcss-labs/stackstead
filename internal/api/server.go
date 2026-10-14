@@ -29,6 +29,10 @@ type Options struct {
 	// SSEHeartbeat is the idle interval between ": ping" comments on
 	// operation streams (default 15s) and SSEWriteTimeout bounds each write
 	// to a stream (default 10s), since the HTTP server has no WriteTimeout.
+	// Closing, when closed, ends open operation streams so graceful HTTP
+	// shutdown does not wait for them.
+	Closing <-chan struct{}
+
 	SSEHeartbeat    time.Duration
 	SSEWriteTimeout time.Duration
 }
