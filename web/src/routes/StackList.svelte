@@ -10,6 +10,15 @@
   import Button from '$lib/components/Button.svelte';
 
   let query = $state('');
+  let retrying = $state(false);
+  async function retry() {
+    retrying = true;
+    try {
+      await refreshStacks();
+    } finally {
+      retrying = false;
+    }
+  }
   let runningStacks = $state<Set<string>>(new Set());
 
   const sorted = $derived([...$stacks.items].sort((a, b) => a.name.localeCompare(b.name)));
@@ -68,7 +77,7 @@
   {#if $stacks.error}
     <Banner kind="danger" title="Could not load stacks">{#snippet children()}{$stacks.error}{/snippet}</Banner>
     {#if $stacks.items.length === 0}
-      <p><Button variant="secondary" onclick={() => void refreshStacks()}>{#snippet children()}Retry{/snippet}</Button></p>
+      <p><Button variant="secondary" loading={retrying} onclick={() => void retry()}>{#snippet children()}Retry{/snippet}</Button></p>
     {/if}
   {/if}
   {#if degraded}

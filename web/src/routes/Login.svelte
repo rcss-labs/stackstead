@@ -55,7 +55,7 @@
   }
 </script>
 
-<main class="container auth">
+<div class="auth">
   <form class="card stack" onsubmit={submit}>
     <h1>Sign in to Stackstead</h1>
     {#if error}<p role="alert" class="error"><span aria-hidden="true">✖ </span>{error}</p>{/if}
@@ -71,7 +71,7 @@
     </Field>
     <Button variant="primary" type="submit" loading={pending}>Sign in</Button>
   </form>
-</main>
+</div>
 
 <style>
   .auth { display: flex; justify-content: center; padding-block: var(--space-6, 2rem); }

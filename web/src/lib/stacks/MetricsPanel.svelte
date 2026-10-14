@@ -29,6 +29,12 @@
   });
   onDestroy(() => ctl.close());
 
+  // The spinner is for the first load only; a range change keeps the old charts until the new data lands.
+  let everLoaded = $state(false);
+  $effect(() => {
+    if ($loaded) everLoaded = true;
+  });
+
   const ranges: Range[] = ['1h', '6h', '24h', '72h'];
 
   const memLimit = $derived.by(() => {
@@ -69,12 +75,12 @@
     <span class="status">Live: {$status}</span>
   </div>
 
-  {#if !$loaded}
+  {#if !everLoaded}
     <Spinner label="Loading metrics" />
   {:else if $services.length === 0}
     <EmptyState title="No samples yet">The sampler records every 10 s.</EmptyState>
   {:else}
-    <div class="grid">
+    <div class="grid" aria-busy={$loaded ? undefined : 'true'}>
       {#each charts as c (c.metric)}
         <MetricsChart
           title={c.title}

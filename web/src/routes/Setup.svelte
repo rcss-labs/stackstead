@@ -82,7 +82,7 @@
   }
 </script>
 
-<main class="container auth">
+<div class="auth">
   <form class="card stack" onsubmit={submit} novalidate>
     <h1>Set up Stackstead</h1>
     <p class="hint">Create the first account.</p>
@@ -118,7 +118,7 @@
     </Field>
     <Button variant="primary" type="submit" loading={pending}>Create account</Button>
   </form>
-</main>
+</div>
 
 <style>
   .auth { display: flex; justify-content: center; padding-block: var(--space-6, 2rem); }

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { link } from '../router';
+
   let {
     username,
     onlogout,
@@ -22,8 +24,8 @@
 
 <nav aria-label="Main" class="nav">
   <ul class="links">
-    {#each links as link (link.href)}
-      <li><a href={link.href} aria-current={current === link.href ? 'page' : undefined}>{link.label}</a></li>
+    {#each links as item (item.href)}
+      <li><a href={item.href} use:link aria-current={current === item.href ? 'page' : undefined}>{item.label}</a></li>
     {/each}
   </ul>
   <div class="cluster aside">

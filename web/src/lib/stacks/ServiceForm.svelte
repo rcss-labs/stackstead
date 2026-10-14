@@ -70,6 +70,36 @@
   const envErrors = $derived(rowErrors('env', ['.name', '.value']));
   const networkErrors = $derived(rowErrors('networks', ['.name', '.ipv4Address']));
 
+  // Human-readable name of a form path, matching the control's own label.
+  function labelOf(path: string): string {
+    const fixed: Record<string, string> = {
+      name: 'Service name',
+      image: form.source === 'build' ? 'Image tag' : 'Image',
+      'build.context': 'Build context',
+      'build.dockerfile': 'Dockerfile',
+      networkMode: 'Network mode',
+      'limits.cpus': 'CPUs',
+      'limits.memory': 'Memory',
+      restart: 'Restart policy',
+      'healthcheck.test': 'Healthcheck command',
+      'healthcheck.interval': 'Healthcheck interval',
+      'healthcheck.timeout': 'Healthcheck timeout',
+      'healthcheck.startPeriod': 'Healthcheck start period',
+      'healthcheck.retries': 'Healthcheck retries',
+    };
+    if (fixed[path]) return fixed[path];
+    const row = /^(ports|volumes|env|networks)\[(\d+)\](?:\.(name|value|ipv4Address))?$/.exec(path);
+    if (row) {
+      const n = Number(row[2]) + 1;
+      const part = row[3];
+      if (row[1] === 'ports') return `Port ${n}`;
+      if (row[1] === 'volumes') return `Volume ${n}`;
+      if (row[1] === 'env') return `Variable ${n}${part ? ` ${part}` : ''}`;
+      return `Network ${n}${part === 'ipv4Address' ? ' IPv4 address' : part ? ` ${part}` : ''}`;
+    }
+    return path;
+  }
+
   const invalid = (path: string) => (shown[path] ? ('true' as const) : undefined);
 
   export function focusFirstError() {
@@ -121,7 +151,7 @@
 {/snippet}
 
 <div class="service-form" bind:this={root}>
-  <p class="visually-hidden" role="status">{errorCount > 0 ? `${errorCount} ${errorCount === 1 ? 'field has an error' : 'fields have errors'}: ${Object.keys(shown).join(', ')}` : ''}</p>
+  <p class="visually-hidden" role="status">{errorCount > 0 ? `${errorCount} ${errorCount === 1 ? 'field has an error' : 'fields have errors'}: ${Object.keys(shown).map(labelOf).join(', ')}` : ''}</p>
   {#if errors['_form']}
     <div class="form-error" role="alert" tabindex="-1" data-form-error>{errors['_form']}</div>
   {/if}

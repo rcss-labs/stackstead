@@ -2,6 +2,8 @@ import { render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { createRawSnippet } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { get } from 'svelte/store';
+import { route } from '../router';
 import { toasts } from '../stores/toasts';
 import Banner from './Banner.svelte';
 import Button from './Button.svelte';
@@ -582,6 +584,13 @@ describe('Nav', () => {
     expect(screen.getByRole('link', { name: 'Import' }).getAttribute('href')).toBe('/stacks/import');
     expect(screen.getByRole('link', { name: 'Settings' }).getAttribute('aria-current')).toBe('page');
     expect(screen.getByRole('link', { name: 'Stacks' }).getAttribute('aria-current')).toBeNull();
+  });
+
+  it('navigates client-side when a link is clicked', async () => {
+    render(Nav, { username: 'ana', onlogout: () => {}, runningOps: 0, current: '/' });
+    await userEvent.setup().click(screen.getByRole('link', { name: 'Settings' }));
+    expect(get(route).path).toBe('/settings');
+    window.history.replaceState(null, '', '/');
   });
 
   it('shows running operations, the user and a working log out', async () => {

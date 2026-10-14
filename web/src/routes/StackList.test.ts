@@ -169,4 +169,32 @@ describe('StackList', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: /retry/i }));
     await waitFor(() => expect(screen.getByRole('link', { name: 'alpha' })).toBeTruthy());
   });
+
+  it('shows a busy Retry while the refetch is in flight', async () => {
+    let release: (() => void) | undefined;
+    let fail = true;
+    fake = installFakeFetch({
+      'GET /api/stacks': async () => {
+        if (fail) return { status: 500, body: { error: 'boom' } };
+        await new Promise<void>((r) => (release = r));
+        return { body: [stack('alpha')] };
+      },
+      'GET /api/operations?state=running': { body: [] },
+    });
+    stop = startStacks({
+      list: async () => {
+        const r = await fetch('/api/stacks');
+        if (!r.ok) throw new Error('boom');
+        return r.json();
+      },
+      changes: writable<(Change & { resync?: true }) | null>(null),
+    });
+    render(StackList);
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('boom'));
+    fail = false;
+    await userEvent.setup().click(screen.getByRole('button', { name: /retry/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /retry/i }).getAttribute('aria-busy')).toBe('true'));
+    release?.();
+    await waitFor(() => expect(screen.getByRole('link', { name: 'alpha' })).toBeTruthy());
+  });
 });
