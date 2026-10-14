@@ -58,7 +58,14 @@ func newTestEnv(t *testing.T, setupToken string) *testEnv {
 	return &testEnv{handler: h, auth: svc, clock: clock}
 }
 
-func fromLoopback(r *http.Request) { r.RemoteAddr = "127.0.0.1:50000" }
+func fromLoopback(r *http.Request) {
+	r.RemoteAddr = "127.0.0.1:50000"
+	r.Host = "127.0.0.1:8420"
+}
+
+func withHost(host string) func(*http.Request) {
+	return func(r *http.Request) { r.Host = host }
+}
 
 func withHeader(key, value string) func(*http.Request) {
 	return func(r *http.Request) { r.Header.Set(key, value) }
@@ -151,6 +158,29 @@ func TestSetupThroughLocalProxyRequiresToken(t *testing.T) {
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("loopback with %s: status = %d, want 403", header, rec.Code)
 		}
+	}
+}
+
+func TestSetupFromLoopbackChecksHostHeader(t *testing.T) {
+	tests := []struct {
+		host string
+		want int
+	}{
+		{"evil.com", http.StatusForbidden},
+		{"evil.com:8420", http.StatusForbidden},
+		{"localhost:8420", http.StatusNoContent},
+		{"LOCALHOST", http.StatusNoContent},
+		{"[::1]:8420", http.StatusNoContent},
+		{"127.0.0.1:8420", http.StatusNoContent},
+	}
+	for _, tt := range tests {
+		t.Run(tt.host, func(t *testing.T) {
+			env := newTestEnv(t, "tok-123")
+			rec := env.do(t, http.MethodPost, "/api/setup", setupBody(""), fromLoopback, withHost(tt.host))
+			if rec.Code != tt.want {
+				t.Errorf("Host %q: status = %d, want %d", tt.host, rec.Code, tt.want)
+			}
+		})
 	}
 }
 

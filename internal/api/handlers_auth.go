@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"strings"
 
 	"github.com/rcss-labs/stackstead/internal/auth"
 )
@@ -56,14 +57,35 @@ func (s *server) setupAllowed(r *http.Request, token string) bool {
 // isDirectLoopback reports whether the request came from this machine without
 // passing through a proxy. A reverse proxy on the same host connects from
 // loopback too, so any forwarding header means the real client may be remote.
+// The Host must also name this machine: otherwise a DNS-rebinding page or a
+// proxy that adds no forwarding headers could ride the loopback connection.
 func isDirectLoopback(r *http.Request) bool {
 	for _, h := range []string{"Forwarded", "X-Forwarded-For", "X-Real-Ip"} {
 		if r.Header.Get(h) != "" {
 			return false
 		}
 	}
+	if !isLoopbackHostname(hostnameOf(r.Host)) {
+		return false
+	}
 	ip := net.ParseIP(remoteHost(r))
 	return ip != nil && ip.IsLoopback()
+}
+
+// hostnameOf strips an optional port, handling bracketed IPv6 like "[::1]:8420".
+func hostnameOf(hostport string) string {
+	if host, _, err := net.SplitHostPort(hostport); err == nil {
+		return host
+	}
+	return strings.Trim(hostport, "[]")
+}
+
+func isLoopbackHostname(host string) bool {
+	switch strings.ToLower(host) {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	return false
 }
 
 func remoteHost(r *http.Request) string {
