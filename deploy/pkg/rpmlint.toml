@@ -1,0 +1,4 @@
+# rpmlint 2.x configuration for the Stackstead rpm (used by `make package-lint`).
+# The project licence is the SPDX identifier AGPL-3.0-only, which rpmlint 2.4's default
+# list does not contain.
+ValidLicenses = ["AGPL-3.0-only"]

@@ -427,3 +427,19 @@ func TestDistVersionComparisonIsExact(t *testing.T) {
 		}
 	}
 }
+
+// -print-version feeds `make packages`; a dev or dirty version must be refused there
+// too, so a package can never be built from a version `make release` would reject.
+func TestPrintVersionRefusesDevWithoutAllowDev(t *testing.T) {
+	noEnv := func(string) string { return "" }
+	for _, v := range []string{"abc1234", "v1.2.3-4-gabc1234", "v1.2.3-dirty", "v1.2.3-dev"} {
+		var out bytes.Buffer
+		if err := run([]string{"-version", v, "-print-version"}, noEnv, &out); err == nil {
+			t.Errorf("-print-version %s: want an error for a dev version, got %q", v, out.String())
+		}
+		out.Reset()
+		if err := run([]string{"-version", v, "-print-version", "-allow-dev"}, noEnv, &out); err != nil || out.Len() == 0 {
+			t.Errorf("-print-version %s -allow-dev: %v %q", v, err, out.String())
+		}
+	}
+}
