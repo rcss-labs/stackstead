@@ -111,19 +111,63 @@ describe('createLiveAggregator', () => {
       ],
     );
     expect(out).toHaveLength(2);
-    // gauges (including memLimit) averaged; rate from max cumulative (900) over previous max (0)
-    expect(out[1]).toMatchObject({ t: T0 + 1000, cpu: 20, mem: 200, memLimit: 650, netRx: 900 });
+    // gauges (including memLimit) averaged; counter rates are the total across replicas (200 + 900)
+    expect(out[1]).toMatchObject({ t: T0 + 1000, cpu: 20, mem: 200, memLimit: 650, netRx: 1100 });
   });
 
-  it('rates come from the per-service max of cumulative counters, like the server', () => {
+  it('two replicas at 1 MB/s each give 2 MB/s', () => {
+    const MB = 1_000_000;
+    const agg = createLiveAggregator();
+    const [, p] = run(
+      agg,
+      [sample({ container: 'a', netTx: 0 }, 0), sample({ container: 'b', netTx: 5 * MB }, 0)],
+      [sample({ container: 'a', netTx: MB }, 1), sample({ container: 'b', netTx: 6 * MB }, 1)],
+    );
+    expect(p.netTx).toBe(2 * MB);
+  });
+
+  it('a restarted replica contributes 0 while the other still counts', () => {
     const agg = createLiveAggregator();
     const [, p] = run(
       agg,
       [sample({ container: 'a', netRx: 10_000 }, 0), sample({ container: 'b', netRx: 0 }, 0)],
       [sample({ container: 'a', netRx: 5 }, 1), sample({ container: 'b', netRx: 40 }, 1)],
     );
-    // max(5,40)=40 is below previous max(10000,0)=10000
-    expect(p.netRx).toBe(0);
+    expect(p.netRx).toBe(40);
+  });
+
+  it('a new replica contributes nothing on its first tick', () => {
+    const agg = createLiveAggregator();
+    const [, p] = run(
+      agg,
+      [sample({ container: 'a', netRx: 0 }, 0)],
+      [sample({ container: 'a', netRx: 100 }, 1), sample({ container: 'b', netRx: 999_999 }, 1)],
+    );
+    expect(p.netRx).toBe(100);
+  });
+
+  it('a service whose containers are all on their first tick has no rate', () => {
+    const agg = createLiveAggregator();
+    const [, p] = run(
+      agg,
+      [sample({ container: 'a', netRx: 0 }, 0)],
+      [sample({ container: 'b', netRx: 500 }, 1), sample({ container: 'c', netRx: 500 }, 1)],
+    );
+    expect(p.netRx).toBeUndefined();
+  });
+
+  it('forgets containers not seen for more than 3 ticks', () => {
+    const agg = createLiveAggregator();
+    const out = run(
+      agg,
+      [sample({ container: 'a', netRx: 0 }, 0)],
+      [sample({ container: 'z' }, 1)],
+      [sample({ container: 'z' }, 2)],
+      [sample({ container: 'z' }, 3)],
+      [sample({ container: 'z' }, 4)],
+      [sample({ container: 'a', netRx: 1000 }, 5)],
+    );
+    expect(out[out.length - 1].netRx).toBeUndefined();
   });
 
   it('merges per-container sample events of one tick into one point', () => {

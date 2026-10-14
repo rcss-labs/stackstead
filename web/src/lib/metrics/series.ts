@@ -60,26 +60,34 @@ type Counters = Record<Counter, number>;
 interface Prev {
   t: number;
   counters: Counters;
+  seenTick: number;
 }
+
+/** Containers not seen for more than this many ticks are forgotten. */
+const PREV_MAX_AGE_TICKS = 3;
 
 /**
  * Turns raw per-container samples into per-service points exactly as the
- * server's history does: per service per tick, gauges (cpu, mem, memLimit) are
- * averaged across containers and each cumulative counter is the MAX across
- * containers; a rate is then taken between consecutive ticks of the service,
- * and is 0 when the counter did not increase (restart).
+ * server's history does. Per service per tick, gauges (cpu, mem, memLimit)
+ * are averaged across containers. Counter rates are computed per container
+ * from its previous cumulative counters (a decrease, i.e. a restart, gives 0)
+ * and then SUMMED across the service's containers, so net/block rates are
+ * totals across replicas. A container without a previous sample contributes
+ * nothing; if no container has a rate the service's rates are undefined.
  *
  * The live stream sends one event per container, so the current tick is held
  * back until a sample at least 1s later arrives (or flush() is called). Points
  * are therefore emitted one tick late.
  */
 export function createLiveAggregator() {
-  const prev = new Map<string, Prev>(); // by service
+  const prev = new Map<string, Prev>(); // by container
+  let tickNo = 0;
   let pendingT = 0;
   let pending = new Map<string, Sample>(); // by container
 
   function finalize(): SeriesPoint[] {
     if (pending.size === 0) return [];
+    tickNo++;
     const byService = new Map<string, Sample[]>();
     for (const s of pending.values()) {
       const list = byService.get(s.service);
@@ -87,7 +95,7 @@ export function createLiveAggregator() {
       else byService.set(s.service, [s]);
     }
     const out: SeriesPoint[] = [];
-    for (const [service, list] of byService) {
+    for (const list of byService.values()) {
       const n = list.length;
       const p: SeriesPoint = {
         t: pendingT,
@@ -95,17 +103,29 @@ export function createLiveAggregator() {
         mem: list.reduce((a, s) => a + s.mem, 0) / n,
         memLimit: list.reduce((a, s) => a + s.memLimit, 0) / n,
       };
-      const counters = {} as Counters;
-      for (const k of COUNTERS) counters[k] = Math.max(...list.map((s) => s[k]));
-      const before = prev.get(service);
-      const dt = before ? (pendingT - before.t) / 1000 : 0;
-      if (before && dt > 0) {
-        for (const k of COUNTERS) {
-          p[k] = counters[k] > before.counters[k] ? (counters[k] - before.counters[k]) / dt : 0;
+      for (const s of list) {
+        const before = prev.get(s.container);
+        const dt = before ? (pendingT - before.t) / 1000 : 0;
+        if (before && dt > 0) {
+          for (const k of COUNTERS) {
+            const rate = s[k] >= before.counters[k] ? (s[k] - before.counters[k]) / dt : 0;
+            p[k] = (p[k] ?? 0) + rate;
+          }
+        }
+        if (!before || dt > 0) {
+          prev.set(s.container, {
+            t: pendingT,
+            counters: { netRx: s.netRx, netTx: s.netTx, blkRead: s.blkRead, blkWrite: s.blkWrite },
+            seenTick: tickNo,
+          });
+        } else {
+          before.seenTick = tickNo;
         }
       }
-      if (!before || dt > 0) prev.set(service, { t: pendingT, counters });
       out.push(p);
+    }
+    for (const [container, v] of prev) {
+      if (tickNo - v.seenTick > PREV_MAX_AGE_TICKS) prev.delete(container);
     }
     pending = new Map();
     return out;
