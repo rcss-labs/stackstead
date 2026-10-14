@@ -45,12 +45,18 @@ type fakeSource struct {
 	overlaps   int           // Events calls made while an earlier stream was still open
 	gate       chan struct{} // when set, Containers blocks until it is closed
 	eventsErr  error         // when set, every stream fails immediately
+	hang       time.Duration // when set, Containers waits this long before answering
 }
 
 func (f *fakeSource) Containers(context.Context) ([]engine.Container, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.fetches++
+	if h := f.hang; h > 0 {
+		f.mu.Unlock()
+		time.Sleep(h)
+		f.mu.Lock()
+	}
 	if g := f.gate; g != nil {
 		f.mu.Unlock()
 		<-g
@@ -410,8 +416,16 @@ func TestChangeDependsOnStatusProjectionNotStatusText(t *testing.T) {
 	s := src.stream(t, 1)
 	ev := engine.Event{Type: "container", Action: "start", ContainerID: "a1"}
 
+	// sendAndWaitFetch delivers ev and waits for the resulting refetch, so a
+	// following noChange cannot pass just because nothing was processed yet.
+	sendAndWaitFetch := func() {
+		before := src.fetchCount()
+		s.send(t, ev)
+		waitFor(t, func() bool { return src.fetchCount() > before })
+	}
+
 	src.set([]engine.Container{withStatus(up, "Up 6 minutes")}, nil)
-	s.send(t, ev)
+	sendAndWaitFetch()
 	noChange(t, changes, 120*time.Millisecond)
 
 	for _, status := range []string{"Up 6 minutes (healthy)", "Up 6 minutes (unhealthy)", "Up 6 minutes (health: starting)"} {
@@ -433,7 +447,7 @@ func TestChangeDependsOnStatusProjectionNotStatusText(t *testing.T) {
 		t.Fatalf("exit code change = %+v", ch)
 	}
 	src.set([]engine.Container{withStatus(dead, "Exited (137) 3 minutes ago")}, nil)
-	s.send(t, ev)
+	sendAndWaitFetch()
 	noChange(t, changes, 120*time.Millisecond)
 }
 
@@ -454,6 +468,28 @@ func TestFailingEventStreamKeepsBackingOff(t *testing.T) {
 	// resync would keep every wait at or below Min.
 	if waits[2] <= 20*time.Millisecond {
 		t.Errorf("waits = %v: backoff did not grow", waits)
+	}
+}
+
+func TestFailedResyncAfterLongHangIsNotStable(t *testing.T) {
+	// The listing hangs for Backoff.Max and then fails. The session lasted
+	// long enough to look stable, but it never synced, so backoff must grow.
+	src := &fakeSource{err: engine.ErrUnavailable, hang: 80 * time.Millisecond}
+	c := New(src, nil, Backoff{Min: 20 * time.Millisecond, Max: 80 * time.Millisecond})
+	var mu sync.Mutex
+	var waits []time.Duration
+	c.onWait = func(d time.Duration) { mu.Lock(); waits = append(waits, d); mu.Unlock() }
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); c.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	waitFor(t, func() bool { mu.Lock(); defer mu.Unlock(); return len(waits) >= 3 })
+	mu.Lock()
+	defer mu.Unlock()
+	// With a reset every round all waits stay at or below Min; attempt 2
+	// waits at least half of 4*Min.
+	if waits[2] <= 20*time.Millisecond {
+		t.Errorf("waits = %v: backoff was reset by a failed resync", waits)
 	}
 }
 

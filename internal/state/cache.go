@@ -137,10 +137,16 @@ func (c *Cache) session(ctx context.Context) (stable bool, err error) {
 	// The no-gap guarantee relies on Docker replaying events from "since"
 	// (second granularity); the refetch makes replayed events harmless.
 	events, errs := c.src.Events(sctx, begun)
-	defer func() { stable = stable || time.Since(begun) >= c.backoff.Max }()
+	// Network connect/disconnect events are not watched: the event filter is
+	// container-only, and only container changes alter what the cache holds.
+	synced := false
+	// Lasting Backoff.Max counts as stable only after a successful resync; a
+	// listing that hangs and then fails proves nothing.
+	defer func() { stable = stable || (synced && time.Since(begun) >= c.backoff.Max) }()
 	if err := c.resync(sctx); err != nil {
 		return false, err
 	}
+	synced = true
 
 	var timer *time.Timer
 	var fire <-chan time.Time
