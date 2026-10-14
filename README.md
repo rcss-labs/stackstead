@@ -30,6 +30,27 @@ All routes except setup and login need a session cookie. Errors are
 | `GET /api/operations/{id}`, `/stream`, `POST .../cancel` | output, live SSE stream, cancel |
 | `GET /api/fs?path=`, `GET /api/networks`, `GET /api/status` | file browser, Docker networks, Docker and compose status |
 
+Notes on the stacks API:
+
+- **Partial checks.** Creating or editing a stack checks new host ports and
+  static IPs against the Docker engine. If the engine is unreachable only the
+  ports declared by other stacks are checked, and the response carries the
+  header `X-Stackstead-Checks: partial`.
+- **POST needs JSON.** Every `POST` (including `actions/{action}` and
+  `operations/{id}/cancel`) requires `Content-Type: application/json`, and a
+  body, which may be just `{}`.
+- **Operation stream.** `GET /api/operations/{id}/stream` is server-sent
+  events: `line` (one output line, as a JSON string; earlier output is replayed
+  first), `done` (the final operation as JSON, after which the stream ends) and
+  `dropped` (the subscription ended without the operation finishing; fetch
+  `GET /api/operations/{id}` instead).
+- **Override files are not supported yet.** Stackstead runs compose with
+  `-f <file>`, which turns off the automatic merge of `compose.override.yaml`
+  (and `.yml`, `docker-compose.override.*`). Importing a file with an override
+  next to it is refused, startup sync skips such folders with a warning, and
+  lifecycle actions and edits are refused if one appears later. Merge or
+  remove the override file.
+
 Removing a stack never deletes files: the compose file and its folder stay on
 disk, and volumes are removed only when `volumes=true`. Stopping Stackstead
 never stops containers.
