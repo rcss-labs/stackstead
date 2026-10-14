@@ -20,6 +20,8 @@ const (
 	SessionTTL        = 7 * 24 * time.Hour
 	MinPasswordLength = 12
 	maxUsernameLength = 64
+
+	maxConcurrentHashes = 2
 )
 
 var (
@@ -41,6 +43,9 @@ type Service struct {
 	// dummyHash is verified against when a username does not exist, so a failed
 	// login costs the same time either way and does not reveal valid usernames.
 	dummyHash string
+	// hashSlots bounds concurrent argon2 work: each hash allocates 64 MiB, so
+	// the worst case is maxConcurrentHashes x 64 MiB however many logins arrive.
+	hashSlots chan struct{}
 }
 
 func NewService(db *sql.DB, now func() time.Time) (*Service, error) {
@@ -48,8 +53,37 @@ func NewService(db *sql.DB, now func() time.Time) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("prepare dummy hash: %w", err)
 	}
-	return &Service{db: db, now: now, dummyHash: dummy}, nil
+	return &Service{db: db, now: now, dummyHash: dummy, hashSlots: make(chan struct{}, maxConcurrentHashes)}, nil
 }
+
+// hash and verify run argon2 under the hashSlots limit, waiting for a slot
+// only as long as ctx allows. Neither holds a database connection.
+func (s *Service) hash(ctx context.Context, password string) (string, error) {
+	if err := s.acquireHashSlot(ctx); err != nil {
+		return "", err
+	}
+	defer s.releaseHashSlot()
+	return hashPassword(password)
+}
+
+func (s *Service) verify(ctx context.Context, encoded, password string) (bool, error) {
+	if err := s.acquireHashSlot(ctx); err != nil {
+		return false, err
+	}
+	defer s.releaseHashSlot()
+	return verifyPassword(encoded, password)
+}
+
+func (s *Service) acquireHashSlot(ctx context.Context) error {
+	select {
+	case s.hashSlots <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Service) releaseHashSlot() { <-s.hashSlots }
 
 func (s *Service) HasAdmin(ctx context.Context) (bool, error) {
 	var exists bool
@@ -68,7 +102,12 @@ func (s *Service) CreateAdmin(ctx context.Context, username, password string) er
 	if utf8.RuneCountInString(password) < MinPasswordLength {
 		return ErrWeakPassword
 	}
-	hash, err := hashPassword(password)
+	if has, err := s.HasAdmin(ctx); err != nil {
+		return err
+	} else if has {
+		return ErrAdminExists // skip the expensive hash; the INSERT below still guards races
+	}
+	hash, err := s.hash(ctx, password)
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
 	}
@@ -96,13 +135,15 @@ func (s *Service) Login(ctx context.Context, username, password string) (string,
 	var hash string
 	err := s.db.QueryRowContext(ctx, `SELECT id, password_hash FROM users WHERE username = ?`, username).Scan(&id, &hash)
 	if errors.Is(err, sql.ErrNoRows) {
-		_, _ = verifyPassword(s.dummyHash, password)
+		if _, err := s.verify(ctx, s.dummyHash, password); err != nil && ctx.Err() != nil {
+			return "", ctx.Err()
+		}
 		return "", ErrInvalidCredentials
 	}
 	if err != nil {
 		return "", fmt.Errorf("look up user: %w", err)
 	}
-	ok, err := verifyPassword(hash, password)
+	ok, err := s.verify(ctx, hash, password)
 	if err != nil {
 		return "", fmt.Errorf("verify password: %w", err)
 	}

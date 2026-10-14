@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -157,6 +158,61 @@ func TestLoginFailuresAreIndistinguishable(t *testing.T) {
 	}
 	if _, err := svc.Login(ctx, "nobody", goodPassword); !errors.Is(err, ErrInvalidCredentials) {
 		t.Errorf("unknown user err = %v, want ErrInvalidCredentials", err)
+	}
+}
+
+func TestHashingConcurrencyIsBounded(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	ctx := context.Background()
+	if err := svc.CreateAdmin(ctx, "admin", goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	var current, peak atomic.Int32
+	orig := deriveKey
+	t.Cleanup(func() { deriveKey = orig })
+	deriveKey = func(password, salt []byte, iterations, memory uint32, threads uint8, keyLen uint32) []byte {
+		n := current.Add(1)
+		for {
+			p := peak.Load()
+			if n <= p || peak.CompareAndSwap(p, n) {
+				break
+			}
+		}
+		defer current.Add(-1)
+		time.Sleep(20 * time.Millisecond)
+		return orig(password, salt, iterations, memory, threads, keyLen)
+	}
+
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			user := "admin"
+			if i%2 == 1 {
+				user = "nobody" // dummy-hash path must be bounded too
+			}
+			_, _ = svc.Login(ctx, user, goodPassword)
+		}()
+	}
+	wg.Wait()
+	if got := peak.Load(); got > 2 {
+		t.Errorf("peak concurrent hashes = %d, want <= 2", got)
+	}
+}
+
+func TestHashingWaitRespectsContext(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	if err := svc.CreateAdmin(context.Background(), "admin", goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	for range cap(svc.hashSlots) {
+		svc.hashSlots <- struct{}{}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := svc.Login(ctx, "admin", goodPassword); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("err = %v, want context.DeadlineExceeded", err)
 	}
 }
 

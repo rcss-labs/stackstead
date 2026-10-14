@@ -23,6 +23,16 @@ type argonParams struct {
 // parameters back from each stored hash, so raising them later is safe.
 var hashParams = argonParams{memory: 64 * 1024, iterations: 3, threads: 2, keyLen: 32, saltLen: 16}
 
+// deriveKey is a seam so tests can observe how many derivations run at once.
+var deriveKey = argon2.IDKey
+
+// Bounds on parameters read from a stored hash, so a corrupt or tampered row
+// cannot panic argon2 or trigger a huge allocation.
+const (
+	maxHashMemoryKiB = 1 << 20 // 1 GiB
+	minHashKeyLen    = 16
+)
+
 var errMalformedHash = errors.New("malformed password hash")
 
 // hashPassword returns a PHC-format string: $argon2id$v=19$m=..,t=..,p=..$salt$key
@@ -32,7 +42,7 @@ func hashPassword(password string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-	key := argon2.IDKey([]byte(password), salt, p.iterations, p.memory, p.threads, p.keyLen)
+	key := deriveKey([]byte(password), salt, p.iterations, p.memory, p.threads, p.keyLen)
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
 		argon2.Version, p.memory, p.iterations, p.threads,
 		base64.RawStdEncoding.EncodeToString(salt),
@@ -53,6 +63,9 @@ func verifyPassword(encoded, password string) (bool, error) {
 	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &iterations, &threads); err != nil {
 		return false, errMalformedHash
 	}
+	if threads == 0 || iterations == 0 || memory == 0 || memory > maxHashMemoryKiB {
+		return false, errMalformedHash
+	}
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil {
 		return false, errMalformedHash
@@ -61,6 +74,9 @@ func verifyPassword(encoded, password string) (bool, error) {
 	if err != nil {
 		return false, errMalformedHash
 	}
-	got := argon2.IDKey([]byte(password), salt, iterations, memory, threads, uint32(len(want)))
+	if len(want) < minHashKeyLen {
+		return false, errMalformedHash
+	}
+	got := deriveKey([]byte(password), salt, iterations, memory, threads, uint32(len(want)))
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }
