@@ -27,6 +27,11 @@ func TestNormalizeVersion(t *testing.T) {
 		{"v1.2.3-5-gabc1234-dirty", "1.2.3-dev.5.abc1234.dirty", "1.2.3~dev.5.abc1234.dirty", "dev.5.abc1234.dirty", true},
 		{"abc1234", "0.0.0-dev.abc1234", "0.0.0~dev.abc1234", "dev.abc1234", true},
 		{"abc1234-dirty", "0.0.0-dev.abc1234.dirty", "0.0.0~dev.abc1234.dirty", "dev.abc1234.dirty", true},
+		{"v1.2.3-dirty", "1.2.3-dirty", "1.2.3~dirty", "dirty", true},
+		{"v1.2.3-dev.7", "1.2.3-dev.7", "1.2.3~dev.7", "dev.7", true},
+		{"v1.2.3-rc.1-dirty", "1.2.3-rc.1.dirty", "1.2.3~rc.1.dirty", "rc.1.dirty", true},
+		{"v1.2.3-rc.1-4-gabc1234", "1.2.3-rc.1.dev.4.abc1234", "1.2.3~rc.1.dev.4.abc1234", "rc.1.dev.4.abc1234", true},
+		{"v1.2.3-rc.1-4-gabc1234-dirty", "1.2.3-rc.1.dev.4.abc1234.dirty", "1.2.3~rc.1.dev.4.abc1234.dirty", "rc.1.dev.4.abc1234.dirty", true},
 	}
 	for _, c := range cases {
 		got, err := normalizeVersion(c.in)
@@ -108,11 +113,12 @@ func (f fixture) opts(version string, targets ...string) options {
 }
 
 type entry struct {
-	name      string
-	mode      int64
-	uid, gid  int
-	mtimeUnix int64
-	content   string
+	name         string
+	uname, gname string
+	mode         int64
+	uid, gid     int
+	mtimeUnix    int64
+	content      string
 }
 
 func readArchive(t *testing.T, path string) []entry {
@@ -140,7 +146,7 @@ func readArchive(t *testing.T, path string) []entry {
 			t.Fatal(err)
 		}
 		b, _ := io.ReadAll(tr)
-		out = append(out, entry{h.Name, h.Mode, h.Uid, h.Gid, h.ModTime.Unix(), string(b)})
+		out = append(out, entry{h.Name, h.Uname, h.Gname, h.Mode, h.Uid, h.Gid, h.ModTime.Unix(), string(b)})
 	}
 }
 
@@ -175,6 +181,9 @@ func TestArchiveIsDeterministic(t *testing.T) {
 	names := make([]string, len(entries))
 	for i, e := range entries {
 		names[i] = e.name
+		if e.uname != "root" || e.gname != "root" {
+			t.Errorf("%s: owner names %q/%q", e.name, e.uname, e.gname)
+		}
 		if e.uid != 0 || e.gid != 0 {
 			t.Errorf("%s: uid/gid %d/%d", e.name, e.uid, e.gid)
 		}
@@ -350,5 +359,44 @@ func TestRunPrintVersionAndFlags(t *testing.T) {
 		if e.mtimeUnix != 1700000000 {
 			t.Errorf("%s mtime %d: SOURCE_DATE_EPOCH ignored", e.name, e.mtimeUnix)
 		}
+	}
+}
+
+func TestExtraAndTargetNamesAreValidated(t *testing.T) {
+	f := newFixture(t, "linux/amd64")
+	for _, name := range []string{"../evil", "a/b", ".", "..", "has space", ""} {
+		o := f.opts("v1.2.3", "linux/amd64")
+		o.Extras = append(append([]extra{}, o.Extras...), extra{Name: name, Path: o.Extras[0].Path})
+		if err := build(o); err == nil {
+			t.Errorf("extra name %q accepted", name)
+		}
+	}
+	o := f.opts("v1.2.3", "linux/amd64")
+	o.Extras = append(append([]extra{}, o.Extras...), extra{OS: "Linux/../x", Name: "ok", Path: o.Extras[0].Path})
+	if err := build(o); err == nil {
+		t.Error("bad extra os accepted")
+	}
+	for _, tg := range []string{"linux/amd64/x", "../x/y", "linux/", "Linux/amd64", "linux/am d64"} {
+		if err := build(f.opts("v1.2.3", tg)); err == nil {
+			t.Errorf("target %q accepted", tg)
+		}
+	}
+}
+
+func TestDistWithOtherVersionIsRefused(t *testing.T) {
+	f := newFixture(t, "linux/amd64")
+	write(t, filepath.Join(f.dist, "stackstead_1.2.2_linux_amd64.tar.gz"), "old", 0o644)
+	err := build(f.opts("v1.2.3", "linux/amd64"))
+	if err == nil || !strings.Contains(err.Error(), "make dist-clean") {
+		t.Fatalf("want a dist-clean error, got %v", err)
+	}
+	if err := os.Remove(filepath.Join(f.dist, "stackstead_1.2.2_linux_amd64.tar.gz")); err != nil {
+		t.Fatal(err)
+	}
+	// Same-version packages (deb uses the ~ form, rpm/pkg use dashes) and unrelated files stay.
+	write(t, filepath.Join(f.dist, "stackstead_1.2.3~rc.1_amd64.deb"), "x", 0o644)
+	write(t, filepath.Join(f.dist, "install.sh"), "x", 0o755)
+	if err := build(f.opts("v1.2.3-rc.1", "linux/amd64")); err != nil {
+		t.Fatalf("same-version artifacts refused: %v", err)
 	}
 }

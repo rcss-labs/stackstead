@@ -51,42 +51,55 @@ type options struct {
 }
 
 var (
-	tagRe      = regexp.MustCompile(`^v?(\d+\.\d+\.\d+)(?:-(.+))?$`)
-	describeRe = regexp.MustCompile(`^(\d+)-g([0-9a-f]+)(-dirty)?$`)
-	bareSHARe  = regexp.MustCompile(`^([0-9a-f]{4,40})(-dirty)?$`)
-	preRe      = regexp.MustCompile(`^[0-9A-Za-z]+(\.[0-9A-Za-z]+)*$`)
+	// vX.Y.Z[-prerelease][-N-g<sha>] (after "-dirty" has been stripped).
+	tagRe     = regexp.MustCompile(`^v?(\d+\.\d+\.\d+)(?:-([0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*?))?(?:-(\d+)-g([0-9a-f]+))?$`)
+	bareSHARe = regexp.MustCompile(`^[0-9a-f]{4,40}$`)
+	nameRe    = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	osArchRe  = regexp.MustCompile(`^[a-z0-9]+$`)
 )
 
-// normalizeVersion maps `git describe` output to artifact and package versions.
+// normalizeVersion maps `git describe --tags --always --dirty` output to
+// artifact and package versions. Anything that is not exactly a clean tag or
+// a clean release candidate is a Dev version: commits past a tag, a dirty
+// tree, an explicit dev prerelease, or a bare commit sha.
 func normalizeVersion(in string) (versionInfo, error) {
-	if m := tagRe.FindStringSubmatch(in); m != nil {
-		base, rest := m[1], m[2]
-		switch {
-		case rest == "":
-			return versionInfo{Ver: base, PkgVer: base}, nil
-		case describeRe.MatchString(rest):
-			d := describeRe.FindStringSubmatch(rest)
-			pre := "dev." + d[1] + "." + d[2]
-			if d[3] != "" {
-				pre += ".dirty"
+	rest, dirty := strings.CutSuffix(in, "-dirty")
+	var base, pre string
+	dev := dirty
+	if m := tagRe.FindStringSubmatch(rest); m != nil {
+		base, pre = m[1], m[2]
+		if m[3] != "" {
+			dev = true
+			d := "dev." + m[3] + "." + m[4]
+			if pre != "" {
+				pre += "." + d
+			} else {
+				pre = d
 			}
-			return versionInfo{Ver: base + "-" + pre, PkgVer: base + "~" + pre, Prerelease: pre, Dev: true}, nil
-		case preRe.MatchString(rest):
-			return versionInfo{Ver: base + "-" + rest, PkgVer: base + "~" + rest, Prerelease: rest}, nil
 		}
-	} else if m := bareSHARe.FindStringSubmatch(in); m != nil {
-		pre := "dev." + m[1]
-		if m[2] != "" {
-			pre += ".dirty"
-		}
-		return versionInfo{Ver: "0.0.0-" + pre, PkgVer: "0.0.0~" + pre, Prerelease: pre, Dev: true}, nil
+	} else if bareSHARe.MatchString(rest) {
+		base, pre, dev = "0.0.0", "dev."+rest, true
+	} else {
+		return versionInfo{}, fmt.Errorf("cannot normalise version %q (want vX.Y.Z[-pre], git describe output or a commit sha)", in)
 	}
-	return versionInfo{}, fmt.Errorf("cannot normalise version %q (want vX.Y.Z[-pre], git describe output or a commit sha)", in)
+	if pre == "dev" || strings.HasPrefix(pre, "dev.") || strings.Contains(pre, ".dev.") {
+		dev = true
+	}
+	if dirty {
+		if pre != "" {
+			pre += "."
+		}
+		pre += "dirty"
+	}
+	if pre == "" {
+		return versionInfo{Ver: base, PkgVer: base}, nil
+	}
+	return versionInfo{Ver: base + "-" + pre, PkgVer: base + "~" + pre, Prerelease: pre, Dev: dev}, nil
 }
 
 func splitTarget(t string) (goos, goarch string, err error) {
 	goos, goarch, ok := strings.Cut(t, "/")
-	if !ok || goos == "" || goarch == "" {
+	if !ok || !osArchRe.MatchString(goos) || !osArchRe.MatchString(goarch) {
 		return "", "", fmt.Errorf("bad target %q (want os/arch)", t)
 	}
 	return goos, goarch, nil
@@ -108,6 +121,17 @@ func build(o options) error {
 	}
 	if len(o.Targets) == 0 {
 		return errors.New("no targets")
+	}
+	for _, e := range o.Extras {
+		if !nameRe.MatchString(e.Name) || e.Name == "." || e.Name == ".." {
+			return fmt.Errorf("bad archive entry name %q (want [A-Za-z0-9._-]+)", e.Name)
+		}
+		if e.OS != "" && !osArchRe.MatchString(e.OS) {
+			return fmt.Errorf("bad os %q for extra %q", e.OS, e.Name)
+		}
+	}
+	if err := checkDistVersion(o.Dist, v); err != nil {
+		return err
 	}
 	// Validate everything before writing anything.
 	type job struct {
@@ -160,6 +184,28 @@ func build(o options) error {
 	return writeSums(o.Dist)
 }
 
+// checkDistVersion refuses a dist/ that already holds release artifacts of a
+// different version, which would otherwise end up in SHA256SUMS.
+func checkDistVersion(dist string, v versionInfo) error {
+	ents, err := os.ReadDir(dist)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, e := range ents {
+		n := e.Name()
+		if !strings.HasPrefix(n, "stackstead_") && !strings.HasPrefix(n, "stackstead-") {
+			continue
+		}
+		if !strings.Contains(n, v.Ver) && !strings.Contains(n, v.PkgVer) {
+			return fmt.Errorf("%s/%s is not version %s: run make dist-clean first", dist, n, v.Ver)
+		}
+	}
+	return nil
+}
+
 func writeArchive(path string, ms []member, mtime time.Time) (err error) {
 	tmp := path + ".tmp"
 	out, err := os.Create(tmp)
@@ -181,7 +227,7 @@ func writeArchive(path string, ms []member, mtime time.Time) (err error) {
 		}
 		hdr := &tar.Header{
 			Name: m.name, Mode: m.mode, Size: int64(len(data)), ModTime: mtime,
-			Typeflag: tar.TypeReg, Format: tar.FormatUSTAR,
+			Uname: "root", Gname: "root", Typeflag: tar.TypeReg, Format: tar.FormatUSTAR,
 		}
 		if err = tw.WriteHeader(hdr); err != nil {
 			_ = out.Close()
@@ -277,13 +323,13 @@ func run(args []string, getenv func(string) string, stdout io.Writer) error {
 		_, err = fmt.Fprintf(stdout, "%s\t%s\t%s\n", v.Ver, v.PkgVer, v.Prerelease)
 		return err
 	}
-	epoch := time.Now().Unix()
-	if s := getenv("SOURCE_DATE_EPOCH"); s != "" {
-		if epoch, err = strconv.ParseInt(s, 10, 64); err != nil {
-			return fmt.Errorf("bad SOURCE_DATE_EPOCH %q", s)
-		}
-	} else {
+	s := getenv("SOURCE_DATE_EPOCH")
+	if s == "" {
 		return errors.New("SOURCE_DATE_EPOCH is required for reproducible archives (the Makefile passes the commit time)")
+	}
+	epoch, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return fmt.Errorf("bad SOURCE_DATE_EPOCH %q", s)
 	}
 	return build(options{
 		Version: *version, Dist: *dist, Bin: *bin, Targets: strings.Split(*targets, ","),

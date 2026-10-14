@@ -5,7 +5,7 @@
 BIN := bin
 
 help: ## List targets
-	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
+	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
 
 # Installs dependencies only when the lockfile is newer than the last install, so
 # `make check` (ui-check + ui-test) runs `npm ci` at most once.
@@ -29,14 +29,15 @@ build: ui ## Build the UI, then the static binary
 RELEASE_VERSION = $(or $(VERSION),$(shell git describe --tags --always --dirty))
 DIST ?= dist
 RELEASE_TARGETS ?= linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
-# Commit time, so archives are byte-identical across rebuilds of the same commit.
+# Commit time for archive mtimes. Archives are byte-identical across rebuilds of the
+# same commit only if the binaries are too (needs DATE from the commit time, Plan 6).
 SOURCE_DATE_EPOCH ?= $(shell git log -1 --format=%ct)
 # Empty = unsigned (current policy). Set to an ssh private key to also write SHA256SUMS.sig.
 SIGNING_KEY ?=
 # allowed_signers file; verify-release checks the signature only when this is set.
 SIGNERS ?=
 SIGN_NAMESPACE := stackstead-release
-SIGNER_IDENTITY ?= stackstead-release
+SIGNER_IDENTITY ?= release@stackstead
 MKRELEASE_EXTRAS = \
 	-extra install.sh=install.sh \
 	-extra config.example.yaml=deploy/config.example.yaml \
@@ -46,6 +47,9 @@ MKRELEASE_EXTRAS = \
 	-extra darwin:launchagent.plist.in=deploy/macos/launchagent.plist.in
 
 release: ui ## Build release tarballs + SHA256SUMS in dist/ (run after packages/pkg; unsigned unless SIGNING_KEY is set)
+	mkdir -p $(DIST)
+	cp install.sh $(DIST)/install.sh
+	chmod 755 $(DIST)/install.sh
 	@for t in $(RELEASE_TARGETS); do \
 		os=$${t%/*}; arch=$${t#*/}; \
 		echo "build $$os/$$arch"; \
@@ -62,15 +66,21 @@ else
 endif
 
 verify-release: ## Verify dist/SHA256SUMS (and SHA256SUMS.sig when SIGNERS=<allowed_signers> is given)
-	@cd $(DIST) && if command -v sha256sum >/dev/null 2>&1; then sha256sum -c SHA256SUMS; \
+	@cd $(DIST) && test -s SHA256SUMS || { echo "$(DIST)/SHA256SUMS is missing or empty"; exit 1; }; \
+	status=0; \
+	if command -v sha256sum >/dev/null 2>&1; then sha256sum -c SHA256SUMS || status=1; \
 	else \
-		status=0; \
 		while read -r sum name; do \
 			got=$$(shasum -a 256 "$$name" | awk '{print $$1}'); \
 			if [ "$$got" = "$$sum" ]; then echo "$$name: OK"; else echo "$$name: FAILED"; status=1; fi; \
 		done < SHA256SUMS; \
-		exit $$status; \
-	fi
+	fi; \
+	for f in *; do \
+		case "$$f" in SHA256SUMS|SHA256SUMS.sig) continue;; esac; \
+		[ -f "$$f" ] || continue; \
+		awk -v f="$$f" 'substr($$0,67)==f{found=1} END{exit !found}' SHA256SUMS || { echo "$$f: in $(DIST) but not listed in SHA256SUMS"; status=1; }; \
+	done; \
+	exit $$status
 ifneq ($(strip $(SIGNERS)),)
 	@test -f $(DIST)/SHA256SUMS.sig || { echo "SIGNERS given but $(DIST)/SHA256SUMS.sig is missing"; exit 1; }
 	ssh-keygen -Y verify -f '$(SIGNERS)' -I '$(SIGNER_IDENTITY)' -n $(SIGN_NAMESPACE) -s $(DIST)/SHA256SUMS.sig < $(DIST)/SHA256SUMS
