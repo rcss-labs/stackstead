@@ -59,8 +59,13 @@ func applyEdit(src []byte, e edit) ([]byte, error) {
 		if m.Style&yaml.FlowStyle != 0 {
 			// Flow mappings cannot be edited line by line; rewrite the whole
 			// mapping in block style with the edit applied.
+			if hasAnchorOrAlias(m) {
+				return nil, errSharedNode
+			}
 			updated := blockCopy(m)
-			setInTree(updated, e.path[i:], e.value)
+			if err := setInTree(updated, e.path[i:], e.value); err != nil {
+				return nil, err
+			}
 			return replaceValue(l, mKey, m, updated, lay)
 		}
 		key, val := lookup(m, name)
@@ -74,6 +79,9 @@ func applyEdit(src []byte, e edit) ([]byte, error) {
 			return nil, errSharedNode
 		}
 		if i == len(e.path)-1 {
+			if hasAnchorOrAlias(val) {
+				return nil, errSharedNode
+			}
 			if e.value != nil {
 				return replaceValue(l, key, val, e.value, lay)
 			}
@@ -106,29 +114,48 @@ func lookup(m *yaml.Node, name string) (key, val *yaml.Node) {
 	return nil, nil
 }
 
+// hasAnchorOrAlias reports whether n or any descendant is an anchor or alias.
+func hasAnchorOrAlias(n *yaml.Node) bool {
+	if n.Kind == yaml.AliasNode || n.Anchor != "" {
+		return true
+	}
+	for _, c := range n.Content {
+		if hasAnchorOrAlias(c) {
+			return true
+		}
+	}
+	return false
+}
+
 // setInTree applies an edit to an in-memory node tree (used for flow mappings).
-func setInTree(m *yaml.Node, path []string, value *yaml.Node) {
+func setInTree(m *yaml.Node, path []string, value *yaml.Node) error {
 	for i := 0; i+1 < len(m.Content); i += 2 {
 		if m.Content[i].Value != path[0] {
 			continue
 		}
+		child := m.Content[i+1]
 		switch {
-		case len(path) > 1 && m.Content[i+1].Kind == yaml.MappingNode:
-			setInTree(m.Content[i+1], path[1:], value)
+		case len(path) > 1 && child.Kind == yaml.MappingNode:
+			return setInTree(child, path[1:], value)
 		case len(path) > 1:
-			if value != nil {
-				m.Content[i+1] = nested(path[1:], value)
+			if child.Kind == yaml.ScalarNode && child.ShortTag() == "!!null" {
+				if value != nil {
+					m.Content[i+1] = nested(path[1:], value)
+				}
+				return nil
 			}
+			return fmt.Errorf("%w: %s", errPathNotMapping, path[0])
 		case value == nil:
 			m.Content = append(m.Content[:i], m.Content[i+2:]...)
 		default:
 			m.Content[i+1] = value
 		}
-		return
+		return nil
 	}
 	if value != nil {
 		m.Content = append(m.Content, nested(path, value).Content...)
 	}
+	return nil
 }
 
 func splice(src []byte, start, end int, text string) []byte {

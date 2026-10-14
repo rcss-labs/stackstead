@@ -272,6 +272,24 @@ networks:
 # end of services
 `),
 		},
+		{
+			name:  "insert after multi-line flow sequence closing at key indent",
+			in:    "services:\n  web:\n    command: [\n      \"a\",\n    ]\n",
+			edits: []edit{{path("services.web.restart"), scalar("always")}},
+			want:  "services:\n  web:\n    command: [\n      \"a\",\n    ]\n    restart: always\n",
+		},
+		{
+			name:  "replace multi-line flow sequence closing at key indent",
+			in:    "services:\n  web:\n    command: [\n      \"a\",\n    ]\n    image: x\n",
+			edits: []edit{{path("services.web.command"), scalar("b")}},
+			want:  "services:\n  web:\n    command: b\n    image: x\n",
+		},
+		{
+			name:  "comment after a tab is kept",
+			in:    "services:\n  web:\n    image: nginx\t# pinned\n",
+			edits: []edit{{path("services.web.image"), scalar("httpd")}},
+			want:  "services:\n  web:\n    image: httpd\t# pinned\n",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -322,6 +340,36 @@ func TestApplyEditsRefuses(t *testing.T) {
 			in:   "{services: {}}\n",
 			e:    edit{path("services.web"), scalar("x")},
 			want: errUnsupportedLayout,
+		},
+		{
+			name: "anchor inside flow mapping",
+			in:   "services:\n  a:\n    deploy: {resources: &q {limits: {cpus: \"1\"}}}\n  b:\n    deploy: {resources: *q}\n",
+			e:    edit{path("services.a.deploy.resources.limits.memory"), scalar("1G")},
+			want: errSharedNode,
+		},
+		{
+			name: "alias inside flow mapping",
+			in:   "x-r: &r {reservations: {cpus: \"1\"}}\nservices:\n  a:\n    deploy: {resources: *r}\n",
+			e:    edit{path("services.a.deploy.resources.limits.memory"), scalar("1G")},
+			want: errSharedNode,
+		},
+		{
+			name: "path through scalar inside flow mapping",
+			in:   "services:\n  a:\n    deploy: {resources: 5}\n",
+			e:    edit{path("services.a.deploy.resources.limits.memory"), scalar("1G")},
+			want: errPathNotMapping,
+		},
+		{
+			name: "replacing value with nested anchor",
+			in:   "services:\n  a:\n    environment: {A: &v foo}\n  b:\n    environment: {A: *v}\n",
+			e:    edit{path("services.a.environment"), &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{scalar("A"), scalar("bar")}}},
+			want: errSharedNode,
+		},
+		{
+			name: "deleting value with nested anchor",
+			in:   "services:\n  a:\n    environment:\n      A: &v foo\n    image: x\n  b:\n    environment:\n      A: *v\n",
+			e:    edit{path("services.a.environment"), nil},
+			want: errSharedNode,
 		},
 	}
 	for _, tt := range tests {

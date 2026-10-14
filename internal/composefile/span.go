@@ -64,7 +64,7 @@ func (l lines) entryEnd(keyLine, keyIndent int, compactSeq bool) int {
 		}
 		ind := indentOf(t)
 		rest := t[ind:]
-		if ind > keyIndent || (compactSeq && ind == keyIndent && (rest == "-" || strings.HasPrefix(rest, "- "))) {
+		if ind > keyIndent || (ind == keyIndent && (strings.HasPrefix(rest, "]") || strings.HasPrefix(rest, "}"))) || (compactSeq && ind == keyIndent && (rest == "-" || strings.HasPrefix(rest, "- "))) {
 			end = n
 			continue
 		}
@@ -128,10 +128,13 @@ func inlineEnd(line string, i int) int {
 		return -1
 	default:
 		end := len(line)
-		if k := strings.Index(line[i:], " #"); k >= 0 {
-			end = i + k
+		for j := i + 1; j < len(line); j++ {
+			if line[j] == '#' && (line[j-1] == ' ' || line[j-1] == '\t') {
+				end = j
+				break
+			}
 		}
-		return i + len(strings.TrimRight(line[i:end], " "))
+		return i + len(strings.TrimRight(line[i:end], " \t"))
 	}
 }
 
