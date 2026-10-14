@@ -220,7 +220,8 @@ func (s *server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	service := r.URL.Query().Get("service")
 	var cs []engine.Container
 	for _, c := range all {
-		if c.Project() == detail.Project && (service == "" || c.ComposeService() == service) {
+		// An empty project would otherwise match every non-compose container.
+		if detail.Project != "" && c.Project() == detail.Project && (service == "" || c.ComposeService() == service) {
 			cs = append(cs, c)
 		}
 	}
@@ -399,16 +400,16 @@ func (s *server) handleMetricsHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 type sampleDTO struct {
-	Time      time.Time `json:"time"`
-	Service   string    `json:"service"`
-	Container string    `json:"container"`
-	CPU       float64   `json:"cpu"`
-	Mem       uint64    `json:"mem"`
-	MemLimit  uint64    `json:"memLimit"`
-	NetRx     uint64    `json:"netRx"`
-	NetTx     uint64    `json:"netTx"`
-	BlkRead   uint64    `json:"blkRead"`
-	BlkWrite  uint64    `json:"blkWrite"`
+	Time      string  `json:"time"`
+	Service   string  `json:"service"`
+	Container string  `json:"container"`
+	CPU       float64 `json:"cpu"`
+	Mem       uint64  `json:"mem"`
+	MemLimit  uint64  `json:"memLimit"`
+	NetRx     uint64  `json:"netRx"`
+	NetTx     uint64  `json:"netTx"`
+	BlkRead   uint64  `json:"blkRead"`
+	BlkWrite  uint64  `json:"blkWrite"`
 }
 
 // handleMetricsLive streams "sample" events (raw per-container readings with
@@ -432,7 +433,7 @@ func (s *server) handleMetricsLive(w http.ResponseWriter, r *http.Request) {
 			_ = sw.Event("dropped", "", struct{}{})
 			return true, nil
 		}
-		return false, sw.Event("sample", "", sampleDTO{Time: m.TS.UTC(), Service: m.Service, Container: m.Container, CPU: m.CPU,
+		return false, sw.Event("sample", "", sampleDTO{Time: m.TS.UTC().Format(time.RFC3339), Service: m.Service, Container: m.Container, CPU: m.CPU,
 			Mem: m.Mem, MemLimit: m.MemLimit, NetRx: m.NetRx, NetTx: m.NetTx, BlkRead: m.BlkRead, BlkWrite: m.BlkWrite})
 	})
 }

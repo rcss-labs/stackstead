@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -33,10 +34,14 @@ func startSSE(w http.ResponseWriter, writeTimeout time.Duration) (*sseWriter, er
 	return sw, sw.Comment("stream open")
 }
 
-// raw writes bytes under a fresh deadline and flushes. SetWriteDeadline may be
-// unsupported (recorders in tests); that is not an error.
+// raw writes bytes under a fresh deadline and flushes. A writer that does not
+// support deadlines at all (http.ErrNotSupported, e.g. httptest recorders)
+// is written to without one; any other deadline failure ends the stream,
+// because continuing would leave the write unbounded.
 func (s *sseWriter) raw(format string, args ...any) error {
-	_ = s.rc.SetWriteDeadline(time.Now().Add(s.writeTimeout))
+	if err := s.rc.SetWriteDeadline(time.Now().Add(s.writeTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return err
+	}
 	if _, err := fmt.Fprintf(s.w, format, args...); err != nil {
 		return err
 	}

@@ -55,12 +55,13 @@ type Sampler struct {
 	tickOverride <-chan time.Time // tests: manual tick trigger
 	tickDone     func()           // tests: called after each tick body
 
-	mu        sync.Mutex
-	degraded  bool
-	latest    []ExpositionSample
-	subs      map[string]map[*subscriber]struct{}
-	lastWarn  time.Time
-	lastPrune time.Time
+	mu           sync.Mutex
+	degraded     bool
+	latest       []ExpositionSample
+	subs         map[string]map[*subscriber]struct{}
+	lastWarn     time.Time
+	lastListWarn time.Time // list-containers failures, rate-limited separately from write failures; tick goroutine only
+	lastPrune    time.Time
 }
 
 func NewSampler(st *Store, lister ContainerLister, stats StatsSource, interval, retention time.Duration, logger *slog.Logger, now func() time.Time) *Sampler {
@@ -153,7 +154,8 @@ func (s *Sampler) tick(ctx context.Context) {
 		s.mu.Lock()
 		s.latest = nil // don't serve stale values as current
 		s.mu.Unlock()
-		if ctx.Err() == nil {
+		if ctx.Err() == nil && now.Sub(s.lastListWarn) >= warnEvery {
+			s.lastListWarn = now
 			s.log.Warn("metrics: list containers", "err", err)
 		}
 		return

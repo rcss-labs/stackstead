@@ -434,6 +434,38 @@ func TestListerErrorClearsLatest(t *testing.T) {
 	}
 }
 
+func TestListContainersFailureLogIsRateLimitedToOncePerMinute(t *testing.T) {
+	st, _ := newStore(t)
+	var buf syncBuf
+	clk := &clock{t: base}
+	lst := &fakeLister{err: errors.New("docker down")}
+	ticks := make(chan time.Time)
+	s := metrics.NewSampler(st, lst, &fakeStats{}, 10*time.Second, time.Hour, slog.New(slog.NewTextHandler(&buf, nil)), clk.now)
+	s.UseTicks(ticks)
+	fin := make(chan struct{}, 100)
+	s.OnTickDone(func() { fin <- struct{}{} })
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+	tick := func() { ticks <- clk.now(); <-fin }
+	count := func() int { return strings.Count(buf.String(), "list containers") }
+
+	tick()
+	clk.add(10 * time.Second)
+	tick()
+	clk.add(10 * time.Second)
+	tick()
+	if n := count(); n != 1 {
+		t.Fatalf("logs within one minute = %d, want 1", n)
+	}
+	clk.add(time.Minute)
+	tick()
+	if n := count(); n != 2 {
+		t.Fatalf("logs after a minute = %d, want 2", n)
+	}
+}
+
 type syncBuf struct {
 	mu sync.Mutex
 	b  []byte

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -387,6 +388,70 @@ func TestLogsNoContainersEndsImmediately(t *testing.T) {
 	}
 }
 
+func TestLogsEmptyProjectEndsWithoutStreams(t *testing.T) {
+	fake := twoContainerFake()
+	fake.containers = append(fake.containers, container("c-plain", "plain-1", "", ""))
+	st := newFakeStacks()
+	st.summary.Project = ""
+	env, cookie := newObserveEnvWith(t, fake, st)
+	_, ch := openSSE(t, env, cookie, context.Background(), "/api/stacks/web/logs?follow=1")
+	evs := drain(t, ch)
+	if names := eventNames(evs); len(names) != 1 || names[0] != "end" {
+		t.Fatalf("events = %v, want just end", names)
+	}
+	if n := fake.logCalls(); n != 0 {
+		t.Errorf("opened %d log streams for a stack without a project, want 0", n)
+	}
+}
+
+// A client that stays connected but stops reading must not hold the handler
+// (and the Docker streams) forever: the per-write deadline cuts it.
+func TestLogsStalledClientIsCutByWriteDeadline(t *testing.T) {
+	fake := newFakeObserve()
+	fake.containers = []engine.Container{container("c-app", "web-app-1", "web", "app")}
+	big := strings.Repeat("x", 4096)
+	lines := make([]engine.LogLine, 30000) // ~120MB, far beyond any socket buffer
+	for i := range lines {
+		lines[i] = engine.LogLine{Stream: "stdout", Time: t0, Text: big}
+	}
+	fake.logs["c-app"] = fakeLogSpec{lines: lines}
+	st := newFakeStacks()
+	env := newEnvWith(t, "", func(o *api.Options) {
+		o.Stacks, o.Operations, o.FSRoots, o.Status = st, fakeOps{st}, st.roots, st.status
+		o.Observe = fake
+		o.SSEHeartbeat = time.Hour
+		o.SSEWriteTimeout = 200 * time.Millisecond
+	})
+	env.createAdmin(t)
+	cookie := env.login(t)
+	srv := httptest.NewServer(env.handler)
+	t.Cleanup(srv.Close)
+
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if tc, ok := conn.(*net.TCPConn); ok {
+		_ = tc.SetReadBuffer(4096)
+	}
+	fmt.Fprintf(conn, "GET /api/stacks/web/logs?follow=1 HTTP/1.1\r\nHost: x\r\nCookie: %s=%s\r\n\r\n", cookie.Name, cookie.Value)
+	// Never read: the connection stays open but stalled.
+
+	deadline := time.Now().Add(5 * time.Second)
+	for fake.logCtx("c-app") == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("log stream was never opened")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	select {
+	case <-fake.logCtx("c-app").Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("stalled client still holds the Docker stream; write deadline did not cut it")
+	}
+}
+
 func TestLogsCapsContainersAtFifty(t *testing.T) {
 	fake := newFakeObserve()
 	for i := 0; i < 60; i++ {
@@ -650,6 +715,27 @@ func TestLiveMetricsStreamsSamples(t *testing.T) {
 	case <-fake.samplesCancelled:
 	case <-time.After(3 * time.Second):
 		t.Fatal("sample subscription was not cancelled on disconnect")
+	}
+}
+
+// History and live samples use the same time format: UTC RFC3339.
+func TestLiveMetricsTimeIsUTCRFC3339(t *testing.T) {
+	fake := newFakeObserve()
+	env, cookie := newObserveEnv(t, fake)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, ch := openSSE(t, env, cookie, ctx, "/api/stacks/web/metrics/live")
+	zone := time.FixedZone("x", 3*3600)
+	fake.samples <- metrics.Sample{TS: time.Date(2026, 1, 1, 15, 0, 0, 123456789, zone), Project: "web", Service: "app"}
+	ev := nextEvent(t, ch, true)
+	var got struct {
+		Time string `json:"time"`
+	}
+	if err := json.Unmarshal([]byte(ev.data), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Time != "2026-01-01T12:00:00Z" {
+		t.Errorf("time = %q, want 2026-01-01T12:00:00Z", got.Time)
 	}
 }
 

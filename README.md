@@ -82,10 +82,14 @@ compose containers.
   default window is the last hour. Counters are bucketed with MAX across a
   service's replicas, so the rates in history reflect the busiest replica, not
   the sum. Memory excludes page cache (`inactive_file` on cgroup v2, `cache` on
-  v1), like `docker stats`. `metrics/live` streams new samples as they are taken.
+  v1), like `docker stats`. `metrics/live` streams new samples as they are taken
+  (`sample` events). History and live `time` are both UTC RFC3339.
 - **Events.** `GET /api/events` sends `status` (`events`, `metricsDegraded`)
   when it connects or changes, and `change` (`project`, `seq`) when a
   project's containers changed; refetch the affected stack on `change`.
+  `/api/events` and `metrics/live` send `event: dropped` and then end when the
+  client falls behind; reconnect. A stack without a compose project has no
+  logs: the logs stream sends just `end`.
 
 ### What is stored
 
@@ -93,7 +97,7 @@ Every `metrics_interval` (default `10s`) one row per running compose
 container is written to the SQLite database in the data directory: CPU,
 memory and limit, and cumulative network and block I/O. Rows older than
 `metrics_retention` (default `72h`) are pruned hourly. At the default settings
-that is about 260,000 rows per container. If the database cannot be written,
+that is about 26,000 rows per container. If the database cannot be written,
 `/api/status` reports `metricsDegraded` and live data keeps working.
 
 ### Prometheus
@@ -175,6 +179,6 @@ curl -H 'Content-Type: application/json' \
 
 ```bash
 go test ./...
-go test -tags integration -race ./...   # needs a running Docker; creates and removes itest*/stackstead-it-* resources
+go test -tags integration -race -timeout 300s ./...   # needs a running Docker; creates and removes itest*/stackstead-it-* resources
 STACKSTEAD_DATA_DIR=$PWD/.dev/data STACKSTEAD_STACKS_DIR=$PWD/.dev/stacks go run ./cmd/stackstead
 ```
