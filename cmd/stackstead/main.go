@@ -29,6 +29,7 @@ const (
 	httpShutdownGrace = 10 * time.Second
 	engineTimeout     = 2 * time.Second
 	probeTimeout      = 3 * time.Second
+	versionCacheTTL   = 5 * time.Second
 	defaultConfigPath = "/etc/stackstead/config.yaml"
 	readTimeout       = 30 * time.Second
 	idleTimeout       = 120 * time.Second
@@ -94,7 +95,9 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	}
 
 	dockerEngine := engine.New(cfg.DockerSocket, engineTimeout)
-	runner := buildRunner(cfg)
+	// One cache serves the status probe and the service, so polling the
+	// status does not spawn `docker compose version` every time.
+	runner := stacks.NewVersionCache(buildRunner(cfg), versionCacheTTL, time.Now)
 	// Docker or compose being unavailable is not fatal: the service starts
 	// and lifecycle endpoints answer 503 until they come back.
 	dockerStatus := func(ctx context.Context) (docker, compose string) {
