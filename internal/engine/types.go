@@ -32,8 +32,13 @@ func (c Container) ComposeService() string { return c.Labels[labelService] }
 // Network is a Docker network with its IPv4 IPAM configuration.
 type Network struct {
 	ID, Name, Driver string
-	Subnets          []netip.Prefix
-	Gateways         []netip.Addr
+	Subnets          []Subnet
+}
+
+// Subnet is one IPv4 IPAM entry.
+type Subnet struct {
+	Prefix  netip.Prefix
+	Gateway netip.Addr // zero value if none
 }
 
 // Wire shapes; only the fields we read.
@@ -46,7 +51,10 @@ type apiContainer struct {
 	Labels          map[string]string
 	Ports           []apiPort
 	NetworkSettings struct {
-		Networks map[string]struct{ IPAddress string }
+		Networks map[string]struct {
+			IPAddress  string
+			IPAMConfig *struct{ IPv4Address string }
+		}
 	}
 }
 

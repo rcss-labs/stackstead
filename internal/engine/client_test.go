@@ -9,27 +9,56 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// serve starts a fake Engine API on a unix socket and returns its path.
-func serve(t *testing.T, h http.Handler) string {
+// fake is a fake Engine API on a unix socket.
+type fake struct {
+	sock    string
+	mu      sync.Mutex
+	paths   []string
+	version string // Api-Version header on /_ping; "" omits it
+}
+
+func (f *fake) seen() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.paths...)
+}
+
+func serve(t *testing.T, h http.Handler) string { return serveVer(t, "1.41", h).sock }
+
+func serveVer(t *testing.T, version string, h http.Handler) *fake {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "eng")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	sock := filepath.Join(dir, "d.sock")
-	l, err := net.Listen("unix", sock)
+	f := &fake{sock: filepath.Join(dir, "d.sock"), version: version}
+	l, err := net.Listen("unix", f.sock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &http.Server{Handler: h}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.paths = append(f.paths, r.URL.Path)
+		f.mu.Unlock()
+		if r.URL.Path == "/_ping" {
+			if f.version != "" {
+				w.Header().Set("Api-Version", f.version)
+			}
+			w.Write([]byte("OK"))
+			return
+		}
+		h.ServeHTTP(w, r)
+	})}
 	go srv.Serve(l)
 	t.Cleanup(func() { srv.Close() })
-	return sock
+	return f
 }
 
 func fileHandler(t *testing.T, routes map[string]string) http.Handler {
@@ -41,7 +70,8 @@ func fileHandler(t *testing.T, routes map[string]string) http.Handler {
 		}
 		b, err := os.ReadFile(filepath.Join("testdata", file))
 		if err != nil {
-			t.Error(err)
+			http.Error(w, err.Error(), 500)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(b)
@@ -68,7 +98,7 @@ func TestContainers(t *testing.T) {
 	if gotQuery != "all=1" {
 		t.Errorf("query = %q", gotQuery)
 	}
-	if len(cs) != 2 {
+	if len(cs) != 3 {
 		t.Fatalf("got %d containers", len(cs))
 	}
 	c := cs[0]
@@ -90,6 +120,9 @@ func TestContainers(t *testing.T) {
 	if len(c.Networks) != 2 || c.Networks["demo_default"] != "172.18.0.2" || c.Networks["demo_backend"] != "172.19.0.5" {
 		t.Errorf("networks: %+v", c.Networks)
 	}
+	if c := cs[2]; c.State != "exited" || c.Networks["demo_default"] != "172.18.0.50" {
+		t.Errorf("stopped container should keep its reserved IP: %+v", c.Networks)
+	}
 	if cs[1].Name != "standalone" || cs[1].Project() != "" || cs[1].ComposeService() != "" {
 		t.Errorf("standalone: %+v", cs[1])
 	}
@@ -109,10 +142,10 @@ func TestNetworks(t *testing.T) {
 		t.Fatalf("got %d networks", len(ns))
 	}
 	if b := by["bridge"]; b.Driver != "bridge" || len(b.Subnets) != 1 ||
-		b.Subnets[0] != netip.MustParsePrefix("172.17.0.0/16") || b.Gateways[0] != netip.MustParseAddr("172.17.0.1") {
+		b.Subnets[0].Prefix != netip.MustParsePrefix("172.17.0.0/16") || b.Subnets[0].Gateway != netip.MustParseAddr("172.17.0.1") {
 		t.Errorf("bridge: %+v", b)
 	}
-	if n := by["demo_default"]; len(n.Subnets) != 1 || n.Subnets[0] != netip.MustParsePrefix("172.18.0.0/16") || len(n.Gateways) != 1 {
+	if n := by["demo_default"]; len(n.Subnets) != 1 || n.Subnets[0].Prefix != netip.MustParsePrefix("172.18.0.0/16") {
 		t.Errorf("IPv6 should be ignored: %+v", n)
 	}
 	for _, name := range []string{"host", "none"} {
@@ -120,20 +153,18 @@ func TestNetworks(t *testing.T) {
 			t.Errorf("%s subnets: %+v", name, by[name].Subnets)
 		}
 	}
-	if n := by["broken"]; len(n.Subnets) != 1 || n.Subnets[0] != netip.MustParsePrefix("10.5.0.0/24") {
+	if n := by["broken"]; len(n.Subnets) != 1 || n.Subnets[0].Prefix != netip.MustParsePrefix("10.5.0.0/24") {
 		t.Errorf("malformed subnet should be skipped: %+v", n)
 	}
 }
 
 func TestPing(t *testing.T) {
-	sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1.41/_ping" {
-			t.Errorf("path %s", r.URL.Path)
-		}
-		w.Write([]byte("OK"))
-	}))
-	if err := New(sock, time.Second).Ping(ctx(t)); err != nil {
+	f := serveVer(t, "1.41", http.NotFoundHandler())
+	if err := New(f.sock, time.Second).Ping(ctx(t)); err != nil {
 		t.Fatal(err)
+	}
+	if got := f.seen(); len(got) == 0 || got[0] != "/_ping" {
+		t.Errorf("Ping must use the unversioned path: %v", got)
 	}
 }
 
@@ -155,7 +186,7 @@ func TestTimeout(t *testing.T) {
 		}
 	}))
 	_, err := New(sock, 100*time.Millisecond).Networks(ctx(t))
-	if !errors.Is(err, ErrUnavailable) {
+	if !errors.Is(err, ErrUnavailable) || !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("err = %v", err)
 	}
 }
@@ -175,8 +206,8 @@ func TestServerError(t *testing.T) {
 }
 
 func TestNoRequestWithoutDeadline(t *testing.T) {
-	called := false
-	sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true }))
+	var called atomic.Bool
+	sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called.Store(true) }))
 	// The client timeout supplies a deadline even when the caller's context has none.
 	c := New(sock, time.Second)
 	var sawDeadline bool
@@ -185,11 +216,119 @@ func TestNoRequestWithoutDeadline(t *testing.T) {
 		return nil, errors.New("stop")
 	})
 	_, _ = c.Containers(context.Background())
-	if !sawDeadline || called {
-		t.Errorf("deadline=%v called=%v", sawDeadline, called)
+	if !sawDeadline || called.Load() {
+		t.Errorf("deadline=%v called=%v", sawDeadline, called.Load())
 	}
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestCallerCancelIsNotUnavailable(t *testing.T) {
+	started := make(chan struct{})
+	sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+	}))
+	c := New(sock, 5*time.Second)
+	cctx, cancel := context.WithCancel(context.Background())
+	go func() { <-started; cancel() }()
+	_, err := c.Networks(cctx)
+	if !errors.Is(err, context.Canceled) || errors.Is(err, ErrUnavailable) {
+		t.Errorf("mid-request cancel: %v", err)
+	}
+	_, err = c.Networks(cctx) // already cancelled
+	if !errors.Is(err, context.Canceled) || errors.Is(err, ErrUnavailable) {
+		t.Errorf("pre-cancelled: %v", err)
+	}
+}
+
+func TestVersionNegotiation(t *testing.T) {
+	cases := []struct{ header, wantPrefix string }{
+		{"1.51", "/v1.47/"},
+		{"1.43", "/v1.43/"},
+		{"", "/v1.41/"},
+	}
+	for _, tc := range cases {
+		t.Run("header="+tc.header, func(t *testing.T) {
+			f := serveVer(t, tc.header, fileHandler(t, map[string]string{
+				tc.wantPrefix + "networks": "networks.json",
+			}))
+			c := New(f.sock, 2*time.Second)
+			for i := 0; i < 2; i++ {
+				if _, err := c.Networks(ctx(t)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var pings int
+			for _, p := range f.seen() {
+				if p == "/_ping" {
+					pings++
+				} else if p != tc.wantPrefix+"networks" {
+					t.Errorf("unexpected path %s", p)
+				}
+			}
+			if pings != 1 {
+				t.Errorf("version should be negotiated once, pings=%d", pings)
+			}
+		})
+	}
+}
+
+func TestVersionTooOld(t *testing.T) {
+	f := serveVer(t, "1.40", http.NotFoundHandler())
+	_, err := New(f.sock, time.Second).Containers(ctx(t))
+	if err == nil || !strings.Contains(err.Error(), "older than the minimum 1.41") || errors.Is(err, ErrUnavailable) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestNegotiationRetriedAfterFailure(t *testing.T) {
+	dir, err := os.MkdirTemp("", "eng")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "late.sock")
+	c := New(sock, time.Second)
+	if _, err := c.Networks(ctx(t)); !errors.Is(err, ErrUnavailable) {
+		t.Fatal(err)
+	}
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := fileHandler(t, map[string]string{"/v1.41/networks": "networks.json"})
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/_ping" {
+			w.Header().Set("Api-Version", "1.41")
+			return
+		}
+		h.ServeHTTP(w, r)
+	})}
+	go srv.Serve(l)
+	t.Cleanup(func() { srv.Close() })
+	if _, err := c.Networks(ctx(t)); err != nil {
+		t.Errorf("failure must not be cached: %v", err)
+	}
+}
+
+func TestResponseSizeCap(t *testing.T) {
+	sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("[" + strings.Repeat(" ", 200) + "]"))
+	}))
+	c := New(sock, time.Second)
+	c.maxBody = 100
+	_, err := c.Networks(ctx(t))
+	if err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestDefaultTimeout(t *testing.T) {
+	sock := serve(t, fileHandler(t, map[string]string{"/v1.41/networks": "networks.json"}))
+	if _, err := New(sock, 0).Networks(ctx(t)); err != nil {
+		t.Errorf("zero timeout must default, got %v", err)
+	}
+}
