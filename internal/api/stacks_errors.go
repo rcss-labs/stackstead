@@ -66,6 +66,9 @@ func (s *server) writeStackError(w http.ResponseWriter, r *http.Request, err err
 		writeError(w, http.StatusForbidden, "permission denied")
 	case errors.Is(err, syscall.ENOTDIR):
 		writeError(w, http.StatusBadRequest, "not a directory")
+	case errors.Is(err, syscall.EINVAL):
+		// Path resolution rejects names the kernel cannot take, e.g. a NUL byte.
+		writeError(w, http.StatusBadRequest, "invalid path")
 
 	case errors.Is(err, composefile.ErrEditRefused):
 		writeError(w, http.StatusUnprocessableEntity, "this change needs the raw YAML editor")

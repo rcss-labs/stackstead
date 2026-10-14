@@ -387,6 +387,9 @@ func TestFSBrowse(t *testing.T) {
 	if rec = env.do(t, "GET", "/api/fs?path=relative", "", withCookie(cookie)); rec.Code != 400 {
 		t.Errorf("relative = %d, want 400", rec.Code)
 	}
+	if rec = env.do(t, "GET", "/api/fs?path="+root+"/x%00y", "", withCookie(cookie)); rec.Code != 400 {
+		t.Errorf("NUL byte = %d, want 400", rec.Code)
+	}
 }
 
 func TestOversizedBodyIsRejected(t *testing.T) {
