@@ -71,7 +71,7 @@
       reloadDetail: () => onreload(),
     },
   );
-  const { errors, phase, notice, conflictMessage, previewText, checksPartial, rebased, formVersion } = edit;
+  const { errors, phase, notice, conflictMessage, previewText, checksPartial, rebased, discardedGroups, formVersion } = edit;
   const isDirty = edit.dirty;
 
   // ServiceForm mutates its form in place, so a local reactive copy feeds it and the state machine
@@ -269,6 +269,10 @@
     {#if $rebased}
       <Banner kind="warning" title="The file changed since you opened this editor">
         Your changes were applied on top of the new version; review the diff.
+        {#if $discardedGroups.length}
+          Your changes to {$discardedGroups.join(', ')} were discarded because that part of the file can now only be
+          edited as raw YAML.
+        {/if}
       </Banner>
     {/if}
     <p class="hint">The compose file as it is now, against the file this edit would write.</p>

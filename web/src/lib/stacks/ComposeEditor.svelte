@@ -65,7 +65,7 @@
   });
 
   async function save() {
-    if (!isDirty || $st.phase === 'saving' || $st.phase === 'loading') return;
+    if (!isDirty || $st.phase === 'conflict' || $st.phase === 'saving' || $st.phase === 'loading') return;
     const ok = await editor.save();
     if (ok) {
       toasts.push({ kind: 'success', message: `Saved — previous version kept as ${backupName}` });
@@ -151,7 +151,11 @@
       <Button
         variant="primary"
         loading={$st.phase === 'saving'}
-        disabledReason={isDirty ? undefined : 'No changes to save'}
+        disabledReason={!isDirty
+          ? 'No changes to save'
+          : $st.phase === 'conflict'
+            ? 'Resolve the conflict first (Reload or Discard)'
+            : undefined}
         onclick={save}>Save</Button
       >
       {#if $st.phase === 'saved'}

@@ -7,14 +7,19 @@ BIN := bin
 help: ## List targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
 
-ui: ## Build the web UI into web/dist (needs Node)
-	cd web && npm ci && npm run build
+# Installs dependencies only when the lockfile is newer than the last install, so
+# `make check` (ui-check + ui-test) runs `npm ci` at most once.
+web/node_modules/.package-lock.json: web/package-lock.json
+	cd web && npm ci
 
-ui-check: ## Type-check the web UI (svelte-check)
-	cd web && npm ci && npm run check
+ui: web/node_modules/.package-lock.json ## Build the web UI into web/dist (needs Node)
+	cd web && npm run build
 
-ui-test: ## Run the web UI unit tests (vitest)
-	cd web && npm ci && npm run test
+ui-check: web/node_modules/.package-lock.json ## Type-check the web UI (svelte-check)
+	cd web && npm run check
+
+ui-test: web/node_modules/.package-lock.json ## Run the web UI unit tests (vitest)
+	cd web && npm run test
 
 build: ui ## Build the UI, then the static binary
 	CGO_ENABLED=0 go build -o $(BIN)/stackstead ./cmd/stackstead

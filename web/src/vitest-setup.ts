@@ -144,6 +144,8 @@ export function installFakeStream(routes: StreamRoutes): FakeStream {
     const r = splitRequest(input, init);
     const route = routes[r.pathname];
     if (!route) return original(input, init);
+    // Like real fetch: a signal that is already aborted rejects before anything is sent.
+    if (r.signal?.aborted) throw r.signal.reason ?? new DOMException('aborted', 'AbortError');
     requests.push({ path: r.path, headers: r.headers, signal: r.signal });
 
     let response: StreamResponse;

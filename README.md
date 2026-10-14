@@ -112,7 +112,10 @@ compose containers.
   (new replicas, malformed entries) start from the normal `tail`. Residual
   limits come from Docker: lines already evicted by log rotation cannot be
   replayed, a recreated container has a new id and starts from `tail`, and
-  log drivers with coarse clocks only make the ordinal do more work.
+  log drivers with coarse clocks only make the ordinal do more work. Resume
+  reads the container's log from the start (`tail=all` plus `since`) and skips
+  to the cursor, so its cost grows with the log: configure log rotation
+  (for example `max-size`) on stacks you tail for long.
 - **Metrics history.** `GET /api/stacks/{name}/metrics?from=&to=&step=&service=`
   returns `{points}` with, per service and time bucket, `cpu` (percent of one
   core), `mem`, `memLimit` and per-second network and block I/O rates. The
@@ -185,6 +188,11 @@ address, for example with nginx:
 proxy_set_header Host $host;
 proxy_set_header X-Forwarded-For $remote_addr;
 ```
+
+Each open browser tab keeps an `/api/events` stream plus the active tab's own
+stream (logs, metrics or an operation). HTTP/1.1 allows only 6 connections per
+origin, so behind an HTTP/1.1 proxy more than about two tabs can starve regular
+requests. Use an HTTP/2 reverse proxy, or keep at most two tabs open.
 
 If a proxy fronts an instance that has no admin yet, complete first-run setup
 with the setup token from `journalctl -u stackstead`.
@@ -262,8 +270,9 @@ wrong current password answers 403 (not 401, which the UI treats as "session
 gone") and counts against the same per-IP limiter as logins (429 when
 exceeded). The UI never echoes either password.
 
-**CI: deferred.** There is no CI configuration yet; `make test` needs no
-Node, while `make build` and `make e2e` do (e2e needs a built UI).
+**CI: deferred.** There is no CI configuration yet. `make test` needs no
+Node; `make build` does. `make e2e` does not run Node itself but needs the UI
+to be built already (`make ui`); without it the smoke test skips.
 
 ## Licence
 

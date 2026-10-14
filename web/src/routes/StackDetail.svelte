@@ -14,6 +14,7 @@
   import ActionsBar from '$lib/stacks/ActionsBar.svelte';
   import LogsViewer from '$lib/stacks/LogsViewer.svelte';
   import OperationPanel from '$lib/stacks/OperationPanel.svelte';
+  import { debounce } from '$lib/stores/debounce';
   import { changes, live, refreshStatus } from '$lib/stores/live';
   import { setUnsavedChanges } from '$lib/stores/guard';
   import { operationsRefresh, refreshRunningOps, refreshStacks } from '$lib/stores/stacks';
@@ -119,7 +120,13 @@
     }
   }
 
-  // Initial load, then refetch on this project's changes and on every resync.
+  // Initial load, then refetch on this project's changes (debounced: a burst of container events is one
+  // refetch) and immediately on every resync.
+  const refetch = debounce(() => {
+    void load();
+    void loadOperations();
+  });
+  onDestroy(() => refetch.cancel());
   let firstChange = true;
   $effect(() => {
     const c = $changes;
@@ -130,10 +137,9 @@
         void loadOperations();
         return;
       }
-      if (c && (c.resync || c.project === detail?.project)) {
-        void load();
-        void loadOperations();
-      }
+      if (!c) return;
+      if (c.resync) refetch.flush();
+      else if (c.project === detail?.project) refetch.trigger();
     });
   });
   let firstTick = true;

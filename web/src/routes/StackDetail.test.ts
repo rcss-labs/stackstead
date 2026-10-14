@@ -138,6 +138,21 @@ describe('StackDetail', () => {
     await waitFor(() => expect(stackGets()).toBe(3));
   });
 
+  it('collapses a burst of changes for its project into at most two refetches of each endpoint', async () => {
+    startLive({ fetchStatus: () => fetch('/api/status').then((r) => r.json()) });
+    render(StackDetail, { name: 'web' });
+    await screen.findByRole('heading', { name: 'web' });
+    await waitFor(() => expect(stackGets()).toBe(2)); // initial + resync on open
+    const opsGets = () => fake.calls.filter((c) => c.path === '/api/stacks/web/operations').length;
+    const [stackBefore, opsBefore] = [stackGets(), opsGets()];
+    for (let i = 1; i <= 10; i++) stream.push('/api/events', `event: change\ndata: {"project":"web","seq":${i}}\n\n`);
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(stackGets() - stackBefore).toBeGreaterThanOrEqual(1);
+    expect(stackGets() - stackBefore).toBeLessThanOrEqual(2);
+    expect(opsGets() - opsBefore).toBeGreaterThanOrEqual(1);
+    expect(opsGets() - opsBefore).toBeLessThanOrEqual(2);
+  });
+
   it('shows the not-found view with a way back on 404', async () => {
     stackRes = { status: 404, body: { error: 'stack not found' } };
     render(StackDetail, { name: 'web' });

@@ -43,6 +43,18 @@ func (s *syncBuffer) String() string {
 	return s.b.String()
 }
 
+// dockerOutput runs one docker CLI command with a deadline so a wedged daemon cannot hang the suite.
+func dockerOutput(args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, "docker", args...).Output()
+}
+
+// redact hides the first-run setup token, which the server logs at startup.
+var setupTokenRe = regexp.MustCompile(`(setup_token=)\S+`)
+
+func redact(log string) string { return setupTokenRe.ReplaceAllString(log, "${1}[redacted]") }
+
 type e2eServer struct {
 	base   string
 	stderr *syncBuffer
@@ -61,10 +73,13 @@ func freePort(t *testing.T) int {
 // dockerSocket returns the local Docker socket path when `docker compose` is
 // usable, or "" when the Docker part of the smoke test should be skipped.
 func dockerSocket() string {
-	if exec.Command("docker", "info").Run() != nil || exec.Command("docker", "compose", "version").Run() != nil {
+	if _, err := dockerOutput("info"); err != nil {
 		return ""
 	}
-	out, err := exec.Command("docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}").Output()
+	if _, err := dockerOutput("compose", "version"); err != nil {
+		return ""
+	}
+	out, err := dockerOutput("context", "inspect", "--format", "{{.Endpoints.docker.Host}}")
 	if err != nil {
 		return ""
 	}
@@ -121,7 +136,7 @@ func startServer(t *testing.T, socket string) *e2eServer {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("server did not answer: %v\nstderr:\n%s", err, stderr.String())
+			t.Fatalf("server did not answer: %v\nstderr:\n%s", err, redact(stderr.String()))
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -241,6 +256,7 @@ func TestE2ESmoke(t *testing.T) {
 	})
 
 	password := randomSecret(t)
+	var newPassword, metricsToken string
 	t.Run("auth and settings", func(t *testing.T) {
 		anon.expect(401, "GET", "/api/me", nil)
 		anon.expect(204, "POST", "/api/setup", map[string]string{"username": "admin", "password": password, "setupToken": ""})
@@ -269,6 +285,7 @@ func TestE2ESmoke(t *testing.T) {
 		if err := json.Unmarshal(c.expect(200, "POST", "/api/settings/metrics-token", map[string]string{}), &created); err != nil || created.Token == "" {
 			t.Fatalf("create token: %v", err)
 		}
+		metricsToken = created.Token
 		_ = json.Unmarshal(c.expect(200, "GET", "/api/settings/metrics-token", nil), &ts)
 		if !ts.Configured {
 			t.Error("token status not configured after create")
@@ -287,7 +304,7 @@ func TestE2ESmoke(t *testing.T) {
 		other.expect(204, "POST", "/api/login", map[string]string{"username": "admin", "password": password})
 		other.expect(200, "GET", "/api/me", nil)
 
-		newPassword := randomSecret(t)
+		newPassword = randomSecret(t)
 		c.expect(403, "POST", "/api/password", map[string]string{"current": randomSecret(t), "new": newPassword})
 		c.expect(204, "POST", "/api/password", map[string]string{"current": password, "new": newPassword})
 		c.expect(200, "GET", "/api/me", nil)
@@ -295,7 +312,6 @@ func TestE2ESmoke(t *testing.T) {
 		anon.expect(401, "POST", "/api/login", map[string]string{"username": "admin", "password": password})
 		fresh := newClient(t, srv.base)
 		fresh.expect(204, "POST", "/api/login", map[string]string{"username": "admin", "password": newPassword})
-		password = newPassword
 	})
 
 	if socket != "" {
@@ -328,11 +344,17 @@ func TestE2ESmoke(t *testing.T) {
 
 	log := srv.stderr.String()
 	if !strings.Contains(log, "listening") || strings.Contains(log, "not built") {
-		t.Errorf("unexpected server log:\n%s", log)
+		t.Errorf("unexpected server log:\n%s", redact(log))
 	}
-	for _, secret := range []string{password} {
-		if strings.Contains(log, secret) {
-			t.Error("server log contains the admin password")
+	for name, secret := range map[string]string{
+		"original admin password": password,
+		"new admin password":      newPassword,
+		"metrics token":           metricsToken,
+	} {
+		if secret == "" {
+			t.Errorf("%s was never captured; the log check would prove nothing", name)
+		} else if strings.Contains(log, secret) {
+			t.Errorf("server log contains the %s", name)
 		}
 	}
 }
@@ -353,6 +375,12 @@ func findChrome() string {
 	return ""
 }
 
+// projectContainers lists the IDs of all containers (any state) of one compose project.
+func projectContainers(project string) []string {
+	out, _ := dockerOutput("ps", "-aq", "--filter", "label=com.docker.compose.project="+project)
+	return strings.Fields(string(out))
+}
+
 // dockerStack creates, starts, observes and removes a throwaway stack. The
 // name is unique so a pre-existing container is never touched; cleanup is
 // registered before anything is created.
@@ -365,15 +393,10 @@ func dockerStack(t *testing.T, c *client) {
 		// with this exact compose project.
 		c.do("DELETE", "/api/stacks/"+name+"?volumes=true", nil)
 		time.Sleep(3 * time.Second)
-		for _, args := range [][]string{
-			{"ps", "-aq", "--filter", "label=com.docker.compose.project=" + name},
-		} {
-			out, _ := exec.Command("docker", args...).Output()
-			for _, id := range strings.Fields(string(out)) {
-				_ = exec.Command("docker", "rm", "-f", id).Run()
-			}
+		for _, id := range projectContainers(name) {
+			_, _ = dockerOutput("rm", "-f", id)
 		}
-		_ = exec.Command("docker", "network", "rm", name+"_default").Run()
+		_, _ = dockerOutput("network", "rm", name+"_default")
 	})
 
 	c.expect(201, "POST", "/api/stacks", map[string]any{
@@ -437,9 +460,13 @@ func dockerStack(t *testing.T, c *client) {
 		t.Fatalf("down = %d: %.200s", got, body)
 	}
 	wait(body, "down")
-	got, _ = c.do("DELETE", "/api/stacks/"+name+"?volumes=true", nil)
+	got, body = c.do("DELETE", "/api/stacks/"+name+"?volumes=true", nil)
 	if got != 202 {
-		t.Fatalf("remove = %d", got)
+		t.Fatalf("remove = %d: %.200s", got, body)
+	}
+	wait(body, "remove")
+	if left := projectContainers(name); len(left) > 0 {
+		t.Errorf("containers of %s remain after remove: %v", name, left)
 	}
 }
 

@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { createRawSnippet } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
-import { route } from '../router';
+import { navigate, route } from '../router';
 import { toasts } from '../stores/toasts';
 import Banner from './Banner.svelte';
 import Button from './Button.svelte';
@@ -575,6 +575,7 @@ describe('RelativeTime', () => {
 });
 
 describe('Nav', () => {
+  afterEach(() => navigate('/', { replace: true })); // the router store outlives the test
   it('links to the main pages and marks the current one', () => {
     render(Nav, { username: 'ana', onlogout: () => {}, runningOps: 0, current: '/settings' });
     const nav = screen.getByRole('navigation', { name: 'Main' });
@@ -590,7 +591,6 @@ describe('Nav', () => {
     render(Nav, { username: 'ana', onlogout: () => {}, runningOps: 0, current: '/' });
     await userEvent.setup().click(screen.getByRole('link', { name: 'Settings' }));
     expect(get(route).path).toBe('/settings');
-    window.history.replaceState(null, '', '/');
   });
 
   it('shows running operations, the user and a working log out', async () => {

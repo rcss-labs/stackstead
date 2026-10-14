@@ -236,6 +236,21 @@ describe('createServiceEdit', () => {
     expect(deps.preview.mock.calls.at(-1)![0].image).toBe('nginx:2');
   });
 
+  it('reload names the groups whose edits were dropped because they became read-only', async () => {
+    const { edit } = setup({
+      update: vi.fn(async () => {
+        throw new ApiError(409, 'changed');
+      }),
+    });
+    edit.form.update((f) => ({ ...f, image: 'nginx:2', ports: ['81:81'] }));
+    await edit.preview();
+    await edit.save();
+    edit.reload(detail('h9', { ...config, ports: ['8080:80'] }, ['ports']));
+    expect(get(edit.discardedGroups)).toEqual(['Ports']);
+    edit.discard(detail('h9', config));
+    expect(get(edit.discardedGroups)).toEqual([]);
+  });
+
   it('a second preview while one is in flight starts no second chain', async () => {
     let release!: () => void;
     const { edit, deps } = setup({

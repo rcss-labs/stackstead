@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { api, onUnauthorized } from '$lib/api/client';
   import { bootstrapSession, expireSession, logout, session } from '$lib/api/session';
   import Banner from '$lib/components/Banner.svelte';
@@ -9,6 +9,7 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import Toasts from '$lib/components/Toasts.svelte';
   import { link, matchRoute, navigate, route, startRouter } from '$lib/router';
+  import { debounce } from '$lib/stores/debounce';
   import { changes, live, startLive, stopLive } from '$lib/stores/live';
   import { unsavedChanges, setUnsavedChanges } from '$lib/stores/guard';
   import { operationsRefresh, startStacks } from '$lib/stores/stacks';
@@ -96,13 +97,7 @@
   });
 
   let opsSeq = 0;
-  $effect(() => {
-    void $changes;
-    void $operationsRefresh;
-    if ($session.state !== 'authenticated') {
-      runningOps = 0;
-      return;
-    }
+  function loadRunningOps() {
     const mine = ++opsSeq;
     api
       .runningOperations()
@@ -110,6 +105,26 @@
         if (mine === opsSeq) runningOps = ops.length;
       })
       .catch(() => {});
+  }
+  // Every container event is a change; the running-operations badge only needs the settled state.
+  const refreshOps = debounce(loadRunningOps);
+  onDestroy(() => refreshOps.cancel());
+  let opsFirst = true;
+  $effect(() => {
+    const c = $changes;
+    void $operationsRefresh;
+    if ($session.state !== 'authenticated') {
+      refreshOps.cancel();
+      opsFirst = true;
+      runningOps = 0;
+      return;
+    }
+    untrack(() => {
+      if (opsFirst || c?.resync) {
+        opsFirst = false;
+        refreshOps.flush();
+      } else refreshOps.trigger();
+    });
   });
 
   // A client-side navigation does not move focus by itself, so keyboard and screen-reader users would

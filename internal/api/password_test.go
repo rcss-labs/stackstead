@@ -123,3 +123,20 @@ func TestChangePasswordIsRateLimited(t *testing.T) {
 		}
 	}
 }
+
+// A verified current password with a rejected new one is not a guessing attempt.
+func TestChangePasswordPolicyFailuresDoNotCountAgainstLimiter(t *testing.T) {
+	env := newTestEnv(t, "")
+	env.createAdmin(t)
+	cookie := env.login(t)
+	for i := range 6 {
+		rec := env.do(t, http.MethodPost, "/api/password", passwordBody(adminPassword, adminPassword), withCookie(cookie))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("same-password attempt %d = %d, want 400", i+1, rec.Code)
+		}
+	}
+	login := env.do(t, http.MethodPost, "/api/login", fmt.Sprintf(`{"username":"admin","password":%q}`, adminPassword))
+	if login.Code != http.StatusNoContent {
+		t.Fatalf("login after policy failures = %d, want 204", login.Code)
+	}
+}

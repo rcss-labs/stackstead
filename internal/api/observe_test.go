@@ -137,6 +137,10 @@ func (f *fakeObserve) Logs(ctx context.Context, c engine.Container, opts engine.
 		defer close(errs)
 		defer close(out)
 		for _, l := range spec.lines {
+			// Like the daemon, `since` is inclusive: only lines strictly before it are dropped.
+			if !opts.Since.IsZero() && l.Time.Before(opts.Since) {
+				continue
+			}
 			select {
 			case out <- l:
 			case <-ctx.Done():
