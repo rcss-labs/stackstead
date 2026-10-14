@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 )
 
@@ -174,12 +175,32 @@ func TestPkgPayloadAndScripts(t *testing.T) {
 	}
 	contains(t, "bom", bom, "./usr/local/bin/stackstead")
 
-	// scripts: exactly an executable postinstall
+	// scripts: the postinstall and its own copy of install.sh and the templates. installer
+	// extracts Scripts into a root-only temp dir, so root runs and reads nothing from
+	// /usr/local/share (which a user may own) during the installation.
 	scripts := walkFiles(t, filepath.Join(comp, "Scripts"))
-	if strings.Join(scripts, ",") != "postinstall" {
-		t.Errorf("Scripts = %v, want only postinstall", scripts)
+	wantScripts := "config.example.yaml,install.sh,launchagent.plist.in,postinstall"
+	if strings.Join(scripts, ",") != wantScripts {
+		t.Errorf("Scripts = %v, want %s", scripts, wantScripts)
 	}
 	assertMode(t, filepath.Join(comp, "Scripts", "postinstall"), 0o755)
+	assertMode(t, filepath.Join(comp, "Scripts", "install.sh"), 0o755)
+	for name, src := range map[string]string{
+		"install.sh":           filepath.Join(repo, "install.sh"),
+		"launchagent.plist.in": filepath.Join(repo, "deploy", "macos", "launchagent.plist.in"),
+		"config.example.yaml":  filepath.Join(repo, "deploy", "config.example.yaml"),
+		"postinstall":          postinstallScript(t),
+	} {
+		if string(readFile(t, filepath.Join(comp, "Scripts", name))) != string(readFile(t, src)) {
+			t.Errorf("Scripts/%s differs from %s", name, src)
+		}
+	}
+	// no quarantine/provenance attribute and no AppleDouble leftovers in the payload
+	for _, rel := range want {
+		if out, _ := runTool(t, "xattr", filepath.Join(payload, rel)); strings.Contains(out, "com.apple.quarantine") {
+			t.Errorf("%s carries a quarantine attribute: %s", rel, out)
+		}
+	}
 
 	// PackageInfo
 	info := string(readFile(t, filepath.Join(comp, "PackageInfo")))
@@ -338,16 +359,19 @@ func postinstallScript(t *testing.T) string {
 type postinstallRun struct {
 	out, errOut string
 	code        int
-	stubs       string // directory of logging stubs
+	stubs       string // directory of logging stubs (also the PATH seam directory)
+	dir         string // the "scripts dir": postinstall and its sibling stub install.sh
 	helperLog   string
 	helperEnv   string
 }
 
-// runPostinstall runs the script as the invoking (non-root) user. The sandbox
-// overrides (PATH, helper path) are honoured only when not root, so they
-// cannot redirect a real installer run. consoleUser is what `stat -f %Su
-// /dev/console` reports; helperExit is the stub install.sh's exit status.
-func runPostinstall(t *testing.T, volume, consoleUser string, uid0 bool, helperExit int, extraEnv ...string) postinstallRun {
+// runPostinstall runs a copy of the script as the invoking (non-root) user next
+// to a stub install.sh (the real one is shipped beside it in the pkg). The PATH
+// seam is honoured only when not root, so it cannot redirect a real installer
+// run; assumeRoot sets the test-only "behave as root" switch (which can only
+// restrict). consoleUser is what `stat -f %Su /dev/console` reports; helperExit
+// is the stub install.sh's exit status.
+func runPostinstall(t *testing.T, volume, consoleUser string, uid0 bool, helperExit int, assumeRoot bool) postinstallRun {
 	t.Helper()
 	dir := t.TempDir()
 	stubs := stubPath(t, map[string]string{
@@ -355,18 +379,21 @@ func runPostinstall(t *testing.T, volume, consoleUser string, uid0 bool, helperE
 		"id":        fmt.Sprintf(`case "$1" in -u) if [ -n "$2" ] && [ %t = true ]; then echo 0; elif [ -n "$2" ]; then echo 501; else echo 4242; fi ;; *) exit 1 ;; esac`, uid0),
 		"launchctl": `exit 0`,
 		"sudo":      `exit 0`,
+		"env":       `exit 0`,
 	})
-	helper := filepath.Join(dir, "install.sh")
-	writeFile(t, helper, []byte(fmt.Sprintf("#!/bin/sh\necho \"$*\" >> %q\nenv > %q\nexit %d\n", filepath.Join(dir, "helper.log"), filepath.Join(dir, "helper.env"), helperExit)), 0o755)
-	cmd := exec.Command("/bin/sh", postinstallScript(t), "/tmp/fake.pkg", volume+"/", volume, volume)
-	cmd.Env = append([]string{
-		"PATH=" + stubs + ":/usr/bin:/bin",
+	writeFile(t, filepath.Join(dir, "postinstall"), readFile(t, postinstallScript(t)), 0o755)
+	writeFile(t, filepath.Join(dir, "install.sh"), []byte(fmt.Sprintf("#!/bin/sh\necho \"$*\" >> %q\n/usr/bin/env > %q\nexit %d\n", filepath.Join(dir, "helper.log"), filepath.Join(dir, "helper.env"), helperExit)), 0o755)
+	cmd := exec.Command("/bin/sh", filepath.Join(dir, "postinstall"), "/tmp/fake.pkg", volume+"/", volume, volume)
+	cmd.Env = []string{
+		"PATH=/usr/bin:/bin",
 		"STACKSTEAD_PKG_PATH=" + stubs + ":/usr/bin:/bin",
-		"STACKSTEAD_PKG_HELPER=" + helper,
 		"TMPDIR=/evil-tmp",
 		"SUDO_USER=mallory",
 		"HOME=" + t.TempDir(),
-	}, extraEnv...)
+	}
+	if assumeRoot {
+		cmd.Env = append(cmd.Env, "STACKSTEAD_PKG_ASSUME_ROOT=1")
+	}
 	var so, se strings.Builder
 	cmd.Stdout, cmd.Stderr = &so, &se
 	code := 0
@@ -379,11 +406,11 @@ func runPostinstall(t *testing.T, volume, consoleUser string, uid0 bool, helperE
 	}
 	hl, _ := os.ReadFile(filepath.Join(dir, "helper.log"))
 	he, _ := os.ReadFile(filepath.Join(dir, "helper.env"))
-	return postinstallRun{so.String(), se.String(), code, stubs, string(hl), string(he)}
+	return postinstallRun{so.String(), se.String(), code, stubs, dir, string(hl), string(he)}
 }
 
 func TestPostinstallStagesOnlyOnTestVolume(t *testing.T) {
-	r := runPostinstall(t, "/Volumes/sstest", "alice", false, 0)
+	r := runPostinstall(t, "/Volumes/sstest", "alice", false, 0, false)
 	mustExit(t, r.code, 0, r.out, r.errOut)
 	contains(t, "stdout", r.out, "staged only")
 	if r.helperLog != "" {
@@ -406,7 +433,7 @@ func TestPostinstallNeedsARegularConsoleUser(t *testing.T) {
 		"space":                "al ice",
 	} {
 		t.Run(name, func(t *testing.T) {
-			r := runPostinstall(t, "/", user, false, 0)
+			r := runPostinstall(t, "/", user, false, 0, false)
 			mustExit(t, r.code, 0, r.out, r.errOut) // never fail the installation
 			contains(t, "stdout", r.out, "install.sh --from-pkg --user")
 			if r.helperLog != "" {
@@ -417,7 +444,7 @@ func TestPostinstallNeedsARegularConsoleUser(t *testing.T) {
 }
 
 func TestPostinstallRefusesUIDZeroUser(t *testing.T) {
-	r := runPostinstall(t, "/", "toor", true, 0)
+	r := runPostinstall(t, "/", "toor", true, 0, false)
 	mustExit(t, r.code, 0, r.out, r.errOut)
 	contains(t, "stdout", r.out, "install.sh --from-pkg --user")
 	if r.helperLog != "" {
@@ -426,10 +453,12 @@ func TestPostinstallRefusesUIDZeroUser(t *testing.T) {
 }
 
 func TestPostinstallDelegatesWithCleanEnvironment(t *testing.T) {
-	r := runPostinstall(t, "/", "alice", false, 0)
+	r := runPostinstall(t, "/", "alice", false, 0, false)
 	mustExit(t, r.code, 0, r.out, r.errOut)
-	if got := strings.TrimSpace(r.helperLog); got != "--from-pkg --user alice" {
-		t.Errorf("install.sh args = %q, want %q", got, "--from-pkg --user alice")
+	// the sibling install.sh and the templates next to it, never anything under /usr/local/share
+	want := "--from-pkg --payload-dir " + evalDir(t, r.dir) + " --user alice"
+	if got := strings.TrimSpace(r.helperLog); got != want {
+		t.Errorf("install.sh args = %q, want %q", got, want)
 	}
 	// the installer's environment (a user-influenced TMPDIR, SUDO_USER, HOME) is not passed on
 	notContains(t, "helper env", r.helperEnv, "TMPDIR=/evil-tmp", "SUDO_USER=mallory", "HOME=")
@@ -437,28 +466,42 @@ func TestPostinstallDelegatesWithCleanEnvironment(t *testing.T) {
 }
 
 func TestPostinstallToleratesAFailingHelper(t *testing.T) {
-	r := runPostinstall(t, "/", "alice", false, 7)
+	r := runPostinstall(t, "/", "alice", false, 7, false)
 	mustExit(t, r.code, 0, r.out, r.errOut)
 	contains(t, "stderr", r.errOut, "--from-pkg --user alice", "7")
 }
 
-func TestPostinstallIgnoresSandboxOverridesAsRoot(t *testing.T) {
-	if _, err := os.Stat("/usr/local/share/stackstead/install.sh"); err == nil {
-		t.Skip("a real Stackstead helper is installed on this machine; not running the root path")
-	}
-	// `id -u` says 0 (the first call runs with the caller's PATH): the override variables must be ignored
-	dir := t.TempDir()
-	stubs := stubPath(t, map[string]string{"id": `echo 0`})
-	evil := filepath.Join(dir, "evil.sh")
-	writeFile(t, evil, []byte("#!/bin/sh\necho ran >> "+filepath.Join(dir, "evil.log")+"\n"), 0o755)
-	cmd := exec.Command("/bin/sh", postinstallScript(t), "/tmp/fake.pkg", "/", "/", "/")
-	cmd.Env = []string{"PATH=" + stubs + ":/usr/bin:/bin", "STACKSTEAD_PKG_PATH=" + stubs, "STACKSTEAD_PKG_HELPER=" + evil}
-	out, err := cmd.CombinedOutput()
+func evalDir(t *testing.T, d string) string {
+	t.Helper()
+	r, err := filepath.EvalSymlinks(d)
 	if err != nil {
-		t.Fatalf("postinstall failed: %v\n%s", err, out)
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "evil.log")); err == nil {
-		t.Error("the helper override was honoured while running as root")
+	return r
+}
+
+// As root the PATH seam must be ignored: the stubs in it (stat, id, env, ...)
+// are never called, and the helper gets the fixed system PATH.
+func TestPostinstallIgnoresSandboxOverridesAsRoot(t *testing.T) {
+	r := runPostinstall(t, "/", "alice", false, 0, true)
+	mustExit(t, r.code, 0, r.out, r.errOut)
+	for _, name := range []string{"stat", "id", "env", "launchctl", "sudo"} {
+		if l := stubLog(r.stubs, name); l != "" {
+			t.Errorf("stub %s from the override PATH was called as root: %q", name, l)
+		}
+	}
+	if r.helperLog != "" {
+		notContains(t, "helper env", r.helperEnv, r.stubs)
+		contains(t, "helper env", r.helperEnv, "PATH=/usr/bin:/bin:/usr/sbin:/sbin")
+	}
+}
+
+// As a non-root user the seam works (so the tests above exercise the real script).
+func TestPostinstallPathSeamWorksWhenNotRoot(t *testing.T) {
+	r := runPostinstall(t, "/", "alice", false, 0, false)
+	mustExit(t, r.code, 0, r.out, r.errOut)
+	if stubLog(r.stubs, "stat") == "" {
+		t.Error("the PATH seam stub was not used")
 	}
 }
 
@@ -501,23 +544,54 @@ func TestShellcheckPostinstall(t *testing.T) {
 // TestPkgInstallOnTestVolume installs onto a separately mounted volume. It is
 // skipped unless STACKSTEAD_PKG_TEST_VOLUME names one (see RELEASING.md): it
 // runs `sudo installer`, which is never done implicitly.
+// requireScratchVolume refuses anything that is, or lives on the same device as,
+// the boot volume or its data volume: /Volumes/Macintosh HD is a symlink to /.
+func requireScratchVolume(t *testing.T, vol string) {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(vol)
+	if err != nil {
+		t.Fatalf("STACKSTEAD_PKG_TEST_VOLUME %q: %v", vol, err)
+	}
+	if !strings.HasPrefix(real, "/Volumes/") {
+		t.Fatalf("STACKSTEAD_PKG_TEST_VOLUME must resolve to a mounted volume under /Volumes, got %q", real)
+	}
+	vs, err := os.Stat(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sys := range []string{"/", "/System/Volumes/Data"} {
+		ss, err := os.Stat(sys)
+		if err != nil {
+			continue
+		}
+		if os.SameFile(vs, ss) {
+			t.Fatalf("%q is the system volume (%s); refusing", vol, sys)
+		}
+		a, aok := vs.Sys().(*syscall.Stat_t)
+		b, bok := ss.Sys().(*syscall.Stat_t)
+		if aok && bok && a.Dev == b.Dev {
+			t.Fatalf("%q is on the same device as %s; refusing", vol, sys)
+		}
+	}
+}
+
 func TestPkgInstallOnTestVolume(t *testing.T) {
 	vol := os.Getenv("STACKSTEAD_PKG_TEST_VOLUME")
 	if vol == "" {
 		t.Skip("set STACKSTEAD_PKG_TEST_VOLUME to a mounted scratch volume (not / and not a real volume) to run this")
 	}
-	if vol == "/" || !strings.HasPrefix(vol, "/Volumes/") {
-		t.Fatalf("STACKSTEAD_PKG_TEST_VOLUME must be a mounted volume under /Volumes, got %q", vol)
-	}
+	requireScratchVolume(t, vol)
 	pkg, _ := builtPkg(t)
-	t.Cleanup(func() { _, _ = runTool(t, "pkgutil", "--forget", pkgTestID, "--volume", vol) })
-	if out, err := runTool(t, "sudo", "installer", "-pkg", pkg, "-target", vol, "-dumplog"); err != nil {
+	t.Cleanup(func() { _, _ = runTool(t, "sudo", "pkgutil", "--forget", pkgTestID, "--volume", vol) })
+	out, err := runTool(t, "sudo", "installer", "-pkg", pkg, "-target", vol, "-dumplog")
+	if err != nil {
 		t.Fatalf("installer: %v\n%s", err, out)
 	}
+	contains(t, "installer -dumplog", out, "staged only")
 	if _, err := os.Stat(filepath.Join(vol, "usr/local/bin/stackstead")); err != nil {
 		t.Errorf("binary did not land under the volume: %v", err)
 	}
-	out, _ := runTool(t, "pkgutil", "--pkgs", "--volume", vol)
+	out, _ = runTool(t, "pkgutil", "--pkgs", "--volume", vol)
 	contains(t, "pkgutil --pkgs", out, pkgTestID)
 }
 
@@ -613,19 +687,6 @@ func TestInstallShFromPkg(t *testing.T) {
 		}
 	})
 
-	t.Run("SymlinkedPayloadFileIsRefused", func(t *testing.T) {
-		f := fromPkgFixture(t)
-		p := f.p("usr/local/share/stackstead/launchagent.plist.in")
-		if err := os.Remove(p); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink("/etc/hosts", p); err != nil {
-			t.Fatal(err)
-		}
-		out, errOut, code := f.run("--from-pkg", "--user", "alice")
-		mustExit(t, code, 7, out, errOut)
-	})
-
 	t.Run("NoStartWritesButDoesNotLoad", func(t *testing.T) {
 		f := fromPkgFixture(t)
 		out, errOut, code := f.run("--from-pkg", "--user", "alice", "--no-start")
@@ -635,4 +696,103 @@ func TestInstallShFromPkg(t *testing.T) {
 			t.Error("plist missing")
 		}
 	})
+}
+
+// fromPkgSim runs install.sh --from-pkg for real (no --root) with uid 0 (rootSim's
+// sudo stub logs every `sudo -H -u alice ...` and runs it as the test user), with
+// the payload staged under a throwaway prefix.
+func fromPkgSim(t *testing.T) (f *fixture, home, prefix string, env map[string]string) {
+	t.Helper()
+	f, home, prefix, env = rootSim(t)
+	share := filepath.Join(prefix, "share", "stackstead")
+	repo := repoRoot(t)
+	writeFile(t, filepath.Join(prefix, "bin", "stackstead"), readFile(t, buildBinary(t, "darwin", "arm64", "1.0.0")), 0o755)
+	writeFile(t, filepath.Join(share, "launchagent.plist.in"), readFile(t, filepath.Join(repo, "deploy", "macos", "launchagent.plist.in")), 0o644)
+	writeFile(t, filepath.Join(share, "config.example.yaml"), readFile(t, filepath.Join(repo, "deploy", "config.example.yaml")), 0o644)
+	return f, home, prefix, env
+}
+
+func runFromPkgSim(t *testing.T, f *fixture, env map[string]string, prefix string, args ...string) (string, string, int) {
+	t.Helper()
+	return runScript(t, append([]string{"--from-pkg", "--prefix", prefix, "--no-start"}, args...), env, nil)
+}
+
+// A payload directory that a user may own (/usr/local/share on an Intel Homebrew
+// Mac) is read as that user, never by root: a swapped directory or a hard link to
+// a root-only file cannot be turned into root-written config.
+func TestFromPkgReadsUserControlledTemplatesAsTheUser(t *testing.T) {
+	f, _, prefix, env := fromPkgSim(t)
+	out, errOut, code := runFromPkgSim(t, f, env, prefix)
+	mustExit(t, code, 0, out, errOut)
+	log := stubLog(f.stubD, "sudo")
+	for _, tpl := range []string{"launchagent.plist.in", "config.example.yaml"} {
+		want := "-H -u alice cat " + filepath.Join(prefix, "share", "stackstead", tpl)
+		if !strings.Contains(log, want) {
+			t.Errorf("template %s was not read as the user (want %q in the sudo log):\n%s", tpl, want, log)
+		}
+	}
+}
+
+// With --payload-dir (the pkg's root-only scripts dir) root reads the templates
+// itself, from that dir and nowhere else.
+func TestFromPkgPayloadDirIsUsedInsteadOfThePrefix(t *testing.T) {
+	f, home, prefix, env := fromPkgSim(t)
+	dir := t.TempDir()
+	repo := repoRoot(t)
+	tpl := string(readFile(t, filepath.Join(repo, "deploy", "macos", "launchagent.plist.in")))
+	writeFile(t, filepath.Join(dir, "launchagent.plist.in"), []byte(tpl+"<!-- from-payload-dir -->\n"), 0o644)
+	writeFile(t, filepath.Join(dir, "config.example.yaml"), readFile(t, filepath.Join(repo, "deploy", "config.example.yaml")), 0o644)
+	// poison the prefix copy: it must not be read
+	writeFile(t, filepath.Join(prefix, "share", "stackstead", "launchagent.plist.in"), []byte("POISON @LABEL@\n"), 0o644)
+	out, errOut, code := runFromPkgSim(t, f, env, prefix, "--payload-dir", dir)
+	mustExit(t, code, 0, out, errOut)
+	plist := string(readFile(t, filepath.Join(home, "Library", "LaunchAgents", darwinLabel+".plist")))
+	contains(t, "plist", plist, "from-payload-dir")
+	notContains(t, "plist", plist, "POISON")
+	if strings.Contains(stubLog(f.stubD, "sudo"), " cat "+prefix) {
+		t.Errorf("templates were read through the user although a payload dir was given:\n%s", stubLog(f.stubD, "sudo"))
+	}
+
+	// a symlinked or missing template in the payload dir is refused
+	if err := os.Remove(filepath.Join(dir, "config.example.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/etc/hosts", filepath.Join(dir, "config.example.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, code = runFromPkgSim(t, f, env, prefix, "--payload-dir", dir)
+	mustExit(t, code, 7, out, errOut)
+	// the flag needs --from-pkg and an absolute path
+	out, errOut, code = runScript(t, []string{"--payload-dir", dir, "--prefix", prefix}, env, nil)
+	mustExit(t, code, 2, out, errOut)
+	out, errOut, code = runFromPkgSim(t, f, env, prefix, "--payload-dir", "relative")
+	mustExit(t, code, 2, out, errOut)
+}
+
+func TestFromPkgRefusedOnLinux(t *testing.T) {
+	f := newFixture(t, "1.0.0")
+	out, errOut, code := f.run("--from-pkg")
+	mustExit(t, code, 2, out, errOut)
+	contains(t, "stderr", errOut, "macOS")
+}
+
+func TestHelpMentionsFromPkg(t *testing.T) {
+	out, errOut, code := runScript(t, []string{"--help"}, nil, defaultStubs())
+	mustExit(t, code, 0, out, errOut)
+	contains(t, "help", out, "--from-pkg")
+}
+
+// A bin/ left over from another version must not be packaged.
+func TestPkgRefusesStaleBinaries(t *testing.T) {
+	tmp := t.TempDir()
+	d := lintDirs{dist: filepath.Join(tmp, "dist"), bin: filepath.Join(tmp, "bin")}
+	buildBinaries(t, d, "v0.0.1", "darwin/amd64 darwin/arm64")
+	out, err := lintMake(t, d.args("pkg", "VERSION=v0.0.2", "ALLOW_DEV_RELEASE=1")...)
+	if err == nil {
+		t.Fatalf("make pkg accepted binaries built for another version:\n%s", out)
+	}
+	contains(t, "output", out, "stale", "0.0.1", "0.0.2")
+	if pkgs, _ := filepath.Glob(filepath.Join(d.dist, "*.pkg")); len(pkgs) != 0 {
+		t.Errorf("a pkg was produced: %v", pkgs)
+	}
 }

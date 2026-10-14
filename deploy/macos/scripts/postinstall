@@ -15,18 +15,27 @@
 # how to finish it. The postinstall never fails the installation because the
 # agent could not be set up; the package files are in place either way.
 #
-# Test seams (STACKSTEAD_PKG_PATH, STACKSTEAD_PKG_HELPER) are honoured only when
-# this script is NOT running as root, so they cannot redirect a real install.
+# Where install.sh comes from: installer extracts the package's Scripts into a
+# temporary directory only root can write, and this script, install.sh and the two
+# templates sit together in it. Root runs and reads those copies, never anything
+# under /usr/local/share (on some Macs that directory is writable by a non-root
+# user, who could swap it between the extraction and this script).
+#
+# Test seams: STACKSTEAD_PKG_PATH replaces PATH, and STACKSTEAD_PKG_ASSUME_ROOT=1
+# makes a non-root run behave as root. The PATH seam is honoured only when NOT
+# root (a real root run ignores both variables), so it cannot redirect an install.
 set -eu
 
-HELPER=/usr/local/share/stackstead/install.sh
-if [ "$(id -u)" -eq 0 ]; then
+if [ "$(/usr/bin/id -u)" -eq 0 ] || [ "${STACKSTEAD_PKG_ASSUME_ROOT:-}" = 1 ]; then
 	PATH=/usr/bin:/bin:/usr/sbin:/sbin
 else
 	PATH=${STACKSTEAD_PKG_PATH:-$PATH}
-	HELPER=${STACKSTEAD_PKG_HELPER:-$HELPER}
 fi
 export PATH
+
+HERE=$(cd "$(dirname "$0")" && pwd -P)
+HELPER=$HERE/install.sh
+SHARED=/usr/local/share/stackstead/install.sh # only printed, as a hint for later
 
 volume=${3:-/}
 if [ "$volume" != / ]; then
@@ -37,7 +46,7 @@ fi
 # finish_by_hand REASON: succeed, and say how to set the agent up later.
 finish_by_hand() {
 	echo "Stackstead: $1; the package files are installed."
-	echo "Stackstead: to set up the agent for a user, run:  sudo $HELPER --from-pkg --user <name>"
+	echo "Stackstead: to set up the agent for a user, run:  sudo $SHARED --from-pkg --user <name>"
 	exit 0
 }
 
@@ -50,15 +59,15 @@ if [ "$(id -u "$console_user" 2>/dev/null || echo 0)" -eq 0 ]; then
 	finish_by_hand "the console user has uid 0"
 fi
 if [ ! -f "$HELPER" ]; then
-	finish_by_hand "$HELPER is missing"
+	finish_by_hand "the installer's copy of install.sh is missing"
 fi
 
 echo "Stackstead: setting up the LaunchAgent for $console_user"
 status=0
 # A clean environment: nothing the installer was started with reaches install.sh.
-env -i PATH="$PATH" /bin/sh "$HELPER" --from-pkg --user "$console_user" || status=$?
+/usr/bin/env -i PATH="$PATH" /bin/sh "$HELPER" --from-pkg --payload-dir "$HERE" --user "$console_user" || status=$?
 if [ "$status" -ne 0 ]; then
 	echo "Stackstead: the agent setup did not finish (install.sh exit status $status); the package files are installed." >&2
-	echo "Stackstead: retry as an administrator:  sudo $HELPER --from-pkg --user $console_user" >&2
+	echo "Stackstead: retry as an administrator:  sudo $SHARED --from-pkg --user $console_user" >&2
 fi
 exit 0

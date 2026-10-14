@@ -33,6 +33,7 @@ Options:
   --force             reinstall the same version or an older one
   --base-url URL      release repository URL (default https://github.com/rcss-labs/stackstead);
                       env STACKSTEAD_BASE_URL
+  --from-pkg          macOS: finish a .pkg installation (per-user setup only; the .pkg runs it)
   --root DIR          stage into DIR (DESTDIR style); no root needed; service and account
                       commands are printed, not run
   --yes               macOS: confirm --purge without asking (it removes your stacks)
@@ -127,6 +128,7 @@ PRINT_PATHS=
 USER_ARG=
 YES=
 FROM_PKG=
+PAYLOAD_DIR=
 LABEL=$DEFAULT_LABEL
 
 need_value() { # option remaining-arg-count
@@ -158,6 +160,7 @@ parse_args() {
 		--user) need_value "$1" $#; USER_ARG=$2; shift 2 ;;
 		--user=*) USER_ARG=${1#*=}; shift ;;
 		--from-pkg) FROM_PKG=1; shift ;;
+		--payload-dir) need_value "$1" $#; PAYLOAD_DIR=$2; shift 2 ;;
 		--label) need_value "$1" $#; LABEL=$2; shift 2 ;;
 		--label=*) LABEL=${1#*=}; shift ;;
 		--yes | -y) YES=1; shift ;;
@@ -196,6 +199,13 @@ setup_paths() {
 	if [ -n "$FROM_PKG" ]; then
 		[ -z "$UNINSTALL" ] || usage_error "--from-pkg cannot be combined with --uninstall"
 		[ -z "$VERSION_ARG" ] || usage_error "--from-pkg installs the files the package already placed; --version does not apply"
+	fi
+	if [ -n "$PAYLOAD_DIR" ]; then
+		[ -n "$FROM_PKG" ] || usage_error "--payload-dir only makes sense with --from-pkg"
+		case $PAYLOAD_DIR in
+		/*) ;;
+		*) usage_error "--payload-dir must be an absolute path: $PAYLOAD_DIR" ;;
+		esac
 	fi
 	case $LABEL in
 	"" | *[!A-Za-z0-9._-]*) usage_error "--label may only contain letters, digits and . _ -: $LABEL" ;;
@@ -1210,21 +1220,31 @@ install_files_darwin() {
 	say "Installed $(rp "$BIN")"
 }
 
-# stage_from_pkg: --from-pkg (used by the .pkg postinstall, hidden from --help).
-# No download: the binary and the helper files are already under the prefix, put
-# there by the installer as root. The two templates are copied into the private
-# stage dir (refusing symlinks and non-regular files) and the per-user steps run
-# exactly as in the normal flow, as the target user. An existing plist marks an
+# stage_from_pkg: --from-pkg (used by the .pkg postinstall; shown in --help only as
+# "finish a .pkg installation"). No download: the binary is already under the prefix.
+# The two templates come from one of two places:
+#  - --payload-dir DIR: the pkg's own scripts directory, which installer extracts into
+#    a root-only temp dir; root reads them itself (regular files only, no symlinks).
+#  - otherwise (an admin re-running it from /usr/local/share/stackstead): that
+#    directory may be controlled by a non-root user (Homebrew on Intel Macs), so the
+#    files are read AS the target user, never by root: a swapped directory or a hard
+#    link to a root-only file yields nothing root-specific.
+# The per-user steps then run exactly as in the normal flow. An existing plist marks an
 # upgrade (the binary is the new one already, so its version says nothing).
 stage_from_pkg() {
 	TMP=$(mktemp -d "${TMPDIR:-/tmp}/stackstead-install.XXXXXX") || die 1 "cannot create a temporary directory"
 	STAGE=$TMP/stage
 	mkdir -p "$STAGE"
-	sf_dir=$(rp "$HELPER_DIR")
 	{ [ -f "$(rp "$BIN")" ] && [ -x "$(rp "$BIN")" ] && [ ! -L "$(rp "$BIN")" ]; } || die 7 "the package payload is incomplete: no executable $(rp "$BIN")"
 	for sf_f in launchagent.plist.in config.example.yaml; do
-		{ [ -f "$sf_dir/$sf_f" ] && [ ! -L "$sf_dir/$sf_f" ]; } || die 7 "the package payload is incomplete or unsafe: $sf_dir/$sf_f"
-		cp "$sf_dir/$sf_f" "$STAGE/$sf_f" || die 7 "cannot read $sf_dir/$sf_f"
+		if [ -n "$PAYLOAD_DIR" ]; then
+			{ [ -f "$PAYLOAD_DIR/$sf_f" ] && [ ! -L "$PAYLOAD_DIR/$sf_f" ]; } || die 7 "the package scripts are incomplete or unsafe: $PAYLOAD_DIR/$sf_f"
+			cp "$PAYLOAD_DIR/$sf_f" "$STAGE/$sf_f" || die 7 "cannot read $PAYLOAD_DIR/$sf_f"
+		else
+			sf_src=$(rp "$HELPER_DIR")/$sf_f
+			as_fs cat "$sf_src" >"$STAGE/$sf_f" || die 7 "cannot read $sf_src as $TARGET_USER"
+			[ -s "$STAGE/$sf_f" ] || die 7 "$sf_src is empty"
+		fi
 	done
 	if as_fs test -e "$(rp "$PLIST")"; then
 		UPGRADE=1

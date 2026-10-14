@@ -111,6 +111,8 @@ packages: ## Build deb + rpm into dist/ from the binaries made by `make binaries
 	done; \
 	mkdir -p $(DIST); \
 	pkgver=$$(printf '%s' "$$info" | cut -f2); pre=$$(printf '%s' "$$info" | cut -f3); \
+	ver=$$(printf '%s' "$$info" | cut -f1); \
+	$(CHECK_BIN_VERSION); for arch in $(PKG_ARCHES); do chk "$(BIN)/stackstead-linux-$$arch" "$$ver"; done; \
 	for arch in $(PKG_ARCHES); do \
 		case $$arch in amd64) rpmarch=x86_64;; arm64) rpmarch=aarch64;; *) echo "unsupported arch $$arch"; exit 1;; esac; \
 		for fmt in deb rpm; do \
@@ -190,6 +192,13 @@ MACOS_APP_IDENTITY ?=
 MACOS_INSTALLER_IDENTITY ?=
 NOTARY_PROFILE ?=
 
+# CHECK_BIN_VERSION defines chk FILE VERSION for a recipe: refuse a stale bin/. A binary this host
+# cannot run (another OS or architecture, or an old CLI without version --short) is skipped.
+define CHECK_BIN_VERSION
+chk() { got=$$("$$1" version --short 2>/dev/null </dev/null) || return 0; \
+	case $$got in v$$2|$$2) ;; *) echo "stale binary $$1 reports $$got but the release is $$2: run make binaries"; exit 1;; esac; }
+endef
+
 pkg-skip:
 	@echo "skipping the macOS .pkg: it can only be built on a macOS host (uname -s is $(UNAME_S))"
 
@@ -204,6 +213,7 @@ pkg: ## Build dist/stackstead_<ver>_darwin.pkg (macOS host; unsigned unless all 
 	info=$$(go run ./tools/mkrelease -version '$(RELEASE_VERSION)' $(if $(filter 1,$(ALLOW_DEV_RELEASE)),-allow-dev) -print-version) \
 		|| { echo "cannot build the pkg: $(RELEASE_VERSION) is a dev version (tag the commit, or set ALLOW_DEV_RELEASE=1)"; exit 1; }; \
 	ver=$$(printf '%s' "$$info" | cut -f1); pkgver=$$(printf '%s' "$$info" | cut -f2); pkgver=$${pkgver%%~*}; \
+	$(CHECK_BIN_VERSION); chk "$(BIN)/stackstead-darwin-amd64" "$$ver"; chk "$(BIN)/stackstead-darwin-arm64" "$$ver"; \
 	mkdir -p "$(DIST)"; out="$(abspath $(DIST))/stackstead_$${ver}_darwin.pkg"; \
 	work=$$(mktemp -d "$${TMPDIR:-/tmp}/stackstead-pkg.XXXXXX"); trap 'rm -rf "$$work"' EXIT; \
 	root="$$work/pkgroot"; mkdir -p "$$root/usr/local/bin" "$$root/usr/local/share/stackstead" "$$work/res" "$$work/pkgs"; \
@@ -215,8 +225,12 @@ pkg: ## Build dist/stackstead_<ver>_darwin.pkg (macOS host; unsigned unless all 
 	install -m 644 deploy/macos/launchagent.plist.in deploy/config.example.yaml LICENSE "$$root/usr/local/share/stackstead/"; \
 	stamp=$$(TZ=UTC date -r '$(SOURCE_DATE_EPOCH)' +%Y%m%d%H%M.%S); \
 	find "$$root" -exec touch -h -t "$$stamp" {} +; \
+	xattr -cr "$$root" 2>/dev/null || true; \
+	scripts="$$work/scripts"; mkdir -p "$$scripts"; \
+	install -m 755 deploy/macos/scripts/postinstall install.sh "$$scripts/"; \
+	install -m 644 deploy/macos/launchagent.plist.in deploy/config.example.yaml "$$scripts/"; \
 	pkgbuild --root "$$root" --identifier $(PKG_IDENTIFIER) --version "$$pkgver" --install-location / \
-		--ownership recommended --scripts deploy/macos/scripts "$$work/pkgs/stackstead-component.pkg" >/dev/null; \
+		--ownership recommended --scripts "$$scripts" "$$work/pkgs/stackstead-component.pkg" >/dev/null; \
 	sed -e "s|@IDENTIFIER@|$(PKG_IDENTIFIER)|g" -e "s|@VERSION@|$$pkgver|g" -e "s|@COMPONENT@|stackstead-component.pkg|g" deploy/macos/distribution.xml.in >"$$work/distribution.xml"; \
 	cp deploy/macos/resources/welcome.html deploy/macos/resources/conclusion.html "$$work/res/"; \
 	rm -f "$$out"; \
