@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"syscall"
 	"strings"
 )
 
@@ -28,9 +29,12 @@ type Entry struct {
 // resolved too.
 //
 // When resolution fails, the error reveals nothing about paths outside the
-// roots: if the component that failed (or its nearest existing ancestor) is
-// outside every root the result is ErrOutsideRoots; otherwise the underlying
-// error kind (fs.ErrNotExist, ENOTDIR, ...) is returned naming only p.
+// roots. If the failure is a *fs.PathError or a bare errno (not found, not a
+// directory, permission denied, ...) and the nearest existing ancestor of the
+// failing path is outside every root, the result is ErrOutsideRoots; if
+// inside, the underlying error kind is returned naming only p. Any other failure, notably symlink
+// loops, cannot be attributed to a component and fails closed as
+// ErrOutsideRoots, even when the loop lies inside a root.
 func Resolve(roots []string, p string) (string, error) {
 	return resolveWith(resolveRoots(roots), p)
 }
@@ -60,9 +64,17 @@ func resolveWith(resolvedRoots []string, p string) (string, error) {
 	if err != nil {
 		failed := p
 		var pathErr *fs.PathError
-		if errors.As(err, &pathErr) {
-			failed = pathErr.Path
-			err = pathErr.Err
+		var errno syscall.Errno
+		switch {
+		case errors.As(err, &pathErr):
+			failed, err = pathErr.Path, pathErr.Err
+		case errors.As(err, &errno):
+			// ENOTDIR comes back bare; judge it by the resolved parent of p.
+			err = errno
+		default:
+			// Loops ("too many links") and unknown errors do not say which
+			// component failed: fail closed.
+			return "", ErrOutsideRoots
 		}
 		if !existingAncestorWithin(resolvedRoots, failed) {
 			return "", ErrOutsideRoots

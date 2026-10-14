@@ -193,3 +193,28 @@ func TestResolveNonDirectoryComponent(t *testing.T) {
 		t.Errorf("inside file/x: err = %v, want ENOTDIR", err)
 	}
 }
+
+// Go reports symlink loops with a plain error (not a PathError), so the
+// failing component is unknown; Resolve fails closed with ErrOutsideRoots,
+// including for loops that lie entirely inside the root.
+func TestResolveSymlinkLoopsFailClosed(t *testing.T) {
+	tr := newTree(t)
+	roots := []string{tr.root}
+	symlink(t, filepath.Join(tr.outside, "lb"), filepath.Join(tr.outside, "la"))
+	symlink(t, filepath.Join(tr.outside, "la"), filepath.Join(tr.outside, "lb"))
+	symlink(t, filepath.Join(tr.outside, "la"), filepath.Join(tr.root, "to_out_loop"))
+	symlink(t, filepath.Join(tr.root, "in_b"), filepath.Join(tr.root, "in_a"))
+	symlink(t, filepath.Join(tr.root, "in_a"), filepath.Join(tr.root, "in_b"))
+	for name, p := range map[string]string{
+		"outside loop":     filepath.Join(tr.root, "to_out_loop"),
+		"outside loop + x": filepath.Join(tr.root, "to_out_loop", "x"),
+		"inside loop":      filepath.Join(tr.root, "in_a"),
+	} {
+		_, err := Resolve(roots, p)
+		if !errors.Is(err, ErrOutsideRoots) {
+			t.Errorf("%s: err = %v, want ErrOutsideRoots", name, err)
+		} else if strings.Contains(err.Error(), tr.outside) {
+			t.Errorf("%s: error leaks outside path: %v", name, err)
+		}
+	}
+}
