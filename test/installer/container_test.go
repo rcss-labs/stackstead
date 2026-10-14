@@ -617,8 +617,10 @@ type runOpts struct {
 	Mounts        []string // host:container[:ro]
 	Env           []string // KEY=VALUE
 	Privileged    bool
-	Detach        bool // stdout is the container name
-	KeepContainer bool // no --rm
+	NoInit        bool     // no docker-init: the command (systemd) must be PID 1
+	ExtraArgs     []string // more `docker run` flags, before the image
+	Detach        bool     // stdout is the container name
+	KeepContainer bool     // no --rm
 }
 
 // dockerRun runs a labelled, uniquely named container; cleanup is registered
@@ -628,7 +630,11 @@ func dockerRun(t *testing.T, r *run, image, network string, cmd []string, opts r
 	t.Helper()
 	name := fmt.Sprintf("stackstead-itest-%s-c%d", r.ID, seq.Add(1))
 	t.Cleanup(func() { docker("rm", "-f", name) })
-	args := []string{"run", "--name", name, "--label", "stackstead.test=" + r.ID, "--init"}
+	args := []string{"run", "--name", name, "--label", "stackstead.test=" + r.ID}
+	if !opts.NoInit {
+		args = append(args, "--init")
+	}
+	args = append(args, opts.ExtraArgs...)
 	if !opts.KeepContainer {
 		args = append(args, "--rm")
 	}
@@ -929,6 +935,11 @@ type scenarioOpts struct {
 	FakeSystemd bool   // /run/systemd/system exists and systemctl is a recording fake that starts the fake service
 	Mode        string // contents of /etc/fake-stackstead-mode
 	Tamper      func(t *testing.T, www string)
+	// Binary builds the stackstead for linux/arch of a version; default: the fast fake server.
+	// The opt-in systemd smoke passes the real binary.
+	Binary func(t *testing.T, r *run, arch, version string) string
+	// Booted starts the container with systemd as PID 1 (privileged; see bootedRunOpts).
+	Booted bool
 }
 
 // scenario is one container on its own private network with a release server.
@@ -952,7 +963,11 @@ func newScenario(t *testing.T, distro string, o scenarioOpts) *scenario {
 	var firstBin string
 	var dist string
 	for _, v := range o.Versions {
-		bin := buildFakeServer(t, r, arch, v)
+		build := buildFakeServer
+		if o.Binary != nil {
+			build = o.Binary
+		}
+		bin := build(t, r, arch, v)
 		if firstBin == "" {
 			firstBin = bin
 		}
@@ -970,14 +985,22 @@ func newScenario(t *testing.T, distro string, o scenarioOpts) *scenario {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, errOut, code := dockerRun(t, r, image, network, []string{"sleep", "infinity"}, runOpts{
+	ro := runOpts{
 		Detach: true,
 		Mounts: []string{rootDir + ":/release:ro", installScript(t) + ":/src/install.sh:ro"},
-	})
+	}
+	cmd := []string{"sleep", "infinity"}
+	if o.Booted {
+		ro, cmd = bootedRunOpts(ro), []string{"/lib/systemd/systemd"}
+	}
+	out, errOut, code := dockerRun(t, r, image, network, cmd, ro)
 	if code != 0 {
 		t.Fatalf("starting the test container: %s", errOut)
 	}
 	s.container = strings.TrimSpace(out)
+	if o.Booted {
+		s.waitBooted()
+	}
 	setup := "touch /var/log/fake-stackstead-calls.log && chmod 666 /var/log/fake-stackstead-calls.log"
 	if o.Mode != "" {
 		setup += " && echo " + o.Mode + " > /etc/fake-stackstead-mode"
