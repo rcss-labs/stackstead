@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -118,7 +119,7 @@ func Run(ctx context.Context, root *Command, args []string, env *Env) error {
 		rest = rest[1:]
 		sub := cmd.find(name)
 		if sub == nil && name == "help" {
-			return printHelp(env, root, rest)
+			return printHelp(env, cmd, path, rest)
 		}
 		if sub == nil {
 			return exitf(ExitUsage, "unknown command %q\n\n%s", name, usageText(env, cmd, path))
@@ -160,8 +161,9 @@ func Run(ctx context.Context, root *Command, args []string, env *Env) error {
 	return cmd.Run(ctx, env, g, positional)
 }
 
-func printHelp(env *Env, root *Command, names []string) error {
-	cmd, path := root, []string{}
+// printHelp prints usage of the command named by names, resolved from from.
+func printHelp(env *Env, from *Command, fromPath, names []string) error {
+	cmd, path := from, slices.Clone(fromPath)
 	for _, n := range names {
 		sub := cmd.find(n)
 		if sub == nil {
@@ -216,6 +218,9 @@ func usageText(env *Env, cmd *Command, path []string) string {
 		cmd.Flags(local)
 		b.WriteString("\nFlags:\n" + defaults(local))
 	}
+	if cmd.RawArgs { // such a command parses its own flags; globals do not apply
+		return b.String()
+	}
 	global := flag.NewFlagSet("global", flag.ContinueOnError)
 	(&globalFlags{Output: "table", Timeout: defaultTimeout}).register(global)
 	b.WriteString("\nGlobal flags:\n" + defaults(global))
@@ -237,7 +242,7 @@ func Main(ctx context.Context, args []string, env *Env) int {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if len(args) > 0 && strings.HasPrefix(args[0], "-") && !isHelpFlag(args[0]) {
+	if isBareServeInvocation(args) {
 		fmt.Fprintln(env.Stderr, bareFlagsNote)
 		args = append([]string{"serve"}, args...)
 	}
@@ -256,8 +261,20 @@ func errString(err error) string {
 	return err.Error()
 }
 
-func isHelpFlag(s string) bool {
-	return s == "-h" || s == "--help" || s == "-help"
+// isBareServeInvocation reports whether args are the deprecated
+// `stackstead --config P` form: the first argument is the config flag and
+// serve's own flags consume every argument, leaving no subcommand behind.
+func isBareServeInvocation(args []string) bool {
+	if len(args) == 0 || !strings.HasPrefix(args[0], "-") {
+		return false
+	}
+	name, _, _ := strings.Cut(strings.TrimLeft(args[0], "-"), "=")
+	if name != "config" {
+		return false
+	}
+	fs := newFlagSet("serve")
+	fs.String("config", "", "")
+	return fs.Parse(args) == nil && fs.NArg() == 0
 }
 
 // rootCommand is the command tree. Task 10 moves it to commands.go and adds

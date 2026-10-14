@@ -275,3 +275,81 @@ func TestMainCancelledCommandExits130Silently(t *testing.T) {
 		t.Errorf("stderr = %q, want nothing", te.Err.String())
 	}
 }
+
+func stubServe(t *testing.T) *[]string {
+	t.Helper()
+	called := new([]string)
+	orig := serveRun
+	serveRun = func(_ context.Context, _ *Env, args []string) error {
+		*called = append([]string{"called"}, args...)
+		return nil
+	}
+	t.Cleanup(func() { serveRun = orig })
+	return called
+}
+
+func TestGlobalFlagsBeforeSubcommandDoNotTakeCompatPath(t *testing.T) {
+	for _, args := range [][]string{{"-o", "json", "version"}, {"--no-color", "version"}} {
+		called := stubServe(t)
+		te := newTestEnv(t, nil)
+		if code := Main(context.Background(), args, te.Env); code != 0 {
+			t.Fatalf("%v: code %d, stderr %s", args, code, te.Err.String())
+		}
+		if len(*called) != 0 {
+			t.Errorf("%v: serve was called", args)
+		}
+		if !strings.Contains(te.Out.String(), "AGPL-3.0") {
+			t.Errorf("%v: version did not run: %q", args, te.Out.String())
+		}
+	}
+}
+
+func TestConfigFlagWithSubcommandIsUsageErrorNotServe(t *testing.T) {
+	called := stubServe(t)
+	te := newTestEnv(t, nil)
+	if code := Main(context.Background(), []string{"--config", "x", "version"}, te.Env); code != 2 {
+		t.Errorf("code = %d, want 2", code)
+	}
+	if len(*called) != 0 {
+		t.Error("serve was called")
+	}
+}
+
+func TestConfigEqualsFormStillServes(t *testing.T) {
+	called := stubServe(t)
+	te := newTestEnv(t, nil)
+	if code := Main(context.Background(), []string{"--config=x"}, te.Env); code != 0 || len(*called) == 0 {
+		t.Errorf("code=%d called=%v", code, *called)
+	}
+}
+
+func TestNestedHelpResolvesFromCurrentCommand(t *testing.T) {
+	var s seen
+	te := newTestEnv(t, nil)
+	if err := Run(context.Background(), testTree(&s), []string{"stacks", "help", "up"}, te.Env); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(te.Out.String(), "stacks up <name> [--detach]") {
+		t.Errorf("help output: %q", te.Out.String())
+	}
+}
+
+func TestServeHelpOmitsGlobalFlags(t *testing.T) {
+	te := newTestEnv(t, nil)
+	if code := Main(context.Background(), []string{"serve", "--help"}, te.Env); code != 0 {
+		t.Fatalf("code %d", code)
+	}
+	if strings.Contains(te.Out.String(), "Global flags") || !strings.Contains(te.Out.String(), "-config") {
+		t.Errorf("serve help: %q", te.Out.String())
+	}
+}
+
+func TestServeBadFlagExits2AndPrintsOnce(t *testing.T) {
+	te := newTestEnv(t, nil)
+	if code := Main(context.Background(), []string{"serve", "--bogus"}, te.Env); code != 2 {
+		t.Errorf("code = %d, want 2", code)
+	}
+	if n := strings.Count(te.Err.String(), "bogus"); n != 1 {
+		t.Errorf("flag named %d times in %q, want once", n, te.Err.String())
+	}
+}

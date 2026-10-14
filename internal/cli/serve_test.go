@@ -95,6 +95,9 @@ func TestShutdownOrder(t *testing.T) {
 
 func TestServeLogsVersion(t *testing.T) {
 	dir := t.TempDir()
+	origConfig := defaultConfigPath
+	defaultConfigPath = dir + "/no-such-config.yaml"
+	t.Cleanup(func() { defaultConfigPath = origConfig })
 	te := newTestEnv(t, map[string]string{
 		"STACKSTEAD_LISTEN":        "127.0.0.1:0",
 		"STACKSTEAD_DATA_DIR":      dir + "/data",

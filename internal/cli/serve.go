@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -26,12 +27,14 @@ import (
 	"github.com/rcss-labs/stackstead/web"
 )
 
+// defaultConfigPath is a variable so tests can point it away from the host.
+var defaultConfigPath = "/etc/stackstead/config.yaml"
+
 const (
 	httpShutdownGrace = 10 * time.Second
 	engineTimeout     = 2 * time.Second
 	probeTimeout      = 3 * time.Second
 	versionCacheTTL   = 5 * time.Second
-	defaultConfigPath = "/etc/stackstead/config.yaml"
 	readTimeout       = 30 * time.Second
 	idleTimeout       = 120 * time.Second
 )
@@ -52,18 +55,25 @@ func serveCommand() *Command {
 }
 
 // serveRun is a variable so tests can stub the server.
-var serveRun = serve
+var serveRun func(ctx context.Context, env *Env, args []string) error
+
+// Assigned in init: serve prints serveCommand's usage, which refers to serveRun.
+func init() { serveRun = serve }
 
 func serve(ctx context.Context, env *Env, args []string) error {
 	logger := slog.New(slog.NewTextHandler(env.Stderr, nil))
 	flags := flag.NewFlagSet("stackstead serve", flag.ContinueOnError)
-	flags.SetOutput(env.Stderr)
+	flags.SetOutput(io.Discard)
 	configPath := flags.String("config", "", "path to config.yaml (default: "+defaultConfigPath+" if it exists; STACKSTEAD_* env vars override it)")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
+			printUsage(env.Stdout, env, serveCommand(), []string{"serve"})
 			return nil
 		}
-		return err
+		return exitf(ExitUsage, "%v", err)
+	}
+	if flags.NArg() > 0 {
+		return exitf(ExitUsage, "unexpected argument %q", flags.Arg(0))
 	}
 
 	path := *configPath
