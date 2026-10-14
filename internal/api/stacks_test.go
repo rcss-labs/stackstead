@@ -45,6 +45,7 @@ type fakeStacks struct {
 	gotCancel  string
 
 	replay       []string
+	first        int // absolute index of replay[0]
 	live         chan string
 	done         chan stacks.Operation
 	cancelOnce   sync.Once
@@ -118,11 +119,11 @@ func (o fakeOps) Recent(string) []stacks.Operation     { return []stacks.Operati
 func (o fakeOps) Get(string) (stacks.Operation, error) { return o.f.op, o.f.err }
 func (o fakeOps) Lines(string) ([]string, error)       { return []string{"a", "b"}, o.f.err }
 func (o fakeOps) Cancel(id string) error               { o.f.gotCancel = id; return o.f.err }
-func (o fakeOps) Subscribe(string) ([]string, <-chan string, <-chan stacks.Operation, func(), error) {
+func (o fakeOps) Subscribe(string) ([]string, int, <-chan string, <-chan stacks.Operation, func(), error) {
 	if o.f.err != nil {
-		return nil, nil, nil, nil, o.f.err
+		return nil, 0, nil, nil, nil, o.f.err
 	}
-	return o.f.replay, o.f.live, o.f.done, func() { o.f.cancelOnce.Do(func() { close(o.f.unsubscribed) }) }, nil
+	return o.f.replay, o.f.first, o.f.live, o.f.done, func() { o.f.cancelOnce.Do(func() { close(o.f.unsubscribed) }) }, nil
 }
 func (f *fakeStacks) status(context.Context) (string, string) {
 	return "ok", "v2.30.0"
@@ -679,5 +680,71 @@ func TestStreamResumeKeepsLiveIDsContinuous(t *testing.T) {
 	got := streamLinesUntilDone(t, events)
 	if want := []string{`2="l2"`, `3="l3"`}; !reflect.DeepEqual(got, want) {
 		t.Errorf("lines = %v, want %v", got, want)
+	}
+}
+
+// shiftedStream is a finished operation whose oldest lines were evicted:
+// replay[0] is the dropped note and real lines start at absolute index first+1.
+func shiftedStream(first int, lines ...string) *fakeStacks {
+	fake := finishedStream(append([]string{"... 11 earlier lines dropped"}, lines...)...)
+	fake.first = first
+	return fake
+}
+
+func TestStreamIDsAreAbsoluteWhenOldLinesWereDropped(t *testing.T) {
+	env, cookie := newStacksEnv(t, shiftedStream(10, "l11", "l12"))
+	_, events := openStream(t, env, cookie, context.Background())
+	got := streamLinesUntilDone(t, events)
+	want := []string{`="... 11 earlier lines dropped"`, `11="l11"`, `12="l12"`}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("lines = %v, want %v", got, want)
+	}
+}
+
+func TestStreamResumeAcrossShiftedWindow(t *testing.T) {
+	env, cookie := newStacksEnv(t, shiftedStream(10, "l11", "l12", "l13"))
+	_, events := openStreamWithID(t, env, cookie, context.Background(), "11")
+	got := streamLinesUntilDone(t, events)
+	if want := []string{`12="l12"`, `13="l13"`}; !reflect.DeepEqual(got, want) {
+		t.Errorf("resumed lines = %v, want %v", got, want)
+	}
+}
+
+func TestStreamResumeFromEvictedLineReplaysEverything(t *testing.T) {
+	for _, id := range []string{"3", "9"} {
+		env, cookie := newStacksEnv(t, shiftedStream(10, "l11", "l12"))
+		_, events := openStreamWithID(t, env, cookie, context.Background(), id)
+		got := streamLinesUntilDone(t, events)
+		want := []string{`="... 11 earlier lines dropped"`, `11="l11"`, `12="l12"`}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("Last-Event-ID %s: lines = %v, want %v", id, got, want)
+		}
+	}
+}
+
+func TestStreamLiveIDsContinueAfterShiftedReplay(t *testing.T) {
+	fake := shiftedStream(10, "l11")
+	fake.live = make(chan string, 1)
+	fake.done = make(chan stacks.Operation, 1)
+	env, cookie := newStacksEnv(t, fake)
+	_, events := openStream(t, env, cookie, context.Background())
+	fake.live <- "l12"
+	close(fake.live)
+	fake.done <- fake.op
+	close(fake.done)
+	got := streamLinesUntilDone(t, events)
+	want := []string{`="... 11 earlier lines dropped"`, `11="l11"`, `12="l12"`}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("lines = %v, want %v", got, want)
+	}
+}
+
+func TestStreamHugeOrBeyondEndLastEventIDSendsNoLines(t *testing.T) {
+	for _, id := range []string{"9223372036854775807", "99", "1"} {
+		env, cookie := newStacksEnv(t, finishedStream("l0", "l1"))
+		_, events := openStreamWithID(t, env, cookie, context.Background(), id)
+		if got := streamLinesUntilDone(t, events); len(got) != 0 {
+			t.Errorf("Last-Event-ID %s: got %v, want no lines", id, got)
+		}
 	}
 }

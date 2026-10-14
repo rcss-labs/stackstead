@@ -33,7 +33,7 @@ type OperationsAPI interface {
 	Get(id string) (stacks.Operation, error)
 	Lines(id string) ([]string, error)
 	// Subscribe has the contract documented on stacks.Ops.Subscribe.
-	Subscribe(id string) (replay []string, live <-chan string, done <-chan stacks.Operation, cancel func(), err error)
+	Subscribe(id string) (replay []string, first int, live <-chan string, done <-chan stacks.Operation, cancel func(), err error)
 	Cancel(id string) error
 }
 

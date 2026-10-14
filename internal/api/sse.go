@@ -65,6 +65,8 @@ func (s *sseWriter) Comment(text string) error { return s.raw(": %s\n\n", text) 
 // handle is called for every value received from in, and once with ok=false
 // when in is closed. It returns stop=true to end the stream, or an error
 // (which also ends it). It must not block for long; writes go through sw.
+// If handle returns (false, nil) for ok=false, in is not polled again and the
+// loop just keeps heartbeating until the context ends or Closing closes.
 func runSSE[T any](s *server, r *http.Request, sw *sseWriter, in <-chan T, handle func(v T, ok bool) (stop bool, err error)) {
 	heartbeat := s.opts.SSEHeartbeat
 	if heartbeat <= 0 {
@@ -84,8 +86,12 @@ func runSSE[T any](s *server, r *http.Request, sw *sseWriter, in <-chan T, handl
 				return
 			}
 		case v, ok := <-in:
-			if stop, err := handle(v, ok); stop || err != nil {
+			stop, err := handle(v, ok)
+			if stop || err != nil {
 				return
+			}
+			if !ok {
+				in = nil // closed and handled once; a nil channel never fires
 			}
 		}
 	}
@@ -105,11 +111,14 @@ func parseLastEventID(r *http.Request) int {
 //
 // Contract:
 //   - "event: line" with a JSON string as data and "id: <line index>", once per
-//     output line: first the retained output, then live lines. The index counts
-//     from the start of the retained output.
+//     output line: first the retained output, then live lines. The index is
+//     absolute (0 is the operation's first line), so it is stable across
+//     subscriptions even when old lines were evicted. The "... N earlier lines
+//     dropped" note, shown first once lines were evicted, has no id.
 //   - A Last-Event-ID header resumes after that index: the replay is sliced
 //     from the subscription's own atomic replay, so no line is lost or
-//     repeated. A malformed value replays everything.
+//     repeated. A malformed value, or an index whose next line was already
+//     evicted, replays everything; an index at or past the end sends nothing.
 //   - "event: done" with the final Operation JSON; the stream then ends.
 //   - "event: dropped" when the subscription ended without the operation
 //     finishing (the client was too slow and was dropped). The stream ends and
@@ -120,7 +129,7 @@ func parseLastEventID(r *http.Request) int {
 // unsubscribes. It holds no locks while writing: the Ops manager never blocks
 // on subscribers, and a stuck client is cut by the per-write deadline.
 func (s *server) handleStreamOperation(w http.ResponseWriter, r *http.Request) {
-	replay, live, done, cancel, err := s.opts.Operations.Subscribe(r.PathValue("id"))
+	replay, first, live, done, cancel, err := s.opts.Operations.Subscribe(r.PathValue("id"))
 	if err != nil {
 		s.writeStackError(w, r, err)
 		return
@@ -136,25 +145,40 @@ func (s *server) handleStreamOperation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	next := 0 // index of the next line to send
+	// Ids are absolute line indexes, stable across subscriptions. replay[0]
+	// has index first; when first > 0 it is the "earlier lines dropped" note,
+	// which stands in for a line that is gone and so carries no id.
+	nextID := first + len(replay) // id of the next live line
+	start := 0
 	if last := parseLastEventID(r); last >= 0 {
-		next = min(last+1, len(replay))
-		replay = replay[next:]
+		switch {
+		case first > 0 && last < first:
+			// The line after the client's position was evicted: replay all,
+			// so the client sees the dropped note.
+		case last >= nextID-1: // compare, never last+1: it may be MaxInt
+			start = len(replay)
+		default:
+			start = last + 1 - first
+		}
 	}
-	sendLine := func(line string) error {
-		err := sw.Event("line", strconv.Itoa(next), line)
-		next++
-		return err
-	}
-	for _, line := range replay {
-		if sendLine(line) != nil {
+	for i := start; i < len(replay); i++ {
+		id := strconv.Itoa(first + i)
+		if first > 0 && i == 0 {
+			id = ""
+		}
+		if sw.Event("line", id, replay[i]) != nil {
 			return
 		}
+	}
+	sendLive := func(line string) error {
+		err := sw.Event("line", strconv.Itoa(nextID), line)
+		nextID++
+		return err
 	}
 
 	runSSE(s, r, sw, live, func(line string, ok bool) (bool, error) {
 		if ok {
-			return false, sendLine(line)
+			return false, sendLive(line)
 		}
 		// live closed: a value on done means the operation finished.
 		select {
