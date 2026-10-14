@@ -54,7 +54,7 @@ func healthHost(t *testing.T, listen, socket string) *localHost {
 	return h
 }
 
-type healthReport struct {
+type healthReportJSON struct {
 	OK     bool
 	Checks []struct {
 		Name   string
@@ -63,9 +63,9 @@ type healthReport struct {
 	}
 }
 
-func parseHealth(t *testing.T, out string) healthReport {
+func parseHealth(t *testing.T, out string) healthReportJSON {
 	t.Helper()
-	var r healthReport
+	var r healthReportJSON
 	if err := json.Unmarshal([]byte(out), &r); err != nil {
 		t.Fatalf("json: %v\n%s", err, out)
 	}
