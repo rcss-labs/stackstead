@@ -31,7 +31,12 @@ type Contexts struct {
 	Contexts map[string]Context `json:"contexts"`
 }
 
-// ContextStore reads and writes the contexts file.
+// renameFile is a test seam over os.Rename.
+var renameFile = os.Rename
+
+// ContextStore reads and writes the contexts file. Concurrent CLI processes
+// are last-writer-wins: Update is load-modify-save without a lock, which is
+// fine for interactive use but may drop a concurrent login or logout.
 type ContextStore struct{ Path string }
 
 const contextsVersion = 1
@@ -93,6 +98,9 @@ func (s *ContextStore) Save(c Contexts) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return exitf(ExitGeneral, "create %s: %v", dir, errors.Unwrap(err))
 	}
+	if err := os.Chmod(dir, 0o700); err != nil { // tighten a directory created loose earlier
+		return exitf(ExitGeneral, "secure %s: %v", dir, errors.Unwrap(err))
+	}
 	tmp, err := os.CreateTemp(dir, ".contexts-*.tmp") // created 0600
 	if err != nil {
 		return exitf(ExitGeneral, "write contexts file: %v", errors.Unwrap(err))
@@ -113,7 +121,7 @@ func (s *ContextStore) Save(c Contexts) error {
 	if err := tmp.Close(); err != nil {
 		return exitf(ExitGeneral, "write contexts file: %v", errors.Unwrap(err))
 	}
-	if err := os.Rename(tmp.Name(), s.Path); err != nil {
+	if err := renameFile(tmp.Name(), s.Path); err != nil {
 		return exitf(ExitGeneral, "write contexts file %s: %v", s.Path, errors.Unwrap(err))
 	}
 	return os.Chmod(s.Path, 0o600)
@@ -133,12 +141,21 @@ func (s *ContextStore) Update(fn func(*Contexts) error) error {
 
 // Warnings reports a contexts file that other users can read.
 func (s *ContextStore) Warnings(env *Env) []string {
+	var out []string
 	fi, err := os.Stat(s.Path)
-	if err != nil || fi.Mode().Perm()&0o077 == 0 {
+	if err != nil {
 		return nil
 	}
-	return []string{fmt.Sprintf("contexts file %s is readable by others (mode %04o); run chmod 600 %s",
-		s.Path, fi.Mode().Perm(), s.Path)}
+	if fi.Mode().Perm()&0o077 != 0 {
+		out = append(out, fmt.Sprintf("contexts file %s is readable by others (mode %04o); run chmod 600 %s",
+			s.Path, fi.Mode().Perm(), s.Path))
+	}
+	dir := filepath.Dir(s.Path)
+	if di, err := os.Stat(dir); err == nil && di.Mode().Perm()&0o077 != 0 {
+		out = append(out, fmt.Sprintf("config directory %s is accessible by others (mode %04o); run chmod 700 %s",
+			dir, di.Mode().Perm(), dir))
+	}
+	return out
 }
 
 // resolveContext picks the named context, or the current one.
@@ -166,11 +183,27 @@ func validateContextName(name string) error {
 	return nil
 }
 
-// defaultContextName is the URL's hostname with dots replaced by hyphens.
+// defaultContextName is the URL's hostname with dots replaced by hyphens,
+// sanitised so the result always passes validateContextName.
 func defaultContextName(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return ""
+	host := ""
+	if u, err := url.Parse(rawURL); err == nil {
+		host = strings.ToLower(u.Hostname())
 	}
-	return strings.ToLower(strings.ReplaceAll(u.Hostname(), ".", "-"))
+	var b strings.Builder
+	for _, r := range host {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	name := strings.TrimLeft(b.String(), "-")
+	if len(name) > 32 {
+		name = name[:32]
+	}
+	if name = strings.TrimRight(name, "-"); name == "" {
+		return "default"
+	}
+	return name
 }

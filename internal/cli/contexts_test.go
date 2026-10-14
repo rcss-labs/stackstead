@@ -126,12 +126,17 @@ func TestLoadUnknownVersionAndExtraFields(t *testing.T) {
 func TestWarningsOnLoosePerms(t *testing.T) {
 	e := newTestEnv(t, nil)
 	s := newContextStore(e.Env)
+	_ = os.Chmod(filepath.Dir(s.Path), 0o700)
 	if w := s.Warnings(e.Env); len(w) != 0 {
 		t.Fatalf("missing file: %v", w)
 	}
 	_ = os.WriteFile(s.Path, []byte(`{"version":1}`), 0o600)
 	if w := s.Warnings(e.Env); len(w) != 0 {
 		t.Fatalf("0600: %v", w)
+	}
+	_ = os.Chmod(s.Path, 0o640)
+	if w := s.Warnings(e.Env); len(w) != 1 || !strings.Contains(w[0], "0640") {
+		t.Fatalf("0640: %v", w)
 	}
 	_ = os.Chmod(s.Path, 0o644)
 	w := s.Warnings(e.Env)
@@ -189,5 +194,62 @@ func TestContextNames(t *testing.T) {
 	}
 	if got := defaultContextName("https://Stack.example.com:8420/x"); got != "stack-example-com" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestWarningsOnLooseDir(t *testing.T) {
+	e := newTestEnv(t, nil)
+	s := newContextStore(e.Env)
+	_ = os.WriteFile(s.Path, []byte(`{"version":1}`), 0o600)
+	_ = os.Chmod(filepath.Dir(s.Path), 0o755)
+	w := s.Warnings(e.Env)
+	if len(w) != 1 || !strings.Contains(w[0], filepath.Dir(s.Path)) || !strings.Contains(w[0], "0755") {
+		t.Fatalf("%v", w)
+	}
+}
+
+func TestSaveTightensLooseDir(t *testing.T) {
+	e := newTestEnv(t, nil)
+	s := newContextStore(e.Env)
+	_ = os.Chmod(filepath.Dir(s.Path), 0o755)
+	if err := s.Save(sample()); err != nil {
+		t.Fatal(err)
+	}
+	di, _ := os.Stat(filepath.Dir(s.Path))
+	if di.Mode().Perm() != 0o700 {
+		t.Fatalf("dir mode %v", di.Mode().Perm())
+	}
+}
+
+func TestSaveFailureLeavesNoTempFileAndTempIs0600(t *testing.T) {
+	e := newTestEnv(t, nil)
+	s := newContextStore(e.Env)
+	old := renameFile
+	t.Cleanup(func() { renameFile = old })
+	var mode os.FileMode
+	renameFile = func(from, to string) error {
+		fi, err := os.Stat(from)
+		if err == nil {
+			mode = fi.Mode().Perm()
+		}
+		return os.ErrPermission
+	}
+	if err := s.Save(sample()); err == nil {
+		t.Fatal("expected failure")
+	}
+	if mode != 0o600 {
+		t.Errorf("temp file mode %v", mode)
+	}
+	entries, _ := os.ReadDir(filepath.Dir(s.Path))
+	if len(entries) != 0 {
+		t.Fatalf("leftovers: %v", entries)
+	}
+}
+
+func TestDefaultContextNameIsAlwaysValid(t *testing.T) {
+	for _, u := range []string{"https://a.example", "http://127.0.0.1:8420", "http://[::1]:8420", "https://" + strings.Repeat("a", 60) + ".example", "https://Ünï.example", "", "not a url", "https://-x.example"} {
+		if err := validateContextName(defaultContextName(u)); err != nil {
+			t.Errorf("%q -> %q: %v", u, defaultContextName(u), err)
+		}
 	}
 }
