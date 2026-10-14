@@ -221,8 +221,8 @@ func stacksShowCommand() *Command {
 
 func stacksImportCommand() *Command {
 	return &Command{
-		Name: "import", Short: "Import an existing compose directory as a stack", Usage: "stacks import <path>", MinArgs: 1, MaxArgs: 1,
-		Long: "The path is a directory on the server host, inside its allowed roots.",
+		Name: "import", Short: "Import an existing compose file as a stack", Usage: "stacks import <path>", MinArgs: 1, MaxArgs: 1,
+		Long: "The path is a compose file on the server host (e.g. /opt/stacks/web/compose.yaml), inside its allowed roots.",
 		Run: func(ctx context.Context, env *Env, g *globalFlags, args []string) error {
 			return withAPI(env, g, func(c *client.Client, _ string, _ Context) error {
 				res, err := c.Import(ctx, args[0])

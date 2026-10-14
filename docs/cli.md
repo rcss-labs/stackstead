@@ -39,7 +39,7 @@ stackstead ops ls --running
 | `stacks ls`, `stacks show <name>` | list stacks; services and containers of one |
 | `stacks up\|down\|restart\|pull\|build <name> [--detach]` | lifecycle actions; they wait for the operation unless `--detach` |
 | `stacks rm <name> [--volumes] [--yes] [--detach]` | compose down; asks on a terminal, `--yes` is required without one |
-| `stacks import <path>` | import an existing compose directory |
+| `stacks import <path>` | import an existing compose file (e.g. `/opt/stacks/web/compose.yaml`) inside the server's allowed roots |
 | `stacks compose get\|edit\|put <name>` | read, edit (in `$VISUAL`/`$EDITOR`) or replace (`-f FILE --hash H`) the compose file |
 | `ops ls\|show\|stream\|cancel` | operations and their output |
 | `logs <stack> [-f] [--tail N\|all] [--since X] [--service S] [--timestamps] [--raw]` | container logs |
