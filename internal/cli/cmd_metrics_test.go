@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,9 @@ func t9API(t *testing.T, fn func(r *http.Request) any) *httptest.Server {
 }
 
 func TestMetricsHistoryTable(t *testing.T) {
+	oldLocal := time.Local
+	time.Local = time.FixedZone("T9", 5*3600+1800) // non-UTC, so a missing local conversion shows
+	t.Cleanup(func() { time.Local = oldLocal })
 	var query string
 	srv := t9API(t, func(r *http.Request) any {
 		query = r.URL.RawQuery
@@ -130,7 +134,7 @@ func TestMetricsFromToAcceptRFC3339AndUnix(t *testing.T) {
 func TestMetricsRejectsBadInput(t *testing.T) {
 	for _, args := range [][]string{
 		{"--from", "yesterday"}, {"--to", "5m"}, {"--step", "fast"}, {"--step", "-5s"},
-		{"--live", "--from", "5m"}, {"--live", "--step", "5s"},
+		{"--from", "99999999d"}, {"--live", "--from", "5m"}, {"--live", "--step", "5s"},
 	} {
 		te := newTestEnv(t, nil)
 		t9Seed(t, te, "http://127.0.0.1:1")
@@ -292,4 +296,97 @@ func TestEventsCtrlCExits130(t *testing.T) {
 	if te.Err.String() != "" {
 		t.Errorf("stderr = %q", te.Err.String())
 	}
+}
+
+func TestMetricsLiveHeaderAlignsWithColour(t *testing.T) {
+	srv := t9Serve(t, t9Conn{Frames: []string{
+		t9Ev("sample", "", apitypes.Sample{Time: "2026-10-14T11:00:00Z", Service: "web", Container: "aaaaaaaaaaaa", CPU: 1, Mem: 1 << 20, MemLimit: 2 << 30}),
+	}, Hold: true})
+	te := newTestEnv(t, nil)
+	t9Seed(t, te, srv.URL)
+	f, err := os.CreateTemp(t.TempDir(), "out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	te.Stdout = f
+	te.IsTerminal = func(uintptr) bool { return true }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- t9Run(ctx, te, "metrics", "demo", "--live") }()
+	var lines []string
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		b, _ := os.ReadFile(f.Name())
+		if lines = strings.Split(strings.TrimRight(string(b), "\n"), "\n"); len(lines) >= 2 {
+			break
+		}
+	}
+	cancel()
+	<-done
+	if len(lines) < 2 {
+		t.Fatalf("lines = %q", lines)
+	}
+	if !strings.Contains(lines[0], "\x1b[") {
+		t.Fatalf("header should be coloured: %q", lines[0])
+	}
+	header, row := stripANSI(lines[0]), stripANSI(lines[1])
+	for _, col := range []string{"SERVICE", "CONTAINER", "CPU", "MEM", "LIMIT"} {
+		// Each column starts where the matching cell of the row starts.
+		cell := map[string]string{"SERVICE": "web", "CONTAINER": "aaaaaaaaaaaa", "CPU": "1.0%", "MEM": "1.0 MiB", "LIMIT": "2.0 GiB"}[col]
+		if strings.Index(header, col) != strings.Index(row, cell) {
+			t.Errorf("column %s at %d in header but %d in row:\n%s\n%s", col, strings.Index(header, col), strings.Index(row, cell), header, row)
+		}
+	}
+}
+
+func TestMetricsAndEventsNamesCannotForgeLines(t *testing.T) {
+	forged := "web] real\n[db\x1b[2J"
+	srv := t9API(t, func(r *http.Request) any {
+		return apitypes.MetricsHistory{Points: []apitypes.MetricPoint{{Time: "2026-10-14T11:00:00Z", Service: forged}}}
+	})
+	te := newTestEnv(t, nil)
+	t9Seed(t, te, srv.URL)
+	if err := t9Run(context.Background(), te, "metrics", "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(te.Out.String(), "\n"); n != 2 || strings.Contains(te.Out.String(), "\x1b") {
+		t.Errorf("history output = %q", te.Out.String())
+	}
+
+	live := t9Serve(t, t9Conn{Frames: []string{
+		t9Ev("sample", "", apitypes.Sample{Time: "2026-10-14T11:00:00Z", Service: forged, Container: forged}),
+	}, Hold: true})
+	te = newTestEnv(t, nil)
+	t9Seed(t, te, live.URL)
+	t9Stream(t, te, "\n", "metrics", "demo", "--live")
+	if n := strings.Count(te.Out.String(), "\n"); n != 2 || strings.Contains(te.Out.String(), "\x1b") {
+		t.Errorf("live output = %q", te.Out.String())
+	}
+
+	ev := t9Serve(t, t9Conn{Frames: []string{
+		t9Ev("status", "", apitypes.StatusFlags{Events: "up\n1\x1b[2J"}),
+		t9Ev("change", "", apitypes.Change{Project: forged, Seq: 1}),
+	}, Hold: true})
+	te = newTestEnv(t, nil)
+	t9Seed(t, te, ev.URL)
+	t9Stream(t, te, "seq=1\n", "events")
+	out := te.Out.String()
+	if n := strings.Count(out, "\n"); n != 2 || strings.Contains(out, "\x1b") {
+		t.Errorf("events output = %q", out)
+	}
+}
+
+// t9Stream runs a streaming command until stdout contains want, then cancels it.
+func t9Stream(t *testing.T, te *testEnv, want string, args ...string) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- t9Run(ctx, te, args...) }()
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline) && !strings.Contains(te.Out.String(), want); time.Sleep(5 * time.Millisecond) {
+	}
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
 }

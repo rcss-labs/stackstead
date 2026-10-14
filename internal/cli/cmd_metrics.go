@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -38,18 +39,28 @@ func parseTimeArg(flagName, s string, now time.Time, allowAgo bool) (time.Time, 
 	return time.Time{}, exitf(ExitUsage, "invalid --%s %q: use %s", flagName, s, forms)
 }
 
+// maxAgoDays bounds --from durations so the arithmetic cannot overflow.
+const maxAgoDays = 3650
+
 func parseAgo(s string) (time.Duration, error) {
 	if days, ok := strings.CutSuffix(s, "d"); ok {
 		n, err := strconv.Atoi(days)
+		if err == nil && (n < 0 || n > maxAgoDays) {
+			err = errors.New("too far back")
+		}
 		return time.Duration(n) * 24 * time.Hour, err
 	}
-	return time.ParseDuration(s)
+	d, err := time.ParseDuration(s)
+	if err == nil && d > maxAgoDays*24*time.Hour {
+		err = errors.New("too far back")
+	}
+	return d, err
 }
 
 func localTime(s string) string {
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {
-		return cleanText(s)
+		return singleLine(s)
 	}
 	return t.Local().Format(localTimeLayout)
 }
@@ -114,7 +125,7 @@ func metricsCommand() *Command {
 				rows := make([][]string, 0, len(h.Points))
 				for _, pt := range h.Points {
 					rows = append(rows, []string{
-						localTime(pt.Time), cleanText(pt.Service), formatPercent(pt.CPU), formatBytes(pt.Mem), formatBytes(pt.MemLimit),
+						localTime(pt.Time), singleLine(pt.Service), formatPercent(pt.CPU), formatBytes(pt.Mem), formatBytes(pt.MemLimit),
 						dash(pt.NetRx), dash(pt.NetTx), dash(pt.BlkRead), dash(pt.BlkWrite),
 					})
 				}
@@ -132,12 +143,12 @@ func metricsCommand() *Command {
 // liveRow prints one fixed-width row; a live feed has no final column
 // widths, so cells are padded to a preset width and never truncated.
 func liveRow(w io.Writer, cells ...string) {
-	widths := []int{19, 12, 12, 7, 10, 10, 14, 14, 14, 14}
+	widths := []int{19, 12, 12, 7, 10, 10, 14, 14, 14, 14} // visible widths
 	var b strings.Builder
 	for i, c := range cells {
 		b.WriteString(c)
 		if i < len(cells)-1 {
-			b.WriteString(strings.Repeat(" ", max(widths[i]-utf8.RuneCountInString(c), 0)+2))
+			b.WriteString(strings.Repeat(" ", max(widths[i]-utf8.RuneCountInString(stripANSI(c)), 0)+2))
 		}
 	}
 	fmt.Fprintln(w, b.String())
@@ -165,7 +176,7 @@ func metricsLive(ctx context.Context, env *Env, g *globalFlags, stack string) er
 					p.paint("2", "MEM"), p.paint("2", "LIMIT"), p.paint("2", "NET RX (TOTAL)"), p.paint("2", "NET TX (TOTAL)"),
 					p.paint("2", "BLK R (TOTAL)"), p.paint("2", "BLK W (TOTAL)"))
 			}
-			liveRow(p.Out, localTime(s.Time), cleanText(s.Service), cleanText(s.Container), formatPercent(s.CPU),
+			liveRow(p.Out, localTime(s.Time), singleLine(s.Service), singleLine(s.Container), formatPercent(s.CPU),
 				formatBytes(s.Mem), formatBytes(s.MemLimit), formatBytes(s.NetRx), formatBytes(s.NetTx),
 				formatBytes(s.BlkRead), formatBytes(s.BlkWrite))
 			return nil
@@ -200,13 +211,13 @@ func eventsCommand() *Command {
 						if s.MetricsDegraded {
 							metrics = "degraded"
 						}
-						fmt.Fprintf(p.Out, "%s  status events=%s metrics=%s\n", stamp, cleanText(s.Events), metrics)
+						fmt.Fprintf(p.Out, "%s  status events=%s metrics=%s\n", stamp, singleLine(s.Events), metrics)
 					case "change":
 						var ch apitypes.Change
 						if err := json.Unmarshal(ev.Data, &ch); err != nil {
 							return nil
 						}
-						fmt.Fprintf(p.Out, "%s  change %s seq=%d\n", stamp, cleanText(ch.Project), ch.Seq)
+						fmt.Fprintf(p.Out, "%s  change %s seq=%d\n", stamp, singleLine(ch.Project), ch.Seq)
 					}
 					return nil
 				})

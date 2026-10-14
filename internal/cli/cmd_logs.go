@@ -104,6 +104,13 @@ func sanitizeLogText(s string) string {
 	}, s)
 }
 
+// singleLine makes untrusted text safe inside one output line: line breaks
+// become spaces (so a name cannot forge extra lines) and escape sequences
+// and control characters are dropped.
+func singleLine(s string) string {
+	return sanitizeLogText(strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(s))
+}
+
 var servicePalette = []string{"36", "33", "35", "34", "32", "96", "93", "95"}
 
 func serviceColour(service string) string {
@@ -133,9 +140,11 @@ func logsCommand() *Command {
 		},
 		Run: func(ctx context.Context, env *Env, g *globalFlags, args []string) error {
 			if tail != "" && tail != "all" {
-				if n, err := strconv.Atoi(tail); err != nil || n < 0 {
+				n, err := strconv.Atoi(tail)
+				if err != nil || n < 0 {
 					return exitf(ExitUsage, "invalid --tail %q: use a number >= 0 or all", tail)
 				}
+				tail = strconv.Itoa(n)
 			}
 			p := newPrinter(env, g)
 			q := client.LogsQuery{Follow: follow, Tail: tail, Since: since, Service: service}
@@ -167,9 +176,9 @@ func handleLogEvent(env *Env, p *Printer, cursors *logCursors, ev client.Event, 
 		if !raw {
 			text = sanitizeLogText(text)
 		}
-		prefix := p.paint(serviceColour(le.Service), "["+cleanText(le.Service)+"]")
+		prefix := p.paint(serviceColour(le.Service), "["+singleLine(le.Service)+"]")
 		if timestamps {
-			prefix = le.Time.UTC().Format(time.RFC3339Nano) + " " + prefix
+			prefix = le.Time.UTC().Format("2006-01-02T15:04:05.000000000Z07:00") + " " + prefix
 		}
 		line := prefix + " " + text
 		if le.Stream == "stderr" {
@@ -185,7 +194,7 @@ func handleLogEvent(env *Env, p *Printer, cursors *logCursors, ev client.Event, 
 			fmt.Fprintf(env.Stderr, "warning: skipped a malformed log error event: %v\n", err)
 			return nil
 		}
-		fmt.Fprintf(env.Stderr, "log stream error for %s: %s\n", cleanText(le.Container), sanitizeLogText(le.Error))
+		fmt.Fprintf(env.Stderr, "log stream error for %s: %s\n", singleLine(le.Container), singleLine(le.Error))
 	case "end":
 		if p.JSON {
 			if err := p.NDJSON("end", ev.ID, eventData(ev)); err != nil {

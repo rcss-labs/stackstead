@@ -189,7 +189,7 @@ func TestLogsTimestamps(t *testing.T) {
 	if err := t9Run(context.Background(), te, "logs", "demo", "--timestamps"); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := te.Out.String(), "2026-10-14T11:59:30Z [web] hello\n"; got != want {
+	if got, want := te.Out.String(), "2026-10-14T11:59:30.000000000Z [web] hello\n"; got != want {
 		t.Errorf("stdout = %q, want %q", got, want)
 	}
 }
@@ -361,7 +361,7 @@ func TestLogsJSONNDJSON(t *testing.T) {
 func TestLogsStripsTerminalEscapesUnlessRaw(t *testing.T) {
 	nasty := "ok\x1b]0;pwned\x07\x1b[31mred\x1b[0m\x1b[2J\x1b(Bz\rq\x00\u009b1m"
 	frames := []string{
-		t9Ev("log", "", t9Log("we\x1bb", "aaaaaaaaaaaa", "stdout", nasty)),
+		t9Ev("log", "", t9Log("we\x1b[31mb", "aaaaaaaaaaaa", "stdout", nasty)),
 		t9Ev("end", "", struct{}{}),
 	}
 	te := newTestEnv(t, nil)
@@ -405,5 +405,67 @@ func TestLogs401MidStreamExits3(t *testing.T) {
 	}
 	if te.Out.String() != "[web] one\n" {
 		t.Errorf("stdout = %q", te.Out.String())
+	}
+}
+
+func TestLogsTimestampsAreFixedWidth(t *testing.T) {
+	ev := t9Log("web", "aaaaaaaaaaaa", "stdout", "hello")
+	ev.Time = time.Date(2026, 10, 14, 11, 59, 30, 500_000_000, time.UTC)
+	srv := t9Serve(t, t9Conn{Frames: []string{t9Ev("log", "", ev), t9Ev("end", "", struct{}{})}})
+	te := newTestEnv(t, nil)
+	t9Seed(t, te, srv.URL)
+	if err := t9Run(context.Background(), te, "logs", "demo", "--timestamps"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := te.Out.String(), "2026-10-14T11:59:30.500000000Z [web] hello\n"; got != want {
+		t.Errorf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestLogsTailPlusSignIsNormalised(t *testing.T) {
+	srv := t9Serve(t, t9Conn{Frames: []string{t9Ev("end", "", struct{}{})}})
+	te := newTestEnv(t, nil)
+	t9Seed(t, te, srv.URL)
+	if err := t9Run(context.Background(), te, "logs", "demo", "--tail", "+5"); err != nil {
+		t.Fatal(err)
+	}
+	if reqs := srv.Requests(); len(reqs) != 1 || reqs[0].Query.Get("tail") != "5" {
+		t.Errorf("requests = %+v, want tail=5", reqs)
+	}
+}
+
+func TestLogsFollowJSONResumesWithCursors(t *testing.T) {
+	a := "aaaaaaaaaaaa"
+	srv := t9Serve(t,
+		t9Conn{Frames: []string{t9Ev("log", a+":ts1:1", t9Log("web", a, "stdout", "a1"))}},
+		t9Conn{Frames: []string{t9Ev("end", "", struct{}{})}},
+	)
+	te := newTestEnv(t, nil)
+	t9Seed(t, te, srv.URL)
+	if err := t9Run(context.Background(), te, "logs", "demo", "-f", "-o", "json"); err != nil {
+		t.Fatal(err)
+	}
+	reqs := srv.Requests()
+	if len(reqs) != 2 || reqs[1].LastID != a+":ts1:1" {
+		t.Errorf("requests = %+v, want the second to resume from the cursor", reqs)
+	}
+}
+
+func TestLogsNamesCannotForgeLines(t *testing.T) {
+	srv := t9Serve(t, t9Conn{Frames: []string{
+		t9Ev("log", "", t9Log("web] real\n[db", "aaaaaaaaaaaa", "stdout", "x")),
+		t9Ev("error", "", apitypes.LogError{Container: "c1\n[db] forged\x1b[2J", Error: "bad\nline"}),
+		t9Ev("end", "", struct{}{}),
+	}})
+	te := newTestEnv(t, nil)
+	t9Seed(t, te, srv.URL)
+	if err := t9Run(context.Background(), te, "logs", "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := te.Out.String(), "[web] real [db] x\n"; got != want {
+		t.Errorf("stdout = %q, want %q", got, want)
+	}
+	if got, want := te.Err.String(), "log stream error for c1 [db] forged: bad line\n"; got != want {
+		t.Errorf("stderr = %q, want %q", got, want)
 	}
 }
