@@ -209,6 +209,9 @@ func (s *Service) Import(ctx context.Context, path string) (Summary, error) {
 	if info, err := os.Stat(resolved); err != nil || !info.Mode().IsRegular() {
 		return Summary{}, invalid("path is not a regular file")
 	}
+	if o := overrideFiles(resolved); len(o) > 0 {
+		return Summary{}, invalid(fmt.Sprintf("%s has an override file %s next to it; Stackstead does not support override files yet", filepath.Base(resolved), o[0]))
+	}
 	data, _, err := composefile.Load(resolved)
 	if err != nil {
 		return Summary{}, invalid("cannot read file: " + err.Error())

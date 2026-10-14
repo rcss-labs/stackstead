@@ -142,6 +142,31 @@ func loadFile(e Entry) ([]byte, string, error) {
 	return data, hash, nil
 }
 
+// overrideNames are the files `docker compose` merges automatically, but only
+// when no -f is given. Stackstead always passes -f, so it would silently drop
+// them (and "up --remove-orphans" would remove their containers).
+var overrideNames = []string{"compose.override.yaml", "compose.override.yml",
+	"docker-compose.override.yaml", "docker-compose.override.yml"}
+
+// overrideFiles lists the override files that sit next to composePath.
+func overrideFiles(composePath string) []string {
+	var found []string
+	for _, n := range overrideNames {
+		if _, err := os.Stat(filepath.Join(filepath.Dir(composePath), n)); err == nil {
+			found = append(found, n)
+		}
+	}
+	return found
+}
+
+// refuseOverrides fails when composePath has override files next to it.
+func refuseOverrides(composePath string) error {
+	if o := overrideFiles(composePath); len(o) > 0 {
+		return fmt.Errorf("%w: override file %s present; remove or merge it", ErrStackUnavailable, o[0])
+	}
+	return nil
+}
+
 // requireCompose fails with composecli.ErrComposeUnavailable when the compose
 // plugin is missing, so callers can answer 503 instead of a misleading
 // compose error.
@@ -192,6 +217,10 @@ func (s *Service) Sync(ctx context.Context) error {
 			continue
 		}
 		if byName[d.Name()] || byPath[path] || ValidateName(d.Name()) != nil {
+			continue
+		}
+		if o := overrideFiles(path); len(o) > 0 {
+			errs = append(errs, fmt.Errorf("skipped %s: override file %s present; Stackstead does not support override files yet", d.Name(), o[0]))
 			continue
 		}
 		project, err := s.compose.ProjectName(ctx, path)
@@ -391,6 +420,9 @@ func (s *Service) Act(ctx context.Context, stack, action string) (Operation, err
 	if _, _, _, err := readFile(e); err != nil {
 		return Operation{}, err
 	}
+	if err := refuseOverrides(e.ComposePath); err != nil {
+		return Operation{}, err
+	}
 	if err := s.requireLifecycle(ctx); err != nil {
 		return Operation{}, err
 	}
@@ -422,6 +454,8 @@ func (s *Service) Remove(ctx context.Context, stack string, withVolumes bool) (O
 		if err := s.confirmNoContainers(ctx, e); err != nil {
 			return Operation{}, err
 		}
+	} else if err := refuseOverrides(e.ComposePath); err != nil {
+		return Operation{}, err
 	} else if err := s.requireLifecycle(ctx); err != nil {
 		return Operation{}, err
 	}

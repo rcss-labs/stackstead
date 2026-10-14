@@ -90,6 +90,9 @@ func (s *Service) SaveRaw(ctx context.Context, stack string, content []byte, has
 // the candidate bytes with compose, then replace the file under the loaded
 // hash and refresh the recorded project name. old may be nil.
 func (s *Service) commit(ctx context.Context, e Entry, old, edited *composefile.File, hash string, qualify bool) (EditResult, error) {
+	if err := refuseOverrides(e.ComposePath); err != nil {
+		return EditResult{}, err
+	}
 	newServices, err := configsOf(edited)
 	if err != nil {
 		return EditResult{}, err

@@ -1203,3 +1203,72 @@ func TestRemoveMissingFileWithEmptyProjectIsRefused(t *testing.T) {
 		t.Errorf("row dropped: %v", err)
 	}
 }
+
+// ---- Final fix wave ----
+
+func writeOverride(t *testing.T, composePath string) string {
+	t.Helper()
+	name := "compose.override.yaml"
+	if err := os.WriteFile(filepath.Join(filepath.Dir(composePath), name), []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return name
+}
+
+func TestImportRefusesFileWithOverrideSibling(t *testing.T) {
+	h := newHarness(t)
+	ext := filepath.Join(t.TempDir(), "docker-compose.yml")
+	os.WriteFile(ext, []byte(externalYAML), 0o644)
+	name := writeOverride(t, ext)
+	_, err := h.svc.Import(context.Background(), ext)
+	fs := fieldsOf(t, err)
+	if len(fs) != 1 || fs[0].Field != "path" || !strings.Contains(fs[0].Message, name) || !strings.Contains(fs[0].Message, "override") {
+		t.Errorf("fields = %+v", fs)
+	}
+	if rows, _ := h.reg.List(context.Background()); len(rows) != 0 {
+		t.Errorf("rows = %v", rows)
+	}
+}
+
+func TestOverrideAppearingLaterRefusesLifecycleAndEdits(t *testing.T) {
+	h := newHarness(t)
+	hash := setupWeb(t, h)
+	ctx := context.Background()
+	name := writeOverride(t, h.path("web"))
+	before, _ := os.ReadFile(h.path("web"))
+
+	check := func(what string, err error) {
+		t.Helper()
+		if !errors.Is(err, stacks.ErrStackUnavailable) || !strings.Contains(err.Error(), name) {
+			t.Errorf("%s err = %v", what, err)
+		}
+	}
+	_, err := h.svc.Act(ctx, "web", "up")
+	check("act", err)
+	_, err = h.svc.Remove(ctx, "web", false)
+	check("remove", err)
+	_, err = h.svc.SaveRaw(ctx, "web", []byte("services:\n  web:\n    image: a\n"), hash)
+	check("saveraw", err)
+	_, err = h.svc.UpdateService(ctx, "web", "web", composefile.ServiceConfig{Image: "nginx:2"}, hash)
+	check("update", err)
+	if len(h.compose.runs) != 0 {
+		t.Errorf("compose ran: %v", h.compose.runs)
+	}
+	if after, _ := os.ReadFile(h.path("web")); string(after) != string(before) {
+		t.Error("file modified")
+	}
+}
+
+func TestSyncSkipsFolderWithOverrideAndWarns(t *testing.T) {
+	h := newHarness(t)
+	os.MkdirAll(filepath.Join(h.dir, "alpha"), 0o755)
+	os.WriteFile(h.path("alpha"), []byte(externalYAML), 0o644)
+	name := writeOverride(t, h.path("alpha"))
+	err := h.svc.Sync(context.Background())
+	if err == nil || !strings.Contains(err.Error(), name) {
+		t.Errorf("warning = %v", err)
+	}
+	if rows, _ := h.reg.List(context.Background()); len(rows) != 0 {
+		t.Errorf("rows = %+v", rows)
+	}
+}
