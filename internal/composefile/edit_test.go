@@ -308,6 +308,36 @@ networks:
 			edits: []edit{{path("services.web.b"), &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{scalar("k"), scalar("v")}}}},
 			want:  "services:\n  web:\n    b: # pinned\n      k: v\n",
 		},
+		{
+			name:  "apostrophe in flow sequence: replace",
+			in:    "services:\n  web:\n    command: [echo, don't]\n    entrypoint: [it's]\n    image: x\n",
+			edits: []edit{{path("services.web.command"), scalar("hi")}},
+			want:  "services:\n  web:\n    command: hi\n    entrypoint: [it's]\n    image: x\n",
+		},
+		{
+			name:  "apostrophe in flow sequence: delete",
+			in:    "services:\n  web:\n    command: [echo, don't]\n    entrypoint: [it's]\n    image: x\n",
+			edits: []edit{{path("services.web.command"), nil}},
+			want:  "services:\n  web:\n    entrypoint: [it's]\n    image: x\n",
+		},
+		{
+			name:  "apostrophe in flow sequence: insert",
+			in:    "web:\n  command: [echo, don't]\n",
+			edits: []edit{{path("web.c"), scalar("1")}},
+			want:  "web:\n  command: [echo, don't]\n  c: 1\n",
+		},
+		{
+			name:  "double quote inside plain flow scalar: insert",
+			in:    "web:\n  command: [a\"b]\n",
+			edits: []edit{{path("web.c"), scalar("1")}},
+			want:  "web:\n  command: [a\"b]\n  c: 1\n",
+		},
+		{
+			name:  "tagged flow sequence: insert",
+			in:    "web:\n  a: !!seq [1]\n",
+			edits: []edit{{path("web.z"), scalar("1")}},
+			want:  "web:\n  a: !!seq [1]\n  z: 1\n",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

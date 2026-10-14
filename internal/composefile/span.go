@@ -178,11 +178,20 @@ func trailingComment(line string, i int) string {
 func (l lines) flowEndLine(line, col int) (int, error) {
 	pos := l.start[line-1] + l.column(line, col)
 	src := l.src
+	if pos < len(src) && src[pos] == '!' { // skip a tag such as !!seq
+		for pos < len(src) && src[pos] != ' ' && src[pos] != '\t' && src[pos] != '\n' {
+			pos++
+		}
+		for pos < len(src) && (src[pos] == ' ' || src[pos] == '\t' || src[pos] == '\n') {
+			pos++
+		}
+	}
 	if pos >= len(src) || (src[pos] != '[' && src[pos] != '{') {
 		return 0, errUnsupportedLayout
 	}
 	depth := 0
 	var quote byte
+	var prev byte // previous significant character outside quotes
 	for j := pos; j < len(src); j++ {
 		c := src[j]
 		switch {
@@ -192,23 +201,27 @@ func (l lines) flowEndLine(line, col int) (int, error) {
 			j++
 		case quote != 0:
 			if c == quote {
-				quote = 0
+				quote, prev = 0, c
 			}
-		case c == '"' || c == '\'':
-			quote = c
+		case (c == '"' || c == '\'') && strings.IndexByte("[{,:?", prev) >= 0 && prev != 0:
+			quote = c // a quote opens a string only at the start of a flow token
 		case c == '#' && j > 0 && (src[j-1] == ' ' || src[j-1] == '\t' || src[j-1] == '\n'):
-			for j < len(src) && src[j] != '\n' {
+			for j+1 < len(src) && src[j+1] != '\n' {
 				j++
 			}
+		case c == ' ' || c == '\t' || c == '\n':
 		case c == '[' || c == '{':
 			depth++
+			prev = c
 		case c == ']' || c == '}':
 			depth--
 			if depth == 0 {
-				// the line index is the last start offset at or before j
-				n := sort.Search(len(l.start), func(k int) bool { return l.start[k] > j })
-				return n, nil
+				// the line number is the count of line starts at or before j
+				return sort.Search(len(l.start), func(k int) bool { return l.start[k] > j }), nil
 			}
+			prev = c
+		default:
+			prev = c
 		}
 	}
 	return 0, errUnsupportedLayout
