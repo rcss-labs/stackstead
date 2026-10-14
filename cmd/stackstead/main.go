@@ -22,7 +22,12 @@ import (
 	"github.com/rcss-labs/stackstead/web"
 )
 
-const shutdownGrace = 10 * time.Second
+const (
+	shutdownGrace     = 10 * time.Second
+	defaultConfigPath = "/etc/stackstead/config.yaml"
+	readTimeout       = 30 * time.Second
+	idleTimeout       = 120 * time.Second
+)
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -36,7 +41,7 @@ func main() {
 
 func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	flags := flag.NewFlagSet("stackstead", flag.ContinueOnError)
-	configPath := flags.String("config", "", "path to config.yaml (optional; STACKSTEAD_* env vars override it)")
+	configPath := flags.String("config", "", "path to config.yaml (default: "+defaultConfigPath+" if it exists; STACKSTEAD_* env vars override it)")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -44,9 +49,20 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 		return err
 	}
 
-	cfg, err := config.Load(*configPath, os.Getenv)
+	path := *configPath
+	if path == "" {
+		if _, err := os.Stat(defaultConfigPath); err == nil {
+			path = defaultConfigPath
+		}
+	}
+	cfg, err := config.Load(path, os.Getenv)
 	if err != nil {
 		return err
+	}
+	if path != "" {
+		logger.Info("loaded config file", "path", path)
+	} else {
+		logger.Info("no config file; using defaults and STACKSTEAD_* environment")
 	}
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
@@ -82,6 +98,9 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 			Logger:     logger,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       readTimeout,
+		IdleTimeout:       idleTimeout,
+		// WriteTimeout stays unset: SSE streams (Plan 4) need long-lived writes.
 	}
 
 	serveErr := make(chan error, 1)
