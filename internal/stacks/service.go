@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -45,6 +46,7 @@ type Deps struct {
 	StacksDir    string   // where Create puts new stacks, one folder each
 	AllowedRoots []string // confines build contexts of new stacks
 	Now          func() time.Time
+	Logger       *slog.Logger // nil means slog.Default()
 }
 
 // Status is the run state of a stack.
@@ -96,6 +98,7 @@ type Service struct {
 	engine    Engine
 	stacksDir string
 	roots     []string
+	log       *slog.Logger
 
 	// Lock order: a stack's lock (lockStack) first, then projectMu; never the
 	// reverse. projectMu makes "is this compose project free?" and the write
@@ -106,8 +109,12 @@ type Service struct {
 }
 
 func NewService(d Deps) *Service {
+	logger := d.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Service{reg: d.Registry, ops: d.Ops, compose: d.Compose, engine: d.Engine,
-		stacksDir: d.StacksDir, roots: d.AllowedRoots}
+		stacksDir: d.StacksDir, roots: d.AllowedRoots, log: logger}
 }
 
 // lockStack serializes read-modify-write cycles of one stack's file.

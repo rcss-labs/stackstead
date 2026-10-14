@@ -152,6 +152,9 @@ func (s *Service) commit(ctx context.Context, e Entry, old, edited *composefile.
 func (s *Service) revertProject(ctx context.Context, e Entry, saveErr error) error {
 	// Not the request context: a cancelled request must not leave the claim behind.
 	if err := s.reg.SetProject(context.WithoutCancel(ctx), e.Name, e.Project); err != nil {
+		// Logged here so the failed revert is visible whatever the caller does with the error.
+		s.log.Error("revert of claimed compose project failed; registry may disagree with the compose file",
+			"stack", e.Name, "project", e.Project, "err", err, "save_err", saveErr)
 		return errors.Join(saveErr, fmt.Errorf("revert project of stack %s to %s: %w", e.Name, e.Project, err))
 	}
 	return saveErr

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -1347,6 +1348,37 @@ func TestFailedRevertIsJoinedWithSaveError(t *testing.T) {
 	err := h.svc.RevertProject(context.Background(), stacks.Entry{Name: "ghost", Project: "p"}, saveErr)
 	if !errors.Is(err, saveErr) || !errors.Is(err, stacks.ErrStackNotFound) {
 		t.Errorf("err = %v", err)
+	}
+}
+
+type recordHandler struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *recordHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *recordHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, r)
+	return nil
+}
+func (h *recordHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *recordHandler) WithGroup(string) slog.Handler      { return h }
+
+func TestFailedRevertIsLoggedAtErrorLevel(t *testing.T) {
+	rec := &recordHandler{}
+	h := newHarness(t)
+	h.svc = stacks.NewService(stacks.Deps{
+		Registry: h.reg, Ops: h.ops, Compose: h.compose, Engine: h.eng,
+		StacksDir: h.dir, Logger: slog.New(rec),
+	})
+	saveErr := errors.New("save failed")
+	h.svc.RevertProject(context.Background(), stacks.Entry{Name: "ghost", Project: "p"}, saveErr)
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.records) != 1 || rec.records[0].Level != slog.LevelError || !strings.Contains(rec.records[0].Message, "revert") {
+		t.Fatalf("records = %+v", rec.records)
 	}
 }
 
