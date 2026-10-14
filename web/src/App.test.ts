@@ -84,6 +84,54 @@ describe('App focus on navigation', () => {
     const h1 = await screen.findByRole('heading', { level: 1, name: 'Settings' });
     await waitFor(() => expect(document.activeElement).toBe(h1));
   });
+
+  it('does not move focus when only the ?tab= query changes', async () => {
+    at('/settings');
+    render(App);
+    const h1 = await screen.findByRole('heading', { level: 1, name: 'Settings' });
+    const button = within(screen.getByRole('main')).getAllByRole('button')[0];
+    button.focus();
+    navigate('/settings?tab=logs');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(document.activeElement).toBe(button);
+    expect(document.activeElement).not.toBe(h1);
+  });
+
+  it('does not steal focus the new page already placed inside main', async () => {
+    at('/');
+    render(App);
+    await screen.findByRole('heading', { name: 'Stacks' });
+    const main = screen.getByRole('main');
+    // Runs as soon as the new page's DOM exists, before the app's post-render focus step.
+    const observer = new MutationObserver(() => {
+      const field = main.querySelector<HTMLElement>('input, button');
+      if (field && main.querySelector('h1')?.textContent === 'Settings') {
+        field.focus();
+        observer.disconnect();
+      }
+    });
+    observer.observe(main, { childList: true, subtree: true });
+    navigate('/settings');
+    const h1 = await screen.findByRole('heading', { level: 1, name: 'Settings' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(main.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).not.toBe(h1);
+    observer.disconnect();
+  });
+
+  it('collapses a burst of changes into at most two running-operations refetches', async () => {
+    at('/');
+    render(App);
+    await screen.findByRole('heading', { name: 'Stacks' });
+    await waitFor(() => expect(stream.requests).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 500)); // let the initial resync settle
+    const runs = () => fake.calls.filter((c) => c.path === '/api/operations?state=running').length;
+    const before = runs();
+    for (let i = 1; i <= 10; i++) stream.push('/api/events', `event: change\ndata: {"project":"p${i}","seq":${i}}\n\n`);
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(runs() - before).toBeGreaterThanOrEqual(1);
+    expect(runs() - before).toBeLessThanOrEqual(2);
+  });
 });
 
 describe('App routing and session', () => {

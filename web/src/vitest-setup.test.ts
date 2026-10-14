@@ -131,4 +131,13 @@ describe('installFakeStream', () => {
     await expect(reader.read()).rejects.toBeDefined();
     expect(() => fake.push('/s', 'x')).toThrow('no open fake stream');
   });
+
+  it('rejects a pre-aborted signal with AbortError and sends nothing, like real fetch', async () => {
+    const fake = installFakeStream({ '/s': [] });
+    restore = fake.restore;
+    const ac = new AbortController();
+    ac.abort();
+    await expect(fetch('/s', { signal: ac.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(fake.requests).toHaveLength(0);
+  });
 });
