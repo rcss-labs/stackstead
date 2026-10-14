@@ -34,17 +34,15 @@ type Point struct {
 // uint64 values above math.MaxInt64 are clamped to math.MaxInt64 on insert
 // (real memory and byte counters never get near 8 EiB).
 type Store struct {
-	db  *sql.DB
-	now func() time.Time
+	db *sql.DB
 }
 
 const tokenHashKey = "metrics_token_hash"
 
-func NewStore(db *sql.DB, now func() time.Time) *Store {
-	if now == nil {
-		now = time.Now
-	}
-	return &Store{db: db, now: now}
+// NewStore wraps db. The now parameter is unused (callers pass explicit times
+// to every method); it is kept so existing call sites keep compiling.
+func NewStore(db *sql.DB, _ func() time.Time) *Store {
+	return &Store{db: db}
 }
 
 func clamp(v uint64) int64 {

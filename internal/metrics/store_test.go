@@ -184,6 +184,29 @@ func TestQueryRawRowsOrderedByServiceThenTime(t *testing.T) {
 
 func TestInsertBatchIsAtomic(t *testing.T) {
 	s, db := newStore(t)
+	// Reject one row in the middle of the batch.
+	if _, err := db.Exec(`CREATE TRIGGER reject_bad BEFORE INSERT ON metric_samples
+		WHEN NEW.service = 'bad' BEGIN SELECT RAISE(ABORT, 'rejected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	batch := []metrics.Sample{
+		sample(base, "p", "web", 1, 1, 1),
+		sample(base, "p", "web", 2, 2, 2),
+		sample(base, "p", "bad", 3, 3, 3),
+		sample(base, "p", "web", 4, 4, 4),
+	}
+	if err := s.InsertBatch(context.Background(), batch); err == nil {
+		t.Fatal("want error from the rejected row")
+	}
+	var n int
+	db.QueryRow("SELECT COUNT(*) FROM metric_samples").Scan(&n)
+	if n != 0 {
+		t.Errorf("rows = %d after failed batch, want 0 (earlier rows must roll back)", n)
+	}
+}
+
+func TestInsertBatchCancelledContextWritesNothing(t *testing.T) {
+	s, db := newStore(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := s.InsertBatch(ctx, []metrics.Sample{sample(base, "p", "web", 1, 1, 1)}); err == nil {
@@ -192,6 +215,6 @@ func TestInsertBatchIsAtomic(t *testing.T) {
 	var n int
 	db.QueryRow("SELECT COUNT(*) FROM metric_samples").Scan(&n)
 	if n != 0 {
-		t.Errorf("rows = %d after failed batch, want 0", n)
+		t.Errorf("rows = %d, want 0", n)
 	}
 }
