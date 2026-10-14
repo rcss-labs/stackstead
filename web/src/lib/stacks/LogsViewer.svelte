@@ -21,6 +21,7 @@
 
   let latest = $state.raw<LogLine[]>([]);
   let frozen = $state.raw<LogLine[]>([]);
+  let frozenSeq = $state(0);
   let status = $state<SSEStatus>('connecting');
   let errors = $state.raw<LogError[]>([]);
   let dismissed = $state.raw<Set<string>>(new Set());
@@ -54,23 +55,29 @@
   }
 
   function restart() {
+    paused = false;
+    frozen = [];
+    frozenSeq = 0;
     dismissed = new Set();
     stream.restart(currentOptions());
   }
 
   const view = $derived(paused ? frozen : latest);
   const visible = $derived(filterLines(view, { stream: streamFilter || undefined, search: search || undefined }));
-  const newLines = $derived(paused ? Math.max(0, (latest.at(-1)?.seq ?? 0) - (frozen.at(-1)?.seq ?? 0)) : 0);
+  const newLines = $derived(paused ? Math.max(0, (latest.at(-1)?.seq ?? 0) - frozenSeq) : 0);
   const visibleErrors = $derived(errors.filter((e) => !dismissed.has(e.container + '\u0000' + e.error)));
 
   function togglePause() {
-    if (!paused) frozen = latest;
+    if (!paused) {
+      frozen = latest;
+      frozenSeq = latest.at(-1)?.seq ?? 0;
+    }
     paused = !paused;
     if (!paused) void scrollToEnd();
   }
 
   function clear() {
-    stream.buffer.clear();
+    stream.clear();
     frozen = [];
   }
 
@@ -90,13 +97,13 @@
     if (stick && !paused) void scrollToEnd();
   });
 
-  // eslint-disable-next-line no-control-regex
-  const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
   function segments(text: string, needle: string): { text: string; match: boolean }[] {
-    const clean = text.replace(ANSI, '');
+    const clean = text;
     if (!needle) return [{ text: clean, match: false }];
     const lower = clean.toLowerCase();
     const n = needle.toLowerCase();
+    // toLowerCase can change length (e.g. U+0130); offsets would be wrong, so skip highlighting.
+    if (lower.length !== clean.length) return [{ text: clean, match: false }];
     const out: { text: string; match: boolean }[] = [];
     let i = 0;
     for (;;) {
@@ -133,7 +140,11 @@
           ? 'connecting'
           : status === 'reconnecting'
             ? 'reconnecting'
-            : status,
+            : status === 'unauthorized'
+              ? 'session expired - sign in again'
+              : status === 'gone'
+                ? 'stack or logs no longer available'
+                : 'closed',
   );
 </script>
 
@@ -159,6 +170,7 @@
     <input id="{uid}-search" type="search" bind:value={searchInput} oninput={onSearchInput} />
     <Button variant="secondary" onclick={togglePause}>{paused ? 'Resume' : 'Pause'}</Button>
     <Button variant="ghost" onclick={clear}>Clear</Button>
+    {#if ended}<Button variant="secondary" onclick={restart}>Reconnect</Button>{/if}
     <small class="status" role="status" aria-live="polite">{statusLabel}</small>
   </div>
 
@@ -170,14 +182,14 @@
   {/if}
   {#each visibleErrors as e (e.container + e.error)}
     <div class="err" role="alert">
-      <strong>{e.service} ({e.container.slice(0, 12)})</strong>
+      <strong>{e.service} ({e.container})</strong>
       <small>{e.error}</small>
-      <button type="button" onclick={() => (dismissed = new Set([...dismissed, e.container + '\u0000' + e.error]))}>Dismiss</button>
+      <button type="button" aria-label="Dismiss error for {e.container}" onclick={() => (dismissed = new Set([...dismissed, e.container + '\u0000' + e.error]))}>Dismiss</button>
     </div>
   {/each}
 
   <!-- svelte-ignore a11y_no_noninteractive_tabindex (keyboard-scrollable log region) -->
-  <div class="scroller" bind:this={scroller} onscroll={onScroll} tabindex="0" role="log" aria-label="Log output">
+  <div class="scroller" aria-live="off" bind:this={scroller} onscroll={onScroll} tabindex="0" role="log" aria-label="Log output">
     {#each visible as line (line.seq)}
       <div class="row" data-testid="log-row">
         <time datetime={line.time} title={utc(line.time)}>{clock(line.time)}</time>

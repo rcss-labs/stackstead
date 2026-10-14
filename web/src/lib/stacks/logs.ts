@@ -28,9 +28,14 @@ export interface LogStream {
   dropped: Readable<number>;
   restart(opts: LogStreamOptions): void;
   close(): void;
+  /** Empties the buffer and the dropped count; the stream and cursors keep going. */
+  clear(): void;
   /** Composite Last-Event-ID: the latest id of every container, comma-joined. */
   cursors(): string;
 }
+
+// eslint-disable-next-line no-control-regex
+const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 
 const CURSOR_ID = /^([0-9a-f]+):(\d+):(\d+)$/;
 
@@ -84,7 +89,8 @@ export function createLogStream(stackName: string, initial: LogStreamOptions, de
 
   function start(opts: LogStreamOptions) {
     const gen = ++generation;
-    const h = open({
+    let h: SSEHandle | undefined;
+    h = open({
       url: buildUrl(stackName, opts),
       // Asked on every connect: a reconnect resumes every container exactly, with no `since`.
       lastEventId: () => {
@@ -100,7 +106,8 @@ export function createLogStream(stackName: string, initial: LogStreamOptions, de
           const ev = parse<LogEvent>(m);
           if (!ev) return;
           if (m.id) mergeCursor(cursorMap, m.id);
-          coalescer.add(ev);
+          // Strip ANSI once here so filtering and highlighting see the same text.
+          coalescer.add({ ...ev, text: ev.text.replace(ANSI, '') });
         } else if (m.event === 'error') {
           const err = parse<LogError>(m);
           if (!err) return;
@@ -131,6 +138,12 @@ export function createLogStream(stackName: string, initial: LogStreamOptions, de
     errors,
     ended,
     dropped,
+    clear() {
+      coalescer.cancel();
+      trimmedTotal = 0;
+      buffer.clear();
+      syncDropped();
+    },
     cursors: () => [...cursorMap.values()].join(','),
     restart(opts) {
       if (closed) return;

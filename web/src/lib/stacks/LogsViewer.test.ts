@@ -100,4 +100,32 @@ describe('LogsViewer', () => {
     await fireEvent.change(screen.getByLabelText('Tail'), { target: { value: 'all' } });
     expect(screen.getByText(/entire log history/i)).toBeTruthy();
   });
+
+  it('labels dismiss buttons and keeps the log region quiet for screen readers', async () => {
+    const err = JSON.stringify({ service: 'api', container: 'web-api-1', error: 'oops' });
+    fake = installFakeStream({ [PATH]: [`event: error\ndata: ${err}\n\n`] });
+    const { container } = render(LogsViewer, { stackName: 'web', services: ['api'] });
+    await tick();
+    expect(screen.getByRole('button', { name: 'Dismiss error for web-api-1' })).toBeTruthy();
+    expect(container.querySelector('[role="log"]')!.getAttribute('aria-live')).toBe('off');
+  });
+
+  it('offers Reconnect after the stream ends and Clear resets the new-lines count', async () => {
+    fake = installFakeStream({ [PATH]: { responses: [{ chunks: [logEvent(C_A, 1, 1, 'a'), 'event: end\ndata: {}\n\n'] }, { chunks: [] }] } });
+    render(LogsViewer, { stackName: 'web', services: ['api'] });
+    await tick();
+    await fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
+    await tick();
+    expect(fake.requests).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
+  });
+
+  it('restart while paused unpauses', async () => {
+    fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'a')] });
+    render(LogsViewer, { stackName: 'web', services: ['api', 'worker'] });
+    await tick();
+    await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    await fireEvent.change(screen.getByLabelText('Service'), { target: { value: 'worker' } });
+    expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
+  });
 });

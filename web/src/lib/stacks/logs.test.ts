@@ -131,4 +131,41 @@ describe('createLogStream', () => {
     s.close();
     expect(get(s.status)).toBe('closed');
   });
+
+  it('ignores late messages from the old handle after restart', async () => {
+    const handlers: ((m: { event: string; data: string; id?: string }) => void)[] = [];
+    const open = vi.fn((o: { onMessage: (m: { event: string; data: string; id?: string }) => void }) => {
+      handlers.push(o.onMessage);
+      return { close() {}, status: 'open', lastEventId: undefined };
+    });
+    const s = createLogStream('web', { tail: 200, follow: true }, { schedule: immediate, open: open as never });
+    streams.push(s);
+    const data = JSON.stringify({ service: 'api', container: C_A, stream: 'stdout', time: 't', text: 'late' });
+    s.restart({ tail: 200, follow: true });
+    handlers[0]({ event: 'log', data, id: `${C_A}:1:1` });
+    await tick();
+    expect(s.buffer.snapshot()).toHaveLength(0);
+    expect(s.cursors()).toBe('');
+    handlers[1]({ event: 'log', data, id: `${C_A}:2:1` });
+    await tick();
+    expect(s.buffer.snapshot()).toHaveLength(1);
+  });
+
+  it('strips ANSI escapes from log text', async () => {
+    fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, '\u001b[31mred\u001b[0m text')] });
+    const s = make();
+    await tick();
+    expect(s.buffer.snapshot()[0].text).toBe('red text');
+  });
+
+  it('clear resets the buffer and the dropped count', async () => {
+    const many = Array.from({ length: 30 }, (_, i) => logEvent(C_A, i + 1, 1, `l${i}`)).join('');
+    fake = installFakeStream({ [PATH]: [many] });
+    const s = createLogStream('web', { tail: 'all', follow: true }, { schedule: immediate, capacity: 10 });
+    streams.push(s);
+    await tick();
+    s.clear();
+    expect(s.buffer.snapshot()).toHaveLength(0);
+    expect(get(s.dropped)).toBe(0);
+  });
 });
