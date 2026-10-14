@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -332,6 +333,20 @@ func (o *Ops) Recent(stack string) []Operation {
 	for i := len(hist) - 1; i >= 0; i-- {
 		out = append(out, hist[i].info)
 	}
+	return out
+}
+
+// All returns the retained operations of every stack, newest first.
+func (o *Ops) All() []Operation {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	var out []Operation
+	for _, hist := range o.byStack {
+		for _, rec := range hist {
+			out = append(out, rec.info)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
 	return out
 }
 

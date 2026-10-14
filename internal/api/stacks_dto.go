@@ -256,4 +256,9 @@ func toFSEntries(entries []fsguard.Entry) []fsEntryDTO {
 type statusDTO struct {
 	Docker  string `json:"docker"`
 	Compose string `json:"compose"`
+	// Events is "connected" while the container status cache follows Docker
+	// events, else "disconnected"; MetricsDegraded is true while the sampler
+	// cannot store samples.
+	Events          string `json:"events"`
+	MetricsDegraded bool   `json:"metricsDegraded"`
 }

@@ -26,6 +26,9 @@ type Options struct {
 	Operations OperationsAPI
 	FSRoots    []string
 	Status     StatusFunc
+	// Observe backs the logs, metrics, status-event and /metrics routes; nil
+	// disables them (and /api/status reports events as disconnected).
+	Observe ObserveAPI
 	// SSEHeartbeat is the idle interval between ": ping" comments on
 	// operation streams (default 15s) and SSEWriteTimeout bounds each write
 	// to a stream (default 10s), since the HTTP server has no WriteTimeout.
@@ -54,6 +57,10 @@ func New(opts Options) http.Handler {
 
 	if opts.Stacks != nil && opts.Operations != nil {
 		s.registerStackRoutes(mux)
+	}
+
+	if opts.Observe != nil {
+		s.registerObserveRoutes(mux)
 	}
 
 	// Unknown API paths get a JSON 404 (after auth, so they don't reveal which
