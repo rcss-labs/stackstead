@@ -39,6 +39,10 @@ func Load(path string) ([]byte, string, error) {
 // The check and the write are not atomic with respect to other processes;
 // callers serialize saves of the same stack.
 func Save(path string, data []byte, expectedHash string) error {
+	// Write through a symlink to its target so the link survives the rename.
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
 	mode := newFileMode
 	current, err := os.ReadFile(path)
 	switch {
