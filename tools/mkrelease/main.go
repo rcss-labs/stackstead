@@ -199,11 +199,23 @@ func checkDistVersion(dist string, v versionInfo) error {
 		if !strings.HasPrefix(n, "stackstead_") && !strings.HasPrefix(n, "stackstead-") {
 			continue
 		}
-		if !strings.Contains(n, v.Ver) && !strings.Contains(n, v.PkgVer) {
+		if got := artifactVersion(n); got != v.Ver && got != v.PkgVer {
 			return fmt.Errorf("%s/%s is not version %s: run make dist-clean first", dist, n, v.Ver)
 		}
 	}
 	return nil
+}
+
+// artifactVersion extracts the version field of a release artifact name:
+// stackstead_<ver>_... (tarball, deb, pkg) or stackstead-<ver>-... (rpm).
+func artifactVersion(name string) string {
+	if rest, ok := strings.CutPrefix(name, "stackstead_"); ok {
+		field, _, _ := strings.Cut(rest, "_")
+		return field
+	}
+	rest := strings.TrimPrefix(name, "stackstead-")
+	field, _, _ := strings.Cut(rest, "-")
+	return field
 }
 
 func writeArchive(path string, ms []member, mtime time.Time) (err error) {

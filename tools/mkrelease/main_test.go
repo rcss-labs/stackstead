@@ -400,3 +400,30 @@ func TestDistWithOtherVersionIsRefused(t *testing.T) {
 		t.Fatalf("same-version artifacts refused: %v", err)
 	}
 }
+
+func TestDistVersionComparisonIsExact(t *testing.T) {
+	cases := []struct {
+		existing, release string
+		refuse            bool
+	}{
+		{"stackstead_1.2.3-rc.1_linux_amd64.tar.gz", "v1.2.3", true},
+		{"stackstead_0.0.1_linux_amd64.tar.gz", "v10.0.1", true},
+		{"stackstead_10.0.1_linux_amd64.tar.gz", "v0.0.1", true},
+		{"stackstead-1.2.3-1.x86_64.rpm", "v1.2.3-rc.1", true},
+		{"stackstead_1.2.3~rc.1_amd64.deb", "v1.2.3", true},
+		{"stackstead_1.2.3_darwin.pkg", "v1.2.3", false},
+		{"stackstead-1.2.3~rc.1-1.x86_64.rpm", "v1.2.3-rc.1", false},
+		{"stackstead_1.2.3~rc.1_amd64.deb", "v1.2.3-rc.1", false},
+	}
+	for _, c := range cases {
+		f := newFixture(t, "linux/amd64")
+		write(t, filepath.Join(f.dist, c.existing), "x", 0o644)
+		err := build(f.opts(c.release, "linux/amd64"))
+		if c.refuse && (err == nil || !strings.Contains(err.Error(), "make dist-clean")) {
+			t.Errorf("%s then %s: want dist-clean refusal, got %v", c.existing, c.release, err)
+		}
+		if !c.refuse && err != nil {
+			t.Errorf("%s then %s: unexpected %v", c.existing, c.release, err)
+		}
+	}
+}
