@@ -150,6 +150,10 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 		logger.Warn("stack sync reported problems", "err", err)
 	}
 
+	if !web.Built() {
+		logger.Warn("web UI not built; serving placeholder page (run make ui)")
+	}
+
 	closing := make(chan struct{})
 	srv := &http.Server{
 		Addr: cfg.Listen,

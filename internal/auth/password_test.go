@@ -2,7 +2,12 @@ package auth
 
 import (
 	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/rcss-labs/stackstead/internal/store"
 )
 
 func TestVerifyPasswordRejectsUnsafeParameters(t *testing.T) {
@@ -35,5 +40,44 @@ func TestVerifyPasswordAcceptsValidHash(t *testing.T) {
 	}
 	if ok, _ := verifyPassword(hash, "wrong"); ok {
 		t.Error("wrong password verified")
+	}
+}
+
+func TestProductionHashParamsAreUnchanged(t *testing.T) {
+	want := argonParams{memory: 64 * 1024, iterations: 3, threads: 2, keyLen: 32, saltLen: 16}
+	if defaultHashParams != want {
+		t.Fatalf("defaultHashParams = %+v, want %+v", defaultHashParams, want)
+	}
+	hash, err := hashPasswordWith(defaultHashParams, "correct horse battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(hash, "$argon2id$v=19$m=65536,t=3,p=2$") {
+		t.Errorf("hash %q does not carry production parameters", hash)
+	}
+}
+
+func TestNewServiceUsesDefaultParamsUnlessFastHashingRequested(t *testing.T) {
+	orig := hashParams
+	t.Cleanup(func() { hashParams = orig })
+	hashParams = defaultHashParams
+	db, err := store.Open(filepath.Join(t.TempDir(), "auth.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	plain, err := NewService(db, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.params != defaultHashParams {
+		t.Errorf("default service params = %+v, want production params", plain.params)
+	}
+	fast, err := NewService(db, time.Now, WithFastHashingForTests())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fast.params == defaultHashParams || fast.params.memory >= defaultHashParams.memory {
+		t.Errorf("fast service params = %+v, want cheaper than production", fast.params)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -45,7 +46,7 @@ type fakeObserve struct {
 	logCtxs map[string]context.Context
 	logOpts map[string]engine.LogOptions
 
-	points     []metrics.Point
+	points     []metrics.ContainerBucket
 	queryErr   error
 	gotProject string
 	gotService string
@@ -103,7 +104,7 @@ func (f *fakeObserve) SubscribeSamples(project string) (<-chan metrics.Sample, f
 	return f.samples, func() { f.samplesOnce.Do(func() { close(f.samplesCancelled) }) }
 }
 func (f *fakeObserve) Latest() []metrics.ExpositionSample { return f.latest }
-func (f *fakeObserve) Query(_ context.Context, project, service string, from, to time.Time, step time.Duration) ([]metrics.Point, error) {
+func (f *fakeObserve) QueryContainers(_ context.Context, project, service string, from, to time.Time, step time.Duration) ([]metrics.ContainerBucket, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.gotProject, f.gotService, f.gotFrom, f.gotTo, f.gotStep = project, service, from, to, step
@@ -136,6 +137,10 @@ func (f *fakeObserve) Logs(ctx context.Context, c engine.Container, opts engine.
 		defer close(errs)
 		defer close(out)
 		for _, l := range spec.lines {
+			// Like the daemon, `since` is inclusive: only lines strictly before it are dropped.
+			if !opts.Since.IsZero() && l.Time.Before(opts.Since) {
+				continue
+			}
 			select {
 			case out <- l:
 			case <-ctx.Done():
@@ -190,10 +195,19 @@ func newObserveEnvWith(t *testing.T, fake *fakeObserve, st *fakeStacks) (*testEn
 // exercised. The returned channel closes when the stream ends.
 func openSSE(t *testing.T, env *testEnv, cookie *http.Cookie, ctx context.Context, path string) (*http.Response, <-chan sseEvent) {
 	t.Helper()
+	return openSSEResume(t, env, cookie, ctx, path, "")
+}
+
+// openSSEResume is openSSE sending a Last-Event-ID header when lastID is set.
+func openSSEResume(t *testing.T, env *testEnv, cookie *http.Cookie, ctx context.Context, path, lastID string) (*http.Response, <-chan sseEvent) {
+	t.Helper()
 	srv := httptest.NewServer(env.handler)
 	t.Cleanup(srv.Close)
 	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+path, nil)
 	req.AddCookie(cookie)
+	if lastID != "" {
+		req.Header.Set("Last-Event-ID", lastID)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -207,6 +221,8 @@ func openSSE(t *testing.T, env *testEnv, cookie *http.Cookie, ctx context.Contex
 		for sc.Scan() {
 			line := sc.Text()
 			switch {
+			case strings.HasPrefix(line, "id: "):
+				cur.id = strings.TrimPrefix(line, "id: ")
 			case strings.HasPrefix(line, "event: "):
 				cur.name = strings.TrimPrefix(line, "event: ")
 			case strings.HasPrefix(line, "data: "):
@@ -628,10 +644,14 @@ func TestMetricsStepIsClamped(t *testing.T) {
 func TestMetricsRatesFromCounters(t *testing.T) {
 	fake := newFakeObserve()
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	fake.points = []metrics.Point{
-		{TS: base, Service: "app", CPU: 1.5, Mem: 10, MemLimit: 100, NetRx: 100, NetTx: 1000, BlkRead: 0, BlkWrite: 500},
-		{TS: base.Add(10 * time.Second), Service: "app", CPU: 2.5, Mem: 20, MemLimit: 100, NetRx: 160, NetTx: 1000, BlkRead: 50, BlkWrite: 100}, // blkWrite fell: restart
-		{TS: base, Service: "db", NetRx: 7},
+	bucket := func(service, container string, sec int, cpu float64, mem, rx, tx, br, bw uint64) metrics.ContainerBucket {
+		return metrics.ContainerBucket{TS: base.Add(time.Duration(sec) * time.Second), Service: service, Container: container, Samples: 1,
+			CPUSum: cpu, MemSum: mem, MemLimitSum: 100, NetRx: rx, NetTx: tx, BlkRead: br, BlkWrite: bw}
+	}
+	fake.points = []metrics.ContainerBucket{
+		bucket("app", "app-1", 0, 1.5, 10, 100, 1000, 0, 500),
+		bucket("app", "app-1", 10, 2.5, 20, 160, 1000, 50, 100), // blkWrite fell: restart
+		bucket("db", "db-1", 0, 0, 0, 7, 0, 0, 0),
 	}
 	env, cookie := newObserveEnv(t, fake)
 	points := getMetrics(t, env, cookie, "?from=2026-01-01T00:00:00Z&to=2026-01-01T00:01:00Z&step=10s")
@@ -659,6 +679,33 @@ func TestMetricsRatesFromCounters(t *testing.T) {
 	}
 	if second.BlkWriteBytesPerSec == nil || *second.BlkWriteBytesPerSec != 0 {
 		t.Errorf("blk write rate after a counter reset = %v, want 0 (clamped)", second.BlkWriteBytesPerSec)
+	}
+}
+
+func TestMetricsRatesAreTotalsAcrossReplicas(t *testing.T) {
+	fake := newFakeObserve()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	rep := func(container string, sec int, cpu float64, rx uint64) metrics.ContainerBucket {
+		return metrics.ContainerBucket{TS: base.Add(time.Duration(sec) * time.Second), Service: "app", Container: container,
+			Samples: 1, CPUSum: cpu, MemSum: 10, MemLimitSum: 100, NetRx: rx}
+	}
+	fake.points = []metrics.ContainerBucket{
+		rep("app-1", 0, 10, 0), rep("app-1", 10, 10, 1_000_0),
+		rep("app-2", 0, 30, 5), rep("app-2", 10, 30, 5+1_000_0),
+	}
+	env, cookie := newObserveEnv(t, fake)
+	points := getMetrics(t, env, cookie, "?from=2026-01-01T00:00:00Z&to=2026-01-01T00:01:00Z&step=10s&service=app")
+	if len(points) != 2 {
+		t.Fatalf("points = %+v", points)
+	}
+	if points[0].NetRxBytesPerSec != nil {
+		t.Errorf("first bucket must carry no rate: %+v", points[0])
+	}
+	if got := points[1].NetRxBytesPerSec; got == nil || *got != 2000 {
+		t.Errorf("net rx = %v, want 2000/s (two replicas at 1000/s)", got)
+	}
+	if points[1].CPU != 20 {
+		t.Errorf("cpu = %v, want the 20 average", points[1].CPU)
 	}
 }
 
@@ -1029,5 +1076,225 @@ func TestMetricsEndpointDoesNotReadStorePerRequest(t *testing.T) {
 	env.do(t, "DELETE", "/api/settings/metrics-token", "", withCookie(cookie))
 	if rec := scrape(t, env, "Bearer "+token); rec.Code != http.StatusNotFound {
 		t.Errorf("after delete = %d, want 404", rec.Code)
+	}
+}
+
+// ---- log cursors and token status ----
+
+const (
+	cursorA = "aaaaaaaaaaaa" // 12-hex prefix of cursorAFull
+	cursorB = "bbbbbbbbbbbb"
+)
+
+var (
+	cursorAFull = cursorA + strings.Repeat("0", 52)
+	cursorBFull = cursorB + strings.Repeat("0", 52)
+	ts1         = t0
+	ts2         = t0.Add(time.Second + 7) // nanosecond part must survive
+)
+
+func cursorID(prefix string, ts time.Time, ordinal int) string {
+	return fmt.Sprintf("%s:%d:%d", prefix, ts.UnixNano(), ordinal)
+}
+
+// cursorFake has container A (app) with three lines, two sharing ts2, and
+// container B (db) with one line.
+func cursorFake() *fakeObserve {
+	f := newFakeObserve()
+	f.containers = []engine.Container{
+		container(cursorAFull, "web-app-1", "web", "app"),
+		container(cursorBFull, "web-db-1", "web", "db"),
+	}
+	f.logs[cursorAFull] = fakeLogSpec{lines: []engine.LogLine{
+		{Stream: "stdout", Time: ts1, Text: "one"},
+		{Stream: "stdout", Time: ts2, Text: "two"},
+		{Stream: "stderr", Time: ts2, Text: "three"},
+	}}
+	f.logs[cursorBFull] = fakeLogSpec{lines: []engine.LogLine{{Stream: "stdout", Time: ts1, Text: "db"}}}
+	return f
+}
+
+func TestLogEventsCarryCursorIds(t *testing.T) {
+	fake := cursorFake()
+	env, cookie := newObserveEnv(t, fake)
+	_, ch := openSSE(t, env, cookie, context.Background(), "/api/stacks/web/logs?service=app")
+	evs := drain(t, ch)
+	var ids []string
+	for _, ev := range evs {
+		switch ev.name {
+		case "log":
+			ids = append(ids, ev.id)
+		case "end":
+			if ev.id != "" {
+				t.Errorf("end event carries id %q", ev.id)
+			}
+		}
+	}
+	want := []string{cursorID(cursorA, ts1, 1), cursorID(cursorA, ts2, 1), cursorID(cursorA, ts2, 2)}
+	if !slices.Equal(ids, want) {
+		t.Fatalf("ids = %v, want %v", ids, want)
+	}
+}
+
+func TestResumeSkipsOrdinalAtSameTimestamp(t *testing.T) {
+	fake := cursorFake()
+	// What the daemon returns for since=ts2 (inclusive): nothing older.
+	fake.logs[cursorAFull] = fakeLogSpec{lines: []engine.LogLine{
+		{Stream: "stdout", Time: ts2, Text: "two"},
+		{Stream: "stderr", Time: ts2, Text: "three"},
+		{Stream: "stdout", Time: ts2.Add(time.Second), Text: "four"},
+	}}
+	env, cookie := newObserveEnv(t, fake)
+	_, ch := openSSEResume(t, env, cookie, context.Background(), "/api/stacks/web/logs?tail=7", cursorID(cursorA, ts2, 1))
+	got := logsOf(t, drain(t, ch))
+	var app []string
+	for _, l := range got {
+		if l.Service == "app" {
+			app = append(app, l.Text)
+		}
+	}
+	if !slices.Equal(app, []string{"three", "four"}) {
+		t.Errorf("app lines = %v, want the first ts2 line skipped", app)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	a, b := fake.logOpts[cursorAFull], fake.logOpts[cursorBFull]
+	if !a.Since.Equal(ts2) || a.Tail != -1 {
+		t.Errorf("resumed container opts = %+v, want Since=ts2 Tail=-1", a)
+	}
+	if b.Tail != 7 || !b.Since.IsZero() {
+		t.Errorf("container without cursor opts = %+v, want the request's tail", b)
+	}
+}
+
+func TestResumeIgnoresMalformedCursors(t *testing.T) {
+	fake := cursorFake()
+	env, cookie := newObserveEnv(t, fake)
+	hdr := "garbage,,:1:1,zz:5:1," + cursorA + ":x:1," + cursorA + ":5:0," + cursorID(cursorA, ts2, 1) + ", " + cursorB + ":9"
+	_, ch := openSSEResume(t, env, cookie, context.Background(), "/api/stacks/web/logs", hdr)
+	evs := drain(t, ch)
+	if names := eventNames(evs); names[len(names)-1] != "end" {
+		t.Fatalf("stream did not end cleanly: %v", names)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if o := fake.logOpts[cursorAFull]; !o.Since.Equal(ts2) || o.Tail != -1 {
+		t.Errorf("valid entry did not resume: %+v", o)
+	}
+	if o := fake.logOpts[cursorBFull]; o.Tail != defaultTailForTest || !o.Since.IsZero() {
+		t.Errorf("malformed entry changed container B: %+v", o)
+	}
+}
+
+const defaultTailForTest = 200
+
+func TestResumeIgnoresHugeOrdinals(t *testing.T) {
+	fake := cursorFake()
+	env, cookie := newObserveEnv(t, fake)
+	hdr := cursorA + ":5:1000000001," + cursorB + ":5:9223372036854775807"
+	_, ch := openSSEResume(t, env, cookie, context.Background(), "/api/stacks/web/logs", hdr)
+	drain(t, ch)
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	for _, full := range []string{cursorAFull, cursorBFull} {
+		if o := fake.logOpts[full]; o.Tail != defaultTailForTest || !o.Since.IsZero() {
+			t.Errorf("oversized ordinal was honoured for %s: %+v", full, o)
+		}
+	}
+}
+
+func TestResumeAcceptsOrdinalAtCap(t *testing.T) {
+	fake := cursorFake()
+	env, cookie := newObserveEnv(t, fake)
+	_, ch := openSSEResume(t, env, cookie, context.Background(), "/api/stacks/web/logs", cursorA+":5:1000000000")
+	drain(t, ch)
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if o := fake.logOpts[cursorAFull]; o.Tail != -1 {
+		t.Errorf("ordinal at the cap was ignored: %+v", o)
+	}
+}
+
+func TestResumeOrdinalContinues(t *testing.T) {
+	fake := cursorFake()
+	fake.logs[cursorAFull] = fakeLogSpec{lines: []engine.LogLine{
+		{Stream: "stdout", Time: ts2, Text: "two"},
+		{Stream: "stderr", Time: ts2, Text: "three"},
+		{Stream: "stderr", Time: ts2, Text: "four"},
+	}}
+	env, cookie := newObserveEnv(t, fake)
+	_, ch := openSSEResume(t, env, cookie, context.Background(), "/api/stacks/web/logs?service=app", cursorID(cursorA, ts2, 1))
+	var ids []string
+	for _, ev := range drain(t, ch) {
+		if ev.name == "log" {
+			ids = append(ids, ev.id)
+		}
+	}
+	want := []string{cursorID(cursorA, ts2, 2), cursorID(cursorA, ts2, 3)}
+	if !slices.Equal(ids, want) {
+		t.Errorf("ids = %v, want %v", ids, want)
+	}
+}
+
+func TestResumeNeverTruncatesWithTail(t *testing.T) {
+	fake := cursorFake()
+	env, cookie := newObserveEnv(t, fake)
+	_, ch := openSSEResume(t, env, cookie, context.Background(), "/api/stacks/web/logs?service=app&tail=1&since=10m", cursorID(cursorA, ts1, 1))
+	drain(t, ch)
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if o := fake.logOpts[cursorAFull]; o.Tail != -1 || !o.Since.Equal(ts1) {
+		t.Errorf("opts = %+v, want Tail=-1 and the cursor's Since", o)
+	}
+}
+
+func TestResumeStopsWithRequestContext(t *testing.T) {
+	fake := cursorFake()
+	env, cookie := newObserveEnv(t, fake)
+	ctx, cancel := context.WithCancel(context.Background())
+	_, ch := openSSEResume(t, env, cookie, ctx, "/api/stacks/web/logs?follow=true", cursorID(cursorA, ts2, 1))
+	for ev := range ch { // wait for the first log so the streams are open
+		if ev.name == "log" {
+			break
+		}
+	}
+	cancel()
+	select {
+	case <-fake.logCtx(cursorAFull).Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("resumed docker stream outlived the request")
+	}
+}
+
+func TestMetricsTokenStatus(t *testing.T) {
+	fake := newFakeObserve()
+	env, cookie := newObserveEnv(t, fake)
+	if rec := env.do(t, "GET", "/api/settings/metrics-token", ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no session = %d, want 401", rec.Code)
+	}
+	configured := func() bool {
+		t.Helper()
+		rec := env.do(t, "GET", "/api/settings/metrics-token", "", withCookie(cookie))
+		if rec.Code != 200 || rec.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("status = %d, cache-control %q", rec.Code, rec.Header().Get("Cache-Control"))
+		}
+		var body map[string]bool
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || len(body) != 1 {
+			t.Fatalf("body %s, err %v", rec.Body, err)
+		}
+		return body["configured"]
+	}
+	if configured() {
+		t.Error("configured with no hash")
+	}
+	createToken(t, env, cookie)
+	if !configured() {
+		t.Error("not configured after create")
+	}
+	if rec := env.do(t, "DELETE", "/api/settings/metrics-token", "", withCookie(cookie)); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete = %d", rec.Code)
+	}
+	if configured() {
+		t.Error("configured after delete")
 	}
 }

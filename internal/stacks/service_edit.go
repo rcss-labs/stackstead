@@ -37,31 +37,62 @@ type EditResult struct {
 	ChecksPartial bool
 }
 
+// stagedEdit loads the stack's compose file under its lock, checks the
+// caller's hash, and applies the service edit in memory. UpdateService and
+// PreviewService both start here so a preview can never accept an edit the
+// save would refuse. The caller must call unlock.
+func (s *Service) stagedEdit(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) (e Entry, old, edited *composefile.File, unlock func(), err error) {
+	e, unlock, err = s.lockedEntry(ctx, stack)
+	if err != nil {
+		return Entry{}, nil, nil, nil, err
+	}
+	fail := func(err error) (Entry, *composefile.File, *composefile.File, func(), error) {
+		unlock()
+		return Entry{}, nil, nil, nil, err
+	}
+	data, current, err := loadFile(e)
+	if err != nil {
+		return fail(err)
+	}
+	if current != hash {
+		return fail(composefile.ErrConflict)
+	}
+	old, err = parseFile(data)
+	if err != nil {
+		return fail(err)
+	}
+	edited, err = old.UpdateService(service, cfg)
+	if err != nil {
+		return fail(err)
+	}
+	if err := refuseOverrides(e.ComposePath); err != nil {
+		return fail(err)
+	}
+	return e, old, edited, unlock, nil
+}
+
 // UpdateService applies a form edit to one service. It shares its save
 // pipeline (commit) with SaveRaw.
 func (s *Service) UpdateService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) (EditResult, error) {
-	e, unlock, err := s.lockedEntry(ctx, stack)
+	e, old, edited, unlock, err := s.stagedEdit(ctx, stack, service, cfg, hash)
 	if err != nil {
 		return EditResult{}, err
 	}
 	defer unlock()
-
-	data, current, err := loadFile(e)
-	if err != nil {
-		return EditResult{}, err
-	}
-	if current != hash {
-		return EditResult{}, composefile.ErrConflict
-	}
-	old, err := parseFile(data)
-	if err != nil {
-		return EditResult{}, err
-	}
-	edited, err := old.UpdateService(service, cfg)
-	if err != nil {
-		return EditResult{}, err
-	}
 	return s.commit(ctx, e, old, edited, hash, false)
+}
+
+// PreviewService returns the bytes UpdateService would write for the same
+// edit, without validating with compose, checking ports, or touching the
+// file. It shares stagedEdit with UpdateService, so a preview computed
+// against a hash is what a save with that hash writes.
+func (s *Service) PreviewService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) ([]byte, error) {
+	_, _, edited, unlock, err := s.stagedEdit(ctx, stack, service, cfg, hash)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	return edited.Bytes(), nil
 }
 
 // SaveRaw replaces the whole compose file with content.

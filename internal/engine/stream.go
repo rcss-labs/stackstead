@@ -277,7 +277,9 @@ func (c *Client) streamLogs(ctx context.Context, containerID string, opts LogOpt
 		q.Set("tail", strconv.Itoa(opts.Tail))
 	}
 	if !opts.Since.IsZero() {
-		q.Set("since", strconv.FormatInt(opts.Since.Unix(), 10))
+		// Nanosecond precision (inclusive on the daemon) lets a caller resume
+		// exactly after a line it has already seen.
+		q.Set("since", fmt.Sprintf("%d.%09d", opts.Since.Unix(), opts.Since.Nanosecond()))
 	}
 	resp, cancel, err := c.openStream(ctx, "/containers/"+url.PathEscape(containerID)+"/logs?"+q.Encode())
 	if err != nil {

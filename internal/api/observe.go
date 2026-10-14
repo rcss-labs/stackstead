@@ -42,7 +42,7 @@ type ObserveAPI interface {
 	SubscribeSamples(project string) (<-chan metrics.Sample, func())
 	Latest() []metrics.ExpositionSample
 	Degraded() bool
-	Query(ctx context.Context, project, service string, from, to time.Time, step time.Duration) ([]metrics.Point, error)
+	QueryContainers(ctx context.Context, project, service string, from, to time.Time, step time.Duration) ([]metrics.ContainerBucket, error)
 	TokenHash(ctx context.Context) (string, error)
 	SetTokenHash(ctx context.Context, hash string) error
 }
@@ -82,8 +82,8 @@ func (o ObserveSources) SubscribeSamples(project string) (<-chan metrics.Sample,
 }
 func (o ObserveSources) Latest() []metrics.ExpositionSample { return o.Sampler.Latest() }
 func (o ObserveSources) Degraded() bool                     { return o.Sampler.Degraded() }
-func (o ObserveSources) Query(ctx context.Context, project, service string, from, to time.Time, step time.Duration) ([]metrics.Point, error) {
-	return o.Store.Query(ctx, project, service, from, to, step)
+func (o ObserveSources) QueryContainers(ctx context.Context, project, service string, from, to time.Time, step time.Duration) ([]metrics.ContainerBucket, error) {
+	return o.Store.QueryContainers(ctx, project, service, from, to, step)
 }
 func (o ObserveSources) TokenHash(ctx context.Context) (string, error) {
 	return o.Store.TokenHash(ctx)
@@ -111,6 +111,7 @@ func (s *server) registerObserveRoutes(mux *http.ServeMux) {
 	route("GET /api/events", s.handleEvents)
 	route("POST /api/settings/metrics-token", s.handleCreateMetricsToken)
 	route("DELETE /api/settings/metrics-token", s.handleDeleteMetricsToken)
+	route("GET /api/settings/metrics-token", s.handleMetricsTokenStatus)
 	if s.opts.Stacks != nil {
 		route("GET /api/stacks/{name}/logs", s.handleLogs)
 		route("GET /api/stacks/{name}/metrics", s.handleMetricsHistory)
@@ -142,6 +143,7 @@ type logErrorDTO struct {
 }
 
 type logItem struct {
+	id        string // SSE event id (a logCursor), empty when the line has no usable timestamp
 	container engine.Container
 	line      engine.LogLine
 	err       error
@@ -194,6 +196,65 @@ func parseLogOptions(w http.ResponseWriter, r *http.Request) (engine.LogOptions,
 	return opts, true
 }
 
+// logCursor is a resume point in one container's log: the timestamp of the
+// last line delivered and how many lines with exactly that timestamp have been
+// delivered (1 for the first). Its string form is the SSE event id, so it is
+// newline-free by construction; a client sends the latest cursor of every
+// container, comma-separated, as Last-Event-ID.
+type logCursor struct {
+	Container string // first 12 hex digits of the container id
+	TS        int64  // unix nanoseconds
+	Ordinal   int
+}
+
+func (c logCursor) String() string {
+	return c.Container + ":" + strconv.FormatInt(c.TS, 10) + ":" + strconv.Itoa(c.Ordinal)
+}
+
+const cursorIDLen = 12
+
+func cursorContainer(id string) string {
+	if len(id) > cursorIDLen {
+		return id[:cursorIDLen]
+	}
+	return id
+}
+
+func isLowerHex(s string) bool {
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return s != ""
+}
+
+// parseLogCursors reads a Last-Event-ID header. Entries that are not
+// "<1-12 lowercase hex>:<positive ts>:<ordinal in 1..maxCursorOrdinal>" are skipped (the
+// header is client-controlled, and an operation-stream id may arrive here
+// from a shared client); for a repeated container the later entry wins.
+// maxCursorOrdinal bounds the client-supplied ordinal: it is a count of lines
+// at one timestamp, so anything larger is forged, and capping it keeps later
+// arithmetic on it far from overflow.
+const maxCursorOrdinal = 1_000_000_000
+
+func parseLogCursors(header string) map[string]logCursor {
+	out := map[string]logCursor{}
+	for _, part := range strings.Split(header, ",") {
+		fields := strings.Split(strings.TrimSpace(part), ":")
+		if len(fields) != 3 || len(fields[0]) > cursorIDLen || !isLowerHex(fields[0]) {
+			continue
+		}
+		ts, err1 := strconv.ParseInt(fields[1], 10, 64)
+		ord, err2 := strconv.Atoi(fields[2])
+		if err1 != nil || err2 != nil || ts <= 0 || ord <= 0 || ord > maxCursorOrdinal {
+			continue
+		}
+		out[fields[0]] = logCursor{Container: fields[0], TS: ts, Ordinal: ord}
+	}
+	return out
+}
+
 // handleLogs streams the merged logs of a stack's containers.
 //
 // Events: "log" {service, container, stream, time, text} per line; "error"
@@ -202,6 +263,16 @@ func parseLogOptions(w http.ResponseWriter, r *http.Request) (engine.LogOptions,
 // means every container's stream ended on its own. A stack with no containers
 // (or none matching service) gets just "end". At most 50 containers (by name)
 // are read. Closing the request cancels every Docker stream.
+//
+// Every "log" event has an id (a logCursor). With a Last-Event-ID header, each
+// container that has a cursor is read from that timestamp with tail=all and
+// its first Ordinal lines at that exact timestamp are dropped, so lines are
+// neither repeated nor skipped; other containers use tail/since as usual.
+// Limits are Docker's: lines already rotated away cannot be replayed. A resume
+// re-reads the container's log from the start (tail=all plus since) and skips
+// forward, so it costs a full read. Docker may also store stdout and stderr
+// lines slightly out of timestamp order, so in that race a resume can lose or
+// repeat a line.
 func (s *server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	opts, ok := parseLogOptions(w, r)
 	if !ok {
@@ -237,16 +308,39 @@ func (s *server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel() // cancels every Docker stream and stops the pumps
 
+	cursors := parseLogCursors(r.Header.Get("Last-Event-ID"))
 	merged := make(chan logItem)
 	var wg sync.WaitGroup
 	for _, c := range cs {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			lines, errs := s.opts.Observe.Logs(ctx, c, opts)
+			copts := opts
+			cur := logCursor{Container: cursorContainer(c.ID)}
+			skip := 0
+			if resume, ok := cursors[cur.Container]; ok {
+				copts.Tail, copts.Since = -1, time.Unix(0, resume.TS)
+				cur.TS, cur.Ordinal, skip = resume.TS, resume.Ordinal, resume.Ordinal
+			}
+			lines, errs := s.opts.Observe.Logs(ctx, c, copts)
 			for l := range lines {
+				item := logItem{container: c, line: l}
+				if !l.Time.IsZero() { // a line without a timestamp cannot be a cursor
+					ts := l.Time.UnixNano()
+					if skip > 0 && ts == cur.TS {
+						skip--
+						continue
+					}
+					skip = 0
+					if ts == cur.TS {
+						cur.Ordinal++
+					} else {
+						cur.TS, cur.Ordinal = ts, 1
+					}
+					item.id = cur.String()
+				}
 				select {
-				case merged <- logItem{container: c, line: l}:
+				case merged <- item:
 				case <-ctx.Done():
 					return
 				}
@@ -279,7 +373,7 @@ func (s *server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			}
 			return false, sw.Event("error", "", logErrorDTO{Service: it.container.ComposeService(), Container: it.container.Name, Error: msg})
 		default:
-			return false, sw.Event("log", "", logEventDTO{Service: it.container.ComposeService(), Container: it.container.Name,
+			return false, sw.Event("log", it.id, logEventDTO{Service: it.container.ComposeService(), Container: it.container.Name,
 				Stream: it.line.Stream, Time: it.line.Time, Text: it.line.Text})
 		}
 	})
@@ -293,8 +387,8 @@ type metricPointDTO struct {
 	CPU      float64 `json:"cpu"`
 	Mem      uint64  `json:"mem"`
 	MemLimit uint64  `json:"memLimit"`
-	// Rates are bytes per second between this point and the service's
-	// previous one; absent on a service's first point.
+	// Rates are bytes per second, summed across the service's replicas;
+	// absent when no replica has a previous bucket to diff against.
 	NetRx    *float64 `json:"netRxBytesPerSec,omitempty"`
 	NetTx    *float64 `json:"netTxBytesPerSec,omitempty"`
 	BlkRead  *float64 `json:"blkReadBytesPerSec,omitempty"`
@@ -354,19 +448,13 @@ func metricsWindow(r *http.Request) (from, to time.Time, step time.Duration, err
 	return from, to, step, nil
 }
 
-func rate(cur, prev uint64, seconds float64) *float64 {
-	var v float64
-	if cur > prev { // a drop means the container restarted and its counter reset
-		v = float64(cur-prev) / seconds
-	}
-	return &v
-}
-
 // handleMetricsHistory returns {points}: per service and time bucket the
-// averaged gauges (cpu, mem, memLimit) and counter rates. The store keeps
-// cumulative counters and buckets them with MAX across a service's replicas,
-// so rates reflect the busiest replica, not the sum. A negative delta
-// (container restart) is reported as 0.
+// gauges (cpu, mem, memLimit), averaged across the service's replicas, and
+// network and block-I/O rates, which are TOTALS across replicas. Rates are
+// computed per container from its cumulative counters between its own
+// consecutive buckets (a drop, i.e. a restart, counts as 0; a container's
+// first bucket, or the first after a gap of more than 3 buckets, adds
+// nothing) and then summed; see metrics.AggregateServices.
 func (s *server) handleMetricsHistory(w http.ResponseWriter, r *http.Request) {
 	from, to, step, err := metricsWindow(r)
 	if err != nil {
@@ -378,23 +466,16 @@ func (s *server) handleMetricsHistory(w http.ResponseWriter, r *http.Request) {
 		s.writeStackError(w, r, err)
 		return
 	}
-	pts, err := s.opts.Observe.Query(r.Context(), detail.Project, r.URL.Query().Get("service"), from, to, step)
+	rows, err := s.opts.Observe.QueryContainers(r.Context(), detail.Project, r.URL.Query().Get("service"), from, to, step)
 	if err != nil {
 		s.writeStackError(w, r, err)
 		return
 	}
+	pts := metrics.AggregateServices(rows, step)
 	out := make([]metricPointDTO, 0, len(pts))
-	prev := map[string]metrics.Point{}
 	for _, p := range pts {
-		dto := metricPointDTO{Time: p.TS.UTC().Format(time.RFC3339), Service: p.Service, CPU: p.CPU, Mem: p.Mem, MemLimit: p.MemLimit}
-		if last, ok := prev[p.Service]; ok {
-			if dt := p.TS.Sub(last.TS).Seconds(); dt > 0 {
-				dto.NetRx, dto.NetTx = rate(p.NetRx, last.NetRx, dt), rate(p.NetTx, last.NetTx, dt)
-				dto.BlkRead, dto.BlkWrite = rate(p.BlkRead, last.BlkRead, dt), rate(p.BlkWrite, last.BlkWrite, dt)
-			}
-		}
-		prev[p.Service] = p
-		out = append(out, dto)
+		out = append(out, metricPointDTO{Time: p.TS.UTC().Format(time.RFC3339), Service: p.Service, CPU: p.CPU, Mem: p.Mem, MemLimit: p.MemLimit,
+			NetRx: p.NetRx, NetTx: p.NetTx, BlkRead: p.BlkRead, BlkWrite: p.BlkWrite})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"points": out})
 }
@@ -652,6 +733,18 @@ func (s *server) handleCreateMetricsToken(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]string{"token": token})
+}
+
+// handleMetricsTokenStatus reports only whether a token hash is stored, from
+// the same in-memory cache /metrics uses; it never exposes the hash.
+func (s *server) handleMetricsTokenStatus(w http.ResponseWriter, r *http.Request) {
+	hash, err := s.tokenHash(r.Context())
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]bool{"configured": hash != ""})
 }
 
 func (s *server) handleDeleteMetricsToken(w http.ResponseWriter, r *http.Request) {

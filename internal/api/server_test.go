@@ -46,13 +46,16 @@ func newEnvWith(t *testing.T, setupToken string, tweak func(*api.Options)) *test
 	}
 	t.Cleanup(func() { db.Close() })
 	clock := &fakeClock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
-	svc, err := auth.NewService(db, clock.Now)
+	svc, err := auth.NewService(db, clock.Now, auth.WithFastHashingForTests())
 	if err != nil {
 		t.Fatal(err)
 	}
 	static := fstest.MapFS{
 		"index.html":    {Data: []byte("<html>spa</html>")},
 		"assets/app.js": {Data: []byte("console.log(1)")},
+		"favicon.svg":   {Data: []byte("<svg/>")},
+		".gitignore":    {Data: []byte("secret-ignore-rules")},
+		"sub/.hidden":   {Data: []byte("hidden")},
 	}
 	opts := api.Options{
 		Auth:       svc,
@@ -317,7 +320,7 @@ func TestSPAFallbackAndAPINotFound(t *testing.T) {
 	if rec := env.do(t, http.MethodGet, "/assets/app.js", ""); rec.Body.String() != "console.log(1)" {
 		t.Errorf("asset body = %q", rec.Body)
 	}
-	for _, target := range []string{"/", "/stacks/web", "/assets/"} {
+	for _, target := range []string{"/", "/stacks/web"} {
 		rec := env.do(t, http.MethodGet, target, "")
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "spa") {
 			t.Errorf("GET %s = %d %q, want index.html", target, rec.Code, rec.Body)
@@ -328,5 +331,102 @@ func TestSPAFallbackAndAPINotFound(t *testing.T) {
 	var body map[string]string
 	if rec.Code != http.StatusNotFound || json.Unmarshal(rec.Body.Bytes(), &body) != nil || body["error"] == "" {
 		t.Errorf("GET /api/nope = %d %q, want JSON 404", rec.Code, rec.Body)
+	}
+}
+
+func TestAssetsMissingIs404(t *testing.T) {
+	env := newTestEnv(t, "")
+	for _, target := range []string{"/assets/nope.js", "/assets/", "/assets"} {
+		rec := env.do(t, http.MethodGet, target, "")
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", target, rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), "spa") || strings.Contains(rec.Header().Get("Content-Type"), "html") {
+			t.Errorf("GET %s served HTML: %q (%s)", target, rec.Body, rec.Header().Get("Content-Type"))
+		}
+	}
+}
+
+func TestAssetsAreImmutable(t *testing.T) {
+	env := newTestEnv(t, "")
+	rec := env.do(t, http.MethodGet, "/assets/app.js", "")
+	if rec.Code != http.StatusOK || rec.Body.String() != "console.log(1)" {
+		t.Fatalf("GET /assets/app.js = %d %q", rec.Code, rec.Body)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
+		t.Errorf("Cache-Control = %q", got)
+	}
+}
+
+func TestIndexHasSecurityHeaders(t *testing.T) {
+	env := newTestEnv(t, "")
+	for _, target := range []string{"/", "/stacks/web"} {
+		rec := env.do(t, http.MethodGet, target, "")
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "spa") {
+			t.Fatalf("GET %s = %d %q", target, rec.Code, rec.Body)
+		}
+		h := rec.Header()
+		if h.Get("Cache-Control") != "no-cache" {
+			t.Errorf("%s Cache-Control = %q", target, h.Get("Cache-Control"))
+		}
+		if !strings.Contains(h.Get("Content-Security-Policy"), "script-src 'self'") {
+			t.Errorf("%s CSP = %q", target, h.Get("Content-Security-Policy"))
+		}
+		if h.Get("X-Content-Type-Options") != "nosniff" {
+			t.Errorf("%s X-Content-Type-Options = %q", target, h.Get("X-Content-Type-Options"))
+		}
+		if h.Get("Referrer-Policy") != "same-origin" {
+			t.Errorf("%s Referrer-Policy = %q", target, h.Get("Referrer-Policy"))
+		}
+	}
+}
+
+func TestRootFilesServedNoCache(t *testing.T) {
+	env := newTestEnv(t, "")
+	rec := env.do(t, http.MethodGet, "/favicon.svg", "")
+	if rec.Code != http.StatusOK || rec.Body.String() != "<svg/>" {
+		t.Fatalf("GET /favicon.svg = %d %q", rec.Code, rec.Body)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("Cache-Control = %q", got)
+	}
+}
+
+// ServeMux cleans the path and redirects; the redirect target is the cleaned
+// path, never the traversed file, and nothing is served with asset caching.
+func TestAssetTraversalIsRedirectedToCleanPath(t *testing.T) {
+	env := newTestEnv(t, "")
+	rec := env.do(t, http.MethodGet, "/assets/../index.html", "")
+	if rec.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("status = %d, want 307", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/index.html" {
+		t.Errorf("Location = %q, want /index.html", loc)
+	}
+	if strings.Contains(rec.Header().Get("Cache-Control"), "immutable") {
+		t.Errorf("traversal served with immutable caching: %q", rec.Header().Get("Cache-Control"))
+	}
+}
+
+func TestDotfilesAreNotServed(t *testing.T) {
+	env := newTestEnv(t, "")
+	for _, target := range []string{"/.gitignore", "/sub/.hidden", "/.git/config", "/assets/.hidden"} {
+		rec := env.do(t, http.MethodGet, target, "")
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", target, rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), "secret-ignore-rules") || strings.Contains(rec.Body.String(), "hidden") {
+			t.Errorf("GET %s leaked file content: %q", target, rec.Body)
+		}
+	}
+}
+
+func TestNosniffOnEveryResponse(t *testing.T) {
+	env := newTestEnv(t, "")
+	for _, target := range []string{"/", "/stacks/web", "/favicon.svg", "/assets/app.js", "/assets/nope.js", "/.gitignore", "/api/setup/status", "/api/me", "/api/nope", "/metrics"} {
+		rec := env.do(t, http.MethodGet, target, "")
+		if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("GET %s (%d) X-Content-Type-Options = %q, want nosniff", target, rec.Code, got)
+		}
 	}
 }

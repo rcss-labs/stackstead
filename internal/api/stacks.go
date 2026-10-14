@@ -22,6 +22,7 @@ type StacksAPI interface {
 	Raw(ctx context.Context, name string) (content []byte, hash string, err error)
 	SaveRaw(ctx context.Context, stack string, content []byte, hash string) (stacks.EditResult, error)
 	UpdateService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) (stacks.EditResult, error)
+	PreviewService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) (candidate []byte, err error)
 	Act(ctx context.Context, stack, action string) (stacks.Operation, error)
 	Remove(ctx context.Context, stack string, withVolumes bool) (stacks.Operation, error)
 	Networks(ctx context.Context) ([]engine.Network, error)
@@ -60,6 +61,7 @@ func (s *server) registerStackRoutes(mux *http.ServeMux) {
 	route("GET /api/stacks/{name}/compose", s.handleGetCompose)
 	route("PUT /api/stacks/{name}/compose", s.handlePutCompose)
 	route("PUT /api/stacks/{name}/services/{service}", s.handleUpdateService)
+	route("POST /api/stacks/{name}/services/{service}/preview", s.handlePreviewService)
 	route("POST /api/stacks/{name}/actions/{action}", s.handleAction)
 	route("DELETE /api/stacks/{name}", s.handleRemoveStack)
 	route("GET /api/stacks/{name}/operations", s.handleStackOperations)
@@ -165,6 +167,21 @@ func (s *server) handleUpdateService(w http.ResponseWriter, r *http.Request) {
 	}
 	markPartial(w, res.ChecksPartial)
 	writeJSON(w, http.StatusOK, hashResponse{Hash: res.Hash})
+}
+
+// handlePreviewService returns the file a save of the same edit would write,
+// without writing it, so the UI can show a diff before saving.
+func (s *server) handlePreviewService(w http.ResponseWriter, r *http.Request) {
+	var req updateServiceRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	candidate, err := s.opts.Stacks.PreviewService(r.Context(), r.PathValue("name"), r.PathValue("service"), req.Config.toDomain(), req.Hash)
+	if err != nil {
+		s.writeStackError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, previewResponse{Content: string(candidate), Hash: req.Hash})
 }
 
 func (s *server) handleAction(w http.ResponseWriter, r *http.Request) {

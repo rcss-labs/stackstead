@@ -1638,3 +1638,97 @@ func TestValidationUsesEngineNotStatusSource(t *testing.T) {
 		t.Errorf("Remove err = %v", err)
 	}
 }
+
+// ---- PreviewService ----
+
+func TestPreviewReturnsCandidateWithoutWriting(t *testing.T) {
+	h := newHarness(t)
+	hash := setupWeb(t, h)
+	before, _ := os.ReadFile(h.path("web"))
+	infoBefore, _ := os.Stat(h.path("web"))
+	h.compose.configFiles, h.compose.configContents = nil, nil
+
+	cfg := webCfg("8080:80")
+	cfg.Limits.Memory = "256M"
+	candidate, err := h.svc.PreviewService(context.Background(), "web", "web", cfg, hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(candidate), "256M") {
+		t.Errorf("candidate lacks the new limit:\n%s", candidate)
+	}
+	after, _ := os.ReadFile(h.path("web"))
+	infoAfter, _ := os.Stat(h.path("web"))
+	if string(before) != string(after) || !infoBefore.ModTime().Equal(infoAfter.ModTime()) {
+		t.Error("preview touched the compose file")
+	}
+	if len(h.compose.configFiles) != 0 {
+		t.Errorf("preview ran compose config: %v", h.compose.configFiles)
+	}
+	checkTempFiles(t, h)
+	if m, _ := filepath.Glob(h.path("web") + ".bak"); len(m) != 0 {
+		t.Errorf("backup written: %v", m)
+	}
+
+	// The preview is exactly what the save writes.
+	if _, err := h.svc.UpdateService(context.Background(), "web", "web", cfg, hash); err != nil {
+		t.Fatal(err)
+	}
+	saved, _ := os.ReadFile(h.path("web"))
+	if string(saved) != string(candidate) {
+		t.Errorf("save wrote different bytes than the preview:\n%s\nvs\n%s", saved, candidate)
+	}
+}
+
+func TestPreviewRefusesOverrideLikeSave(t *testing.T) {
+	h := newHarness(t)
+	hash := setupWeb(t, h)
+	name := writeOverride(t, h.path("web"))
+	cfg := composefile.ServiceConfig{Image: "nginx:2"}
+	_, saveErr := h.svc.UpdateService(context.Background(), "web", "web", cfg, hash)
+	_, previewErr := h.svc.PreviewService(context.Background(), "web", "web", cfg, hash)
+	if !errors.Is(previewErr, stacks.ErrStackUnavailable) || !strings.Contains(previewErr.Error(), name) {
+		t.Fatalf("preview err = %v, want ErrStackUnavailable naming %s", previewErr, name)
+	}
+	if saveErr == nil || saveErr.Error() != previewErr.Error() {
+		t.Errorf("preview err %q differs from save err %q", previewErr, saveErr)
+	}
+}
+
+func TestPreviewStaleHashConflicts(t *testing.T) {
+	h := newHarness(t)
+	setupWeb(t, h)
+	_, err := h.svc.PreviewService(context.Background(), "web", "web", webCfg("8080:80"), "stale")
+	if !errors.Is(err, composefile.ErrConflict) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestPreviewUnknownStackAndService(t *testing.T) {
+	h := newHarness(t)
+	hash := setupWeb(t, h)
+	if _, err := h.svc.PreviewService(context.Background(), "nope", "web", webCfg(), hash); !errors.Is(err, stacks.ErrStackNotFound) {
+		t.Errorf("unknown stack: %v", err)
+	}
+	if _, err := h.svc.PreviewService(context.Background(), "web", "nope", webCfg(), hash); !errors.Is(err, composefile.ErrServiceNotFound) {
+		t.Errorf("unknown service: %v", err)
+	}
+}
+
+func TestPreviewReadOnlyFieldIsRefused(t *testing.T) {
+	h := newHarness(t)
+	h.create(t, "web", webCfg("8080:80"))
+	src := "services:\n  web: {image: x, labels: &l {k: v}}\n"
+	if err := os.WriteFile(h.path("web"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, hash, err := h.svc.Raw(context.Background(), "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = h.svc.PreviewService(context.Background(), "web", "web", composefile.ServiceConfig{Image: "y"}, hash)
+	var ro *composefile.ReadOnlyFieldError
+	if !errors.Is(err, composefile.ErrEditRefused) && !errors.As(err, &ro) {
+		t.Errorf("err = %v, want ErrEditRefused or ReadOnlyFieldError", err)
+	}
+}

@@ -21,7 +21,14 @@ type argonParams struct {
 
 // hashParams follow the OWASP argon2id baseline. Verification reads the
 // parameters back from each stored hash, so raising them later is safe.
-var hashParams = argonParams{memory: 64 * 1024, iterations: 3, threads: 2, keyLen: 32, saltLen: 16}
+var defaultHashParams = argonParams{memory: 64 * 1024, iterations: 3, threads: 2, keyLen: 32, saltLen: 16}
+
+// hashParams is what NewService reads; only this package's tests reassign it.
+var hashParams = defaultHashParams
+
+// fastHashParams is the same algorithm at a fraction of the cost, for tests
+// of other packages that create admins and log in many times.
+var fastHashParams = argonParams{memory: 1024, iterations: 1, threads: 1, keyLen: 32, saltLen: 16}
 
 // deriveKey is a seam so tests can observe how many derivations run at once.
 var deriveKey = argon2.IDKey
@@ -37,7 +44,10 @@ var errMalformedHash = errors.New("malformed password hash")
 
 // hashPassword returns a PHC-format string: $argon2id$v=19$m=..,t=..,p=..$salt$key
 func hashPassword(password string) (string, error) {
-	p := hashParams
+	return hashPasswordWith(hashParams, password)
+}
+
+func hashPasswordWith(p argonParams, password string) (string, error) {
 	salt := make([]byte, p.saltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err

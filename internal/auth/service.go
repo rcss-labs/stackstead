@@ -30,6 +30,7 @@ var (
 	ErrWeakPassword       = fmt.Errorf("password must be at least %d characters", MinPasswordLength)
 	ErrInvalidCredentials = errors.New("invalid username or password")
 	ErrInvalidSession     = errors.New("invalid or expired session")
+	ErrSamePassword       = errors.New("new password must differ from the current one")
 )
 
 type User struct {
@@ -46,14 +47,30 @@ type Service struct {
 	// hashSlots bounds concurrent argon2 work: each hash allocates 64 MiB, so
 	// the worst case is maxConcurrentHashes x 64 MiB however many logins arrive.
 	hashSlots chan struct{}
+	params    argonParams
 }
 
-func NewService(db *sql.DB, now func() time.Time) (*Service, error) {
-	dummy, err := hashPassword(rand.Text())
+// Option customizes NewService.
+type Option func(*Service)
+
+// WithFastHashingForTests lowers the argon2 cost so tests that hash often run
+// quickly. Production code must not use it; hashes stay verifiable because
+// each one encodes its own parameters.
+func WithFastHashingForTests() Option {
+	return func(s *Service) { s.params = fastHashParams }
+}
+
+func NewService(db *sql.DB, now func() time.Time, opts ...Option) (*Service, error) {
+	s := &Service{db: db, now: now, hashSlots: make(chan struct{}, maxConcurrentHashes), params: hashParams}
+	for _, opt := range opts {
+		opt(s)
+	}
+	dummy, err := hashPasswordWith(s.params, rand.Text())
 	if err != nil {
 		return nil, fmt.Errorf("prepare dummy hash: %w", err)
 	}
-	return &Service{db: db, now: now, dummyHash: dummy, hashSlots: make(chan struct{}, maxConcurrentHashes)}, nil
+	s.dummyHash = dummy
+	return s, nil
 }
 
 // hash and verify run argon2 under the hashSlots limit, waiting for a slot
@@ -63,7 +80,7 @@ func (s *Service) hash(ctx context.Context, password string) (string, error) {
 		return "", err
 	}
 	defer s.releaseHashSlot()
-	return hashPassword(password)
+	return hashPasswordWith(s.params, password)
 }
 
 func (s *Service) verify(ctx context.Context, encoded, password string) (bool, error) {
@@ -187,6 +204,62 @@ func (s *Service) Authenticate(ctx context.Context, token string) (User, error) 
 func (s *Service) Logout(ctx context.Context, token string) error {
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash = ?`, hashToken(token)); err != nil {
 		return fmt.Errorf("delete session: %w", err)
+	}
+	return nil
+}
+
+// ChangePassword verifies current for userID, stores the argon2id hash of next,
+// and deletes every session of the user except keepToken's, so a leaked cookie
+// dies with the old password while the browser in use stays signed in.
+// Errors: ErrInvalidCredentials (wrong current), ErrWeakPassword, ErrSamePassword.
+func (s *Service) ChangePassword(ctx context.Context, userID int64, current, next, keepToken string) error {
+	var hash string
+	if err := s.db.QueryRowContext(ctx, `SELECT password_hash FROM users WHERE id = ?`, userID).Scan(&hash); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrInvalidCredentials
+		}
+		return fmt.Errorf("look up user: %w", err)
+	}
+	ok, err := s.verify(ctx, hash, current)
+	if err != nil {
+		return fmt.Errorf("verify password: %w", err)
+	}
+	if !ok {
+		return ErrInvalidCredentials
+	}
+	if utf8.RuneCountInString(next) < MinPasswordLength {
+		return ErrWeakPassword
+	}
+	if next == current {
+		return ErrSamePassword
+	}
+	newHash, err := s.hash(ctx, next)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	// The store has a single connection: only the two statements run while the
+	// transaction is open.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin password change: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	// Compare-and-swap on the hash we verified: if another change landed
+	// while we were hashing, this one must not silently overwrite it.
+	res, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?`, newHash, userID, hash)
+	if err != nil {
+		return fmt.Errorf("update password: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("update password: %w", err)
+	} else if n == 0 {
+		return ErrInvalidCredentials
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND token_hash != ?`, userID, hashToken(keepToken)); err != nil {
+		return fmt.Errorf("delete other sessions: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit password change: %w", err)
 	}
 	return nil
 }
