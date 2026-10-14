@@ -14,7 +14,7 @@ const (
 	maxStatsTimeout     = 5 * time.Second
 	pruneEvery          = time.Hour
 	warnEvery           = time.Minute
-	subscriberBuffer    = 8
+	subscriberBuffer    = 256
 )
 
 // StatsSource takes one stats reading of a container.
@@ -144,7 +144,12 @@ func (s *Sampler) tick(ctx context.Context) {
 	}
 	containers, err := s.lister.Containers(ctx)
 	if err != nil {
-		s.log.Warn("metrics: list containers", "err", err)
+		s.mu.Lock()
+		s.latest = nil // don't serve stale values as current
+		s.mu.Unlock()
+		if ctx.Err() == nil {
+			s.log.Warn("metrics: list containers", "err", err)
+		}
 		return
 	}
 	var targets []engine.Container
@@ -204,26 +209,41 @@ func (s *Sampler) tick(ctx context.Context) {
 		})
 	}
 
-	err = s.store.InsertBatch(ctx, batch)
+	var werr error
+	if len(batch) > 0 {
+		werr = s.store.InsertBatch(ctx, batch)
+	}
+	failed := werr != nil && ctx.Err() == nil // a write cut short by shutdown is not a failure
 	s.mu.Lock()
 	s.latest = latest
-	s.degraded = err != nil
-	warn := err != nil && now.Sub(s.lastWarn) >= warnEvery
+	if len(batch) > 0 && (werr == nil || failed) {
+		s.degraded = failed
+	}
+	warn := failed && now.Sub(s.lastWarn) >= warnEvery
 	if warn {
 		s.lastWarn = now
 	}
+	perProject := map[string]int{}
+	for _, m := range batch {
+		perProject[m.Project]++
+	}
+	// A subscriber is dropped only when it has no room for this tick's whole
+	// burst, i.e. it did not drain what earlier ticks sent.
+	for project, n := range perProject {
+		for sub := range s.subs[project] {
+			if cap(sub.ch)-len(sub.ch) < n {
+				s.dropLocked(project, sub)
+			}
+		}
+	}
 	for _, m := range batch {
 		for sub := range s.subs[m.Project] {
-			select {
-			case sub.ch <- m:
-			default:
-				s.dropLocked(m.Project, sub)
-			}
+			sub.ch <- m
 		}
 	}
 	s.mu.Unlock()
 	if warn {
-		s.log.Error("metrics: write failed, dropping samples", "err", err)
+		s.log.Error("metrics: write failed, dropping samples", "err", werr)
 	}
 }
 

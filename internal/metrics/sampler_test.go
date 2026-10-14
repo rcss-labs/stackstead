@@ -17,9 +17,18 @@ import (
 	"github.com/rcss-labs/stackstead/internal/metrics"
 )
 
-type fakeLister struct{ list []engine.Container }
+type fakeLister struct {
+	list   []engine.Container
+	err    error
+	onCall func()
+}
 
-func (f *fakeLister) Containers(context.Context) ([]engine.Container, error) { return f.list, nil }
+func (f *fakeLister) Containers(context.Context) ([]engine.Container, error) {
+	if f.onCall != nil {
+		f.onCall()
+	}
+	return f.list, f.err
+}
 
 type fakeStats struct {
 	mu       sync.Mutex
@@ -270,7 +279,7 @@ func TestSlowSubscriberDropped(t *testing.T) {
 	defer cancelOther()
 
 	var got int
-	for i := 0; i < 40; i++ {
+	for i := 0; i < 300; i++ {
 		h.tick()
 		select {
 		case s := <-fast:
@@ -289,7 +298,7 @@ func TestSlowSubscriberDropped(t *testing.T) {
 	}
 	// slow never read: must have been closed after its buffer filled
 	closed := false
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 1000; i++ {
 		select {
 		case _, ok := <-slow:
 			if !ok {
@@ -306,7 +315,7 @@ func TestSlowSubscriberDropped(t *testing.T) {
 	}
 	cancelSlow()
 	cancelSlow() // idempotent
-	if got != 40 {
+	if got != 300 {
 		t.Errorf("fast got %d", got)
 	}
 }
@@ -341,5 +350,122 @@ func TestRunReturnsOnCancelWithoutLeaks(t *testing.T) {
 	}
 	if n := runtime.NumGoroutine(); n > before {
 		t.Errorf("goroutines %d -> %d", before, n)
+	}
+}
+
+func TestKeepingUpSubscriberNotDroppedOnLargeStack(t *testing.T) {
+	var cs []engine.Container
+	for i := 0; i < 12; i++ {
+		cs = append(cs, ctr(fmt.Sprint("c", i), "p", fmt.Sprint("s", i), "running"))
+	}
+	h := newHarness(t, cs...)
+	h.start(t)
+	reader, cancelReader := h.s.Subscribe("p")
+	defer cancelReader()
+	idle, cancelIdle := h.s.Subscribe("p")
+	defer cancelIdle()
+
+	var received int32
+	readerDone := make(chan struct{})
+	go func() {
+		defer close(readerDone)
+		for range reader {
+			atomic.AddInt32(&received, 1)
+		}
+	}()
+	for i := 0; i < 40; i++ {
+		h.tick()
+		for deadline := time.Now().Add(2 * time.Second); atomic.LoadInt32(&received) < int32(12*(i+1)) && time.Now().Before(deadline); {
+			time.Sleep(time.Millisecond)
+		}
+	}
+	cancelReader()
+	<-readerDone
+	if n := atomic.LoadInt32(&received); n != 12*40 {
+		t.Errorf("reader received %d, want %d (dropped while keeping up)", n, 12*40)
+	}
+	closed := false
+	for i := 0; i < 1000 && !closed; i++ {
+		select {
+		case _, ok := <-idle:
+			closed = !ok
+		default:
+			i = 1000
+		}
+	}
+	if !closed {
+		t.Error("never-reading subscriber was not dropped")
+	}
+}
+
+func TestEmptyTickDoesNotClearDegraded(t *testing.T) {
+	h := newHarness(t, ctr("a", "p", "web", "running"))
+	h.start(t)
+	h.db.Exec("ALTER TABLE metric_samples RENAME TO metric_samples_x")
+	h.tick()
+	if !h.s.Degraded() {
+		t.Fatal("want degraded")
+	}
+	h.lst.list = nil
+	h.tick()
+	if !h.s.Degraded() {
+		t.Error("empty tick cleared degraded while the store is still broken")
+	}
+	h.db.Exec("ALTER TABLE metric_samples_x RENAME TO metric_samples")
+	h.lst.list = []engine.Container{ctr("a", "p", "web", "running")}
+	h.tick()
+	if h.s.Degraded() {
+		t.Error("want recovered after a successful write")
+	}
+}
+
+func TestListerErrorClearsLatest(t *testing.T) {
+	h := newHarness(t, ctr("a", "p", "web", "running"))
+	h.start(t)
+	h.tick()
+	if len(h.s.Latest()) != 1 {
+		t.Fatal("want latest populated")
+	}
+	h.lst.err = errors.New("cache down")
+	h.tick()
+	if n := len(h.s.Latest()); n != 0 {
+		t.Errorf("Latest has %d stale entries after lister error", n)
+	}
+}
+
+type syncBuf struct {
+	mu sync.Mutex
+	b  []byte
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.b = append(s.b, p...)
+	return len(p), nil
+}
+
+func (s *syncBuf) String() string { s.mu.Lock(); defer s.mu.Unlock(); return string(s.b) }
+
+func TestShutdownIsNotLoggedOrReportedAsFailure(t *testing.T) {
+	st, _ := newStore(t)
+	var buf syncBuf
+	ctx, cancel := context.WithCancel(context.Background())
+	lst := &fakeLister{list: []engine.Container{ctr("a", "p", "web", "running")}}
+	lst.onCall = func() { cancel(); lst.err = context.Canceled }
+	ticks := make(chan time.Time)
+	s := metrics.NewSampler(st, lst, &fakeStats{}, 10*time.Second, time.Hour, slog.New(slog.NewTextHandler(&buf, nil)), time.Now)
+	s.UseTicks(ticks)
+	fin := make(chan struct{}, 1)
+	s.OnTickDone(func() { fin <- struct{}{} })
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+	ticks <- time.Now()
+	<-done
+	if s.Degraded() {
+		t.Error("shutdown reported as degraded")
+	}
+	if out := buf.String(); out != "" {
+		t.Errorf("unexpected log on shutdown: %s", out)
 	}
 }
