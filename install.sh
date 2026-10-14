@@ -298,12 +298,19 @@ nologin_shell() {
 # ---------------------------------------------------------------- download tools
 
 DOWNLOADER=
+WGET_HTTPS_ONLY=
 
 detect_downloader() {
 	if have curl; then
 		DOWNLOADER=curl
 	elif have wget; then
 		DOWNLOADER=wget
+		# GNU wget can refuse to follow https to http; BusyBox wget cannot
+		if wget --help 2>&1 | grep -q -- '--https-only'; then
+			WGET_HTTPS_ONLY=1
+		else
+			warn "this wget cannot refuse a redirect from https to http; install curl for pinned https downloads"
+		fi
 	else
 		die 4 "need curl or wget (apt install curl | dnf install curl | apk add curl)"
 	fi
@@ -317,7 +324,14 @@ try_fetch() {
 		*) curl -fsSL --retry 2 --connect-timeout 15 --max-time 300 -o "$2" "$1" ;;
 		esac
 	else
-		wget -q -O "$2" -T 30 "$1"
+		case $1 in
+		https://*) if [ -n "$WGET_HTTPS_ONLY" ]; then
+			wget -q --https-only -O "$2" -T 30 "$1"
+		else
+			wget -q -O "$2" -T 30 "$1"
+		fi ;;
+		*) wget -q -O "$2" -T 30 "$1" ;;
+		esac
 	fi
 }
 

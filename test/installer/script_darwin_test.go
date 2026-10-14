@@ -606,6 +606,40 @@ func TestScriptHardening(t *testing.T) {
 		}
 	})
 
+	t.Run("WgetPinsHTTPSForHTTPSURLs", func(t *testing.T) {
+		// curl gets --proto =https; wget must not follow a redirect to plain http either
+		f := newFixture(t, "1.0.0")
+		f.path = minimalPath(t, "curl", "wget")
+		f.stubs["wget"] = `[ "$1" != --help ] || { echo "       --https-only                only follow secure HTTPS links"; exit 0; }
+exit 4`
+		out, errOut, code := f.run("--base-url", "https://releases.invalid/stackstead", "--version", "v1.0.0")
+		mustExit(t, code, 5, out, errOut)
+		var fetches int
+		for _, l := range strings.Split(stubLog(f.stubD, "wget"), "\n") {
+			if strings.Contains(l, "https://") {
+				fetches++
+				if !strings.Contains(l, "--https-only") {
+					t.Errorf("wget fetched an https URL without --https-only: %q", l)
+				}
+			}
+		}
+		if fetches == 0 {
+			t.Fatalf("wget was not used: %q", stubLog(f.stubD, "wget"))
+		}
+		notContains(t, "stderr", errOut, "--https-only")
+
+		// BusyBox wget has no such option: it is not passed (that would fail every
+		// download), and the user is told the redirect cannot be pinned
+		f = newFixture(t, "1.0.0")
+		f.path = minimalPath(t, "curl", "wget")
+		f.stubs["wget"] = `[ "$1" != --help ] || { echo "BusyBox v1.36.1 multi-call binary."; exit 0; }
+exit 4`
+		out, errOut, code = f.run("--base-url", "https://releases.invalid/stackstead", "--version", "v1.0.0")
+		mustExit(t, code, 5, out, errOut)
+		notContains(t, "wget calls", stubLog(f.stubD, "wget"), "--https-only")
+		contains(t, "stderr", errOut, "warning:", "https", "curl")
+	})
+
 	t.Run("UninstallIgnoresTheBaseURL", func(t *testing.T) {
 		f := newFixture(t, "1.0.0")
 		out, errOut, code := f.run()
