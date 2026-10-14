@@ -115,6 +115,22 @@ describe('ComposeEditor', () => {
     expect(screen.getByRole('button', { name: 'Preview changes' }).getAttribute('aria-disabled')).toBe('true');
   });
 
+  it('soft-disables Save and ignores Ctrl+S during a conflict, naming the way out', async () => {
+    putResponses = [{ status: 409, body: { error: 'changed' } }];
+    const { ta } = await loaded();
+    await edit(ta, 'mine\n');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByRole('button', { name: 'Reload' });
+    const save = screen.getByRole('button', { name: 'Save' });
+    expect(save.getAttribute('aria-disabled')).toBe('true');
+    expect(save.getAttribute('title') ?? save.textContent).toContain('Resolve the conflict first');
+    const before = puts().length;
+    await userEvent.type(ta, '{Control>}s{/Control}');
+    await userEvent.click(save);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(puts()).toHaveLength(before);
+  });
+
   it('beforeunload is cancelled while dirty (returnValue is also set; jsdom plain Events coerce it, so only defaultPrevented is asserted)', async () => {
     const { ta } = await loaded();
     await edit(ta, 'changed\n');
