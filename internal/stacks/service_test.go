@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1385,43 +1386,85 @@ func TestFailedRevertIsLoggedAtErrorLevel(t *testing.T) {
 func TestActAndRemoveWaitForConcurrentEditOfSameStack(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		act  func(h *harness) error
+		act  func(h *harness) (stacks.Operation, error)
 	}{
-		{"act", func(h *harness) error {
-			_, err := h.svc.Act(context.Background(), "web", "up")
-			return err
+		{"act", func(h *harness) (stacks.Operation, error) {
+			return h.svc.Act(context.Background(), "web", "up")
 		}},
-		{"remove", func(h *harness) error {
-			_, err := h.svc.Remove(context.Background(), "web", false)
-			return err
+		{"remove", func(h *harness) (stacks.Operation, error) {
+			return h.svc.Remove(context.Background(), "web", false)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t)
-			h.compose.projectFn = projectFromFile
 			h.create(t, "web", webCfg())
 			ctx := context.Background()
 			_, hash, _ := h.svc.Raw(ctx, "web")
+
+			// Record every project name compose derives once the edit has
+			// claimed "renamed". An Act/Remove that did not wait for the edit
+			// would read the still-unsaved file and derive the old name.
+			var claimed atomic.Bool
+			var staleMu sync.Mutex
+			var derived []string
+			h.compose.projectFn = func(file string) string {
+				project := projectFromFile(file)
+				if claimed.Load() {
+					staleMu.Lock()
+					derived = append(derived, project)
+					staleMu.Unlock()
+				}
+				return project
+			}
 
 			// While the edit has claimed "renamed" but not yet saved the file,
 			// start Act/Remove. Unlocked, it would see the claimed project,
 			// derive the old one from the unsaved file and revert the claim
 			// once the edit finished, leaving registry and file disagreeing.
-			var actDone chan error
+			type result struct {
+				op  stacks.Operation
+				err error
+			}
+			var actDone chan result
 			var once sync.Once
 			h.svc.SetAfterClaim(func() {
 				once.Do(func() {
-					actDone = make(chan error, 1)
-					go func() { actDone <- tc.act(h) }()
+					claimed.Store(true)
+					actDone = make(chan result, 1)
+					go func() {
+						op, err := tc.act(h)
+						actDone <- result{op, err}
+					}()
 					time.Sleep(200 * time.Millisecond)
 				})
 			})
 			if _, err := h.svc.SaveRaw(ctx, "web", rawWithName("renamed", "web"), hash); err != nil {
 				t.Fatal(err)
 			}
-			<-actDone
+			res := <-actDone
+			if res.err != nil {
+				t.Fatalf("%s: %v", tc.name, res.err)
+			}
+			if op := wait(t, h.ops, res.op.ID); op.State != stacks.OpSucceeded {
+				t.Fatalf("operation state = %v, want succeeded", op.State)
+			}
+			staleMu.Lock()
+			for _, project := range derived {
+				if project != "renamed" {
+					t.Errorf("%s derived project %q from the unsaved file; it must wait for the edit", tc.name, project)
+				}
+			}
+			if len(derived) == 0 {
+				t.Errorf("%s never derived a project name", tc.name)
+			}
+			staleMu.Unlock()
 			if tc.name == "remove" {
-				return // the stack is gone; nothing left to disagree
+				// The edit finished first, then Remove ran against its result
+				// and unregistered the stack; no claim was reverted into it.
+				if _, err := h.reg.Get(ctx, "web"); !errors.Is(err, stacks.ErrStackNotFound) {
+					t.Fatalf("registry Get after remove = %v, want ErrStackNotFound", err)
+				}
+				return
 			}
 			e, err := h.reg.Get(ctx, "web")
 			if err != nil {
