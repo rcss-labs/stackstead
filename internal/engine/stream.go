@@ -62,8 +62,10 @@ func (c *Client) openStream(caller context.Context, path string) (*http.Response
 	if err != nil {
 		return nil, nil, err
 	}
-	ctx, cancel := context.WithCancel(caller)
-	headerTimer := time.AfterFunc(c.timeout, cancel)
+	ctx, cancelCause := context.WithCancelCause(caller)
+	cancel := context.CancelFunc(func() { cancelCause(context.Canceled) })
+	// The cause lets a header timeout report a deadline rather than "canceled".
+	headerTimer := time.AfterFunc(c.timeout, func() { cancelCause(context.DeadlineExceeded) })
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker/v"+v+path, nil)
 	if err != nil {
 		headerTimer.Stop()
@@ -74,6 +76,9 @@ func (c *Client) openStream(caller context.Context, path string) (*http.Response
 	if err != nil {
 		headerTimer.Stop()
 		cancel()
+		if cause := context.Cause(ctx); caller.Err() == nil && errors.Is(cause, context.DeadlineExceeded) {
+			err = cause
+		}
 		return nil, nil, c.classify(caller, err)
 	}
 	if !headerTimer.Stop() { // the header deadline fired just as headers arrived
@@ -305,7 +310,8 @@ func (c *Client) streamLogs(ctx context.Context, containerID string, opts LogOpt
 	for _, s := range []string{"stdout", "stderr"} {
 		bufs[s].flush(emit[s])
 	}
-	if readErr == nil || errors.Is(readErr, io.EOF) || errors.Is(readErr, io.ErrUnexpectedEOF) {
+	// Only a clean EOF is a normal end; a cut-short body or truncated frame is a failure.
+	if readErr == nil || errors.Is(readErr, io.EOF) {
 		return nil
 	}
 	return c.classify(ctx, readErr)
@@ -414,7 +420,7 @@ func parseLogLine(stream string, raw []byte) LogLine {
 	}
 	if len(line.Text) > maxLogLine {
 		cut := maxLogLine
-		for cut > 0 && !utf8.RuneStart(line.Text[cut]) {
+		for back := 0; back < utf8.UTFMax-1 && cut > 0 && !utf8.RuneStart(line.Text[cut]); back++ {
 			cut--
 		}
 		line.Text = line.Text[:cut]
