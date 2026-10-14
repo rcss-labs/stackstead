@@ -86,7 +86,7 @@ Always include the Gatekeeper block and the checksums:
 ````markdown
 ## Install
 
-    curl -fsSL https://raw.githubusercontent.com/rcss-labs/stackstead/main/install.sh | sudo sh
+    curl -fsSL https://github.com/rcss-labs/stackstead/releases/latest/download/install.sh | sudo sh
 
 Or use the `.deb`, `.rpm` or macOS `.pkg` below. Details: docs/install.md.
 

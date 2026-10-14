@@ -18,10 +18,13 @@ Colima on macOS) and the Compose v2 plugin yourself. Every installer checks for 
 ## The install script
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rcss-labs/stackstead/main/install.sh | sudo sh
+curl -fsSL https://github.com/rcss-labs/stackstead/releases/latest/download/install.sh | sudo sh
 # a specific release
-curl -fsSL https://raw.githubusercontent.com/rcss-labs/stackstead/main/install.sh | sudo sh -s -- --version v1.2.3
+curl -fsSL https://github.com/rcss-labs/stackstead/releases/latest/download/install.sh | sudo sh -s -- --version v1.2.3
 ```
+
+This is the `install.sh` attached to the latest release (it is listed in that release's `SHA256SUMS`), not
+the development copy on `main`.
 
 Prefer to read it first: download `install.sh`, read it, run `sudo sh install.sh`. `sh install.sh --help`
 lists every flag, environment variable and exit code.
@@ -70,7 +73,7 @@ start the service on a fresh install, restart it on an upgrade, and recommend (n
 | service unit | `/usr/lib/systemd/system/stackstead.service` | `/etc/systemd/system/stackstead.service` |
 | config | `/etc/stackstead/config.yaml` (0640 root:stackstead, kept on upgrade) | same, written only if absent |
 | data (database) | `/var/lib/stackstead` (0700 stackstead) | same |
-| default stacks folder | `/opt/stacks` (2775 stackstead:docker, never removed) | same |
+| default stacks folder | `/opt/stacks` (created 2775 stackstead:docker; an existing one is never changed or removed) | same |
 | uninstall helper | your package manager | `/usr/local/share/stackstead/install.sh --uninstall` |
 
 The shipped unit expects the binary at `/usr/bin/stackstead`; the script rewrites `ExecStart` for its
@@ -160,7 +163,7 @@ sudo userdel stackstead
 Two ways, same result:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rcss-labs/stackstead/main/install.sh | sudo sh
+curl -fsSL https://github.com/rcss-labs/stackstead/releases/latest/download/install.sh | sh
 ```
 
 or the universal `stackstead_<version>_darwin.pkg` from the release page (one download for Intel and Apple
@@ -181,7 +184,7 @@ The binary itself runs normally: it is ad-hoc signed and neither `installer` nor
 | | Path |
 |---|---|
 | binary | `/usr/local/bin/stackstead` |
-| helper files (for uninstall) | `/usr/local/share/stackstead/` |
+| helper files (for uninstall) | `/usr/local/share/stackstead/`: `install.sh`, `launchagent.plist.in`, `LICENSE`; the `.pkg` also ships `config.example.yaml` there (the documented reference config) |
 | config | `~/Library/Application Support/Stackstead/config.yaml` |
 | data | `~/Library/Application Support/Stackstead/data/` |
 | default stacks folder | `~/Library/Application Support/Stackstead/stacks/` |
