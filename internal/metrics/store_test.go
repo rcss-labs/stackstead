@@ -3,6 +3,7 @@ package metrics_test
 import (
 	"context"
 	"database/sql"
+	"math"
 	"path/filepath"
 	"testing"
 	"time"
@@ -140,5 +141,89 @@ func TestQueryContainersBucketsPerContainer(t *testing.T) {
 	}
 	if r := rows[2]; r.Samples != 1 || r.NetRx != 50 {
 		t.Errorf("web-2 bucket 0 = %+v", r)
+	}
+}
+
+func TestQueryContainersWindowIsFromInclusiveToExclusive(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	b := base.Truncate(10 * time.Second)
+	err := s.InsertBatch(ctx, []metrics.Sample{
+		sample(b.Add(-time.Second), "p", "web", 1, 1, 1),
+		sample(b, "p", "web", 2, 1, 1),
+		sample(b.Add(9*time.Second), "p", "web", 3, 1, 1),
+		sample(b.Add(10*time.Second), "p", "web", 4, 1, 1),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Window [b, b+10s): the sample at from is included, the one at to is not,
+	// and the one before from is not; both kept samples share the bucket at b.
+	rows, err := s.QueryContainers(ctx, "p", "", b, b.Add(10*time.Second), 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Samples != 2 || rows[0].CPUSum != 5 || !rows[0].TS.Equal(b) {
+		t.Errorf("rows = %+v, want one bucket at %v with cpu sum 5 over 2 samples", rows, b)
+	}
+}
+
+func TestQueryContainersBucketsAreEpochAligned(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	b := base.Truncate(time.Minute)
+	// A window starting mid-bucket still buckets on epoch multiples of step.
+	err := s.InsertBatch(ctx, []metrics.Sample{
+		sample(b.Add(25*time.Second), "p", "web", 1, 1, 1),
+		sample(b.Add(35*time.Second), "p", "web", 1, 1, 1),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.QueryContainers(ctx, "p", "", b.Add(25*time.Second), b.Add(time.Minute), 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || !rows[0].TS.Equal(b) || !rows[1].TS.Equal(b.Add(30*time.Second)) {
+		t.Errorf("rows = %+v, want buckets at %v and %v", rows, b, b.Add(30*time.Second))
+	}
+}
+
+func TestPruneRemovesOnlyOlderRows(t *testing.T) {
+	s, db := newStore(t)
+	ctx := context.Background()
+	if err := s.InsertBatch(ctx, []metrics.Sample{
+		sample(base.Add(-2*time.Second), "p", "web", 1, 1, 1),
+		sample(base.Add(-time.Second), "p", "web", 1, 1, 1),
+		sample(base, "p", "web", 1, 1, 1),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.Prune(ctx, base)
+	if err != nil || n != 2 {
+		t.Fatalf("Prune = %d, %v; want 2", n, err)
+	}
+	var left int
+	var ts int64
+	if err := db.QueryRow("SELECT COUNT(*), MIN(ts) FROM metric_samples").Scan(&left, &ts); err != nil {
+		t.Fatal(err)
+	}
+	if left != 1 || ts != base.Unix() {
+		t.Errorf("left = %d rows, oldest ts %d; want 1 row at %d", left, ts, base.Unix())
+	}
+}
+
+func TestHugeCountersClampToInt64Max(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	if err := s.InsertBatch(ctx, []metrics.Sample{sample(base, "p", "web", 1, math.MaxUint64, math.MaxUint64)}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.QueryContainers(ctx, "p", "", base, base.Add(time.Second), time.Second)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("%v %v", rows, err)
+	}
+	if rows[0].NetRx != math.MaxInt64 || rows[0].BlkWrite != math.MaxInt64 {
+		t.Errorf("clamped counters = %d/%d, want MaxInt64", rows[0].NetRx, rows[0].BlkWrite)
 	}
 }
