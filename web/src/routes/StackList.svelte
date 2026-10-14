@@ -6,7 +6,8 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import { link } from '$lib/router';
-  import { stacks } from '$lib/stores/stacks';
+  import { operationsRefresh, refreshStacks, stacks } from '$lib/stores/stacks';
+  import Button from '$lib/components/Button.svelte';
 
   let query = $state('');
   let runningStacks = $state<Set<string>>(new Set());
@@ -19,26 +20,44 @@
   });
   const degraded = $derived($stacks.items.length > 0 && $stacks.items.every((s) => s.status === 'unknown'));
 
-  // Running operations are refetched whenever the list is (a change usually
-  // means an operation started or ended); a stale answer is dropped.
-  let opsSeq = 0;
+  // Running operations are rechecked when the list changes, when asked
+  // (operationsRefresh), and with backoff while any are running: an operation
+  // ending emits no container change, so polling is the only way the spinner clears.
   $effect(() => {
     void $stacks.items;
-    const mine = ++opsSeq;
-    api
-      .runningOperations()
-      .then((r: Operation[]) => {
-        if (mine === opsSeq) runningStacks = new Set(r.map((o) => o.stack));
-      })
-      .catch(() => {
-        // The badge column still works without the spinner.
-      });
+    void $operationsRefresh;
+    if ($stacks.loading) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let attempt = 0;
+    let hadRunning = false;
+    const schedule = () => {
+      timer = setTimeout(check, Math.min(2000 * 2 ** attempt, 10000));
+      attempt++;
+    };
+    const check = async () => {
+      try {
+        const r: Operation[] = await api.runningOperations();
+        if (cancelled) return;
+        runningStacks = new Set(r.map((o) => o.stack));
+        hadRunning = r.length > 0;
+        if (hadRunning) schedule();
+      } catch {
+        // The badge column still works without the spinner; keep trying only if we were tracking one.
+        if (!cancelled && hadRunning) schedule();
+      }
+    };
+    void check();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   });
 </script>
 
 <section>
   <header class="head">
-    <h1>Stacks</h1>
+    <h1 id="stacks-heading">Stacks</h1>
     <span class="count">{$stacks.items.length} {$stacks.items.length === 1 ? 'stack' : 'stacks'}</span>
     <label class="search">
       <span class="visually-hidden">Search stacks</span>
@@ -48,6 +67,9 @@
 
   {#if $stacks.error}
     <Banner kind="danger" title="Could not load stacks">{#snippet children()}{$stacks.error}{/snippet}</Banner>
+    {#if $stacks.items.length === 0}
+      <p><Button variant="secondary" onclick={() => void refreshStacks()}>{#snippet children()}Retry{/snippet}</Button></p>
+    {/if}
   {/if}
   {#if degraded}
     <Banner kind="warning" title="Degraded">{#snippet children()}Container status is unavailable, so every stack shows as unknown.{/snippet}</Banner>
@@ -55,7 +77,9 @@
 
   {#if $stacks.loading}
     <Spinner />
-  {:else if $stacks.items.length === 0 && !$stacks.error}
+  {:else if $stacks.items.length === 0 && $stacks.error}
+    <!-- the banner above is the whole story -->
+  {:else if $stacks.items.length === 0}
     <EmptyState title="No stacks yet" description="Create a stack or import an existing compose file.">
       {#snippet children()}
         <p class="actions">
@@ -65,34 +89,54 @@
       {/snippet}
     </EmptyState>
   {:else}
-    <table>
-      <thead>
-        <tr>
-          <th scope="col">Name</th>
-          <th scope="col">Status</th>
-          <th scope="col">Running</th>
-          <th scope="col">Origin</th>
-          <th scope="col">Project</th>
-          <th scope="col">Path</th>
+    <!-- explicit roles keep table semantics when the mobile layout sets display:block -->
+    <!-- svelte-ignore a11y_no_redundant_roles -->
+    <table role="table" aria-labelledby="stacks-heading">
+      <!-- svelte-ignore a11y_no_redundant_roles -->
+      <thead role="rowgroup">
+        <!-- svelte-ignore a11y_no_redundant_roles -->
+        <tr role="row">
+          <!-- svelte-ignore a11y_no_redundant_roles -->
+          <th role="columnheader" scope="col">Name</th>
+          <!-- svelte-ignore a11y_no_redundant_roles -->
+          <th role="columnheader" scope="col">Status</th>
+          <!-- svelte-ignore a11y_no_redundant_roles -->
+          <th role="columnheader" scope="col">Running</th>
+          <!-- svelte-ignore a11y_no_redundant_roles -->
+          <th role="columnheader" scope="col">Origin</th>
+          <!-- svelte-ignore a11y_no_redundant_roles -->
+          <th role="columnheader" scope="col">Project</th>
+          <!-- svelte-ignore a11y_no_redundant_roles -->
+          <th role="columnheader" scope="col">Path</th>
         </tr>
       </thead>
-      <tbody>
+      <!-- svelte-ignore a11y_no_redundant_roles -->
+      <tbody role="rowgroup">
         {#each visible as s (s.name)}
-          <tr>
-            <td data-label="Name">
-              <a href={`/stacks/${encodeURIComponent(s.name)}`} use:link>{s.name}</a>
-              {#if runningStacks.has(s.name)}<Spinner label="Operation running" />{/if}
+          <!-- svelte-ignore a11y_no_redundant_roles -->
+          <tr role="row">
+            <!-- svelte-ignore a11y_no_redundant_roles -->
+            <td role="cell" data-label="Name">
+              <span class="name">
+                <a href={`/stacks/${encodeURIComponent(s.name)}`} use:link>{s.name}</a>
+                {#if runningStacks.has(s.name)}<Spinner label={`Operation running on ${s.name}`} />{/if}
+              </span>
             </td>
-            <td data-label="Status"><StatusBadge status={s.status} /></td>
-            <td data-label="Running">{s.running}/{s.serviceCount}</td>
-            <td data-label="Origin">{s.origin}</td>
-            <td data-label="Project">{s.project}</td>
-            <td data-label="Path" class="path"><span title={s.path}>{s.path}</span></td>
+            <!-- svelte-ignore a11y_no_redundant_roles -->
+            <td role="cell" data-label="Status"><StatusBadge status={s.status} /></td>
+            <!-- svelte-ignore a11y_no_redundant_roles -->
+            <td role="cell" data-label="Running">{s.running}/{s.serviceCount}</td>
+            <!-- svelte-ignore a11y_no_redundant_roles -->
+            <td role="cell" data-label="Origin">{s.origin}</td>
+            <!-- svelte-ignore a11y_no_redundant_roles -->
+            <td role="cell" data-label="Project">{s.project}</td>
+            <!-- svelte-ignore a11y_no_redundant_roles -->
+            <td role="cell" data-label="Path" class="path"><span title={s.path}>{s.path}</span></td>
           </tr>
         {/each}
       </tbody>
     </table>
-    {#if visible.length === 0}<p class="none">No stacks match "{query}".</p>{/if}
+    {#if visible.length === 0 && query.trim()}<p class="none">No stacks match "{query}".</p>{/if}
   {/if}
 </section>
 
@@ -104,7 +148,7 @@
   .actions { display: flex; gap: var(--space-4); }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); }
-  td:first-child { display: flex; align-items: center; gap: var(--space-2); }
+  .name { display: inline-flex; align-items: center; gap: var(--space-2); }
   .path { max-width: 22rem; }
   .path span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 0.875rem; }
   .none { color: var(--muted); }

@@ -1,9 +1,9 @@
 import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { writable } from 'svelte/store';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Change, Operation, StackSummary } from '$lib/api/types';
-import { startStacks } from '$lib/stores/stacks';
+import { refreshRunningOps, startStacks } from '$lib/stores/stacks';
 import { installFakeFetch, type FakeFetch } from '../vitest-setup';
 import StackList from './StackList.svelte';
 
@@ -78,8 +78,8 @@ describe('StackList', () => {
   it('shows a running-operation spinner only for stacks with a running operation', async () => {
     await mount([stack('alpha'), stack('beta')], [op('beta')]);
     const rows = screen.getAllByRole('row').slice(1);
-    await waitFor(() => expect(within(rows[1]).getByText('Operation running')).toBeTruthy());
-    expect(within(rows[0]).queryByText('Operation running')).toBeNull();
+    await waitFor(() => expect(within(rows[1]).getByText('Operation running on beta')).toBeTruthy());
+    expect(within(rows[0]).queryByText(/Operation running/)).toBeNull();
   });
 
   it('flags unavailable stacks with a warning that links to the detail page', async () => {
@@ -96,5 +96,77 @@ describe('StackList', () => {
   it('does not show the degraded note when some stacks have a known status', async () => {
     await mount([stack('a', { status: 'unknown' }), stack('b')]);
     expect(screen.queryByText(/status is unavailable/i)).toBeNull();
+  });
+
+  it('encodes names with spaces and # in links', async () => {
+    await mount([stack('my stack#1')]);
+    expect(screen.getByRole('link', { name: 'my stack#1' }).getAttribute('href')).toBe('/stacks/my%20stack%231');
+  });
+
+  it('names the table and keeps table roles', async () => {
+    await mount([stack('alpha')]);
+    expect(screen.getByRole('table', { name: 'Stacks' })).toBeTruthy();
+    expect(screen.getAllByRole('columnheader').length).toBe(6);
+  });
+
+  it('shows no-match text only for a non-empty query', async () => {
+    await mount([stack('alpha')]);
+    expect(screen.queryByText(/No stacks match/)).toBeNull();
+    await userEvent.setup().type(screen.getByRole('searchbox'), 'zzz');
+    expect(screen.getByText(/No stacks match/)).toBeTruthy();
+  });
+
+  it('rechecks running operations with backoff until none run, and on demand', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let running = [op('alpha')];
+      fake = installFakeFetch({
+        'GET /api/stacks': { body: [stack('alpha')] },
+        'GET /api/operations?state=running': () => ({ body: running }),
+      });
+      stop = startStacks({
+        list: () => fetch('/api/stacks').then((r) => r.json()),
+        changes: writable<(Change & { resync?: true }) | null>(null),
+      });
+      render(StackList);
+      await waitFor(() => expect(screen.getByText('Operation running on alpha')).toBeTruthy());
+      const opsCalls = () => fake.calls.filter((c) => c.path.startsWith('/api/operations')).length;
+      const before = opsCalls();
+      running = [];
+      await vi.advanceTimersByTimeAsync(2100);
+      await waitFor(() => expect(screen.queryByText(/Operation running/)).toBeNull());
+      const after = opsCalls();
+      expect(after).toBeGreaterThan(before);
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(opsCalls()).toBe(after); // stopped polling once nothing runs
+      running = [op('alpha')];
+      refreshRunningOps();
+      await waitFor(() => expect(screen.getByText('Operation running on alpha')).toBeTruthy());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('first-load failure shows only the banner and a Retry that refetches', async () => {
+    let fail = true;
+    fake = installFakeFetch({
+      'GET /api/stacks': () => (fail ? { status: 500, body: { error: 'boom' } } : { body: [stack('alpha')] }),
+      'GET /api/operations?state=running': { body: [] },
+    });
+    stop = startStacks({
+      list: async () => {
+        const r = await fetch('/api/stacks');
+        if (!r.ok) throw new Error('boom');
+        return r.json();
+      },
+      changes: writable<(Change & { resync?: true }) | null>(null),
+    });
+    render(StackList);
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('boom'));
+    expect(screen.queryByRole('table')).toBeNull();
+    expect(screen.queryByText(/No stacks match/)).toBeNull();
+    fail = false;
+    await userEvent.setup().click(screen.getByRole('button', { name: /retry/i }));
+    await waitFor(() => expect(screen.getByRole('link', { name: 'alpha' })).toBeTruthy());
   });
 });

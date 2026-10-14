@@ -108,4 +108,49 @@ describe('stacks store', () => {
     await tick(500);
     expect(list).toHaveBeenCalledTimes(1);
   });
+
+  it('forces a refetch during sustained activity (max wait)', async () => {
+    stop = startStacks({ list, changes });
+    await tick();
+    for (let i = 0; i < 15; i++) {
+      emit('web');
+      await tick(200);
+    }
+    // 3 s of changes every 200 ms: a pure debounce would not have fetched at all.
+    expect(list.mock.calls.length - 1).toBeGreaterThanOrEqual(2);
+  });
+
+  it('a resync during a pending debounce refetches once, now, and cancels the timer', async () => {
+    stop = startStacks({ list, changes });
+    await tick();
+    emit('web');
+    await tick(100);
+    emit('', true);
+    await tick();
+    expect(list).toHaveBeenCalledTimes(2);
+    await tick(1000);
+    expect(list).toHaveBeenCalledTimes(2);
+  });
+
+  it('stop resets items', async () => {
+    stop = startStacks({ list, changes });
+    await tick();
+    expect(get(stacks).items).toHaveLength(1);
+    stop();
+    expect(get(stacks)).toEqual({ items: [], loading: false });
+  });
+
+  it('starting twice does not double subscriptions, and the stale stop is harmless', async () => {
+    const stop1 = startStacks({ list, changes });
+    stop = startStacks({ list, changes });
+    await tick();
+    list.mockClear();
+    emit('web');
+    await tick(300);
+    expect(list).toHaveBeenCalledTimes(1);
+    stop1();
+    emit('web');
+    await tick(300);
+    expect(list).toHaveBeenCalledTimes(2);
+  });
 });
