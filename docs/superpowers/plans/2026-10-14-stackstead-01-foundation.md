@@ -99,14 +99,9 @@ deploy/config.example.yaml
   func Load(path string, getenv func(string) string) (Config, error) // path "" = no file
   ```
 
-- [ ] **Step 1: Initialise the module**
+- [ ] **Step 1: Confirm the module is initialised**
 
-```bash
-cd /Users/pavel/GolandProjects/stackstead
-go mod init github.com/rcss-labs/stackstead
-go mod edit -go=1.26
-printf '\n# Build output\nbin/\n' >> .gitignore
-```
+The controller's setup commit already created `go.mod` (`module github.com/rcss-labs/stackstead`, `go 1.26`) and added `bin/` to `.gitignore`. Confirm with `head -3 go.mod`; do not re-run `go mod init`.
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -649,7 +644,7 @@ user_version-based migrations let later plans add tables safely."
 - Test: `internal/auth/main_test.go`, `internal/auth/service_test.go`
 
 **Interfaces:**
-- Consumes: `store.Open(path string) (*sql.DB, error)` (tests only).
+- Consumes: `store.Open(path string) (*sql.DB, error)` (tests only); `fakeClock` with `Now()`/`Advance(d)` from `internal/auth/clock_test.go` (Task 4).
 - Produces:
   ```go
   package auth
@@ -706,10 +701,7 @@ import (
 
 const goodPassword = "correct horse battery"
 
-type fakeClock struct{ now time.Time }
-
-func (c *fakeClock) Now() time.Time          { return c.now }
-func (c *fakeClock) Advance(d time.Duration) { c.now = c.now.Add(d) }
+// fakeClock is defined in clock_test.go (created by Task 4).
 
 func newTestService(t *testing.T) (*Service, *sql.DB, *fakeClock) {
 	t.Helper()
@@ -1174,10 +1166,10 @@ indistinguishable login failures to prevent username enumeration."
 
 **Files:**
 - Create: `internal/auth/ratelimit.go`
-- Test: `internal/auth/ratelimit_test.go`
+- Test: `internal/auth/ratelimit_test.go`, `internal/auth/clock_test.go`
 
 **Interfaces:**
-- Consumes: nothing (uses `fakeClock` from `service_test.go` in tests).
+- Consumes: nothing. Runs in parallel with Tasks 1–2 and before Task 3; it creates the shared test clock `internal/auth/clock_test.go` that Task 3's tests reuse.
 - Produces:
   ```go
   func NewLoginLimiter(maxFailures int, window time.Duration, now func() time.Time) *LoginLimiter
@@ -1187,6 +1179,19 @@ indistinguishable login failures to prevent username enumeration."
   ```
 
 - [ ] **Step 1: Write the failing tests**
+
+Create `internal/auth/clock_test.go` (shared test clock; Task 3's tests use it too):
+
+```go
+package auth
+
+import "time"
+
+type fakeClock struct{ now time.Time }
+
+func (c *fakeClock) Now() time.Time          { return c.now }
+func (c *fakeClock) Advance(d time.Duration) { c.now = c.now.Add(d) }
+```
 
 Create `internal/auth/ratelimit_test.go`:
 
@@ -1334,7 +1339,7 @@ Expected: PASS for all auth tests including the four limiter tests.
 
 ```bash
 gofmt -l . && go vet ./...
-git add internal/auth/ratelimit.go internal/auth/ratelimit_test.go
+git add internal/auth/ratelimit.go internal/auth/ratelimit_test.go internal/auth/clock_test.go
 git commit -m "feat: add per-IP login rate limiter
 
 Slows password guessing against the admin account; expired entries are
