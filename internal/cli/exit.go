@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"regexp"
 	"strings"
 	"syscall"
 	"unicode"
@@ -101,17 +102,33 @@ func isUnreachable(err error) bool {
 	return errors.Is(err, syscall.ECONNREFUSED) || errors.As(err, &dns)
 }
 
-// cleanText drops control characters (ESC, CR, BEL, DEL, C1) from text that
-// came from a server so it cannot rewrite the user's terminal. Newlines and
-// tabs stay.
-func cleanText(s string) string {
+// Terminal safety of server text. It is untrusted: an escape sequence in it
+// could retitle the window, rewrite the screen, or (on some terminals) inject
+// input. sanitize strips whole escape sequences, then every control
+// character and Unicode format character (bidi overrides, zero-width marks),
+// keeping TAB and, when keepNewline is set, LF.
+var escapeSequence = regexp.MustCompile(
+	`\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?` + // OSC
+		`|\x1b[PX^_][^\x1b]*(?:\x1b\\)?` + // DCS, SOS, PM, APC
+		`|\x1b\[[0-?]*[ -/]*[@-~]?` + // CSI
+		`|\x{9b}[0-?]*[ -/]*[@-~]?` + // 8-bit CSI
+		`|\x1b[ -/]*[0-~]?`) // other two- and three-byte escapes
+
+func sanitize(s string, keepNewline bool) string {
+	s = escapeSequence.ReplaceAllString(s, "")
 	return strings.Map(func(r rune) rune {
-		if (unicode.IsControl(r) && r != '\n' && r != '\t') || unicode.Is(unicode.Cf, r) {
+		if r == '\t' || (r == '\n' && keepNewline) {
+			return r
+		}
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return -1
 		}
 		return r
 	}, s)
 }
+
+// cleanText makes multi-line server text safe for the terminal.
+func cleanText(s string) string { return sanitize(s, true) }
 
 // oneLine is cleanText for text that must stay on one line: newlines and
 // tabs become spaces, so server text cannot fake extra output lines.

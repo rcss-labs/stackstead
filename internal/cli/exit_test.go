@@ -100,7 +100,21 @@ func TestCleanTextDropsFormatCharacters(t *testing.T) {
 }
 
 func TestCleanTextStripsControlCharacters(t *testing.T) {
-	if got, want := cleanText("a\x1b[31mb\rc\x07d\ne\tf\x7fg\u009bh"), "a[31mbcd\ne\tfgh"; got != want {
+	if got, want := cleanText("a\x1b[31mb\rc\x07d\ne\tf\x7fg\u009bh"), "abcd\ne\tfg"; got != want {
 		t.Errorf("cleanText = %q, want %q", got, want)
+	}
+}
+
+func TestSanitisersShareOneCore(t *testing.T) {
+	for name, fn := range map[string]func(string) string{"cleanText": cleanText, "oneLine": oneLine} {
+		if got := fn("\x1b[31mweb"); got != "web" {
+			t.Errorf("%s dropped only part of an escape sequence: %q", name, got)
+		}
+	}
+	if got := sanitizeLogText("a‮b"); got != "ab" {
+		t.Errorf("sanitizeLogText kept a bidi override: %q", got)
+	}
+	if got := singleLine("a‮b\nc"); got != "ab c" {
+		t.Errorf("singleLine = %q", got)
 	}
 }

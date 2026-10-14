@@ -7,13 +7,11 @@ import (
 	"flag"
 	"fmt"
 	"hash/fnv"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"github.com/rcss-labs/stackstead/internal/apitypes"
 	"github.com/rcss-labs/stackstead/internal/client"
@@ -85,34 +83,17 @@ func (l *logCursors) String() string {
 	return strings.Join(ids, ",")
 }
 
-// Terminal safety of log text. Container output is untrusted: an escape
-// sequence in it could retitle the window, rewrite the screen, or (on some
-// terminals) inject input. So by default every escape sequence and control
-// character except TAB is dropped, which also drops colour codes; --raw
-// opts out for people who want the colours and trust their stacks. JSON
-// output is never touched (JSON escapes control characters itself).
-var escapeSequence = regexp.MustCompile(
-	`\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?` + // OSC
-		`|\x1b[PX^_][^\x1b]*(?:\x1b\\)?` + // DCS, SOS, PM, APC
-		`|\x1b\[[0-?]*[ -/]*[@-~]?` + // CSI
-		`|\x{9b}[0-?]*[ -/]*[@-~]?` + // 8-bit CSI
-		`|\x1b[ -/]*[0-~]?`) // other two- and three-byte escapes
-
-func sanitizeLogText(s string) string {
-	s = escapeSequence.ReplaceAllString(s, "")
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) && r != '\t' {
-			return -1
-		}
-		return r
-	}, s)
-}
+// sanitizeLogText drops escape sequences, control characters (except TAB)
+// and format characters from container output; --raw opts out for people who
+// want the colours and trust their stacks. JSON output is never touched (JSON
+// escapes control characters itself).
+func sanitizeLogText(s string) string { return sanitize(s, false) }
 
 // singleLine makes untrusted text safe inside one output line: line breaks
 // become spaces (so a name cannot forge extra lines) and escape sequences
 // and control characters are dropped.
 func singleLine(s string) string {
-	return sanitizeLogText(strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(s))
+	return sanitize(strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(s), false)
 }
 
 var servicePalette = []string{"36", "33", "35", "34", "32", "96", "93", "95"}
