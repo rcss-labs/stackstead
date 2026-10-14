@@ -320,7 +320,7 @@ func checkpointCurrent(ctx context.Context, env *Env, current string) error {
 		return nil
 	}
 	warn := func(err error) error {
-		fmt.Fprintf(env.Stderr, "warning: could not checkpoint %s before restoring (%v); its -wal is kept next to the backup\n", current, err)
+		fmt.Fprintf(env.Stderr, "warning: could not checkpoint %s before restoring (%v); any -wal is kept next to the backup\n", current, err)
 		return nil
 	}
 	// Plain read-write open: no schema gate, no migration, never creates.
@@ -333,6 +333,9 @@ func checkpointCurrent(ctx context.Context, env *Env, current string) error {
 	db.SetMaxOpenConns(1)
 	var busy, logFrames, checkpointed int
 	if err := db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &logFrames, &checkpointed); err != nil {
+		if isBusyError(err) {
+			return fmt.Errorf("checkpoint the current database before restoring: database is busy (is the server still running?): %w", err)
+		}
 		return warn(err)
 	}
 	if busy != 0 {
@@ -428,4 +431,20 @@ func refuseLiveDestination(cfg config.Config, dest string) error {
 		}
 	}
 	return nil
+}
+
+// isBusyError reports SQLITE_BUSY / SQLITE_LOCKED errors.
+func isBusyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var coded interface{ Code() int }
+	if errors.As(err, &coded) {
+		switch coded.Code() & 0xff { // primary result code
+		case 5, 6: // SQLITE_BUSY, SQLITE_LOCKED
+			return true
+		}
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "SQLITE_BUSY") || strings.Contains(msg, "SQLITE_LOCKED") || strings.Contains(msg, "is locked")
 }
