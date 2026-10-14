@@ -35,6 +35,26 @@ var migrations = []string{
 	// already has duplicates (see checkUniqueProjects); there are no deployed
 	// users to migrate, so we do not guess which row to drop.
 	`CREATE UNIQUE INDEX stacks_project_unique ON stacks(project);`,
+	// Container resource samples (ts is unix seconds; net/blk are Docker's
+	// cumulative counters) and a small key/value table for app settings.
+	`CREATE TABLE metric_samples (
+		ts        INTEGER NOT NULL,
+		project   TEXT    NOT NULL,
+		service   TEXT    NOT NULL,
+		container TEXT    NOT NULL,
+		cpu       REAL    NOT NULL,
+		mem       INTEGER NOT NULL,
+		mem_limit INTEGER NOT NULL,
+		net_rx    INTEGER NOT NULL,
+		net_tx    INTEGER NOT NULL,
+		blk_read  INTEGER NOT NULL,
+		blk_write INTEGER NOT NULL
+	);
+	CREATE INDEX metric_samples_project_ts ON metric_samples(project, ts);
+	CREATE TABLE settings (
+		key   TEXT NOT NULL PRIMARY KEY,
+		value TEXT NOT NULL
+	);`,
 }
 
 // preMigration checks run inside the migration's transaction, before its SQL.
