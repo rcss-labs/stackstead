@@ -27,6 +27,7 @@ type runCall struct {
 type fakeCompose struct {
 	mu             sync.Mutex
 	configErr      error
+	configFn       func(file string) error // when set, replaces configErr
 	configFiles    []string
 	configContents []string
 	projectFn      func(file string) string
@@ -45,6 +46,9 @@ func (f *fakeCompose) Config(_ context.Context, file string) error {
 	defer f.mu.Unlock()
 	f.configFiles = append(f.configFiles, file)
 	f.configContents = append(f.configContents, string(data))
+	if f.configFn != nil {
+		return f.configFn(file)
+	}
 	return f.configErr
 }
 
@@ -1403,5 +1407,23 @@ func TestCreateSummaryIsTruthfulAboutEngineState(t *testing.T) {
 	}
 	if sum.Status != stacks.StatusStopped || sum.Services != 1 || sum.Running != 0 {
 		t.Errorf("engine up: %+v", sum)
+	}
+}
+
+func TestEditComposeErrorNamesTheRealFileNotTheCheckFile(t *testing.T) {
+	h := newHarness(t)
+	hash := setupWeb(t, h)
+	h.compose.configFn = func(file string) error {
+		return &composecli.ExitError{Code: 1, Output: file + ": services.web.image must be a string"}
+	}
+	_, err := h.svc.SaveRaw(context.Background(), "web", []byte("services:\n  web:\n    image: a\n"), hash)
+	var exit *composecli.ExitError
+	if !errors.As(err, &exit) {
+		t.Fatalf("err = %v", err)
+	}
+	for _, msg := range []string{exit.Output, err.Error()} {
+		if strings.Contains(msg, ".stackstead-check-") || !strings.Contains(msg, "compose.yaml") {
+			t.Errorf("message = %q", msg)
+		}
 	}
 }

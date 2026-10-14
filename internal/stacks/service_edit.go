@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/rcss-labs/stackstead/internal/composecli"
 	"github.com/rcss-labs/stackstead/internal/composefile"
 	"github.com/rcss-labs/stackstead/internal/engine"
 )
@@ -173,9 +174,22 @@ func (s *Service) validateCandidate(ctx context.Context, realPath string, data [
 		return "", fmt.Errorf("write check file: %w", werr)
 	}
 	if err := s.compose.Config(ctx, tmp.Name()); err != nil {
-		return "", err
+		return "", renameInExitError(err, filepath.Base(tmp.Name()), filepath.Base(realPath))
 	}
-	return s.compose.ProjectName(ctx, tmp.Name())
+	project, err := s.compose.ProjectName(ctx, tmp.Name())
+	return project, renameInExitError(err, filepath.Base(tmp.Name()), filepath.Base(realPath))
+}
+
+// renameInExitError makes a compose error talk about the user's file rather
+// than the temporary copy that was checked.
+func renameInExitError(err error, from, to string) error {
+	var exit *composecli.ExitError
+	if errors.As(err, &exit) {
+		fixed := *exit
+		fixed.Output = strings.ReplaceAll(exit.Output, from, to)
+		return &fixed
+	}
+	return err
 }
 
 func configsOf(f *composefile.File) ([]namedConfig, error) {
