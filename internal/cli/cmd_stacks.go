@@ -22,7 +22,7 @@ const maxComposeBytes = 8 << 20
 func joinClean(items []string, sep string) string {
 	out := make([]string, len(items))
 	for i, s := range items {
-		out[i] = cleanText(s)
+		out[i] = oneLine(s)
 	}
 	return strings.Join(out, sep)
 }
@@ -53,7 +53,7 @@ func busyError(err error, name string) error {
 		if msg == "" || msg == "HTTP 409" {
 			msg = fmt.Sprintf("stack %s is busy: another operation is running", name)
 		}
-		return conflictError(err, cleanText(msg))
+		return conflictError(err, oneLine(msg))
 	}
 	return err
 }
@@ -66,7 +66,7 @@ func startAndFollow(ctx context.Context, env *Env, g *globalFlags, c *client.Cli
 		if p.JSON {
 			return p.JSONValue(op)
 		}
-		fmt.Fprintf(env.Stdout, "operation %s started\n", cleanText(op.ID))
+		fmt.Fprintf(env.Stdout, "operation %s started\n", oneLine(op.ID))
 		return nil
 	}
 	return streamOperation(ctx, env, p, c, op)
@@ -152,8 +152,8 @@ func stacksLsCommand() *Command {
 				rows := make([][]string, 0, len(stacks))
 				for _, s := range stacks {
 					rows = append(rows, []string{
-						cleanText(s.Name), p.Status(cleanText(s.Status)), fmt.Sprint(s.ServiceCount), fmt.Sprint(s.Running),
-						cleanText(s.Origin), cleanText(s.Path),
+						oneLine(s.Name), p.Status(oneLine(s.Status)), fmt.Sprint(s.ServiceCount), fmt.Sprint(s.Running),
+						oneLine(s.Origin), oneLine(s.Path),
 					})
 				}
 				p.Table([]string{"name", "status", "services", "running", "origin", "path"}, rows)
@@ -177,27 +177,27 @@ func stacksShowCommand() *Command {
 					return p.JSONValue(d)
 				}
 				fmt.Fprintf(env.Stdout, "Name:     %s\nProject:  %s\nOrigin:   %s\nPath:     %s\nStatus:   %s\nHash:     %s\n",
-					cleanText(d.Name), cleanText(d.Project), cleanText(d.Origin), cleanText(d.Path), p.Status(cleanText(d.Status)), cleanText(d.Hash))
+					oneLine(d.Name), oneLine(d.Project), oneLine(d.Origin), oneLine(d.Path), p.Status(oneLine(d.Status)), oneLine(d.Hash))
 				if d.ParseError != "" {
-					fmt.Fprintf(env.Stdout, "%s\n", p.paint("31", "parse error: "+cleanText(d.ParseError)))
+					fmt.Fprintf(env.Stdout, "%s\n", p.paint("31", "parse error: "+strings.ReplaceAll(cleanText(d.ParseError), "\n", "\n  ")))
 				}
 				if len(d.Services) > 0 {
 					fmt.Fprintln(env.Stdout)
 					rows := make([][]string, 0, len(d.Services))
 					for _, s := range d.Services {
-						source := cleanText(s.Config.Image)
+						source := oneLine(s.Config.Image)
 						if s.Config.Build != nil {
-							source = "build: " + cleanText(s.Config.Build.Context)
+							source = "build: " + oneLine(s.Config.Build.Context)
 						}
 						var limits []string
 						if s.Config.Limits.CPUs != "" {
-							limits = append(limits, "cpus="+cleanText(s.Config.Limits.CPUs))
+							limits = append(limits, "cpus="+oneLine(s.Config.Limits.CPUs))
 						}
 						if s.Config.Limits.Memory != "" {
-							limits = append(limits, "mem="+cleanText(s.Config.Limits.Memory))
+							limits = append(limits, "mem="+oneLine(s.Config.Limits.Memory))
 						}
 						rows = append(rows, []string{
-							cleanText(s.Name), dashIfEmpty(source), dashIfEmpty(joinClean(s.Config.Ports, ",")),
+							oneLine(s.Name), dashIfEmpty(source), dashIfEmpty(joinClean(s.Config.Ports, ",")),
 							dashIfEmpty(strings.Join(limits, " ")), dashIfEmpty(joinClean(s.ReadOnly, ",")),
 						})
 					}
@@ -206,7 +206,7 @@ func stacksShowCommand() *Command {
 				var crows [][]string
 				for _, s := range d.Services {
 					for _, ct := range s.Containers {
-						crows = append(crows, []string{cleanText(ct.Name), cleanText(ct.Service), p.Status(cleanText(ct.State)), cleanText(ct.Status)})
+						crows = append(crows, []string{oneLine(ct.Name), oneLine(ct.Service), p.Status(oneLine(ct.State)), oneLine(ct.Status)})
 					}
 				}
 				if len(crows) > 0 {
@@ -237,7 +237,7 @@ func stacksImportCommand() *Command {
 					return p.JSONValue(res.Data)
 				}
 				fmt.Fprintf(env.Stdout, "imported stack %s (project %s) from %s; status %s\n",
-					cleanText(res.Data.Name), cleanText(res.Data.Project), cleanText(res.Data.Path), p.Status(cleanText(res.Data.Status)))
+					oneLine(res.Data.Name), oneLine(res.Data.Project), oneLine(res.Data.Path), p.Status(oneLine(res.Data.Status)))
 				return nil
 			})
 		},
@@ -318,7 +318,7 @@ func composeCommand() *Command {
 						if p := newPrinter(env, g); p.JSON {
 							return p.JSONValue(res.Data)
 						}
-						fmt.Fprintln(env.Stdout, cleanText(res.Data.Hash))
+						fmt.Fprintln(env.Stdout, oneLine(res.Data.Hash))
 						return nil
 					})
 				},
@@ -415,7 +415,7 @@ func composeEditCommand() *Command {
 				if p := newPrinter(env, g); p.JSON {
 					return p.JSONValue(res.Data)
 				}
-				fmt.Fprintf(env.Stdout, "saved compose file of %s (hash %s)\n", cleanText(name), cleanText(res.Data.Hash))
+				fmt.Fprintf(env.Stdout, "saved compose file of %s (hash %s)\n", oneLine(name), oneLine(res.Data.Hash))
 				return nil
 			})
 		},

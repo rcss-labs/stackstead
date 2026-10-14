@@ -75,17 +75,17 @@ func streamOperation(ctx context.Context, env *Env, p *Printer, c *client.Client
 	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			fmt.Fprintf(env.Stderr, "note: operation %s continues on the server; follow it with stackstead ops stream %s\n", cleanText(op.ID), cleanText(op.ID))
+			fmt.Fprintf(env.Stderr, "note: operation %s continues on the server; follow it with stackstead ops stream %s\n", oneLine(op.ID), oneLine(op.ID))
 		}
 		return err
 	}
 	if final == nil {
-		return exitf(ExitGeneral, "the output stream of operation %s ended without a result", cleanText(op.ID))
+		return exitf(ExitGeneral, "the output stream of operation %s ended without a result", oneLine(op.ID))
 	}
-	desc := fmt.Sprintf("%s %s %s", cleanText(final.Action), cleanText(final.Stack), cleanText(final.State))
+	desc := fmt.Sprintf("%s %s %s", oneLine(final.Action), oneLine(final.Stack), oneLine(final.State))
 	if final.State != apitypes.OpSucceeded {
 		if final.Error != "" {
-			desc += ": " + cleanText(final.Error)
+			desc += ": " + oneLine(final.Error)
 		}
 		return &ExitError{Code: ExitOperationFailed, Err: errors.New(desc)}
 	}
@@ -142,7 +142,7 @@ func opsCommand() *Command {
 								exit = fmt.Sprint(*op.ExitCode)
 							}
 							rows = append(rows, []string{
-								cleanText(op.ID), cleanText(op.Stack), cleanText(op.Action), p.Status(cleanText(op.State)),
+								oneLine(op.ID), oneLine(op.Stack), oneLine(op.Action), p.Status(oneLine(op.State)),
 								relativeTime(op.StartedAt, now), operationDuration(op, now), exit,
 							})
 						}
@@ -168,13 +168,13 @@ func opsCommand() *Command {
 						}
 						now := env.Now()
 						fmt.Fprintf(env.Stdout, "ID:        %s\nStack:     %s\nAction:    %s\nState:     %s\nStarted:   %s\nDuration:  %s\n",
-							cleanText(d.ID), cleanText(d.Stack), cleanText(d.Action), p.Status(cleanText(d.State)),
+							oneLine(d.ID), oneLine(d.Stack), oneLine(d.Action), p.Status(oneLine(d.State)),
 							d.StartedAt.Local().Format(time.RFC3339), operationDuration(d.Operation, now))
 						if d.ExitCode != nil {
 							fmt.Fprintf(env.Stdout, "Exit code: %d\n", *d.ExitCode)
 						}
 						if d.Error != "" {
-							fmt.Fprintf(env.Stdout, "Error:     %s\n", p.paint("31", cleanText(d.Error)))
+							fmt.Fprintf(env.Stdout, "Error:     %s\n", p.paint("31", oneLine(d.Error)))
 						}
 						if len(d.Lines) > 0 {
 							fmt.Fprintln(env.Stdout)
@@ -211,7 +211,7 @@ func opsCommand() *Command {
 						if p.JSON {
 							return p.JSONValue(op)
 						}
-						fmt.Fprintf(env.Stdout, "operation %s %s\n", cleanText(op.ID), p.Status(cleanText(op.State)))
+						fmt.Fprintf(env.Stdout, "operation %s %s\n", oneLine(op.ID), p.Status(oneLine(op.State)))
 						return nil
 					})
 				},
@@ -242,9 +242,9 @@ func networksCommand() *Command {
 					for _, n := range nets {
 						subnets := make([]string, len(n.Subnets))
 						for i, s := range n.Subnets {
-							subnets[i] = cleanText(s)
+							subnets[i] = oneLine(s)
 						}
-						rows = append(rows, []string{cleanText(n.Name), cleanText(n.Driver), strings.Join(subnets, ",")})
+						rows = append(rows, []string{oneLine(n.Name), oneLine(n.Driver), strings.Join(subnets, ",")})
 					}
 					p.Table([]string{"name", "driver", "subnets"}, rows)
 					return nil

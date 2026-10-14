@@ -804,3 +804,43 @@ func TestUpInterruptedNotesOperationContinues(t *testing.T) {
 		t.Errorf("stderr = %q, want %q", te.Err.String(), want)
 	}
 }
+
+func TestServerNamesCannotForgeOutputLines(t *testing.T) {
+	const evil = "web\nFAKE"
+	op := t8Op("failed")
+	op.Stack, op.Action, op.Error = evil, "up\nFAKE", "bad\nFAKE"
+	te := t8Setup(t, map[string]http.HandlerFunc{
+		"GET /api/stacks": func(w http.ResponseWriter, r *http.Request) {
+			t8JSON(w, 200, []apitypes.StackSummary{{Name: evil, Status: "running", Origin: "x\nFAKE", Path: "/p\nFAKE"}})
+		},
+		"GET /api/stacks/web": func(w http.ResponseWriter, r *http.Request) {
+			t8JSON(w, 200, apitypes.StackDetail{Name: evil, Project: "p\nFAKE", Services: []apitypes.ServiceDetail{{
+				Name: evil, Config: apitypes.ServiceConfig{Image: "i\nFAKE", Ports: []string{"1\nFAKE"}},
+				Containers: []apitypes.ContainerInfo{{Name: "c\nFAKE", Service: evil, State: "running", Status: "Up\nFAKE"}},
+			}}})
+		},
+		"GET /api/networks": func(w http.ResponseWriter, r *http.Request) {
+			t8JSON(w, 200, []apitypes.Network{{Name: evil, Driver: "d\nFAKE", Subnets: []string{"s\nFAKE"}}})
+		},
+		"GET /api/operations": func(w http.ResponseWriter, r *http.Request) { t8JSON(w, 200, []apitypes.Operation{op}) },
+		"GET /api/operations/op1": func(w http.ResponseWriter, r *http.Request) {
+			t8JSON(w, 200, apitypes.OperationDetail{Operation: op})
+		},
+		"POST /api/stacks/web/actions/up": func(w http.ResponseWriter, r *http.Request) { t8JSON(w, 202, t8Op("running")) },
+		"GET /api/operations/op1/stream":  (&t8Stream{scripts: [][]t8Event{{t8Done(op)}}}).handler,
+	})
+	for _, args := range [][]string{{"stacks", "ls"}, {"stacks", "show", "web"}, {"networks", "ls"}, {"ops", "ls"}, {"ops", "show", "op1"}, {"stacks", "up", "web"}} {
+		te.Out.buf.Reset()
+		te.Err.buf.Reset()
+		err := t8Run(te, args...)
+		out := te.Out.String() + te.Err.String()
+		if err != nil {
+			out += err.Error()
+		}
+		for _, line := range strings.Split(out, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "FAKE") {
+				t.Errorf("%v: a server-provided value forged the line %q in:\n%s", args, line, out)
+			}
+		}
+	}
+}
