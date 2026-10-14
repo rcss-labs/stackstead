@@ -13,7 +13,7 @@
     autoscroll = true,
   }: {
     operationId: string;
-    oncancel?: (id: string) => void;
+    oncancel?: (id: string) => void | Promise<void>;
     onfinished?: (op: Operation) => void;
     autoscroll?: boolean;
   } = $props();
@@ -21,17 +21,16 @@
   // The stream is bound to one operation id; a new id means a new panel (callers key on it).
   // svelte-ignore state_referenced_locally
   const stream = createOperationStream(operationId);
-  const { lines, op, status } = stream;
+  const { lines, op, status, unavailable } = stream;
   onDestroy(() => stream.close());
 
   let region: HTMLElement | undefined = $state();
   let following = $state(true);
   let now = $state(Date.now());
   let notified = false;
+  let cancelling = $state(false);
 
-  const running = $derived(!$op || $op.state === 'running');
-  // The first line is the "N earlier lines dropped" note when the server sent one.
-  const hasNote = $derived(/^\.\.\. \d+ earlier lines dropped$/.test($lines[0] ?? ''));
+  const running = $derived(!$unavailable && (!$op || $op.state === 'running'));
   const elapsed = $derived.by(() => {
     if (!$op) return undefined;
     const start = Date.parse($op.startedAt);
@@ -39,11 +38,13 @@
     return Number.isNaN(start) || Number.isNaN(end) ? undefined : formatDuration(Math.max(0, end - start));
   });
   const announcement = $derived(
-    $op && $op.state !== 'running'
-      ? `${$op.action} ${$op.state}`
-      : $status === 'reconnecting'
-        ? 'Connection lost, reconnecting'
-        : '',
+    $unavailable
+      ? 'Operation no longer available'
+      : $op && $op.state !== 'running'
+        ? `${$op.action} ${$op.state}`
+        : $status === 'reconnecting'
+          ? 'Connection lost, reconnecting'
+          : '',
   );
 
   $effect(() => {
@@ -64,6 +65,22 @@
     void $lines;
     if (autoscroll && following) void tick().then(scrollToEnd);
   });
+
+  async function cancel() {
+    if (cancelling || !oncancel) return;
+    cancelling = true;
+    const result = oncancel(operationId);
+    // A synchronous handler stays "cancelling" until the operation ends and the button goes away.
+    if (result instanceof Promise) {
+      try {
+        await result;
+      } catch {
+        /* the caller reports its own errors */
+      } finally {
+        cancelling = false;
+      }
+    }
+  }
 
   function scrollToEnd() {
     if (region) region.scrollTop = region.scrollHeight;
@@ -86,11 +103,13 @@
       <StatusBadge status={$op.state} />
       {#if elapsed}<span class="muted">{elapsed}</span>{/if}
       {#if $op.exitCode !== undefined}<span class="muted">exit code {$op.exitCode}</span>{/if}
+    {:else if $unavailable}
+      <span class="muted">Operation no longer available</span>
     {:else}
       <span class="muted">Connecting…</span>
     {/if}
     {#if running}
-      <Button variant="secondary" onclick={() => oncancel?.(operationId)}>Cancel</Button>
+      <Button variant="secondary" loading={cancelling} onclick={cancel}>Cancel</Button>
     {/if}
   </header>
   {#if $op?.error}<p class="error">{$op.error}</p>{/if}
@@ -98,8 +117,8 @@
   <div class="wrap">
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <div class="log" role="log" aria-live="off" aria-label="Output" tabindex="0" bind:this={region} {onscroll}>
-      {#each $lines as text, i (i)}
-        <div class={['line', hasNote && i === 0 && 'note']}>{text}</div>
+      {#each $lines as entry (entry.key)}
+        <div class={['line', entry.kind !== 'line' && entry.kind]}>{entry.text}</div>
       {/each}
     </div>
     {#if !following}
@@ -122,7 +141,7 @@
     background: var(--surface-raised);
   }
   .line { white-space: pre-wrap; overflow-wrap: anywhere; }
-  .note { opacity: 0.6; font-style: italic; }
+  .note, .gap { opacity: 0.6; font-style: italic; }
   .error { color: var(--danger); overflow-wrap: anywhere; margin: 0; }
   .jump { position: absolute; right: var(--space-3); bottom: var(--space-3); }
 </style>

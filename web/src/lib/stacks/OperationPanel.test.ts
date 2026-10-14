@@ -56,4 +56,34 @@ describe('OperationPanel', () => {
     const note = await screen.findByText('... 3 earlier lines dropped');
     expect(note.classList.contains('note')).toBe(true);
   });
+
+  it('announces and hides Cancel when the operation is no longer available', async () => {
+    fetcher = installFakeFetch({ 'GET /api/operations/op1': { status: 404, body: { error: 'nope' } } });
+    stream = installFakeStream({ [PATH]: { responses: [{ status: 404, body: { error: 'nope' } }] } });
+    render(OperationPanel, { operationId: 'op1' });
+    const msgs = await screen.findAllByText('Operation no longer available');
+    expect(msgs.length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+  });
+
+  it('Cancel ignores a double click while the request is pending', async () => {
+    let release!: () => void;
+    const oncancel = vi.fn(() => new Promise<void>((r) => (release = r)));
+    setup([line('0', 'a')], { oncancel });
+    const user = userEvent.setup();
+    const btn = await screen.findByRole('button', { name: 'Cancel' });
+    await user.click(btn);
+    await user.click(btn);
+    expect(oncancel).toHaveBeenCalledTimes(1);
+    expect(btn.getAttribute('aria-busy')).toBe('true');
+    release();
+  });
+
+  it('unmounting aborts the stream', async () => {
+    const { unmount } = setup([line('0', 'a')]);
+    await screen.findByRole('log');
+    await waitFor(() => expect(stream.requests).toHaveLength(1));
+    unmount();
+    expect(stream.requests[0].signal?.aborted).toBe(true);
+  });
 });

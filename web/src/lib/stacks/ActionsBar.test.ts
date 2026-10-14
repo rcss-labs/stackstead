@@ -66,4 +66,18 @@ describe('ActionsBar', () => {
     await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Remove' }));
     expect(onremove).toHaveBeenCalledWith(false);
   });
+
+  it('Remove is soft-disabled while busy', () => {
+    setup({ busy: true });
+    expect(screen.getByRole('button', { name: 'Remove' }).getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('the volumes checkbox resets after cancel and reopen', async () => {
+    const { user } = setup();
+    await user.click(screen.getByRole('button', { name: 'Remove' }));
+    await user.click(screen.getByRole('checkbox', { name: /also remove volumes/i }));
+    await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Cancel' }));
+    await user.click(screen.getByRole('button', { name: 'Remove' }));
+    expect((screen.getByRole('checkbox', { name: /also remove volumes/i }) as HTMLInputElement).checked).toBe(false);
+  });
 });

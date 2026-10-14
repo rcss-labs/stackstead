@@ -40,7 +40,7 @@
       {label(action)}
     </Button>
   {/each}
-  <Button variant="danger" onclick={openConfirm}>Remove</Button>
+  <Button variant="danger" disabledReason={busy ? 'an operation is already running' : undefined} onclick={openConfirm}>Remove</Button>
 </div>
 
 <ConfirmDialog
