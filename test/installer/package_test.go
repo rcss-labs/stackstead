@@ -3,6 +3,7 @@
 package installer_test
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,6 +45,9 @@ func TestMain(m *testing.M) {
 func testPackages(t *testing.T) string {
 	t.Helper()
 	pkgOnce.Do(func() {
+		// cleared only when everything below completed, so a t.Fatal inside the
+		// Once cannot leave later tests running on a partial package set
+		pkgErr = errors.New("package build did not complete")
 		r := newRun(t)
 		arch := dockerArch(t)
 		pkgArch = arch
@@ -78,6 +82,7 @@ func testPackages(t *testing.T) string {
 			})
 		}
 		_ = os.Chmod(root, 0o755)
+		pkgErr = nil
 	})
 	if pkgErr != nil {
 		t.Fatalf("building the test packages: %v", pkgErr)
@@ -128,6 +133,7 @@ func packageVersion(t *testing.T, r *run, container string) string {
 // scriptlets do not have /usr/local/bin in PATH) that really starts/stops the fake service.
 func pkgScenario(t *testing.T, distro string, booted bool) *scenario {
 	t.Helper()
+	requireDocker(t)
 	root := testPackages(t)
 	s := newScenario(t, distro, scenarioOpts{})
 	s.shOK("mkdir -p /pkgs")
@@ -220,10 +226,7 @@ func checkPackageLayout(t *testing.T, s *scenario, version string) {
 	} {
 		expectEqual(t, "stat "+path, s.shOK("stat -c '%a %U:%G' "+path), want)
 	}
-	// the directory's group is whatever the packager gave the implicit parent of the config
-	if got := strings.TrimSpace(s.shOK("stat -c '%a %U:' /etc/stackstead")); got != "755 root:" {
-		t.Fatalf("stat /etc/stackstead: got %q, want 755 root-owned", got)
-	}
+	expectEqual(t, "stat /etc/stackstead", s.shOK("stat -c '%a %U:%G' /etc/stackstead"), "755 root:root")
 	s.shOK("test ! -e /usr/local/bin/stackstead")
 	unit := s.shOK("cat /usr/lib/systemd/system/stackstead.service")
 	expectContains(t, "unit", unit, "ExecStart=/usr/bin/stackstead serve --config /etc/stackstead/config.yaml")
@@ -246,6 +249,7 @@ func seedLocalState(t *testing.T, s *scenario) (configSum string) {
 	s.shOK(`echo '# local change' >> /etc/stackstead/config.yaml &&
 		echo data > /var/lib/stackstead/stackstead.db && chown stackstead:stackstead /var/lib/stackstead/stackstead.db &&
 		mkdir -p /opt/stacks/app && echo 'services: {}' > /opt/stacks/app/compose.yaml &&
+		echo unpackaged > /etc/stackstead/local-notes.txt &&
 		: > /var/log/fake-systemctl.log`)
 	return strings.Fields(s.shOK("sha256sum /etc/stackstead/config.yaml"))[0]
 }
@@ -403,14 +407,15 @@ func TestRpmRemoveKeepsDataInContainer(t *testing.T) {
 		s.pkgInstall("rocky", pkgV1)
 		s.shOK("echo data > /var/lib/stackstead/stackstead.db && chown stackstead:stackstead /var/lib/stackstead/stackstead.db")
 		s.shOK("rpm -e stackstead")
-		s.shOK("test ! -e /etc/stackstead/config.yaml && test ! -e /etc/stackstead/config.yaml.rpmsave")
+		s.shOK("test ! -e /etc/stackstead/config.yaml && test ! -e /etc/stackstead/config.yaml.rpmsave && test ! -e /etc/stackstead")
 		expectEqual(t, "database marker", s.shOK("cat /var/lib/stackstead/stackstead.db"), "data")
 		s.shOK("getent passwd stackstead")
 	})
 }
 
-// dpkg passes no old version when a removed (not purged) package is installed
-// again, so the prerm marker is what makes the reinstall enable the service.
+// dpkg passes the old version to postinst configure when a removed (not purged)
+// package is installed again, so a fresh-install check on $2 alone would skip the
+// enable; the prerm marker is what makes the reinstall enable the service.
 func TestReinstallAfterRemoveEnablesServiceInContainer(t *testing.T) {
 	for _, distro := range []string{"debian", "rocky"} {
 		t.Run(distro, func(t *testing.T) {
@@ -478,6 +483,20 @@ func TestInstallScriptRefusesOverRealPackageInContainer(t *testing.T) {
 			expectContains(t, "stderr", stderr, tc.tool)
 			s.shOK("test ! -e /usr/local/bin/stackstead")
 			expectEqual(t, "package untouched", s.shOK("/usr/bin/stackstead version --short"), "v"+pkgV1)
+		})
+	}
+}
+
+// A user created before the package (an earlier manual setup) still joins the docker group.
+func TestPackageAddsExistingUserToDockerGroupInContainer(t *testing.T) {
+	for _, distro := range []string{"debian", "rocky"} {
+		t.Run(distro, func(t *testing.T) {
+			t.Parallel()
+			s := pkgScenario(t, distro, false)
+			s.shOK("groupadd --system stackstead && useradd --system --gid stackstead stackstead")
+			expectNotContains(t, "groups before", " "+strings.Join(strings.Fields(s.shOK("id -nG stackstead")), " ")+" ", " docker ")
+			s.pkgInstall(distro, pkgV1)
+			expectContains(t, "groups after", " "+strings.Join(strings.Fields(s.shOK("id -nG stackstead")), " ")+" ", " docker ")
 		})
 	}
 }

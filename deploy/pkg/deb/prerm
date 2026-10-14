@@ -21,7 +21,8 @@ svc() {
 case "$1" in
     remove)
         # Remember that the package disabled the service, so a reinstall after
-        # `apt remove` (when dpkg passes no old version) enables it again.
+        # `apt remove` enables it again (dpkg passes the old version to postinst
+        # configure then, so $2 alone cannot tell it from an upgrade).
         # The marker lives in the state dir: purge deletes it, remove keeps it.
         if [ -d "$R/var/lib/stackstead" ]; then
             : > "$R/var/lib/stackstead/.disabled-by-remove"
