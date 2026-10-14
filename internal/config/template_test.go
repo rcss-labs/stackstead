@@ -119,3 +119,71 @@ func TestEffectiveJoinsAllowedRoots(t *testing.T) {
 		}
 	}
 }
+
+func TestTemplateQuotesUnsafeScalars(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.StacksDir = "/srv/a #b"
+	cfg.DataDir = "/srv/data"
+	cfg.AllowedRoots = []string{"/srv/a #b", "/srv/other"}
+	out, err := config.Template(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(out)
+	if !strings.Contains(text, "stacks_dir: \"/srv/a #b\"\n") {
+		t.Errorf("stacks_dir not quoted:\n%s", text)
+	}
+	if !strings.Contains(text, "\nallowed_roots:\n  - \"/srv/a #b\"\n  - /srv/other\n") {
+		t.Errorf("allowed_roots not rendered:\n%s", text)
+	}
+	loaded, err := config.Load(writeConfig(t, text), env(nil))
+	if err != nil {
+		t.Fatalf("Load: %v\n%s", err, text)
+	}
+	if loaded.StacksDir != "/srv/a #b" || !reflect.DeepEqual(loaded.AllowedRoots, cfg.AllowedRoots) {
+		t.Errorf("round trip = %q %v", loaded.StacksDir, loaded.AllowedRoots)
+	}
+}
+
+func TestTemplateQuotesLeadingAt(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Listen = "@host:80" // a bare leading @ is reserved in YAML
+	out, err := config.Template(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "listen: \"@host:80\"\n") {
+		t.Errorf("leading @ not quoted:\n%s", out)
+	}
+}
+
+func TestEffectiveEnvBeatsFile(t *testing.T) {
+	path := writeConfig(t, "listen: 127.0.0.1:7000\n")
+	getenv := env(map[string]string{"STACKSTEAD_LISTEN": "127.0.0.1:7100"})
+	cfg, err := config.Load(path, getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := config.Effective(cfg, path, getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0] != (config.Setting{Key: "listen", Value: "127.0.0.1:7100", Source: "env"}) {
+		t.Errorf("listen = %+v, want env value and source", got[0])
+	}
+}
+
+func TestEffectiveNullValueIsDefault(t *testing.T) {
+	path := writeConfig(t, "listen:\nstacks_dir: /srv/s\n")
+	cfg, err := config.Load(path, env(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := config.Effective(cfg, path, env(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Source != "default" || got[1].Source != "file" {
+		t.Errorf("listen/stacks_dir sources = %q/%q, want default/file", got[0].Source, got[1].Source)
+	}
+}

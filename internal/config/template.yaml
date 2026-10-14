@@ -13,9 +13,7 @@ data_dir: {{.DataDir}}
 
 # Directories the file browser may open (for picking Dockerfiles).
 # Defaults to [stacks_dir]. Env form: comma-separated.
-# allowed_roots:
-#   - /opt/stacks
-#   - /home/me/projects
+{{.AllowedRootsBlock}}
 
 metrics_retention: {{.MetricsRetention}}
 metrics_interval: {{.MetricsInterval}}

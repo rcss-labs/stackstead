@@ -31,7 +31,18 @@ func Template(cfg Config) ([]byte, error) {
 		}
 		return key + ": " + value
 	}
+	allowedRoots := `# allowed_roots:
+#   - /opt/stacks
+#   - /home/me/projects`
+	if len(cfg.AllowedRoots) > 0 && !(len(cfg.AllowedRoots) == 1 && cfg.AllowedRoots[0] == cfg.StacksDir) {
+		lines := []string{"allowed_roots:"}
+		for _, root := range cfg.AllowedRoots {
+			lines = append(lines, "  - "+yamlScalar(root))
+		}
+		allowedRoots = strings.Join(lines, "\n")
+	}
 	view := map[string]string{
+		"AllowedRootsBlock": allowedRoots,
 		"Listen":            yamlScalar(cfg.Listen),
 		"StacksDir":         yamlScalar(cfg.StacksDir),
 		"DataDir":           yamlScalar(cfg.DataDir),
@@ -48,7 +59,7 @@ func Template(cfg Config) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-var plainScalar = regexp.MustCompile(`^[A-Za-z0-9_./:@+][A-Za-z0-9_./:@+-]*$`)
+var plainScalar = regexp.MustCompile(`^[A-Za-z0-9_./:+][A-Za-z0-9_./:@+-]*$`)
 
 // yamlScalar leaves ordinary paths and addresses bare and double-quotes
 // anything else (a double-quoted Go string is a valid YAML scalar).
@@ -91,8 +102,9 @@ func Effective(cfg Config, path string, getenv func(string) string) ([]Setting, 
 		if err := yaml.Unmarshal(data, &raw); err != nil {
 			return nil, fmt.Errorf("parse config %s: %w", path, err)
 		}
-		for key := range raw {
-			inFile[key] = true
+		for key, node := range raw {
+			// `key:` with no value (null) leaves the default in place.
+			inFile[key] = !(node.Kind == yaml.ScalarNode && node.Tag == "!!null")
 		}
 	}
 	source := func(key string) string {
