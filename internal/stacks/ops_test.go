@@ -486,3 +486,43 @@ func TestRecentKeepsTwentyPerStackNewestFirst(t *testing.T) {
 		t.Fatal("per-stack isolation broken")
 	}
 }
+
+func TestLiveAndRetainedLongLinesAgree(t *testing.T) {
+	o := NewOps(time.Minute, fixedNow)
+	subscribed := make(chan struct{})
+	op, _ := o.Start("s", "up", func(ctx context.Context, out func(string)) error {
+		<-subscribed
+		out(strings.Repeat("a", 3*maxLineBytes))
+		return nil
+	})
+	_, live, _, cancel, _ := o.Subscribe(op.ID)
+	defer cancel()
+	close(subscribed)
+	got := <-live
+	waitDone(t, o, op.ID)
+	lines, _ := o.Lines(op.ID)
+	if got != lines[0] || len(got) != maxLineBytes+len(truncatedSuffix) {
+		t.Fatalf("live %d bytes, retained %d bytes", len(got), len(lines[0]))
+	}
+}
+
+func TestTruncateLine(t *testing.T) {
+	suffix := truncatedSuffix
+	tests := []struct {
+		name, in, want string
+	}{
+		{"exact cap unchanged", strings.Repeat("a", maxLineBytes), strings.Repeat("a", maxLineBytes)},
+		{"one over", strings.Repeat("a", maxLineBytes+1), strings.Repeat("a", maxLineBytes) + suffix},
+		{"invalid utf8 keeps content", strings.Repeat("\x80", maxLineBytes+100), strings.Repeat("\x80", maxLineBytes) + suffix},
+		{"emoji straddling cap cut before it",
+			strings.Repeat("a", maxLineBytes-2) + "😀" + "tail",
+			strings.Repeat("a", maxLineBytes-2) + suffix},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := truncateLine(tc.in); got != tc.want {
+				t.Fatalf("got len %d, want len %d", len(got), len(tc.want))
+			}
+		})
+	}
+}

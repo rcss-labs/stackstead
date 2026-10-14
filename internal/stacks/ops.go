@@ -203,12 +203,13 @@ func (o *Ops) finish(rec *op, err, ctxErr error) {
 }
 
 func (o *Ops) emit(rec *op, line string) {
+	line = truncateLine(line) // live subscribers and replay must see the same text
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if rec.info.State != OpRunning {
 		return
 	}
-	rec.lines = append(rec.lines, truncateLine(line))
+	rec.lines = append(rec.lines, line)
 	if len(rec.lines) > maxRetainedLines {
 		rec.lines = rec.lines[1:]
 		rec.dropped++
@@ -360,8 +361,12 @@ func truncateLine(line string) string {
 		return line
 	}
 	cut := maxLineBytes
-	for cut > 0 && !utf8.RuneStart(line[cut]) {
+	// Back off at most UTFMax-1 bytes to a rune start; invalid UTF-8 is cut as is.
+	for i := 0; i < utf8.UTFMax-1 && cut > 0 && !utf8.RuneStart(line[cut]); i++ {
 		cut--
+	}
+	if !utf8.RuneStart(line[cut]) {
+		cut = maxLineBytes
 	}
 	return line[:cut] + truncatedSuffix
 }
