@@ -2,12 +2,41 @@ package composefile
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 
 	"go.yaml.in/yaml/v3"
 )
 
 var ErrInvalidServiceName = errors.New("service name must not be empty")
+
+var ErrInvalidConfig = errors.New("invalid service config")
+
+// ValidateConfig rejects configs that would render duplicate or empty mapping
+// keys, which Docker Compose refuses.
+func ValidateConfig(cfg ServiceConfig) error {
+	seenEnv := map[string]bool{}
+	for _, v := range cfg.Environment {
+		if v.Name == "" {
+			return fmt.Errorf("%w: environment variable name is empty", ErrInvalidConfig)
+		}
+		if seenEnv[v.Name] {
+			return fmt.Errorf("%w: duplicate environment variable %q", ErrInvalidConfig, v.Name)
+		}
+		seenEnv[v.Name] = true
+	}
+	seenNet := map[string]bool{}
+	for _, n := range cfg.Networks {
+		if n.Name == "" {
+			return fmt.Errorf("%w: network name is empty", ErrInvalidConfig)
+		}
+		if seenNet[n.Name] {
+			return fmt.Errorf("%w: duplicate network %q", ErrInvalidConfig, n.Name)
+		}
+		seenNet[n.Name] = true
+	}
+	return nil
+}
 
 // strNode is a string scalar; the !!str tag makes the encoder quote values
 // such as "true" or "8080" that would otherwise read back as other types.
@@ -199,6 +228,9 @@ func New(name string, cfg ServiceConfig) ([]byte, error) {
 		return nil, ErrInvalidServiceName
 	}
 	cfg = normalize(cfg)
+	if err := ValidateConfig(cfg); err != nil {
+		return nil, err
+	}
 	root := mapNode("services", mapNode(name, serviceNode(cfg)))
 	if len(cfg.Networks) > 0 {
 		nets := &yaml.Node{Kind: yaml.MappingNode}
