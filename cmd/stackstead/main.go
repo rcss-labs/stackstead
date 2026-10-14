@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -20,7 +21,9 @@ import (
 	"github.com/rcss-labs/stackstead/internal/composecli"
 	"github.com/rcss-labs/stackstead/internal/config"
 	"github.com/rcss-labs/stackstead/internal/engine"
+	"github.com/rcss-labs/stackstead/internal/metrics"
 	"github.com/rcss-labs/stackstead/internal/stacks"
+	"github.com/rcss-labs/stackstead/internal/state"
 	"github.com/rcss-labs/stackstead/internal/store"
 	"github.com/rcss-labs/stackstead/web"
 )
@@ -120,12 +123,23 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	if err := os.MkdirAll(cfg.StacksDir, 0o755); err != nil {
 		return fmt.Errorf("create stacks dir: %w", err)
 	}
+	// The cache follows Docker events and serves container status to the
+	// stack service, the sampler and the observability routes.
+	cache := state.New(dockerEngine, logger, state.Backoff{})
+	metricsStore := metrics.NewStore(db, time.Now)
+	sampler := metrics.NewSampler(metricsStore, cache, dockerEngine, cfg.MetricsInterval, cfg.MetricsRetention, logger, time.Now)
+	// A service context separate from the signal context: background work
+	// must outlive the signal until HTTP and operations have drained.
+	bg := startBackground(context.Background(), cache.Run, sampler.Run)
+	defer bg.stop(time.Second) // safety net for early returns; the normal path stops it in order below
+
 	ops := stacks.NewOps(cfg.OperationTimeout, time.Now)
 	stackSvc := stacks.NewService(stacks.Deps{
 		Registry:     stacks.NewRegistry(db, time.Now),
 		Ops:          ops,
 		Compose:      runner,
 		Engine:       dockerEngine,
+		Containers:   cache,
 		StacksDir:    cfg.StacksDir,
 		AllowedRoots: cfg.AllowedRoots,
 		Logger:       logger,
@@ -150,6 +164,9 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 			FSRoots:    cfg.AllowedRoots,
 			Status:     dockerStatus,
 			Closing:    closing,
+			Observe: api.ObserveSources{
+				Cache: cache, Sampler: sampler, Store: metricsStore, Engine: dockerEngine,
+			},
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       readTimeout,
@@ -171,20 +188,67 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	case <-ctx.Done():
 	}
 	logger.Info("shutting down")
-	// Order: stop accepting HTTP, then cancel running operations (compose
-	// process groups get SIGTERM then SIGKILL), then the deferred db.Close.
-	// Containers are never stopped.
-	httpCtx, cancelHTTP := context.WithTimeout(context.Background(), httpShutdownGrace)
-	defer cancelHTTP()
-	httpErr := srv.Shutdown(httpCtx)
-	if errors.Is(httpErr, context.DeadlineExceeded) {
-		// Long-lived SSE streams outlive the grace; drop them so the
-		// operations below can finish.
-		httpErr = srv.Close()
+	// Order: stop accepting HTTP (Closing ends streams), cancel running
+	// operations (compose process groups get SIGTERM then SIGKILL), stop the
+	// cache and sampler, then the deferred db.Close. Containers are never
+	// stopped.
+	return shutdownServices(cfg.ShutdownGrace, func() error {
+		httpCtx, cancelHTTP := context.WithTimeout(context.Background(), httpShutdownGrace)
+		defer cancelHTTP()
+		err := srv.Shutdown(httpCtx)
+		if errors.Is(err, context.DeadlineExceeded) {
+			// Long-lived SSE streams outlive the grace; drop them so the
+			// operations below can finish.
+			err = srv.Close()
+		}
+		return err
+	}, ops.Shutdown, bg)
+}
+
+// background runs long-lived goroutines (status cache, metrics sampler)
+// under their own context so shutdown can stop them after HTTP and operations.
+type background struct {
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+}
+
+func startBackground(parent context.Context, runners ...func(context.Context)) *background {
+	ctx, cancel := context.WithCancel(parent)
+	b := &background{cancel: cancel}
+	for _, run := range runners {
+		b.wg.Add(1)
+		go func() {
+			defer b.wg.Done()
+			run(ctx)
+		}()
 	}
-	opsCtx, cancelOps := context.WithTimeout(context.Background(), cfg.ShutdownGrace)
+	return b
+}
+
+// stop cancels the runners and waits up to grace for them to return. It
+// reports whether they all did.
+func (b *background) stop(grace time.Duration) bool {
+	b.cancel()
+	done := make(chan struct{})
+	go func() { b.wg.Wait(); close(done) }()
+	t := time.NewTimer(grace)
+	defer t.Stop()
+	select {
+	case <-done:
+		return true
+	case <-t.C:
+		return false
+	}
+}
+
+// shutdownServices stops the pieces in dependency order and returns the HTTP
+// shutdown error. The caller closes the database afterwards.
+func shutdownServices(grace time.Duration, shutdownHTTP func() error, shutdownOps func(context.Context), bg *background) error {
+	httpErr := shutdownHTTP()
+	opsCtx, cancelOps := context.WithTimeout(context.Background(), grace)
 	defer cancelOps()
-	ops.Shutdown(opsCtx)
+	shutdownOps(opsCtx)
+	bg.stop(grace)
 	return httpErr
 }
 
