@@ -5,6 +5,26 @@ a single Go binary with a web UI for creating, running and debugging stacks.
 
 Design: `docs/superpowers/specs/2026-10-14-stackstead-v1-design.md`
 
+## Prerequisites
+
+Docker must be installed on the host; the systemd unit runs the service with
+the `docker` group.
+
+## Security model
+
+Access to the UI is root-equivalent on the host (it controls the Docker
+socket). By default stackstead binds to localhost only. For remote access put
+a TLS reverse proxy in front and make it forward the original Host and client
+address, for example with nginx:
+
+```nginx
+proxy_set_header Host $host;
+proxy_set_header X-Forwarded-For $remote_addr;
+```
+
+If a proxy fronts an instance that has no admin yet, complete first-run setup
+with the setup token from `journalctl -u stackstead`.
+
 ## Build
 
 ```bash
@@ -23,7 +43,14 @@ sudo systemctl daemon-reload && sudo systemctl enable --now stackstead
 ```
 
 On first start, open the UI from the same machine, or use the setup token
-printed in `journalctl -u stackstead`.
+printed in `journalctl -u stackstead`. Until the web UI exists (Plan 5), do
+first-run setup with:
+
+```bash
+curl -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"<12+ chars>","setupToken":"<token or empty on localhost>"}' \
+  http://127.0.0.1:8420/api/setup
+```
 
 ## Develop
 

@@ -414,6 +414,8 @@ so misconfiguration fails at startup instead of mid-operation."
 
 ### Task 2: SQLite store with migrations
 
+> Note (implementation): `sessions.token_hash` is `NOT NULL` (migration 1 edited before first release).
+
 **Files:**
 - Create: `internal/store/store.go`
 - Test: `internal/store/store_test.go`
@@ -1163,6 +1165,8 @@ indistinguishable login failures to prevent username enumeration."
 ---
 
 ### Task 4: Login rate limiter
+
+> Erratum (implementation): Allowed/RecordFailure were replaced by an atomic `Attempt(ip) bool` + `Reset(ip)` after review found concurrent requests bypassed the limit; see internal/auth/ratelimit.go.
 
 **Files:**
 - Create: `internal/auth/ratelimit.go`
