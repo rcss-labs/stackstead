@@ -110,15 +110,16 @@ func removeCommand() *Command {
 			if volumes {
 				what += ", and delete its volumes"
 			}
-			ok, err := confirm(env, fmt.Sprintf("remove stack %s (%s); files stay on disk?", name, what), yes)
-			if err != nil {
-				return err
-			}
-			if !ok {
-				fmt.Fprintln(env.Stderr, "cancelled")
-				return nil
-			}
+			// Inside withAPI so a logged-out user gets exit 3 before being asked.
 			return withAPI(env, g, func(c *client.Client, _ string, _ Context) error {
+				ok, err := confirm(env, fmt.Sprintf("remove stack %s (%s); files stay on disk?", name, what), yes)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					fmt.Fprintln(env.Stderr, "cancelled")
+					return nil
+				}
 				op, err := c.Remove(ctx, name, volumes)
 				if err != nil {
 					return busyError(err, name)
@@ -331,8 +332,9 @@ var unsafeFileChars = regexp.MustCompile(`[^A-Za-z0-9._-]`)
 func composeEditCommand() *Command {
 	return &Command{
 		Name: "edit", Short: "Edit a stack's compose file in $VISUAL or $EDITOR", Usage: "stacks compose edit <name>", MinArgs: 1, MaxArgs: 1,
-		Long: "The file is saved with the hash it was fetched with, so a concurrent change is refused (exit 5). When the save is\n" +
-			"refused (exit 5 or 6) the edited temporary file is kept and its path is printed.",
+		Long: "$VISUAL or $EDITOR is split on whitespace and run without a shell (\"code --wait\" works, quoting and pipes do not).\n" +
+			"The file is saved with the hash it was fetched with, so a concurrent change is refused (exit 5). When the save is\n" +
+			"refused (exit 5 or 6), the editor fails or the command is interrupted, the temporary file is kept and its path is printed.",
 		Run: func(ctx context.Context, env *Env, g *globalFlags, args []string) error {
 			name := args[0]
 			editor := env.Getenv("VISUAL")
@@ -351,7 +353,7 @@ func composeEditCommand() *Command {
 				if err != nil {
 					return err
 				}
-				tmp, err := os.CreateTemp("", "stackstead-"+unsafeFileChars.ReplaceAllString(name, "_")+"-*.yaml")
+				tmp, err := os.CreateTemp(env.Getenv("TMPDIR"), "stackstead-"+unsafeFileChars.ReplaceAllString(name, "_")+"-*.yaml")
 				if err != nil {
 					return exitf(ExitGeneral, "create temporary file: %v", err)
 				}
@@ -365,14 +367,17 @@ func composeEditCommand() *Command {
 					return exitf(ExitGeneral, "write %s: %v", path, werr)
 				}
 
-				cmd := exec.CommandContext(ctx, fields[0], append(fields[1:], path)...)
+				// exec.Command, not CommandContext: on Ctrl-C the terminal already
+				// signals the editor, and killing it would skip its terminal restore.
+				cmd := exec.Command(fields[0], append(fields[1:], path)...)
 				cmd.Stdin, cmd.Stdout, cmd.Stderr = env.Stdin, env.Stdout, env.Stderr
-				if err := cmd.Run(); err != nil {
-					os.Remove(path)
-					if ctx.Err() != nil {
-						return ctx.Err()
-					}
-					return exitf(ExitGeneral, "editor %s failed: %v", fields[0], err)
+				runErr := cmd.Run()
+				if ctx.Err() != nil {
+					fmt.Fprintf(env.Stderr, "note: your edit is kept in %s\n", path)
+					return ctx.Err()
+				}
+				if runErr != nil {
+					return exitf(ExitGeneral, "editor %s failed: %v (your edit is kept in %s)", fields[0], runErr, path)
 				}
 				edited, err := os.ReadFile(path)
 				if err != nil {

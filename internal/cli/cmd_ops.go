@@ -74,6 +74,9 @@ func streamOperation(ctx context.Context, env *Env, p *Printer, c *client.Client
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			fmt.Fprintf(env.Stderr, "note: operation %s continues on the server; follow it with stackstead ops stream %s\n", cleanText(op.ID), cleanText(op.ID))
+		}
 		return err
 	}
 	if final == nil {

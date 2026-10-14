@@ -368,14 +368,17 @@ func TestStreamStripsControlCharacters(t *testing.T) {
 }
 
 func TestUpJSONIsNDJSON(t *testing.T) {
-	st := &t8Stream{scripts: [][]t8Event{{t8Line(0, "a"), t8Line(1, "b"), t8Done(t8Op("succeeded"))}}}
+	st := &t8Stream{scripts: [][]t8Event{{t8Line(0, "a"), t8Line(1, "b"), {"", "dropped", "{}"}}, {t8Done(t8Op("succeeded"))}}}
 	te := t8Setup(t, t8UpRoutes(st))
 	if err := t8Run(te, "stacks", "up", "web", "-o", "json"); err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(te.Out.String()), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("stdout = %q, want 3 NDJSON lines", te.Out.String())
+	if len(lines) != 4 {
+		t.Fatalf("stdout = %q, want 4 NDJSON lines", te.Out.String())
+	}
+	if lines[2] != `{"event":"dropped","data":{}}` {
+		t.Errorf("dropped line = %q", lines[2])
 	}
 	var first struct {
 		Event string `json:"event"`
@@ -389,8 +392,8 @@ func TestUpJSONIsNDJSON(t *testing.T) {
 		Event string             `json:"event"`
 		Data  apitypes.Operation `json:"data"`
 	}
-	if err := json.Unmarshal([]byte(lines[2]), &last); err != nil || last.Event != "done" || last.Data.State != "succeeded" {
-		t.Errorf("last = %q (%v)", lines[2], err)
+	if err := json.Unmarshal([]byte(lines[3]), &last); err != nil || last.Event != "done" || last.Data.State != "succeeded" {
+		t.Errorf("last = %q (%v)", lines[3], err)
 	}
 }
 
@@ -421,8 +424,49 @@ func TestRmNeedsConfirmation(t *testing.T) {
 	if len(deletes) != 1 || deletes[0] != "volumes=true" {
 		t.Errorf("DELETE queries = %q, want [volumes=true]", deletes)
 	}
+	st.mu.Lock()
+	st.lastIDs = nil
+	st.mu.Unlock()
+	if err := t8Run(te, "stacks", "rm", "web", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if len(deletes) != 2 || deletes[1] != "" {
+		t.Errorf("DELETE queries = %q, want the second to have no volumes parameter", deletes)
+	}
 	if !strings.Contains(te.Out.String(), "removing") {
 		t.Errorf("stdout = %q, want the operation output", te.Out.String())
+	}
+}
+
+func TestRmPromptMentionsVolumes(t *testing.T) {
+	te := t8Setup(t, nil)
+	te.Env.IsTerminal = func(uintptr) bool { return true }
+	te.Stdin = strings.NewReader("n\n")
+	if err := t8Run(te, "stacks", "rm", "web", "--volumes"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(te.Err.String(), "remove stack web (compose down, and delete its volumes); files stay on disk? [y/N]") {
+		t.Errorf("prompt = %q", te.Err.String())
+	}
+}
+
+func TestRmLoggedOutExits3BeforePrompt(t *testing.T) {
+	te := t8Setup(t, nil)
+	te.Env.IsTerminal = func(uintptr) bool { return true }
+	if err := newContextStore(te.Env).Update(func(c *Contexts) error {
+		cx := c.Contexts["lab"]
+		cx.Session = ""
+		c.Contexts["lab"] = cx
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	te.Stdin = strings.NewReader("y\n")
+	if err := t8Run(te, "stacks", "rm", "web"); t8Code(err) != ExitAuth {
+		t.Errorf("code = %d (%v), want 3", t8Code(err), err)
+	}
+	if strings.Contains(te.Err.String(), "[y/N]") {
+		t.Errorf("asked for confirmation while logged out: %q", te.Err.String())
 	}
 }
 
@@ -569,11 +613,10 @@ func t8EditSetup(t *testing.T, editor string, put http.HandlerFunc) (*testEnv, s
 		routes["PUT /api/stacks/web/compose"] = put
 	}
 	te := t8Setup(t, routes)
-	vars := map[string]string{"EDITOR": editor}
+	tmp := t.TempDir()
+	vars := map[string]string{"EDITOR": editor, "TMPDIR": tmp}
 	te.Env.Getenv = func(k string) string { return vars[k] }
 	te.Env.IsTerminal = func(uintptr) bool { return true }
-	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp)
 	return te, tmp
 }
 
@@ -664,8 +707,9 @@ func TestComposeEditNeedsEditorAndTerminal(t *testing.T) {
 func TestComposeEditPrefersVisual(t *testing.T) {
 	te, _ := t8EditSetup(t, "/nonexistent-editor", nil)
 	visual := t8Editor(t, "exit 0")
+	tmp := t.TempDir()
 	te.Env.Getenv = func(k string) string {
-		return map[string]string{"VISUAL": visual, "EDITOR": "/nonexistent-editor"}[k]
+		return map[string]string{"VISUAL": visual, "EDITOR": "/nonexistent-editor", "TMPDIR": tmp}[k]
 	}
 	if err := t8Run(te, "stacks", "compose", "edit", "web"); err != nil {
 		t.Fatalf("VISUAL was not preferred: %v", err)
@@ -688,5 +732,75 @@ func TestNetworksLs(t *testing.T) {
 	}
 	if got := strings.Join(strings.Fields(lines[1]), " "); got != "frontend bridge 172.20.0.0/16,fd00::/64" {
 		t.Errorf("row = %q", got)
+	}
+}
+
+func TestComposeEditSplitsEditorArguments(t *testing.T) {
+	// The script fails unless its first argument is --wait and the second is the file.
+	script := t8Editor(t, `[ "$1" = "--wait" ] || exit 7; echo "# edited" >> "$2"`)
+	var got apitypes.RawCompose
+	te, _ := t8EditSetup(t, script+" --wait", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		t8JSON(w, 200, apitypes.HashResponse{Hash: "h2"})
+	})
+	if err := t8Run(te, "stacks", "compose", "edit", "web"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(got.Content, "# edited\n") {
+		t.Errorf("saved = %+v", got)
+	}
+}
+
+func TestComposeEditKeepsFileWhenEditorFails(t *testing.T) {
+	te, tmp := t8EditSetup(t, t8Editor(t, `echo "# half" >> "$1"; exit 3`), nil)
+	err := t8Run(te, "stacks", "compose", "edit", "web")
+	left := t8TempFiles(t, tmp)
+	if err == nil || len(left) != 1 || !strings.Contains(err.Error(), "kept in "+left[0]) {
+		t.Errorf("err = %v, kept = %v; want the kept path in the error", err, left)
+	}
+}
+
+func TestComposeEditInterruptedKeepsFile(t *testing.T) {
+	// The editor signals it started, then waits; the test cancels the command.
+	started := filepath.Join(t.TempDir(), "started")
+	te, tmp := t8EditSetup(t, t8Editor(t, `echo "# half" >> "$1"; : > `+started+`; sleep 1`), nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		for i := 0; i < 500; i++ {
+			if _, err := os.Stat(started); err == nil {
+				cancel()
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	err := Run(ctx, t8Root(), []string{"stacks", "compose", "edit", "web"}, te.Env)
+	left := t8TempFiles(t, tmp)
+	if err == nil || len(left) != 1 || !strings.Contains(te.Err.String()+err.Error(), left[0]) {
+		t.Errorf("err = %v, kept = %v, stderr = %q", err, left, te.Err.String())
+	}
+}
+
+func TestUpInterruptedNotesOperationContinues(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	routes := t8UpRoutes(&t8Stream{})
+	routes["GET /api/operations/op1/stream"] = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		fmt.Fprint(w, "id: 0\nevent: line\ndata: \"first\"\n\n")
+		w.(http.Flusher).Flush()
+		cancel() // Ctrl-C after the first line
+		<-r.Context().Done()
+	}
+	te := t8Setup(t, routes)
+	err := Run(ctx, t8Root(), []string{"stacks", "up", "web"}, te.Env)
+	if t8Code(err) != ExitInterrupted {
+		t.Errorf("code = %d (%v), want 130", t8Code(err), err)
+	}
+	want := "note: operation op1 continues on the server; follow it with stackstead ops stream op1"
+	if !strings.Contains(te.Err.String(), want) {
+		t.Errorf("stderr = %q, want %q", te.Err.String(), want)
 	}
 }
