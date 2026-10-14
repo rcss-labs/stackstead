@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1350,6 +1352,131 @@ func TestFailedRevertIsJoinedWithSaveError(t *testing.T) {
 	}
 }
 
+type recordHandler struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *recordHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *recordHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, r)
+	return nil
+}
+func (h *recordHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *recordHandler) WithGroup(string) slog.Handler      { return h }
+
+func TestFailedRevertIsLoggedAtErrorLevel(t *testing.T) {
+	rec := &recordHandler{}
+	h := newHarness(t)
+	h.svc = stacks.NewService(stacks.Deps{
+		Registry: h.reg, Ops: h.ops, Compose: h.compose, Engine: h.eng,
+		StacksDir: h.dir, Logger: slog.New(rec),
+	})
+	saveErr := errors.New("save failed")
+	h.svc.RevertProject(context.Background(), stacks.Entry{Name: "ghost", Project: "p"}, saveErr)
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.records) != 1 || rec.records[0].Level != slog.LevelError || !strings.Contains(rec.records[0].Message, "revert") {
+		t.Fatalf("records = %+v", rec.records)
+	}
+}
+
+func TestActAndRemoveWaitForConcurrentEditOfSameStack(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		act  func(h *harness) (stacks.Operation, error)
+	}{
+		{"act", func(h *harness) (stacks.Operation, error) {
+			return h.svc.Act(context.Background(), "web", "up")
+		}},
+		{"remove", func(h *harness) (stacks.Operation, error) {
+			return h.svc.Remove(context.Background(), "web", false)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.create(t, "web", webCfg())
+			ctx := context.Background()
+			_, hash, _ := h.svc.Raw(ctx, "web")
+
+			// Record every project name compose derives once the edit has
+			// claimed "renamed". An Act/Remove that did not wait for the edit
+			// would read the still-unsaved file and derive the old name.
+			var claimed atomic.Bool
+			var staleMu sync.Mutex
+			var derived []string
+			h.compose.projectFn = func(file string) string {
+				project := projectFromFile(file)
+				if claimed.Load() {
+					staleMu.Lock()
+					derived = append(derived, project)
+					staleMu.Unlock()
+				}
+				return project
+			}
+
+			// While the edit has claimed "renamed" but not yet saved the file,
+			// start Act/Remove. Unlocked, it would see the claimed project,
+			// derive the old one from the unsaved file and revert the claim
+			// once the edit finished, leaving registry and file disagreeing.
+			type result struct {
+				op  stacks.Operation
+				err error
+			}
+			var actDone chan result
+			var once sync.Once
+			h.svc.SetAfterClaim(func() {
+				once.Do(func() {
+					claimed.Store(true)
+					actDone = make(chan result, 1)
+					go func() {
+						op, err := tc.act(h)
+						actDone <- result{op, err}
+					}()
+					time.Sleep(200 * time.Millisecond)
+				})
+			})
+			if _, err := h.svc.SaveRaw(ctx, "web", rawWithName("renamed", "web"), hash); err != nil {
+				t.Fatal(err)
+			}
+			res := <-actDone
+			if res.err != nil {
+				t.Fatalf("%s: %v", tc.name, res.err)
+			}
+			if op := wait(t, h.ops, res.op.ID); op.State != stacks.OpSucceeded {
+				t.Fatalf("operation state = %v, want succeeded", op.State)
+			}
+			staleMu.Lock()
+			for _, project := range derived {
+				if project != "renamed" {
+					t.Errorf("%s derived project %q from the unsaved file; it must wait for the edit", tc.name, project)
+				}
+			}
+			if len(derived) == 0 {
+				t.Errorf("%s never derived a project name", tc.name)
+			}
+			staleMu.Unlock()
+			if tc.name == "remove" {
+				// The edit finished first, then Remove ran against its result
+				// and unregistered the stack; no claim was reverted into it.
+				if _, err := h.reg.Get(ctx, "web"); !errors.Is(err, stacks.ErrStackNotFound) {
+					t.Fatalf("registry Get after remove = %v, want ErrStackNotFound", err)
+				}
+				return
+			}
+			e, err := h.reg.Get(ctx, "web")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := projectFromFile(h.path("web")); e.Project != want {
+				t.Errorf("registry project = %q, file project = %q", e.Project, want)
+			}
+		})
+	}
+}
+
 func TestActRederivesProjectAfterOutOfBandRename(t *testing.T) {
 	h := newHarness(t)
 	h.compose.projectFn = projectFromFile
@@ -1425,5 +1552,89 @@ func TestEditComposeErrorNamesTheRealFileNotTheCheckFile(t *testing.T) {
 		if strings.Contains(msg, ".stackstead-check-") || !strings.Contains(msg, "compose.yaml") {
 			t.Errorf("message = %q", msg)
 		}
+	}
+}
+
+type fakeSource struct {
+	containers []engine.Container
+	err        error
+}
+
+func (f fakeSource) Containers(context.Context) ([]engine.Container, error) {
+	return f.containers, f.err
+}
+
+func newSourceHarness(t *testing.T, src stacks.ContainerSource) *harness {
+	t.Helper()
+	h := newHarness(t)
+	h.svc = stacks.NewService(stacks.Deps{
+		Registry: h.reg, Ops: h.ops, Compose: h.compose, Engine: h.eng,
+		Containers: src, StacksDir: h.dir, AllowedRoots: []string{filepath.Dir(h.dir)},
+		Now: func() time.Time { return fixedNow },
+	})
+	return h
+}
+
+func TestStatusComesFromContainerSource(t *testing.T) {
+	src := &fakeSource{}
+	h := newSourceHarness(t, src)
+	h.create(t, "web", webCfg("8080:80"))
+	c := publishing("web", 8080)
+	c.Labels["com.docker.compose.service"] = "web"
+	src.containers = []engine.Container{c}
+	h.eng.err = engine.ErrUnavailable // engine must not be consulted for status
+
+	d, err := h.svc.Get(context.Background(), "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Status != stacks.StatusRunning {
+		t.Errorf("status = %v, want running from the source", d.Status)
+	}
+}
+
+func TestStatusUnknownWhenSourceUnavailable(t *testing.T) {
+	src := &fakeSource{err: fmt.Errorf("%w: not synced", engine.ErrUnavailable)}
+	h := newSourceHarness(t, src)
+	h.create(t, "web", webCfg("8080:80"))
+	list, err := h.svc.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := summaryByName(t, list, "web"); s.Status != stacks.StatusUnknown {
+		t.Errorf("status = %v, want unknown", s.Status)
+	}
+}
+
+// Validation must ask the engine, not the (possibly stale or unavailable)
+// status source, because a wrong "free" answer would start a conflicting stack.
+func TestValidationUsesEngineNotStatusSource(t *testing.T) {
+	src := &fakeSource{err: fmt.Errorf("%w: not synced", engine.ErrUnavailable)}
+	h := newSourceHarness(t, src)
+	ctx := context.Background()
+
+	// A container of another project publishes 8080 on the engine only.
+	h.eng.containers = []engine.Container{publishing("other", 8080)}
+	_, err := h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Config: webCfg("8080:80")})
+	if fs := fieldsOf(t, err); len(fs) == 0 {
+		t.Fatalf("port conflict not detected: %v", err)
+	}
+
+	// An unregistered host project is visible on the engine only.
+	h.eng.containers = []engine.Container{publishing("web", 9090)}
+	_, err = h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Config: webCfg()})
+	if fs := fieldsOf(t, err); !strings.Contains(fs[0].Message, "import it instead") {
+		t.Errorf("host project not detected: %+v", fs)
+	}
+
+	// Remove of a stack whose file vanished checks the engine for containers.
+	h.eng.containers = nil
+	h.create(t, "gone", webCfg("8082:80"))
+	os.Remove(h.path("gone"))
+	c := publishing("gone", 8082)
+	h.eng.containers = []engine.Container{c}
+	if _, err := h.svc.Remove(ctx, "gone", false); !errors.Is(err, stacks.ErrStackUnavailable) ||
+		!strings.Contains(err.Error(), "still exist") {
+		t.Errorf("Remove err = %v", err)
 	}
 }

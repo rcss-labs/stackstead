@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -37,14 +38,22 @@ type Engine interface {
 	Networks(ctx context.Context) ([]engine.Network, error)
 }
 
+// ContainerSource supplies the containers status is derived from; satisfied by
+// *engine.Client and by the events-driven state.Cache.
+type ContainerSource interface {
+	Containers(ctx context.Context) ([]engine.Container, error)
+}
+
 type Deps struct {
 	Registry     *Registry
 	Ops          *Ops
 	Compose      Compose
 	Engine       Engine
-	StacksDir    string   // where Create puts new stacks, one folder each
-	AllowedRoots []string // confines build contexts of new stacks
+	Containers   ContainerSource // status source; nil means Engine
+	StacksDir    string          // where Create puts new stacks, one folder each
+	AllowedRoots []string        // confines build contexts of new stacks
 	Now          func() time.Time
+	Logger       *slog.Logger // nil means slog.Default()
 }
 
 // Status is the run state of a stack.
@@ -94,20 +103,32 @@ type Service struct {
 	ops       *Ops
 	compose   Compose
 	engine    Engine
+	source    ContainerSource // status reads; validation that needs fresh data uses engine
 	stacksDir string
 	roots     []string
+	log       *slog.Logger
 
 	// Lock order: a stack's lock (lockStack) first, then projectMu; never the
 	// reverse. projectMu makes "is this compose project free?" and the write
 	// that claims it (Add, SetProject, adoption) one step across all stacks;
 	// the unique index on stacks.project is the backstop.
-	locks     sync.Map // stack name -> *sync.Mutex, serializes saves of one stack
-	projectMu sync.Mutex
+	// afterClaim, when set by tests, runs between claiming a project and saving the file.
+	afterClaim func()
+	locks      sync.Map // stack name -> *sync.Mutex, serializes saves of one stack
+	projectMu  sync.Mutex
 }
 
 func NewService(d Deps) *Service {
-	return &Service{reg: d.Registry, ops: d.Ops, compose: d.Compose, engine: d.Engine,
-		stacksDir: d.StacksDir, roots: d.AllowedRoots}
+	logger := d.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	var source ContainerSource = d.Containers
+	if source == nil {
+		source = d.Engine
+	}
+	return &Service{reg: d.Registry, ops: d.Ops, compose: d.Compose, engine: d.Engine, source: source,
+		stacksDir: d.StacksDir, roots: d.AllowedRoots, log: logger}
 }
 
 // lockStack serializes read-modify-write cycles of one stack's file.
@@ -310,7 +331,7 @@ func (s *Service) List(ctx context.Context) ([]Summary, error) {
 	if err != nil {
 		return nil, err
 	}
-	containers, engErr := s.engine.Containers(ctx)
+	containers, engErr := s.source.Containers(ctx)
 	if engErr != nil && ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -327,7 +348,7 @@ func (s *Service) Get(ctx context.Context, name string) (Detail, error) {
 	if err != nil {
 		return Detail{}, err
 	}
-	containers, engErr := s.engine.Containers(ctx)
+	containers, engErr := s.source.Containers(ctx)
 	if engErr != nil && ctx.Err() != nil {
 		return Detail{}, ctx.Err()
 	}
@@ -413,10 +434,13 @@ func (s *Service) Act(ctx context.Context, stack, action string) (Operation, err
 	if !ok {
 		return Operation{}, &ValidationError{Fields: []FieldError{{Field: "action", Message: fmt.Sprintf("unknown action %q", action)}}}
 	}
-	e, err := s.reg.Get(ctx, stack)
+	// Held until the operation is started so a concurrent edit's project
+	// claim cannot be reverted by refreshProject; same order as commit.
+	e, unlock, err := s.lockedEntry(ctx, stack)
 	if err != nil {
 		return Operation{}, err
 	}
+	defer unlock()
 	if _, _, _, err := readFile(e); err != nil {
 		return Operation{}, err
 	}
@@ -471,10 +495,11 @@ func (s *Service) requireLifecycle(ctx context.Context) error {
 // compose to bring down, so the stale row is dropped, but only once the
 // engine confirms no containers of the project remain.
 func (s *Service) Remove(ctx context.Context, stack string, withVolumes bool) (Operation, error) {
-	e, err := s.reg.Get(ctx, stack)
+	e, unlock, err := s.lockedEntry(ctx, stack)
 	if err != nil {
 		return Operation{}, err
 	}
+	defer unlock()
 	_, statErr := os.Stat(e.ComposePath)
 	missing := errors.Is(statErr, fs.ErrNotExist)
 	if missing {

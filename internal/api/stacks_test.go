@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -44,6 +45,7 @@ type fakeStacks struct {
 	gotCancel  string
 
 	replay       []string
+	first        int // absolute index of replay[0]
 	live         chan string
 	done         chan stacks.Operation
 	cancelOnce   sync.Once
@@ -114,14 +116,15 @@ func (f *fakeStacks) Networks(context.Context) ([]engine.Network, error) {
 type fakeOps struct{ f *fakeStacks }
 
 func (o fakeOps) Recent(string) []stacks.Operation     { return []stacks.Operation{o.f.op} }
+func (o fakeOps) All() []stacks.Operation              { return []stacks.Operation{o.f.op} }
 func (o fakeOps) Get(string) (stacks.Operation, error) { return o.f.op, o.f.err }
 func (o fakeOps) Lines(string) ([]string, error)       { return []string{"a", "b"}, o.f.err }
 func (o fakeOps) Cancel(id string) error               { o.f.gotCancel = id; return o.f.err }
-func (o fakeOps) Subscribe(string) ([]string, <-chan string, <-chan stacks.Operation, func(), error) {
+func (o fakeOps) Subscribe(string) ([]string, int, <-chan string, <-chan stacks.Operation, func(), error) {
 	if o.f.err != nil {
-		return nil, nil, nil, nil, o.f.err
+		return nil, 0, nil, nil, nil, o.f.err
 	}
-	return o.f.replay, o.f.live, o.f.done, func() { o.f.cancelOnce.Do(func() { close(o.f.unsubscribed) }) }, nil
+	return o.f.replay, o.f.first, o.f.live, o.f.done, func() { o.f.cancelOnce.Do(func() { close(o.f.unsubscribed) }) }, nil
 }
 func (f *fakeStacks) status(context.Context) (string, string) {
 	return "ok", "v2.30.0"
@@ -353,7 +356,7 @@ func TestNetworksAndStatus(t *testing.T) {
 		t.Fatalf("networks = %d %s", rec.Code, rec.Body)
 	}
 	rec = env.do(t, "GET", "/api/status", "", withCookie(cookie))
-	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"docker":"ok","compose":"v2.30.0"}` {
+	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"docker":"ok","compose":"v2.30.0","events":"disconnected","metricsDegraded":false}` {
 		t.Fatalf("status = %d %s", rec.Code, rec.Body)
 	}
 }
@@ -402,14 +405,23 @@ func TestOversizedBodyIsRejected(t *testing.T) {
 }
 
 // sseClient opens the stream against a real server so flushing is exercised.
-type sseEvent struct{ name, data string }
+type sseEvent struct{ name, data, id string }
 
 func openStream(t *testing.T, env *testEnv, cookie *http.Cookie, ctx context.Context) (*http.Response, <-chan sseEvent) {
+	t.Helper()
+	return openStreamWithID(t, env, cookie, ctx, "")
+}
+
+// openStreamWithID is openStream sending a Last-Event-ID header when non-empty.
+func openStreamWithID(t *testing.T, env *testEnv, cookie *http.Cookie, ctx context.Context, lastID string) (*http.Response, <-chan sseEvent) {
 	t.Helper()
 	srv := httptest.NewServer(env.handler)
 	t.Cleanup(srv.Close)
 	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/api/operations/op1/stream", nil)
 	req.AddCookie(cookie)
+	if lastID != "" {
+		req.Header.Set("Last-Event-ID", lastID)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -425,6 +437,8 @@ func openStream(t *testing.T, env *testEnv, cookie *http.Cookie, ctx context.Con
 			switch {
 			case strings.HasPrefix(line, "event: "):
 				cur.name = strings.TrimPrefix(line, "event: ")
+			case strings.HasPrefix(line, "id: "):
+				cur.id = strings.TrimPrefix(line, "id: ")
 			case strings.HasPrefix(line, "data: "):
 				cur.data = strings.TrimPrefix(line, "data: ")
 			case line == ": ping":
@@ -590,6 +604,182 @@ func TestStreamEndsWhenServerIsClosing(t *testing.T) {
 			}
 		case <-time.After(3 * time.Second):
 			t.Fatal("stream did not end after the server started closing")
+		}
+	}
+}
+
+func TestClosingServerStopsLargeReplayPromptly(t *testing.T) {
+	const total = 100000
+	replay := make([]string, total)
+	for i := range replay {
+		replay[i] = "line"
+	}
+	fake := finishedStream(replay...)
+	closing := make(chan struct{})
+	close(closing)
+	env := newEnvWith(t, "", func(o *api.Options) {
+		o.Stacks, o.Operations, o.FSRoots, o.Status = fake, fakeOps{fake}, fake.roots, fake.status
+		o.Closing = closing
+	})
+	env.createAdmin(t)
+	_, events := openStream(t, env, env.login(t), context.Background())
+	lines := 0
+	timeout := time.After(10 * time.Second)
+	for ended := false; !ended; {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				ended = true
+			} else if ev.name == "line" {
+				lines++
+			}
+		case <-timeout:
+			t.Fatalf("stream still running after 10s (%d lines)", lines)
+		}
+	}
+	if lines >= total {
+		t.Errorf("replayed all %d lines despite the server closing", lines)
+	}
+}
+
+// streamLinesUntilDone returns "id=data" for every line event up to done.
+func streamLinesUntilDone(t *testing.T, events <-chan sseEvent) []string {
+	t.Helper()
+	var got []string
+	for {
+		ev := nextEvent(t, events, true)
+		switch ev.name {
+		case "line":
+			got = append(got, ev.id+"="+ev.data)
+		case "done":
+			return got
+		default:
+			t.Fatalf("unexpected event %+v", ev)
+		}
+	}
+}
+
+func finishedStream(lines ...string) *fakeStacks {
+	fake := newFakeStacks()
+	fake.replay = lines
+	fake.live = make(chan string)
+	fake.done = make(chan stacks.Operation, 1)
+	close(fake.live)
+	final := fake.op
+	final.State = stacks.OpSucceeded
+	final.ExitCode = 0
+	fake.done <- final
+	close(fake.done)
+	return fake
+}
+
+func TestStreamLastEventIDResumesAfterIndex(t *testing.T) {
+	env, cookie := newStacksEnv(t, finishedStream("l0", "l1", "l2", "l3", "l4"))
+	_, events := openStreamWithID(t, env, cookie, context.Background(), "2")
+	got := streamLinesUntilDone(t, events)
+	if want := []string{`3="l3"`, `4="l4"`}; !reflect.DeepEqual(got, want) {
+		t.Errorf("resumed lines = %v, want %v", got, want)
+	}
+}
+
+func TestStreamLinesCarryIndexIDs(t *testing.T) {
+	env, cookie := newStacksEnv(t, finishedStream("l0", "l1"))
+	_, events := openStream(t, env, cookie, context.Background())
+	got := streamLinesUntilDone(t, events)
+	if want := []string{`0="l0"`, `1="l1"`}; !reflect.DeepEqual(got, want) {
+		t.Errorf("lines = %v, want %v", got, want)
+	}
+}
+
+func TestStreamMalformedLastEventIDReplaysEverything(t *testing.T) {
+	for _, bad := range []string{"abc", "-1", "1.5"} {
+		env, cookie := newStacksEnv(t, finishedStream("l0", "l1"))
+		_, events := openStreamWithID(t, env, cookie, context.Background(), bad)
+		if got := streamLinesUntilDone(t, events); len(got) != 2 {
+			t.Errorf("Last-Event-ID %q: got %v, want full replay", bad, got)
+		}
+	}
+}
+
+func TestStreamResumeKeepsLiveIDsContinuous(t *testing.T) {
+	fake := newFakeStacks()
+	fake.replay = []string{"l0", "l1", "l2"}
+	fake.live = make(chan string, 2)
+	fake.done = make(chan stacks.Operation, 1)
+	env, cookie := newStacksEnv(t, fake)
+	_, events := openStreamWithID(t, env, cookie, context.Background(), "1")
+	fake.live <- "l3"
+	close(fake.live)
+	fake.done <- fake.op
+	close(fake.done)
+	got := streamLinesUntilDone(t, events)
+	if want := []string{`2="l2"`, `3="l3"`}; !reflect.DeepEqual(got, want) {
+		t.Errorf("lines = %v, want %v", got, want)
+	}
+}
+
+// shiftedStream is a finished operation whose oldest lines were evicted:
+// replay[0] is the dropped note and real lines start at absolute index first+1.
+func shiftedStream(first int, lines ...string) *fakeStacks {
+	fake := finishedStream(append([]string{"... 11 earlier lines dropped"}, lines...)...)
+	fake.first = first
+	return fake
+}
+
+func TestStreamIDsAreAbsoluteWhenOldLinesWereDropped(t *testing.T) {
+	env, cookie := newStacksEnv(t, shiftedStream(10, "l11", "l12"))
+	_, events := openStream(t, env, cookie, context.Background())
+	got := streamLinesUntilDone(t, events)
+	want := []string{`="... 11 earlier lines dropped"`, `11="l11"`, `12="l12"`}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("lines = %v, want %v", got, want)
+	}
+}
+
+func TestStreamResumeAcrossShiftedWindow(t *testing.T) {
+	env, cookie := newStacksEnv(t, shiftedStream(10, "l11", "l12", "l13"))
+	_, events := openStreamWithID(t, env, cookie, context.Background(), "11")
+	got := streamLinesUntilDone(t, events)
+	if want := []string{`12="l12"`, `13="l13"`}; !reflect.DeepEqual(got, want) {
+		t.Errorf("resumed lines = %v, want %v", got, want)
+	}
+}
+
+func TestStreamResumeFromEvictedLineReplaysEverything(t *testing.T) {
+	for _, id := range []string{"3", "9"} {
+		env, cookie := newStacksEnv(t, shiftedStream(10, "l11", "l12"))
+		_, events := openStreamWithID(t, env, cookie, context.Background(), id)
+		got := streamLinesUntilDone(t, events)
+		want := []string{`="... 11 earlier lines dropped"`, `11="l11"`, `12="l12"`}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("Last-Event-ID %s: lines = %v, want %v", id, got, want)
+		}
+	}
+}
+
+func TestStreamLiveIDsContinueAfterShiftedReplay(t *testing.T) {
+	fake := shiftedStream(10, "l11")
+	fake.live = make(chan string, 1)
+	fake.done = make(chan stacks.Operation, 1)
+	env, cookie := newStacksEnv(t, fake)
+	_, events := openStream(t, env, cookie, context.Background())
+	fake.live <- "l12"
+	close(fake.live)
+	fake.done <- fake.op
+	close(fake.done)
+	got := streamLinesUntilDone(t, events)
+	want := []string{`="... 11 earlier lines dropped"`, `11="l11"`, `12="l12"`}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("lines = %v, want %v", got, want)
+	}
+}
+
+func TestStreamHugeOrBeyondEndLastEventIDSendsNoLines(t *testing.T) {
+	for _, id := range []string{"9223372036854775807", "99", "1"} {
+		env, cookie := newStacksEnv(t, finishedStream("l0", "l1"))
+		_, events := openStreamWithID(t, env, cookie, context.Background(), id)
+		if got := streamLinesUntilDone(t, events); len(got) != 0 {
+			t.Errorf("Last-Event-ID %s: got %v, want no lines", id, got)
 		}
 	}
 }

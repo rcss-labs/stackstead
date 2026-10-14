@@ -24,7 +24,7 @@ func waitDone(t *testing.T, o *Ops, id string) Operation {
 	t.Helper()
 	deadline := time.After(5 * time.Second)
 	for {
-		_, live, done, cancel, err := o.Subscribe(id)
+		_, _, live, done, cancel, err := o.Subscribe(id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -228,7 +228,7 @@ func TestSubscribeMidwayGetsEveryLineOnce(t *testing.T) {
 		return nil
 	})
 	<-half
-	replay, live, done, cancel, err := o.Subscribe(op.ID)
+	replay, _, live, done, cancel, err := o.Subscribe(op.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +255,7 @@ func TestSubscribeToFinishedOp(t *testing.T) {
 	o := NewOps(time.Minute, fixedNow)
 	op, _ := o.Start("s", "up", func(ctx context.Context, out func(string)) error { out("x"); return nil })
 	waitDone(t, o, op.ID)
-	replay, live, done, cancel, err := o.Subscribe(op.ID)
+	replay, _, live, done, cancel, err := o.Subscribe(op.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestSubscribeToFinishedOp(t *testing.T) {
 	if final := <-done; final.State != OpSucceeded {
 		t.Fatalf("final %+v", final)
 	}
-	if _, _, _, _, err := o.Subscribe("nope"); !errors.Is(err, ErrOperationNotFound) {
+	if _, _, _, _, _, err := o.Subscribe("nope"); !errors.Is(err, ErrOperationNotFound) {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -288,7 +288,7 @@ func TestSlowSubscriberDroppedWithoutBlockingOp(t *testing.T) {
 		<-release
 		return nil
 	})
-	_, live, done, cancel, err := o.Subscribe(op.ID)
+	_, _, live, done, cancel, err := o.Subscribe(op.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -400,7 +400,7 @@ func TestSubscriberCancelIsIdempotent(t *testing.T) {
 	started := make(chan struct{})
 	op, _ := o.Start("s", "up", blockingFn(started))
 	<-started
-	_, live, _, cancel, _ := o.Subscribe(op.ID)
+	_, _, live, _, cancel, _ := o.Subscribe(op.ID)
 	cancel()
 	cancel()
 	if _, ok := <-live; ok {
@@ -495,7 +495,7 @@ func TestLiveAndRetainedLongLinesAgree(t *testing.T) {
 		out(strings.Repeat("a", 3*maxLineBytes))
 		return nil
 	})
-	_, live, _, cancel, _ := o.Subscribe(op.ID)
+	_, _, live, _, cancel, _ := o.Subscribe(op.ID)
 	defer cancel()
 	close(subscribed)
 	got := <-live
@@ -524,5 +524,55 @@ func TestTruncateLine(t *testing.T) {
 				t.Fatalf("got len %d, want len %d", len(got), len(tc.want))
 			}
 		})
+	}
+}
+
+func TestSubscribeReportsAbsoluteIndexOfFirstRetainedLine(t *testing.T) {
+	o := NewOps(time.Minute, fixedNow)
+	const total = maxRetainedLines + 500
+	op, _ := o.Start("s", "up", func(ctx context.Context, out func(string)) error {
+		for i := 0; i < total; i++ {
+			out(fmt.Sprintf("line %d", i))
+		}
+		return nil
+	})
+	waitDone(t, o, op.ID)
+	replay, first, _, _, cancel, err := o.Subscribe(op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancel()
+	if first != total-maxRetainedLines {
+		t.Fatalf("first = %d, want %d", first, total-maxRetainedLines)
+	}
+	// replay[0] is the note; replay[i] for i>=1 is absolute line first+i.
+	if want := fmt.Sprintf("line %d", first+1); replay[1] != want {
+		t.Fatalf("replay[1] = %q, want %q", replay[1], want)
+	}
+}
+
+func TestAllListsOperationsAcrossStacks(t *testing.T) {
+	o := NewOps(time.Minute, fixedNow)
+	release := make(chan struct{})
+	defer close(release)
+	running, err := o.Start("a", "up", func(ctx context.Context, _ func(string)) error {
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished, _ := o.Start("b", "up", func(context.Context, func(string)) error { return nil })
+	waitDone(t, o, finished.ID)
+
+	states := map[string]OpState{}
+	for _, op := range o.All() {
+		states[op.ID] = op.State
+	}
+	if len(states) != 2 || states[running.ID] != OpRunning || states[finished.ID] != OpSucceeded {
+		t.Fatalf("All = %v", states)
 	}
 }

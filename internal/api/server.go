@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/rcss-labs/stackstead/internal/auth"
@@ -26,6 +27,9 @@ type Options struct {
 	Operations OperationsAPI
 	FSRoots    []string
 	Status     StatusFunc
+	// Observe backs the logs, metrics, status-event and /metrics routes; nil
+	// disables them (and /api/status reports events as disconnected).
+	Observe ObserveAPI
 	// SSEHeartbeat is the idle interval between ": ping" comments on
 	// operation streams (default 15s) and SSEWriteTimeout bounds each write
 	// to a stream (default 10s), since the HTTP server has no WriteTimeout.
@@ -39,6 +43,11 @@ type Options struct {
 
 type server struct {
 	opts Options
+
+	// tokenCache is the /metrics token hash, loaded lazily (see tokenHash).
+	tokenMu     sync.Mutex
+	tokenCache  string
+	tokenLoaded bool
 }
 
 func New(opts Options) http.Handler {
@@ -54,6 +63,15 @@ func New(opts Options) http.Handler {
 
 	if opts.Stacks != nil && opts.Operations != nil {
 		s.registerStackRoutes(mux)
+	}
+
+	if opts.Observe != nil {
+		s.registerObserveRoutes(mux)
+	} else {
+		// Without this /metrics would fall through to the SPA's index.html.
+		mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+			writeError(w, http.StatusNotFound, "not found")
+		})
 	}
 
 	// Unknown API paths get a JSON 404 (after auth, so they don't reveal which

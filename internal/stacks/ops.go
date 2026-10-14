@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -272,25 +273,31 @@ func (o *Ops) Lines(id string) ([]string, error) {
 // Replay and registration happen atomically, so no line is missed or
 // repeated.
 //
+// first is the absolute index (counted from the operation's first line) of
+// replay[0]; live lines continue at first+len(replay). It is 0 until the
+// retention cap evicts lines. Once first > 0, replay[0] is the "earlier lines
+// dropped" note standing in for absolute line first, and carries no line of
+// its own: real lines start at replay[1] (absolute index first+1).
+//
 // Contract: live is closed when the subscription ends. After live closes,
 // receive from done: a value means the operation finished and is its final
 // state; a closed channel with no value means only this subscription ended
 // (dropped for being too slow, or ended by cancel), so call Get or Subscribe
 // again to continue. cancel unsubscribes and is safe to call repeatedly.
-func (o *Ops) Subscribe(id string) (replay []string, live <-chan string, done <-chan Operation, cancel func(), err error) {
+func (o *Ops) Subscribe(id string) (replay []string, first int, live <-chan string, done <-chan Operation, cancel func(), err error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	rec, err := o.lookup(id)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, 0, nil, nil, nil, err
 	}
-	replay = rec.retained()
+	replay, first = rec.retained(), rec.dropped
 	s := &subscriber{live: make(chan string, subscriberBuffer), done: make(chan Operation, 1)}
 	if rec.info.State != OpRunning {
 		close(s.live)
 		s.done <- rec.info
 		close(s.done)
-		return replay, s.live, s.done, func() {}, nil
+		return replay, first, s.live, s.done, func() {}, nil
 	}
 	rec.subs[s] = struct{}{}
 	cancel = func() {
@@ -302,7 +309,7 @@ func (o *Ops) Subscribe(id string) (replay []string, live <-chan string, done <-
 			close(s.done)
 		}
 	}
-	return replay, s.live, s.done, cancel, nil
+	return replay, first, s.live, s.done, cancel, nil
 }
 
 // Cancel asks a running operation to stop. It is a no-op once finished.
@@ -326,6 +333,20 @@ func (o *Ops) Recent(stack string) []Operation {
 	for i := len(hist) - 1; i >= 0; i-- {
 		out = append(out, hist[i].info)
 	}
+	return out
+}
+
+// All returns the retained operations of every stack, newest first.
+func (o *Ops) All() []Operation {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	var out []Operation
+	for _, hist := range o.byStack {
+		for _, rec := range hist {
+			out = append(out, rec.info)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
 	return out
 }
 
