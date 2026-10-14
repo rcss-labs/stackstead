@@ -56,6 +56,27 @@ func Parse(src []byte) (*File, error) {
 // Bytes returns the file's current content.
 func (f *File) Bytes() []byte { return bytes.Clone(f.src) }
 
+// LocalNetworks returns the keys of the top-level networks this file declares
+// itself, that is, without external. Compose creates them on the first up.
+func (f *File) LocalNetworks() map[string]bool {
+	nets := mappingValue(f.root, "networks")
+	out := map[string]bool{}
+	if nets == nil || nets.Kind != yaml.MappingNode {
+		return out
+	}
+	for i := 0; i+1 < len(nets.Content); i += 2 {
+		key, def := nets.Content[i], nets.Content[i+1]
+		if key.Kind != yaml.ScalarNode || key.ShortTag() == "!!merge" {
+			continue
+		}
+		if ext := mappingValue(def, "external"); ext != nil && !(ext.Kind == yaml.ScalarNode && ext.Value != "true") {
+			continue
+		}
+		out[key.Value] = true
+	}
+	return out
+}
+
 // Services returns the service names in file order.
 func (f *File) Services() ([]string, error) {
 	services := mappingValue(f.root, "services")

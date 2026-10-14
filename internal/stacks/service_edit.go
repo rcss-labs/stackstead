@@ -97,7 +97,8 @@ func (s *Service) commit(ctx context.Context, e Entry, old, edited *composefile.
 	if err != nil {
 		return EditResult{}, err
 	}
-	cs := changeSet{stack: e.Name, project: e.Project, services: newServices, qualify: qualify}
+	cs := changeSet{stack: e.Name, project: e.Project, services: newServices, qualify: qualify,
+		localNetworks: edited.LocalNetworks()}
 	if old != nil {
 		if oldServices, err := configsOf(old); err == nil {
 			cs.old = map[string]composefile.ServiceConfig{}
@@ -198,6 +199,10 @@ type changeSet struct {
 	services []namedConfig
 	old      map[string]composefile.ServiceConfig
 	qualify  bool // prefix field names with "services.<name>." (multi-service input)
+	// localNetworks are the networks the edited file declares itself (not
+	// external). One that does not exist on the engine yet is created by the
+	// first `up`, so its static IPs are left to `compose config` and `up`.
+	localNetworks map[string]bool
 }
 
 // checkChanges validates the new host ports and static IPs of cs against
@@ -276,6 +281,9 @@ func (s *Service) checkChanges(ctx context.Context, cs changeSet) (partial bool,
 		for _, i := range j.changedIPs {
 			n := j.svc.Config.Networks[i]
 			network := resolveNetwork(nets, cs.project, n.Name)
+			if cs.localNetworks[n.Name] && !networkExists(nets, network) {
+				continue
+			}
 			for _, fe := range CheckStaticIP(fmt.Sprintf("%snetworks.%s.ipv4_address", prefix, n.Name), network, n.IPv4Address, nets, usedIPs) {
 				fields = append(fields, fe)
 			}
@@ -333,6 +341,15 @@ func resolveNetwork(nets []engine.Network, project, key string) string {
 		}
 	}
 	return key
+}
+
+func networkExists(nets []engine.Network, name string) bool {
+	for _, n := range nets {
+		if n.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // otherStack is a registered stack's parsed services.

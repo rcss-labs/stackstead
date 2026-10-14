@@ -1272,3 +1272,48 @@ func TestSyncSkipsFolderWithOverrideAndWarns(t *testing.T) {
 		t.Errorf("rows = %+v", rows)
 	}
 }
+
+const localNetworkYAML = `services:
+  web:
+    image: nginx
+    networks:
+      lan:
+        ipv4_address: 10.9.0.5
+networks:
+  lan:
+    ipam:
+      config:
+        - subnet: 10.9.0.0/24
+`
+
+func TestStaticIPOnProjectLocalNetworkIsAcceptedBeforeFirstUp(t *testing.T) {
+	ctx := context.Background()
+	t.Run("SaveRaw", func(t *testing.T) {
+		h := newHarness(t)
+		hash := setupWeb(t, h)
+		if _, err := h.svc.SaveRaw(ctx, "web", []byte(localNetworkYAML), hash); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("UpdateService", func(t *testing.T) {
+		h := newHarness(t)
+		hash := setupWeb(t, h)
+		res, err := h.svc.SaveRaw(ctx, "web", []byte(strings.Replace(localNetworkYAML, "ipv4_address: 10.9.0.5", "ipv4_address: 10.9.0.4", 1)), hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg := composefile.ServiceConfig{Image: "nginx", Networks: []composefile.NetworkAttachment{{Name: "lan", IPv4Address: "10.9.0.5"}}}
+		if _, err := h.svc.UpdateService(ctx, "web", "web", cfg, res.Hash); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("external stays strict", func(t *testing.T) {
+		h := newHarness(t)
+		hash := setupWeb(t, h)
+		ext := strings.Replace(localNetworkYAML, "    ipam:\n      config:\n        - subnet: 10.9.0.0/24\n", "    external: true\n", 1)
+		_, err := h.svc.SaveRaw(ctx, "web", []byte(ext), hash)
+		if fs := fieldsOf(t, err); len(fs) != 1 || !strings.Contains(fs[0].Message, "not found") {
+			t.Errorf("fields = %+v", fs)
+		}
+	})
+}
