@@ -45,12 +45,6 @@
   let editingService = $state<string | undefined>();
   let serviceDirty = $state(false);
   let composeDirty = $state(false);
-  const dirty = $derived(serviceDirty || composeDirty);
-  let pendingLeave = $state<(() => void) | undefined>();
-
-  $effect(() => {
-    setUnsavedChanges(dirty);
-  });
   onDestroy(() => setUnsavedChanges(false));
 
   const parseError = $derived(detail?.parseError);
@@ -65,6 +59,21 @@
     (tabs.find((t) => t.id === requested)?.id ?? tabs[0]?.id ?? 'operations') as TabId,
   );
   const selectedOp = $derived($route.query.get('op') ?? undefined);
+
+  // An editor's flag only counts while that editor is mounted; unmounting without the confirm path
+  // (browser Back, a parse error appearing) must not leave a stale "unsaved" state behind.
+  const dirty = $derived(
+    (activeTab === 'compose' && composeDirty) || (activeTab === 'services' && !!editingService && serviceDirty),
+  );
+  let pendingLeave = $state<(() => void) | undefined>();
+
+  $effect(() => {
+    setUnsavedChanges(dirty);
+  });
+  $effect(() => {
+    if (activeTab !== 'compose') composeDirty = false;
+    if (activeTab !== 'services' || !editingService) serviceDirty = false;
+  });
 
   const hasRunning = $derived(operations.some((o) => o.state === 'running'));
   const lifecycleReason = $derived.by(() => {
@@ -90,14 +99,21 @@
       return d;
     } catch (e) {
       if (mine !== seq) return undefined;
-      if (e instanceof ApiError && e.status === 404) notFound = true;
+      if (e instanceof ApiError && e.status === 404) {
+        // The stack vanished right after we asked for its removal: that is the removal succeeding.
+        if (removeOpId) finishRemoval();
+        else notFound = true;
+      }
       else loadError = e instanceof Error ? e.message : String(e);
       return undefined;
     }
   }
+  let opsSeq = 0;
   async function loadOperations() {
+    const mine = ++opsSeq;
     try {
-      operations = await api.stackOperations(name);
+      const list = await api.stackOperations(name);
+      if (mine === opsSeq) operations = list;
     } catch {
       // The list is secondary; the next refresh tries again.
     }
@@ -206,13 +222,21 @@
       toasts.push({ kind: 'danger', message: `Could not cancel: ${e instanceof Error ? e.message : String(e)}` });
     }
   }
+  let removalDone = false;
+  function finishRemoval() {
+    if (removalDone) return;
+    removalDone = true;
+    toasts.push({ kind: 'success', message: `Removed ${name}` });
+    refreshRunningOps();
+    void refreshStacks();
+    navigate('/');
+  }
   function operationFinished(o: Operation) {
     refreshRunningOps();
     void refreshStacks();
     if (o.id === removeOpId) {
       if (o.state === 'succeeded') {
-        toasts.push({ kind: 'success', message: `Removed ${name}` });
-        navigate('/');
+        finishRemoval();
       } else {
         removeOpId = undefined;
         toasts.push({ kind: 'danger', message: `Removing ${name} ${o.state.replace('_', ' ')}` });
@@ -224,8 +248,9 @@
   }
 
   async function reloadDetail(): Promise<StackDetail> {
+    const mine = ++seq;
     const d = await api.stack(name);
-    detail = d;
+    if (mine === seq) detail = d;
     return d;
   }
   function afterSave() {

@@ -4,6 +4,7 @@ import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Operation, StackDetail as Detail } from '$lib/api/types';
 import { changes, startLive, stopLive } from '$lib/stores/live';
+import { unsavedChanges } from '$lib/stores/guard';
 import { toasts } from '$lib/stores/toasts';
 import { navigate, route } from '$lib/router';
 import { installFakeFetch, installFakeStream, type FakeFetch, type FakeResponse, type FakeStream } from '../vitest-setup';
@@ -269,5 +270,34 @@ describe('StackDetail', () => {
     startLive({ fetchStatus: () => fetch('/api/status').then((r) => r.json()) });
     await waitFor(() => expect(stackGets()).toBeGreaterThan(1));
     expect((screen.getByLabelText('Image') as HTMLInputElement).value).toBe('nginx:2');
+  });
+
+  it('history navigation away from a dirty compose editor does not leave a stale unsaved flag', async () => {
+    navigate('/stacks/web?tab=compose');
+    render(StackDetail, { name: 'web' });
+    const ta = (await screen.findByRole('textbox', { name: /compose file/i })) as HTMLTextAreaElement;
+    await waitFor(() => expect(ta.value).toBe('services: {}\n'));
+    await user().type(ta, '# edit');
+    await waitFor(() => expect(get(unsavedChanges)).toBe(true));
+    window.history.replaceState(null, '', '/stacks/web?tab=services');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    navigate('/stacks/web?tab=services', { replace: true });
+    await screen.findByRole('button', { name: 'Edit app' });
+    await waitFor(() => expect(get(unsavedChanges)).toBe(false));
+    await user().click(screen.getByRole('tab', { name: 'Logs' }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('a 404 after a remove operation was started counts as a successful removal', async () => {
+    render(StackDetail, { name: 'web' });
+    await screen.findByRole('heading', { name: 'web' });
+    await user().click(screen.getByRole('button', { name: 'Remove' }));
+    await user().click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(streamed('/api/operations/rm1/stream')).toBe(true));
+    stackRes = { status: 404, body: { error: 'stack not found' } };
+    startLive({ fetchStatus: () => fetch('/api/status').then((r) => r.json()) });
+    await waitFor(() => expect(get(route).path).toBe('/'));
+    expect(get(toasts).filter((t) => t.kind === 'success')).toHaveLength(1);
   });
 });

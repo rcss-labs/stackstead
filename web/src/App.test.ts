@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -34,6 +34,7 @@ beforeEach(() => {
     'GET /api/stacks': () => stacksRes,
     'GET /api/operations?state=running': () => ({ body: running }),
     'POST /api/logout': { status: 204 },
+    'POST /api/login': { status: 204 },
     'GET /api/settings/metrics-token': { body: { configured: false } },
   });
   stream = installFakeStream({ '/api/events': [] });
@@ -153,6 +154,78 @@ describe('App routing and session', () => {
     await user().click(within(nav).getByRole('link', { name: 'Settings' }));
     await user().click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Discard changes' }));
     await waitFor(() => expect(get(route).path).toBe('/settings'));
+  });
+});
+
+describe('App session edge cases', () => {
+  it('an authenticated user opening /login is sent to next, and /setup to the list', async () => {
+    at('/login?next=%2Fsettings');
+    render(App);
+    await waitFor(() => expect(get(route).path).toBe('/settings'));
+    expect(screen.queryByRole('heading', { name: /not found/i })).toBeNull();
+    at('/setup');
+    await waitFor(() => expect(get(route).path).toBe('/'));
+  });
+
+  it('a 401 on the events stream sends the user to login once', async () => {
+    stream.restore();
+    stream = installFakeStream({ '/api/events': { responses: [{ status: 401, body: { error: 'unauthorized' } }] } });
+    at('/settings');
+    render(App);
+    expect(await screen.findByLabelText('Username')).toBeTruthy();
+    expect(get(session).state).toBe('anonymous');
+    expect(get(route).path).toBe('/login');
+    expect(get(route).query.get('next')).toBe('/settings');
+    expect(stream.requests).toHaveLength(1);
+  });
+
+  it('logging in again after a 401 opens exactly one new events stream', async () => {
+    at('/');
+    render(App);
+    await screen.findByRole('heading', { name: 'Stacks' });
+    await waitFor(() => expect(stream.requests).toHaveLength(1));
+    const { refreshStacks } = await import('$lib/stores/stacks');
+    stacksRes = { status: 401, body: {} };
+    await refreshStacks();
+    await screen.findByLabelText('Username');
+    stacksRes = { body: [] };
+    fake.calls.length = 0;
+    const u = user();
+    await u.type(screen.getByLabelText('Username'), 'admin');
+    await u.type(screen.getByLabelText('Password'), 'pw');
+    await u.click(screen.getByRole('button', { name: /log in|sign in/i }));
+    await screen.findByRole('heading', { name: 'Stacks' });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(stream.requests).toHaveLength(2);
+    expect(stream.requests[0].signal!.aborted).toBe(true);
+    expect(get(route).path).toBe('/');
+  });
+
+  it('logout asks first when there are unsaved changes', async () => {
+    at('/');
+    render(App);
+    await screen.findByRole('heading', { name: 'Stacks' });
+    setUnsavedChanges(true);
+    await user().click(screen.getByRole('button', { name: 'Log out' }));
+    const dlg = await screen.findByRole('alertdialog');
+    expect(get(session).state).toBe('authenticated');
+    await user().click(within(dlg).getByRole('button', { name: 'Cancel' }));
+    expect(get(session).state).toBe('authenticated');
+  });
+
+  it('download links are not intercepted by the unsaved-changes guard', async () => {
+    at('/');
+    render(App);
+    await screen.findByRole('heading', { name: 'Stacks' });
+    setUnsavedChanges(true);
+    const a = document.createElement('a');
+    a.href = '/export.txt';
+    a.setAttribute('download', '');
+    a.textContent = 'dl';
+    screen.getByRole('main').append(a);
+    a.addEventListener('click', (e) => e.preventDefault());
+    await fireEvent.click(a);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 });
 

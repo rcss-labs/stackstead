@@ -27,7 +27,9 @@ export function measure(distDir) {
   const js = (chunk) => chunk.file.endsWith('.js');
   const all = Object.values(manifest).filter(js);
   const entry = [...eager].map((k) => manifest[k]).filter(js);
+  const heavy = entry.filter((c) => /(^|\/)(cm|uplot)[-.]/i.test(c.file) || /^(cm|uplot)/i.test(c.name ?? ''));
   return {
+    heavyInEntry: heavy.map((c) => c.file),
     entry: entry.reduce((n, c) => n + gz(c.file), 0),
     total: all.reduce((n, c) => n + gz(c.file), 0),
     lazy: all.filter((c) => !entry.includes(c)).map((c) => ({ file: c.file, gz: gz(c.file) })),
@@ -38,6 +40,7 @@ export function verdict(sizes) {
   const problems = [];
   if (sizes.entry > ENTRY_BUDGET) problems.push(`entry ${sizes.entry} B gz exceeds ${ENTRY_BUDGET} B`);
   if (sizes.total > TOTAL_BUDGET) problems.push(`total ${sizes.total} B gz exceeds ${TOTAL_BUDGET} B`);
+  for (const f of sizes.heavyInEntry ?? []) problems.push(`${f} must be a lazy chunk but is loaded eagerly`);
   return problems;
 }
 

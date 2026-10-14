@@ -41,4 +41,13 @@ describe('bundle budget', () => {
     const dir = fakeDist({ 'assets/index.js': 1000, 'assets/shared.js': 10, 'assets/lazy.js': 401 * 1024 }, manifest);
     expect(verdict(measure(dir)).join()).toMatch(/total/);
   });
+
+  it('fails when a CodeMirror or uPlot chunk is loaded eagerly', () => {
+    const eager = {
+      'index.html': { file: 'assets/index.js', isEntry: true, imports: ['cm'] },
+      cm: { file: 'assets/cm-abc.js', name: 'cm' },
+    };
+    const dir = fakeDist({ 'assets/index.js': 100, 'assets/cm-abc.js': 100 }, eager);
+    expect(verdict(measure(dir)).join()).toMatch(/lazy/);
+  });
 });

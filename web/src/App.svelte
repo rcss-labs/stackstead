@@ -13,7 +13,7 @@
   import { unsavedChanges, setUnsavedChanges } from '$lib/stores/guard';
   import { operationsRefresh, startStacks } from '$lib/stores/stacks';
   import { toasts } from '$lib/stores/toasts';
-  import Login from './routes/Login.svelte';
+  import Login, { safeNext } from './routes/Login.svelte';
   import Settings from './routes/Settings.svelte';
   import Setup from './routes/Setup.svelte';
   import StackCreate from './routes/StackCreate.svelte';
@@ -27,6 +27,7 @@
   let loggingOut = false;
   let navHost: HTMLElement | undefined = $state();
   let pendingHref = $state<string | undefined>();
+  let pendingLogout = $state(false);
 
   const path = $derived($route.path);
   const stackParams = $derived(matchRoute('/stacks/:name', path));
@@ -39,16 +40,18 @@
     return 'notfound' as const;
   });
 
+  function sessionLost() {
+    stopLive();
+    const here = window.location.pathname + window.location.search;
+    expireSession();
+    navigate(here.startsWith('/login') || here === '/' ? '/login' : `/login?next=${encodeURIComponent(here)}`, {
+      replace: true,
+    });
+  }
+
   onMount(() => {
     const stopRouter = startRouter();
-    onUnauthorized(() => {
-      stopLive();
-      const here = window.location.pathname + window.location.search;
-      expireSession();
-      navigate(here.startsWith('/login') || here === '/' ? '/login' : `/login?next=${encodeURIComponent(here)}`, {
-        replace: true,
-      });
-    });
+    onUnauthorized(sessionLost);
     bootstrapSession()
       .catch(() => {
         toasts.push({ kind: 'danger', message: 'Could not reach the Stackstead server' });
@@ -68,7 +71,16 @@
       if (loggingOut) navigate('/login', { replace: true });
       else navigate(`/login?next=${encodeURIComponent(p + window.location.search)}`, { replace: true });
     }
-    if (s === 'authenticated') loggingOut = false;
+    if (s === 'authenticated') {
+      loggingOut = false;
+      if (p === '/login') navigate(safeNext($route.query.get('next')), { replace: true });
+      else if (p === '/setup') navigate('/', { replace: true });
+    }
+  });
+
+  // The events stream answering 401 means the session is gone even if no API call has noticed yet.
+  $effect(() => {
+    if ($live.connection === 'unauthorized' && $session.state === 'authenticated') sessionLost();
   });
 
   // Live updates and the stack list live exactly as long as the session.
@@ -117,6 +129,10 @@
     if ($session.state === 'authenticated' && titles[view]) document.title = `${titles[view]} · Stackstead`;
   });
 
+  function requestLogout() {
+    if ($unsavedChanges) pendingLogout = true;
+    else void handleLogout();
+  }
   async function handleLogout() {
     loggingOut = true;
     setUnsavedChanges(false);
@@ -130,7 +146,7 @@
     if (!$unsavedChanges || ev.defaultPrevented || ev.button !== 0) return;
     if (ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) return;
     const a = (ev.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
-    if (!a || (a.target && a.target !== '_self')) return;
+    if (!a || (a.target && a.target !== '_self') || a.hasAttribute('download')) return;
     const url = new URL(a.href, window.location.href);
     if (url.origin !== window.location.origin) return;
     if (url.pathname === window.location.pathname && url.search === window.location.search) return;
@@ -140,9 +156,12 @@
   }
   function leave() {
     const href = pendingHref;
+    const logoutToo = pendingLogout;
     pendingHref = undefined;
+    pendingLogout = false;
     setUnsavedChanges(false);
-    if (href) navigate(href);
+    if (logoutToo) void handleLogout();
+    else if (href) navigate(href);
   }
 </script>
 
@@ -156,7 +175,7 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="layout" onclickcapture={guardLinks}>
     <div bind:this={navHost}>
-      <Nav username={$session.username} onlogout={() => void handleLogout()} {runningOps} current={path} />
+      <Nav username={$session.username} onlogout={requestLogout} {runningOps} current={path} />
     </div>
     <div class="banners container">
       {#if dockerDown}
@@ -201,13 +220,16 @@
     </main>
   </div>
   <ConfirmDialog
-    open={pendingHref !== undefined}
+    open={pendingHref !== undefined || pendingLogout}
     title="Discard unsaved changes?"
     message="You have unsaved changes in the editor. Leaving now discards them."
     confirmLabel="Discard changes"
     danger
     onconfirm={leave}
-    oncancel={() => (pendingHref = undefined)}
+    oncancel={() => {
+      pendingHref = undefined;
+      pendingLogout = false;
+    }}
   />
 {/if}
 <Toasts />
