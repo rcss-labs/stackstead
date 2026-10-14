@@ -33,6 +33,7 @@ describe('createLogBuffer', () => {
   it('pushes 10 000 lines quickly', () => {
     const buf = createLogBuffer();
     const lines = events(0, 10000);
+    buf.subscribe(() => {});
     const start = performance.now();
     buf.push(lines);
     expect(performance.now() - start).toBeLessThan(50);
@@ -67,6 +68,29 @@ describe('createLogBuffer', () => {
     buf.subscribe(fn);
     buf.push([]);
     expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('createLogBuffer capacity edge cases', () => {
+  it('clamps cap 0 and non-finite caps', () => {
+    const zero = createLogBuffer(0);
+    zero.push(events(0, 3));
+    expect(zero.snapshot().map((l) => l.text)).toEqual(['line 2']);
+    expect(zero.dropped()).toBe(2);
+    const nan = createLogBuffer(Number.NaN);
+    nan.push(events(0, 6000));
+    expect(nan.snapshot()).toHaveLength(5000);
+    expect(createLogBuffer(Infinity).snapshot()).toEqual([]);
+  });
+
+  it('an oversized push keeps correct seq and dropped for the survivors', () => {
+    const buf = createLogBuffer(2);
+    buf.push(events(0, 1));
+    buf.push(events(1, 10));
+    const snap = buf.snapshot();
+    expect(snap.map((l) => l.text)).toEqual(['line 9', 'line 10']);
+    expect(snap.map((l) => l.seq)).toEqual([10, 11]);
+    expect(buf.dropped()).toBe(9);
   });
 });
 
@@ -120,7 +144,7 @@ describe('createCoalescer', () => {
     expect(s.schedule).toHaveBeenCalledTimes(1);
     s.frame();
     expect(flush).toHaveBeenCalledTimes(1);
-    expect(flush).toHaveBeenCalledWith([1, 2, 3]);
+    expect(flush).toHaveBeenCalledWith([1, 2, 3], 0);
     s.frame();
     expect(flush).toHaveBeenCalledTimes(1);
   });
@@ -139,6 +163,32 @@ describe('createCoalescer', () => {
     expect(batches).toEqual([[1], [2]]);
   });
 
+  it('TestHiddenTabCapsPendingAndCountsTrimmed', () => {
+    const s = fakeScheduler(); // frame never fires: hidden tab
+    const flush = vi.fn();
+    const c = createCoalescer<number>(flush, s.schedule, 5000);
+    for (let i = 0; i < 20000; i++) c.add(i);
+    expect(s.schedule).toHaveBeenCalledTimes(1);
+    s.frame();
+    expect(flush).toHaveBeenCalledTimes(1);
+    const [items, trimmed] = flush.mock.calls[0];
+    expect(items).toHaveLength(5000);
+    expect(items[0]).toBe(15000);
+    expect(items[4999]).toBe(19999);
+    expect(trimmed).toBe(15000);
+  });
+
+  it('reports zero trimmed when under the cap and resets per flush', () => {
+    const s = fakeScheduler();
+    const flush = vi.fn();
+    const c = createCoalescer<number>(flush, s.schedule, 3);
+    c.add([1, 2, 3, 4, 5]);
+    s.frame();
+    c.add(6);
+    s.frame();
+    expect(flush.mock.calls).toEqual([[[3, 4, 5], 2], [[6], 0]]);
+  });
+
   it('cancel drops pending items and a stale frame does nothing', () => {
     const s = fakeScheduler();
     const flush = vi.fn();
@@ -149,6 +199,6 @@ describe('createCoalescer', () => {
     expect(flush).not.toHaveBeenCalled();
     c.add(3);
     s.frame();
-    expect(flush).toHaveBeenCalledWith([3]);
+    expect(flush).toHaveBeenCalledWith([3], 0);
   });
 });
