@@ -106,8 +106,8 @@ type Service struct {
 	// the unique index on stacks.project is the backstop.
 	// afterClaim, when set by tests, runs between claiming a project and saving the file.
 	afterClaim func()
-	locks     sync.Map // stack name -> *sync.Mutex, serializes saves of one stack
-	projectMu sync.Mutex
+	locks      sync.Map // stack name -> *sync.Mutex, serializes saves of one stack
+	projectMu  sync.Mutex
 }
 
 func NewService(d Deps) *Service {
