@@ -96,6 +96,7 @@
   {#if $op?.error}<p class="error">{$op.error}</p>{/if}
   <div class="visually-hidden" role="status" aria-live="polite">{announcement}</div>
   <div class="wrap">
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <div class="log" role="log" aria-live="off" aria-label="Output" tabindex="0" bind:this={region} {onscroll}>
       {#each $lines as text, i (i)}
         <div class={['line', hasNote && i === 0 && 'note']}>{text}</div>

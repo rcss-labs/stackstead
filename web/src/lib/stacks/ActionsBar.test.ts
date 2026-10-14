@@ -8,11 +8,11 @@ const stack: StackSummary = {
   name: 'web',
   path: '/srv/web',
   project: 'web',
-  origin: 'created',
+  origin: 'managed',
   status: 'running',
   serviceCount: 2,
   running: 2,
-} as StackSummary;
+};
 
 const setup = (props: Record<string, unknown> = {}) => {
   const onact = vi.fn();
