@@ -36,6 +36,9 @@ func stdinFd(env *Env) uintptr {
 // cannot exhaust memory.
 const maxSecretBytes = 64 << 10
 
+// errSecretTooLong is readLine's limit error.
+var errSecretTooLong = errors.New("input is too long")
+
 // readLine reads one line byte by byte (no buffering, so a following read
 // from the same stream sees the rest), stripping "\n" or "\r\n". It fails
 // when the limit is hit before a newline.
@@ -57,7 +60,7 @@ func readLine(r io.Reader) (string, error) {
 			return "", err
 		}
 	}
-	return "", errors.New("input is too long")
+	return "", errSecretTooLong
 }
 
 // readHidden reads a password without echo. Ctrl-C arrives as a cancelled
@@ -103,6 +106,9 @@ func readSecret(ctx context.Context, env *Env, src secretSource, prompt string, 
 	switch {
 	case src.Stdin:
 		line, err := readLine(env.Stdin)
+		if errors.Is(err, errSecretTooLong) {
+			return "", exitf(ExitValidation, "password is too long (limit %d bytes)", maxSecretBytes)
+		}
 		if err != nil {
 			return "", exitf(ExitUsage, "read secret from stdin: %v", err)
 		}
@@ -121,6 +127,9 @@ func readSecret(ctx context.Context, env *Env, src secretSource, prompt string, 
 		}
 		defer f.Close()
 		line, err := readLine(f)
+		if errors.Is(err, errSecretTooLong) {
+			return "", exitf(ExitValidation, "password is too long (limit %d bytes)", maxSecretBytes)
+		}
 		if err != nil {
 			return "", exitf(ExitUsage, "password file %s: %v", src.File, err)
 		}

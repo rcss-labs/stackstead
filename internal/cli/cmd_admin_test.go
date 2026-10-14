@@ -257,3 +257,9 @@ func TestSetPasswordTTYMismatchExits6AndChangesNothing(t *testing.T) {
 		t.Error("a mismatched confirmation still created the admin")
 	}
 }
+
+func TestSetPasswordMissingFileIsUsageError(t *testing.T) {
+	h := newLocalHost(t, true)
+	err := runLocal(newTestEnv(t, nil), "admin", "set-password", "--password-file", filepath.Join(t.TempDir(), "nope"), "--config", h.cfgPath)
+	wantCode(t, err, ExitUsage)
+}

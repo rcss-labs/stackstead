@@ -1,14 +1,10 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
-	"os"
-	"strings"
 
 	"github.com/rcss-labs/stackstead/internal/apitypes"
 	"github.com/rcss-labs/stackstead/internal/auth"
@@ -131,28 +127,9 @@ func setPassword(ctx context.Context, env *Env, cfg config.Config, username stri
 	if fromStdin && file != "" {
 		return exitf(ExitUsage, "use only one of --password-stdin and --password-file")
 	}
-	var password string
-	var err error
-	if !fromStdin && file == "" {
-		if !stdinIsTerminal(env) {
-			return exitf(ExitUsage, "give the password with --password-stdin or --password-file")
-		}
-		if password, err = readSecret(ctx, env, secretSource{AllowFile: true}, "Password: ", true); err != nil {
-			return err
-		}
-	} else {
-		var src io.Reader = env.Stdin
-		if file != "" {
-			f, err := os.Open(file)
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-			src = f
-		}
-		if password, err = readSecretLine(src); err != nil {
-			return err
-		}
+	password, err := readSecret(ctx, env, secretSource{Stdin: fromStdin, File: file, AllowFile: true}, "Password: ", true)
+	if err != nil {
+		return err
 	}
 
 	db, err := openLocalDB(env, cfg, store.OpenOptions{})
@@ -184,16 +161,4 @@ func setPassword(ctx context.Context, env *Env, cfg config.Config, username stri
 		fmt.Fprintf(env.Stdout, "password for %s updated; all sessions were signed out\n", username)
 	}
 	return nil
-}
-
-// readSecretLine reads the first line (at most 64 KiB) and strips its line ending.
-func readSecretLine(r io.Reader) (string, error) {
-	line, err := bufio.NewReader(io.LimitReader(r, maxSecretBytes+1)).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return "", err
-	}
-	if len(line) > maxSecretBytes {
-		return "", exitf(ExitValidation, "password is too long (limit %d bytes)", maxSecretBytes)
-	}
-	return strings.TrimRight(line, "\r\n"), nil
 }
