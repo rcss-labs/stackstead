@@ -1,0 +1,7 @@
+[
+ {"Name":"host","Id":"86da3a03e4a3","Driver":"host","IPAM":{"Driver":"default","Options":null,"Config":null}},
+ {"Name":"none","Id":"c79c258b63d6","Driver":"null","IPAM":{"Driver":"default","Options":null,"Config":null}},
+ {"Name":"bridge","Id":"7d8c1fb171d8","Driver":"bridge","IPAM":{"Driver":"default","Options":null,"Config":[{"Subnet":"172.17.0.0/16","Gateway":"172.17.0.1"}]}},
+ {"Name":"demo_default","Id":"fa18d04b60cf","Driver":"bridge","IPAM":{"Driver":"default","Config":[{"Subnet":"172.18.0.0/16","Gateway":"172.18.0.1"},{"Subnet":"fd00:1::/64","Gateway":"fd00:1::1"}]}},
+ {"Name":"broken","Id":"deadbeef0000","Driver":"bridge","IPAM":{"Driver":"default","Config":[{"Subnet":"not-a-cidr","Gateway":"x"},{"Subnet":"10.5.0.0/24","Gateway":"10.5.0.1"}]}}
+]

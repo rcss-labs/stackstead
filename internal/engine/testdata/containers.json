@@ -1,0 +1,12 @@
+[
+ {"Id":"4e344ea0e904e86f1f65bb9f09a979c348f2d9609764f0418d1a476328570d82","Names":["/demo-postgres-1"],"Image":"postgres:16.9","State":"running","Status":"Up 5 days (healthy)",
+  "Ports":[{"IP":"0.0.0.0","PrivatePort":5432,"PublicPort":5432,"Type":"tcp"},{"IP":"::","PrivatePort":5432,"PublicPort":5432,"Type":"tcp"},{"PrivatePort":9187,"Type":"tcp"}],
+  "Labels":{"com.docker.compose.project":"demo","com.docker.compose.service":"postgres","com.docker.compose.version":"2.29.0"},
+  "NetworkSettings":{"Networks":{"demo_default":{"IPAddress":"172.18.0.2"},"demo_backend":{"IPAddress":"172.19.0.5"}}}},
+ {"Id":"aa11bb22cc33dd44ee55ff66aa11bb22cc33dd44ee55ff66aa11bb22cc33dd44","Names":["/standalone","/other/alias"],"Image":"nginx:1.27","State":"exited","Status":"Exited (0) 2 hours ago",
+  "Ports":[],"Labels":{},
+  "NetworkSettings":{"Networks":{"bridge":{"IPAddress":""}}}},
+ {"Id":"cc33dd44ee55ff66aa11bb22cc33dd44ee55ff66aa11bb22cc33dd44ee55ff66","Names":["/demo-web-1"],"Image":"web:1","State":"exited","Status":"Exited (137) 1 hour ago",
+  "Ports":[],"Labels":{"com.docker.compose.project":"demo","com.docker.compose.service":"web"},
+  "NetworkSettings":{"Networks":{"demo_default":{"IPAMConfig":{"IPv4Address":"172.18.0.50"},"IPAddress":""}}}}
+]
