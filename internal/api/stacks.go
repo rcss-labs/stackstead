@@ -100,7 +100,7 @@ func (s *server) handleCreateStack(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	sum, err := s.opts.Stacks.Create(r.Context(), stacks.CreateRequest{Name: req.Name, Service: req.Service, Config: req.Config.toDomain()})
+	sum, err := s.opts.Stacks.Create(r.Context(), stacks.CreateRequest{Name: req.Name, Service: req.Service, Config: serviceConfigToDomain(req.Config)})
 	if err != nil {
 		s.writeStackError(w, r, err)
 		return
@@ -160,7 +160,7 @@ func (s *server) handleUpdateService(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	res, err := s.opts.Stacks.UpdateService(r.Context(), r.PathValue("name"), r.PathValue("service"), req.Config.toDomain(), req.Hash)
+	res, err := s.opts.Stacks.UpdateService(r.Context(), r.PathValue("name"), r.PathValue("service"), serviceConfigToDomain(req.Config), req.Hash)
 	if err != nil {
 		s.writeStackError(w, r, err)
 		return
@@ -176,7 +176,7 @@ func (s *server) handlePreviewService(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	candidate, err := s.opts.Stacks.PreviewService(r.Context(), r.PathValue("name"), r.PathValue("service"), req.Config.toDomain(), req.Hash)
+	candidate, err := s.opts.Stacks.PreviewService(r.Context(), r.PathValue("name"), r.PathValue("service"), serviceConfigToDomain(req.Config), req.Hash)
 	if err != nil {
 		s.writeStackError(w, r, err)
 		return
@@ -234,7 +234,7 @@ func (s *server) handleGetOperation(w http.ResponseWriter, r *http.Request) {
 	if lines == nil {
 		lines = []string{}
 	}
-	writeJSON(w, http.StatusOK, operationDetailDTO{operationDTO: toOperation(op), Lines: lines})
+	writeJSON(w, http.StatusOK, operationDetailDTO{Operation: toOperation(op), Lines: lines})
 }
 
 func (s *server) handleCancelOperation(w http.ResponseWriter, r *http.Request) {
@@ -295,5 +295,5 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		docker, compose = s.opts.Status(r.Context())
 	}
 	flags := s.statusFlags()
-	writeJSON(w, http.StatusOK, statusDTO{Docker: docker, Compose: compose, Events: flags.Events, MetricsDegraded: flags.MetricsDegraded})
+	writeJSON(w, http.StatusOK, statusDTO{Docker: docker, Compose: compose, Events: flags.Events, MetricsDegraded: flags.MetricsDegraded, Version: s.opts.Version})
 }

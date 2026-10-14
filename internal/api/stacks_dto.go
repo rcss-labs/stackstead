@@ -1,60 +1,45 @@
 package api
 
 import (
-	"time"
-
+	"github.com/rcss-labs/stackstead/internal/apitypes"
 	"github.com/rcss-labs/stackstead/internal/composefile"
 	"github.com/rcss-labs/stackstead/internal/engine"
 	"github.com/rcss-labs/stackstead/internal/fsguard"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 )
 
-// Response and request shapes. They live here, not in package stacks, so the
-// domain packages stay free of transport concerns.
+// Response and request shapes. They live in apitypes, not in package stacks, so
+// the domain packages stay free of transport concerns.
 
-type summaryDTO struct {
-	Name         string `json:"name"`
-	Path         string `json:"path"`
-	Project      string `json:"project"`
-	Origin       string `json:"origin"`
-	Status       string `json:"status"`
-	ServiceCount int    `json:"serviceCount"`
-	Running      int    `json:"running"`
-}
+// Wire types live in apitypes; these aliases keep the handlers and
+// converters unchanged.
+type (
+	summaryDTO           = apitypes.StackSummary
+	containerDTO         = apitypes.ContainerInfo
+	serviceDetailDTO     = apitypes.ServiceDetail
+	detailDTO            = apitypes.StackDetail
+	serviceConfig        = apitypes.ServiceConfig
+	buildDTO             = apitypes.Build
+	envVarDTO            = apitypes.EnvVar
+	attachmentDTO        = apitypes.NetworkAttachment
+	limitsDTO            = apitypes.Limits
+	healthcheckDTO       = apitypes.Healthcheck
+	createStackRequest   = apitypes.CreateStackRequest
+	importRequest        = apitypes.ImportRequest
+	rawComposeBody       = apitypes.RawCompose
+	updateServiceRequest = apitypes.UpdateServiceRequest
+	hashResponse         = apitypes.HashResponse
+	previewResponse      = apitypes.PreviewResponse
+	operationDTO         = apitypes.Operation
+	networkDTO           = apitypes.Network
+	fsEntryDTO           = apitypes.FSEntry
+	statusDTO            = apitypes.Status
+	operationDetailDTO   = apitypes.OperationDetail
+)
 
 func toSummary(s stacks.Summary) summaryDTO {
 	return summaryDTO{Name: s.Name, Path: s.Path, Project: s.Project, Origin: string(s.Origin),
 		Status: string(s.Status), ServiceCount: s.Services, Running: s.Running}
-}
-
-type containerDTO struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Service string `json:"service"`
-	State   string `json:"state"`
-	Status  string `json:"status"`
-}
-
-type serviceDetailDTO struct {
-	Name       string         `json:"name"`
-	Config     serviceConfig  `json:"config"`
-	ReadOnly   []string       `json:"readOnly"`
-	Containers []containerDTO `json:"containers"`
-}
-
-// detailDTO flattens the summary but carries the per-service list under
-// "services"; serviceCount mirrors the summary field.
-type detailDTO struct {
-	Name         string             `json:"name"`
-	Path         string             `json:"path"`
-	Project      string             `json:"project"`
-	Origin       string             `json:"origin"`
-	Status       string             `json:"status"`
-	Running      int                `json:"running"`
-	ServiceCount int                `json:"serviceCount"`
-	Hash         string             `json:"hash"`
-	Services     []serviceDetailDTO `json:"services"`
-	ParseError   string             `json:"parseError,omitempty"`
 }
 
 func toDetail(d stacks.Detail) detailDTO {
@@ -73,44 +58,6 @@ func toDetail(d stacks.Detail) detailDTO {
 		out.Services = append(out.Services, dto)
 	}
 	return out
-}
-
-// serviceConfig is the JSON form of composefile.ServiceConfig.
-type serviceConfig struct {
-	Image       string          `json:"image,omitempty"`
-	Build       *buildDTO       `json:"build,omitempty"`
-	Ports       []string        `json:"ports,omitempty"`
-	Volumes     []string        `json:"volumes,omitempty"`
-	Environment []envVarDTO     `json:"environment,omitempty"`
-	Networks    []attachmentDTO `json:"networks,omitempty"`
-	NetworkMode string          `json:"networkMode,omitempty"`
-	Limits      limitsDTO       `json:"limits"`
-	Restart     string          `json:"restart,omitempty"`
-	Healthcheck *healthcheckDTO `json:"healthcheck,omitempty"`
-}
-
-type buildDTO struct {
-	Context    string `json:"context"`
-	Dockerfile string `json:"dockerfile,omitempty"`
-}
-type envVarDTO struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-}
-type attachmentDTO struct {
-	Name        string `json:"name"`
-	IPv4Address string `json:"ipv4Address,omitempty"`
-}
-type limitsDTO struct {
-	CPUs   string `json:"cpus,omitempty"`
-	Memory string `json:"memory,omitempty"`
-}
-type healthcheckDTO struct {
-	Test        []string `json:"test,omitempty"`
-	Interval    string   `json:"interval,omitempty"`
-	Timeout     string   `json:"timeout,omitempty"`
-	StartPeriod string   `json:"startPeriod,omitempty"`
-	Retries     int      `json:"retries,omitempty"`
 }
 
 func toServiceConfig(c composefile.ServiceConfig) serviceConfig {
@@ -133,7 +80,7 @@ func toServiceConfig(c composefile.ServiceConfig) serviceConfig {
 	return out
 }
 
-func (c serviceConfig) toDomain() composefile.ServiceConfig {
+func serviceConfigToDomain(c serviceConfig) composefile.ServiceConfig {
 	out := composefile.ServiceConfig{Image: c.Image, Ports: c.Ports, Volumes: c.Volumes, NetworkMode: c.NetworkMode,
 		Limits: composefile.Limits(c.Limits), Restart: c.Restart}
 	if c.Build != nil {
@@ -151,48 +98,6 @@ func (c serviceConfig) toDomain() composefile.ServiceConfig {
 		out.Healthcheck = &h
 	}
 	return out
-}
-
-type createStackRequest struct {
-	Name    string        `json:"name"`
-	Service string        `json:"service"`
-	Config  serviceConfig `json:"config"`
-}
-
-type importRequest struct {
-	Path string `json:"path"`
-}
-
-type rawComposeBody struct {
-	Content string `json:"content"`
-	Hash    string `json:"hash"`
-}
-
-type updateServiceRequest struct {
-	Config serviceConfig `json:"config"`
-	Hash   string        `json:"hash"`
-}
-
-type hashResponse struct {
-	Hash string `json:"hash"`
-}
-
-// previewResponse carries the candidate file and the hash it was computed
-// against, which the save must send unchanged.
-type previewResponse struct {
-	Content string `json:"content"`
-	Hash    string `json:"hash"`
-}
-
-type operationDTO struct {
-	ID        string     `json:"id"`
-	Stack     string     `json:"stack"`
-	Action    string     `json:"action"`
-	State     string     `json:"state"`
-	StartedAt time.Time  `json:"startedAt"`
-	EndedAt   *time.Time `json:"endedAt,omitempty"`
-	ExitCode  *int       `json:"exitCode,omitempty"`
-	Error     string     `json:"error,omitempty"`
 }
 
 func toOperation(o stacks.Operation) operationDTO {
@@ -223,17 +128,6 @@ func toOperations(ops []stacks.Operation) []operationDTO {
 	return out
 }
 
-type operationDetailDTO struct {
-	operationDTO
-	Lines []string `json:"lines"`
-}
-
-type networkDTO struct {
-	Name    string   `json:"name"`
-	Driver  string   `json:"driver"`
-	Subnets []string `json:"subnets"`
-}
-
 func toNetworks(nets []engine.Network) []networkDTO {
 	out := make([]networkDTO, 0, len(nets))
 	for _, n := range nets {
@@ -246,26 +140,10 @@ func toNetworks(nets []engine.Network) []networkDTO {
 	return out
 }
 
-type fsEntryDTO struct {
-	Name  string `json:"name"`
-	IsDir bool   `json:"isDir"`
-	Size  int64  `json:"size"`
-}
-
 func toFSEntries(entries []fsguard.Entry) []fsEntryDTO {
 	out := make([]fsEntryDTO, 0, len(entries))
 	for _, e := range entries {
 		out = append(out, fsEntryDTO(e))
 	}
 	return out
-}
-
-type statusDTO struct {
-	Docker  string `json:"docker"`
-	Compose string `json:"compose"`
-	// Events is "connected" while the container status cache follows Docker
-	// events, else "disconnected"; MetricsDegraded is true while the sampler
-	// cannot store samples.
-	Events          string `json:"events"`
-	MetricsDegraded bool   `json:"metricsDegraded"`
 }

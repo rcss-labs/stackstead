@@ -37,6 +37,11 @@ type Options struct {
 	// shutdown does not wait for them.
 	Closing <-chan struct{}
 
+	// Version is reported by /api/status; empty means unknown. Now is the
+	// clock for the metrics-token cache (default time.Now).
+	Version string
+	Now     func() time.Time
+
 	SSEHeartbeat    time.Duration
 	SSEWriteTimeout time.Duration
 }
@@ -48,15 +53,22 @@ type server struct {
 	tokenMu     sync.Mutex
 	tokenCache  string
 	tokenLoaded bool
+	tokenLoadAt time.Time
 }
 
 func New(opts Options) http.Handler {
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
 	s := &server{opts: opts}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/setup/status", s.handleSetupStatus)
 	mux.HandleFunc("POST /api/setup", s.handleSetup)
 	mux.HandleFunc("POST /api/login", s.handleLogin)
+	// Liveness probe for installers and load balancers: no session, and it
+	// reveals nothing about versions, flags or Docker.
+	mux.HandleFunc("GET /api/health", s.handleHealth)
 
 	mux.Handle("POST /api/logout", s.requireSession(s.handleLogout))
 	mux.Handle("GET /api/me", s.requireSession(s.handleMe))
