@@ -498,3 +498,31 @@ func TestRevokeAllSessionsCount(t *testing.T) {
 		t.Errorf("sessions left = %d", c)
 	}
 }
+
+func TestResetPasswordIsAtomic(t *testing.T) {
+	svc, db, _ := newTestService(t)
+	ctx := context.Background()
+	if err := svc.CreateAdmin(ctx, "admin", goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	token, err := svc.Login(ctx, "admin", goodPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER block_session_delete BEFORE DELETE ON sessions
+		BEGIN SELECT RAISE(ABORT, 'sessions are protected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ResetPassword(ctx, "admin", "a brand new passphrase"); err == nil {
+		t.Fatal("ResetPassword succeeded although deleting sessions failed")
+	}
+	if _, err := svc.Login(ctx, "admin", goodPassword); err != nil {
+		t.Errorf("old password must still work after a failed reset: %v", err)
+	}
+	if _, err := svc.Login(ctx, "admin", "a brand new passphrase"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Errorf("new password err = %v, want ErrInvalidCredentials (reset must roll back)", err)
+	}
+	if _, err := svc.Authenticate(ctx, token); err != nil {
+		t.Errorf("existing session lost: %v", err)
+	}
+}
