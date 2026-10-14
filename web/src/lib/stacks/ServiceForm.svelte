@@ -22,7 +22,7 @@
     name?: string;
     nameReadonly?: boolean;
     onbrowse?: (mode: 'dir' | 'file', cb: (path: string) => void) => void;
-    networkPicker?: Snippet<[ServiceForm]>;
+    networkPicker?: Snippet<[ServiceForm, Record<number, string>]>;
     onRawEditor?: () => void;
   } = $props();
 
@@ -37,7 +37,8 @@
   const MODE_PRESETS = ['', 'host', 'none', 'bridge'];
 
   let root = $state<HTMLElement>();
-  let customMode = $state(!MODE_PRESETS.includes(form.networkMode));
+  let pickedCustom = $state(false);
+  const customMode = $derived(pickedCustom || !MODE_PRESETS.includes(form.networkMode));
 
   const ro = (g: FieldGroup) => form.readOnly.has(g);
   const sourceReadOnly = $derived(ro('image') || ro('build'));
@@ -47,7 +48,7 @@
     const out: FormErrors = {};
     for (const [path, message] of Object.entries(errors)) {
       if (form.source === 'image' && path.startsWith('build.') && !sourceReadOnly) continue;
-      if (form.source === 'build' && path === 'image' && !sourceReadOnly) continue;
+      if (path.startsWith('healthcheck.') && !form.healthcheck.enabled && !ro('healthcheck')) continue;
       out[path] = message;
     }
     return out;
@@ -83,15 +84,16 @@
 
   function selectMode(value: string) {
     if (value === 'custom') {
-      customMode = true;
+      pickedCustom = true;
       form.networkMode = '';
     } else {
-      customMode = false;
+      pickedCustom = false;
       form.networkMode = value;
     }
   }
 
   function pasteEnv(event: ClipboardEvent, index: number) {
+    if (ro('environment')) return;
     const row = form.env[index];
     if (!row || row.name !== '' || row.value !== '') return;
     const text = event.clipboardData?.getData('text') ?? '';
@@ -113,13 +115,13 @@
   {#if ro(group)}
     <p class="note" id="svc-ro-{group}">
       {RO_HINT}
-      {#if onRawEditor}<Button variant="secondary" onclick={() => onRawEditor?.()}>Open raw YAML editor</Button>{/if}
+      {#if onRawEditor}<Button variant="secondary" aria-label="Open raw YAML editor for {group}" onclick={() => onRawEditor?.()}>Open raw YAML editor</Button>{/if}
     </p>
   {/if}
 {/snippet}
 
 <div class="service-form" bind:this={root}>
-  <p class="visually-hidden" role="status">{errorCount > 0 ? `${errorCount} ${errorCount === 1 ? 'field has an error' : 'fields have errors'}` : ''}</p>
+  <p class="visually-hidden" role="status">{errorCount > 0 ? `${errorCount} ${errorCount === 1 ? 'field has an error' : 'fields have errors'}: ${Object.keys(shown).join(', ')}` : ''}</p>
   {#if errors['_form']}
     <div class="form-error" role="alert" tabindex="-1" data-form-error>{errors['_form']}</div>
   {/if}
@@ -132,7 +134,7 @@
     </Field>
   {/if}
 
-  <fieldset aria-describedby={sourceReadOnly ? 'svc-ro-image' : undefined}>
+  <fieldset aria-describedby={sourceReadOnly ? `svc-ro-${ro('build') ? 'build' : 'image'}` : undefined}>
     <legend>Source</legend>
     {@render readonlyNote(ro('build') ? 'build' : 'image')}
     <div class="radios" role="radiogroup" aria-label="Source type">
@@ -140,13 +142,18 @@
       <label><input type="radio" name="svc-source" value="build" checked={form.source === 'build'} disabled={sourceReadOnly} onchange={() => (form.source = 'build')} /> From build</label>
     </div>
     {#if form.source === 'image'}
-      <Field label="Image" id="svc-image" error={shown['image']} hint="For example nginx:1.27" readonly={sourceReadOnly} readonlyReason={RO_HINT}>
+      <Field label="Image" id="svc-image" error={shown['image']} hint="For example nginx:1.27" readonly={sourceReadOnly}>
         {#snippet children(aria)}
           <input type="text" {...aria} bind:value={form.image} autocomplete="off" spellcheck="false" />
         {/snippet}
       </Field>
     {:else}
-      <Field label="Build context" id="svc-build-context" error={shown['build.context']} readonly={sourceReadOnly} readonlyReason={RO_HINT}>
+      <Field label="Image tag" id="svc-image" error={shown['image']} hint="Optional; tag applied to the built image" readonly={sourceReadOnly}>
+        {#snippet children(aria)}
+          <input type="text" {...aria} bind:value={form.image} autocomplete="off" spellcheck="false" />
+        {/snippet}
+      </Field>
+      <Field label="Build context" id="svc-build-context" error={shown['build.context']} readonly={sourceReadOnly}>
         {#snippet children(aria)}
           <div class="inline">
             <input type="text" {...aria} bind:value={form.buildContext} autocomplete="off" spellcheck="false" />
@@ -156,7 +163,7 @@
           </div>
         {/snippet}
       </Field>
-      <Field label="Dockerfile" id="svc-dockerfile" error={shown['build.dockerfile']} hint="Optional; defaults to Dockerfile in the context" readonly={sourceReadOnly} readonlyReason={RO_HINT}>
+      <Field label="Dockerfile" id="svc-dockerfile" error={shown['build.dockerfile']} hint="Optional; defaults to Dockerfile in the context" readonly={sourceReadOnly}>
         {#snippet children(aria)}
           <div class="inline">
             <input type="text" {...aria} bind:value={form.dockerfile} autocomplete="off" spellcheck="false" />
@@ -256,7 +263,7 @@
     <legend>Networks</legend>
     {@render readonlyNote('networks')}
     {#if networkPicker && !ro('networks')}
-      {@render networkPicker(form)}
+      {@render networkPicker(form, networkErrors)}
     {:else}
       <ListEditor
         items={form.networks}

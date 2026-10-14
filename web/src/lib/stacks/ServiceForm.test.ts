@@ -14,7 +14,7 @@ describe('ServiceForm', () => {
     expect((port as HTMLInputElement).readOnly || (port as HTMLInputElement).disabled).toBe(true);
     expect(screen.getByText(HINT)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Add port' })).toBeNull();
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Open raw YAML editor' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Open raw YAML editor for ports' }));
     expect(onRawEditor).toHaveBeenCalledOnce();
   });
 
@@ -44,13 +44,13 @@ describe('ServiceForm', () => {
     expect(screen.getByRole('alert').textContent).toContain('compose rejected the file');
   });
 
-  it("hides the other source's errors after switching source", async () => {
-    render(Host, { errors: { image: 'image is required' } });
-    expect(screen.getByText('image is required')).toBeTruthy();
+  it("hides the build source's errors while the image source is selected", async () => {
+    render(Host, { errors: { 'build.context': 'build context is required' } });
+    expect(screen.queryByText('build context is required')).toBeNull();
     await userEvent.setup().click(screen.getByRole('radio', { name: 'From build' }));
-    expect(screen.queryByText('image is required')).toBeNull();
+    expect(screen.getByText('build context is required')).toBeTruthy();
     await userEvent.setup().click(screen.getByRole('radio', { name: 'From image' }));
-    expect(screen.getByText('image is required')).toBeTruthy();
+    expect(screen.queryByText('build context is required')).toBeNull();
   });
 
   it('shows build errors only for the build source and offers Browse when onbrowse is given', async () => {
@@ -136,16 +136,61 @@ describe('ServiceForm', () => {
     expect(component.getForm().healthcheck).toMatchObject({ enabled: true, test: 'curl -f localhost' });
   });
 
-  it('uses the networkPicker snippet or a plain list for networks', async () => {
+  it('passes the networkPicker snippet the form and its mapped row errors', () => {
+    render(Host, {
+      withPicker: true,
+      initial: { networks: [{ name: 'a', ipv4Address: '' }, { name: 'b', ipv4Address: 'x' }] },
+      errors: { 'networks[1].ipv4Address': 'bad ip' },
+    });
+    expect(screen.getByTestId('picker').textContent).toContain('2 networks');
+    expect(screen.getByTestId('picker').textContent).toContain('bad ip');
+    expect(screen.getByTestId('picker').textContent).toContain('"1"');
+  });
+
+  it('edits networks in a plain list without a picker', async () => {
     const user = userEvent.setup();
-    const { unmount } = render(Host, { withPicker: true });
-    expect(screen.getByTestId('picker')).toBeTruthy();
-    unmount();
     const { component } = render(Host);
     await user.click(screen.getByRole('button', { name: 'Add network' }));
-    await user.type(screen.getByLabelText('Network 1 name'), 'backend');
+    await user.type(screen.getByLabelText('Network 1 name'), 'be');
     await user.type(screen.getByLabelText('Network 1 IPv4 address'), '10.0.0.5');
-    expect(component.getForm().networks).toEqual([{ name: 'backend', ipv4Address: '10.0.0.5' }]);
+    expect(component.getForm().networks).toEqual([{ name: 'be', ipv4Address: '10.0.0.5' }]);
+  });
+
+  it('shows an editable image tag and its errors in build mode', async () => {
+    const { component } = render(Host, { initial: { source: 'build', image: 'app:1' }, errors: { image: 'bad tag' } });
+    const tag = screen.getByLabelText('Image tag') as HTMLInputElement;
+    expect(tag.value).toBe('app:1');
+    expect(tag.getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByText('bad tag')).toBeTruthy();
+    await userEvent.setup().type(tag, '2');
+    expect(component.getForm().image).toBe('app:12');
+  });
+
+  it('does not split pasted lines into a read-only environment', async () => {
+    const user = userEvent.setup();
+    const { component } = render(Host, { initial: { env: [{ name: '', value: '' }], readOnly: new Set<Field>(['environment']) } });
+    await user.click(screen.getByLabelText('Variable 1 name'));
+    await user.paste('A=1\nB=2');
+    expect(component.getForm().env).toEqual([{ name: '', value: '' }]);
+  });
+
+  it('gives each raw-editor button a group-specific name and shows the reason once', () => {
+    render(Host, { initial: { ports: ['1:1'], volumes: ['a:b'], readOnly: new Set<Field>(['ports', 'volumes']) }, onRawEditor: () => {} });
+    expect(screen.getByRole('button', { name: 'Open raw YAML editor for ports' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open raw YAML editor for volumes' })).toBeTruthy();
+    expect(screen.getAllByText(HINT)).toHaveLength(2);
+  });
+
+  it('does not count errors on fields that are not shown', () => {
+    render(Host, { errors: { 'healthcheck.interval': 'bad' } });
+    expect(screen.getByRole('status').textContent).toBe('');
+  });
+
+  it('re-announces when the error set changes even if the count does not', async () => {
+    const { rerender } = render(Host, { errors: { image: 'a' } });
+    const before = screen.getByRole('status').textContent;
+    await rerender({ errors: { 'limits.cpus': 'b' } });
+    expect(screen.getByRole('status').textContent).not.toBe(before);
   });
 
   it('focuses the first invalid control, or the form alert, via focusFirstError', async () => {

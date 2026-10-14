@@ -27,7 +27,9 @@
   let name = $state('web');
   let inner: ServiceForm | undefined;
 
-  const picker = createRawSnippet(() => ({ render: () => '<div data-testid="picker">picker</div>' }));
+  const picker = createRawSnippet((f: () => Form, errs: () => Record<number, string>) => ({
+    render: () => `<div data-testid="picker">${f().networks.length} networks ${JSON.stringify(errs())}</div>`,
+  }));
 
   export const getForm = () => form;
   export const getName = () => name;
