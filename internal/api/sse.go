@@ -162,6 +162,14 @@ func (s *server) handleStreamOperation(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for i := start; i < len(replay); i++ {
+		// A large replay must not outlive the request or a closing server.
+		select {
+		case <-r.Context().Done():
+			return
+		case <-s.opts.Closing:
+			return
+		default:
+		}
 		id := strconv.Itoa(first + i)
 		if first > 0 && i == 0 {
 			id = ""

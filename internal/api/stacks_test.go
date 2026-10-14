@@ -608,6 +608,40 @@ func TestStreamEndsWhenServerIsClosing(t *testing.T) {
 	}
 }
 
+func TestClosingServerStopsLargeReplayPromptly(t *testing.T) {
+	const total = 100000
+	replay := make([]string, total)
+	for i := range replay {
+		replay[i] = "line"
+	}
+	fake := finishedStream(replay...)
+	closing := make(chan struct{})
+	close(closing)
+	env := newEnvWith(t, "", func(o *api.Options) {
+		o.Stacks, o.Operations, o.FSRoots, o.Status = fake, fakeOps{fake}, fake.roots, fake.status
+		o.Closing = closing
+	})
+	env.createAdmin(t)
+	_, events := openStream(t, env, env.login(t), context.Background())
+	lines := 0
+	timeout := time.After(10 * time.Second)
+	for ended := false; !ended; {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				ended = true
+			} else if ev.name == "line" {
+				lines++
+			}
+		case <-timeout:
+			t.Fatalf("stream still running after 10s (%d lines)", lines)
+		}
+	}
+	if lines >= total {
+		t.Errorf("replayed all %d lines despite the server closing", lines)
+	}
+}
+
 // streamLinesUntilDone returns "id=data" for every line event up to done.
 func streamLinesUntilDone(t *testing.T, events <-chan sseEvent) []string {
 	t.Helper()
