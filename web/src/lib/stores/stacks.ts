@@ -59,6 +59,7 @@ export function startStacks(deps: {
     if (list === deps.list) {
       list = null;
       seq++; // a response still in flight must not land after stop
+      state.set({ items: [], loading: false }); // never show another session's stacks
     }
   };
 }
