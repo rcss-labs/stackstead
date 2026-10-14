@@ -1153,6 +1153,33 @@ func TestResumeIgnoresMalformedCursors(t *testing.T) {
 
 const defaultTailForTest = 200
 
+func TestResumeIgnoresHugeOrdinals(t *testing.T) {
+	fake := cursorFake()
+	env, cookie := newObserveEnv(t, fake)
+	hdr := cursorA + ":5:1000000001," + cursorB + ":5:9223372036854775807"
+	_, ch := openSSEResume(t, env, cookie, context.Background(), "/api/stacks/web/logs", hdr)
+	drain(t, ch)
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	for _, full := range []string{cursorAFull, cursorBFull} {
+		if o := fake.logOpts[full]; o.Tail != defaultTailForTest || !o.Since.IsZero() {
+			t.Errorf("oversized ordinal was honoured for %s: %+v", full, o)
+		}
+	}
+}
+
+func TestResumeAcceptsOrdinalAtCap(t *testing.T) {
+	fake := cursorFake()
+	env, cookie := newObserveEnv(t, fake)
+	_, ch := openSSEResume(t, env, cookie, context.Background(), "/api/stacks/web/logs", cursorA+":5:1000000000")
+	drain(t, ch)
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if o := fake.logOpts[cursorAFull]; o.Tail != -1 {
+		t.Errorf("ordinal at the cap was ignored: %+v", o)
+	}
+}
+
 func TestResumeOrdinalContinues(t *testing.T) {
 	fake := cursorFake()
 	fake.logs[cursorAFull] = fakeLogSpec{lines: []engine.LogLine{

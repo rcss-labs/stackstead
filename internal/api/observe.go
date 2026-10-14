@@ -230,9 +230,14 @@ func isLowerHex(s string) bool {
 }
 
 // parseLogCursors reads a Last-Event-ID header. Entries that are not
-// "<1-12 lowercase hex>:<positive ts>:<positive ordinal>" are skipped (the
+// "<1-12 lowercase hex>:<positive ts>:<ordinal in 1..maxCursorOrdinal>" are skipped (the
 // header is client-controlled, and an operation-stream id may arrive here
 // from a shared client); for a repeated container the later entry wins.
+// maxCursorOrdinal bounds the client-supplied ordinal: it is a count of lines
+// at one timestamp, so anything larger is forged, and capping it keeps later
+// arithmetic on it far from overflow.
+const maxCursorOrdinal = 1_000_000_000
+
 func parseLogCursors(header string) map[string]logCursor {
 	out := map[string]logCursor{}
 	for _, part := range strings.Split(header, ",") {
@@ -242,7 +247,7 @@ func parseLogCursors(header string) map[string]logCursor {
 		}
 		ts, err1 := strconv.ParseInt(fields[1], 10, 64)
 		ord, err2 := strconv.Atoi(fields[2])
-		if err1 != nil || err2 != nil || ts <= 0 || ord <= 0 {
+		if err1 != nil || err2 != nil || ts <= 0 || ord <= 0 || ord > maxCursorOrdinal {
 			continue
 		}
 		out[fields[0]] = logCursor{Container: fields[0], TS: ts, Ordinal: ord}
@@ -263,7 +268,11 @@ func parseLogCursors(header string) map[string]logCursor {
 // container that has a cursor is read from that timestamp with tail=all and
 // its first Ordinal lines at that exact timestamp are dropped, so lines are
 // neither repeated nor skipped; other containers use tail/since as usual.
-// Limits are Docker's: lines already rotated away cannot be replayed.
+// Limits are Docker's: lines already rotated away cannot be replayed. A resume
+// re-reads the container's log from the start (tail=all plus since) and skips
+// forward, so it costs a full read. Docker may also store stdout and stderr
+// lines slightly out of timestamp order, so in that race a resume can lose or
+// repeat a line.
 func (s *server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	opts, ok := parseLogOptions(w, r)
 	if !ok {
