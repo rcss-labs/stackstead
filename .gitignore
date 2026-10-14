@@ -35,3 +35,4 @@ go.work.sum
 # Build output
 bin/
 .dev/
+node_modules/
