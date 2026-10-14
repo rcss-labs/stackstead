@@ -104,7 +104,8 @@ that is about 260,000 rows per container. If the database cannot be written,
 `..._network_transmit_bytes_total`, `..._blkio_read_bytes_total`,
 `..._blkio_write_bytes_total`, labelled `project`, `service`, `container`)
 and `stackstead_metrics_degraded`. It does not use the session; it needs a
-bearer token, and it answers 401 until one exists.
+bearer token: the endpoint answers 404 until a token exists, then 401 for a
+missing or wrong one.
 
 Create (or rotate; the old token stops working) a token while logged in. The
 plaintext is shown once and only its SHA-256 is stored:
