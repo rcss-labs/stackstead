@@ -116,6 +116,7 @@ func (f *fakeStacks) Networks(context.Context) ([]engine.Network, error) {
 type fakeOps struct{ f *fakeStacks }
 
 func (o fakeOps) Recent(string) []stacks.Operation     { return []stacks.Operation{o.f.op} }
+func (o fakeOps) All() []stacks.Operation              { return []stacks.Operation{o.f.op} }
 func (o fakeOps) Get(string) (stacks.Operation, error) { return o.f.op, o.f.err }
 func (o fakeOps) Lines(string) ([]string, error)       { return []string{"a", "b"}, o.f.err }
 func (o fakeOps) Cancel(id string) error               { o.f.gotCancel = id; return o.f.err }
@@ -355,7 +356,7 @@ func TestNetworksAndStatus(t *testing.T) {
 		t.Fatalf("networks = %d %s", rec.Code, rec.Body)
 	}
 	rec = env.do(t, "GET", "/api/status", "", withCookie(cookie))
-	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"docker":"ok","compose":"v2.30.0"}` {
+	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"docker":"ok","compose":"v2.30.0","events":"disconnected","metricsDegraded":false}` {
 		t.Fatalf("status = %d %s", rec.Code, rec.Body)
 	}
 }

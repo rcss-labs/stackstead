@@ -550,3 +550,29 @@ func TestSubscribeReportsAbsoluteIndexOfFirstRetainedLine(t *testing.T) {
 		t.Fatalf("replay[1] = %q, want %q", replay[1], want)
 	}
 }
+
+func TestAllListsOperationsAcrossStacks(t *testing.T) {
+	o := NewOps(time.Minute, fixedNow)
+	release := make(chan struct{})
+	defer close(release)
+	running, err := o.Start("a", "up", func(ctx context.Context, _ func(string)) error {
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished, _ := o.Start("b", "up", func(context.Context, func(string)) error { return nil })
+	waitDone(t, o, finished.ID)
+
+	states := map[string]OpState{}
+	for _, op := range o.All() {
+		states[op.ID] = op.State
+	}
+	if len(states) != 2 || states[running.ID] != OpRunning || states[finished.ID] != OpSucceeded {
+		t.Fatalf("All = %v", states)
+	}
+}

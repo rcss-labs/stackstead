@@ -30,6 +30,8 @@ type StacksAPI interface {
 // OperationsAPI is the operation registry; *stacks.Ops satisfies it directly.
 type OperationsAPI interface {
 	Recent(stack string) []stacks.Operation
+	// All returns the retained operations of every stack, newest first.
+	All() []stacks.Operation
 	Get(id string) (stacks.Operation, error)
 	Lines(id string) ([]string, error)
 	// Subscribe has the contract documented on stacks.Ops.Subscribe.
@@ -61,6 +63,7 @@ func (s *server) registerStackRoutes(mux *http.ServeMux) {
 	route("POST /api/stacks/{name}/actions/{action}", s.handleAction)
 	route("DELETE /api/stacks/{name}", s.handleRemoveStack)
 	route("GET /api/stacks/{name}/operations", s.handleStackOperations)
+	route("GET /api/operations", s.handleListOperations)
 	route("GET /api/operations/{id}", s.handleGetOperation)
 	route("GET /api/operations/{id}/stream", s.handleStreamOperation)
 	route("POST /api/operations/{id}/cancel", s.handleCancelOperation)
@@ -274,5 +277,6 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if s.opts.Status != nil {
 		docker, compose = s.opts.Status(r.Context())
 	}
-	writeJSON(w, http.StatusOK, statusDTO{Docker: docker, Compose: compose})
+	flags := s.statusFlags()
+	writeJSON(w, http.StatusOK, statusDTO{Docker: docker, Compose: compose, Events: flags.Events, MetricsDegraded: flags.MetricsDegraded})
 }

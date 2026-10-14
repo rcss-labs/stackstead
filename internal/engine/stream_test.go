@@ -516,3 +516,51 @@ func TestParseLogLineWalkBackCappedAtThreeBytes(t *testing.T) {
 		t.Fatalf("len = %d, want %d", len(got.Text), maxLogLine-3)
 	}
 }
+
+// A TTY container's stream is raw. Callers that cannot know the TTY flag
+// request multiplexed framing; the demuxer must recognise a stream whose first
+// bytes are not a frame header and read it raw instead of misreading a
+// timestamp as a frame length.
+func TestLogsRawTTYStreamWithTTYFalseIsDetected(t *testing.T) {
+	raw := "2026-10-14T10:00:00Z first\r\n2026-10-14T10:00:01Z second\n"
+	check := func(t *testing.T, got []LogLine, es []error) {
+		t.Helper()
+		if len(es) != 0 || len(got) != 2 {
+			t.Fatalf("got %+v errs %v", got, es)
+		}
+		if got[0].Text != "first" || !got[0].Time.Equal(time.Date(2026, 10, 14, 10, 0, 0, 0, time.UTC)) || got[1].Text != "second" {
+			t.Errorf("got %+v", got)
+		}
+	}
+	t.Run("non-follow", func(t *testing.T) {
+		sock := serve(t, logHandler(t, []byte(raw), nil))
+		lines, errs := New(sock, 2*time.Second).Logs(ctx(t), "abc", LogOptions{Tail: -1})
+		got, es := collectLogs(t, lines, errs)
+		check(t, got, es)
+	})
+	t.Run("follow", func(t *testing.T) {
+		sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(raw))
+			w.(http.Flusher).Flush()
+			<-r.Context().Done() // the container stays up
+		}))
+		c, cancel := context.WithCancel(ctx(t))
+		defer cancel()
+		lines, errs := New(sock, 2*time.Second).Logs(c, "abc", LogOptions{Follow: true})
+		var got []LogLine
+		for len(got) < 2 {
+			select {
+			case l, ok := <-lines:
+				if !ok {
+					t.Fatalf("stream ended early: %+v", got)
+				}
+				got = append(got, l)
+			case e := <-errs:
+				t.Fatalf("error: %v", e)
+			case <-time.After(3 * time.Second):
+				t.Fatalf("follow stream hung; got %+v", got)
+			}
+		}
+		check(t, got, nil)
+	})
+}
