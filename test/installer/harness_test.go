@@ -91,6 +91,7 @@ func buildBinary(t *testing.T, goos, goarch, version string) string {
 	script := fmt.Sprintf(`#!/bin/sh
 [ -z "${FAKE_STACKSTEAD_LOG:-}" ] || echo "$*" >> "$FAKE_STACKSTEAD_LOG"
 case "${1:-}" in
+--help|-h|help) echo "Usage: stackstead <command>"; echo "  version   print the version"; exit 0 ;;
 version)
 	case "${2:-}" in
 	--short) echo %[1]s ;;
@@ -108,7 +109,27 @@ esac
 	return p
 }
 
+// buildLegacyBinary returns a pre-Plan-6 stackstead stand-in: it ignores its
+// arguments and serves (here: records a marker and sleeps), except that --help
+// prints flag usage and exits, as Go's flag package does. install.sh must never
+// get it to "serve" while probing. The marker file is $LEGACY_MARKER.
+func buildLegacyBinary(t *testing.T) string {
+	t.Helper()
+	script := `#!/bin/sh
+case "${1:-}" in
+--help|-h) echo "Usage of stackstead:" >&2; echo "  -config string" >&2; exit 2 ;;
+esac
+echo "$$ $*" >> "${LEGACY_MARKER:-/dev/null}"
+sleep 3600
+`
+	p := filepath.Join(t.TempDir(), "stackstead")
+	writeFile(t, p, []byte(script), 0o755)
+	return p
+}
+
 type releaseOpts struct {
+	UnsafeMember bool // add a tar member named ../evil
+	SymlinkUnit  bool // make stackstead.service a symlink
 	Sign         bool // add SHA256SUMS.sig made with the release key (the key in allowed_signers)
 	SignOtherKey bool // add SHA256SUMS.sig made with a key that is NOT in allowed_signers
 	OmitFromSums bool // leave the linux tarballs out of SHA256SUMS
@@ -121,7 +142,7 @@ func hexSum(b []byte) string {
 	return hex.EncodeToString(s[:])
 }
 
-func tarball(t *testing.T, files map[string][]byte, modes map[string]int64) []byte {
+func tarball(t *testing.T, files map[string][]byte, modes map[string]int64, opts releaseOpts) []byte {
 	t.Helper()
 	names := make([]string, 0, len(files))
 	for n := range files {
@@ -137,10 +158,25 @@ func tarball(t *testing.T, files map[string][]byte, modes map[string]int64) []by
 			mode = m
 		}
 		hdr := &tar.Header{Name: n, Mode: mode, Size: int64(len(files[n])), ModTime: time.Unix(1700000000, 0)}
+		if opts.SymlinkUnit && n == "stackstead.service" {
+			hdr = &tar.Header{Name: n, Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd", Mode: 0o777, ModTime: hdr.ModTime}
+		}
 		if err := tw.WriteHeader(hdr); err != nil {
 			t.Fatal(err)
 		}
+		if hdr.Typeflag == tar.TypeSymlink {
+			continue
+		}
 		if _, err := tw.Write(files[n]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if opts.UnsafeMember {
+		evil := []byte("evil\n")
+		if err := tw.WriteHeader(&tar.Header{Name: "../evil", Mode: 0o644, Size: int64(len(evil)), ModTime: time.Unix(1700000000, 0)}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(evil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -210,7 +246,7 @@ func fakeRelease(t *testing.T, r *run, version string, bins map[string]string, o
 			files[k] = v
 		}
 		name := fmt.Sprintf("stackstead_%s_%s_%s.tar.gz", version, goos, goarch)
-		data := tarball(t, files, map[string]int64{"stackstead": 0o755, "install.sh": 0o755})
+		data := tarball(t, files, map[string]int64{"stackstead": 0o755, "install.sh": 0o755}, opts)
 		writeFile(t, filepath.Join(vdir, name), data, 0o644)
 		if !(opts.OmitFromSums && goos == "linux") {
 			lines = append(lines, hexSum(data)+"  "+name)
@@ -353,6 +389,7 @@ func defaultStubs() map[string]string {
 		"systemctl": `exit 0`,
 		"useradd":   `exit 0`,
 		"groupadd":  `exit 0`,
+		"usermod":   `exit 0`,
 		"userdel":   `exit 0`,
 	}
 }

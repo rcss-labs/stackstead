@@ -333,7 +333,7 @@ func TestScript(t *testing.T) {
 		if n := strings.Count(out, "would run: systemctl restart stackstead"); n != 1 {
 			t.Errorf("restart printed %d times, want 1:\n%s", n, out)
 		}
-		notContains(t, "stdout", out, "enable --now", "useradd", "groupadd")
+		notContains(t, "stdout", out, "enable", "useradd", "groupadd")
 	})
 
 	t.Run("OlderVersionNeedsForce", func(t *testing.T) {
@@ -472,7 +472,7 @@ func TestScript(t *testing.T) {
 		}
 		// dry-run needs neither root nor --root.
 		stubD := stubPath(t, f.stubs)
-		out, errOut, code = runScript(t, []string{"--dry-run", "--base-url", f.base}, map[string]string{"STUBS_DIR": stubD, "TMPDIR": f.tmpDir}, nil)
+		out, errOut, code = runScript(t, []string{"--dry-run", "--prefix", filepath.Join(f.r.Dir, "prefix"), "--base-url", f.base}, map[string]string{"STUBS_DIR": stubD, "TMPDIR": f.tmpDir}, nil)
 		mustExit(t, code, 0, out, errOut)
 		contains(t, "plan", out, "would")
 		if tmp, _ := os.ReadDir(f.tmpDir); len(tmp) != 0 {
@@ -484,7 +484,7 @@ func TestScript(t *testing.T) {
 		f := newFixture(t, "1.0.0")
 		out, errOut, code := f.run()
 		mustExit(t, code, 0, out, errOut)
-		for _, name := range []string{"systemctl", "useradd", "groupadd", "adduser", "addgroup", "userdel"} {
+		for _, name := range []string{"systemctl", "useradd", "groupadd", "adduser", "addgroup", "userdel", "usermod"} {
 			if l := stubLog(f.stubD, name); l != "" {
 				t.Errorf("stub %s was called under --root: %q", name, l)
 			}
@@ -607,6 +607,191 @@ func TestScript(t *testing.T) {
 		mustExit(t, code, 8, out, errOut)
 		contains(t, "stderr", errOut, "package")
 		assertNothingStaged(t, f)
+	})
+	t.Run("LegacyBinaryIsNeverStartedByTheProbe", func(t *testing.T) {
+		f := newFixture(t, "1.0.0")
+		marker := filepath.Join(f.r.Dir, "legacy-marker")
+		writeFile(t, f.p("usr/local/bin/stackstead"), readFile(t, buildLegacyBinary(t)), 0o755)
+		out, errOut, code := f.runEnv(map[string]string{"LEGACY_MARKER": marker})
+		mustExit(t, code, 0, out, errOut)
+		if b, _ := os.ReadFile(marker); len(b) != 0 {
+			t.Fatalf("the installer started the legacy binary as a server: %q", b)
+		}
+		if f.installedVersion() != "v1.0.0" {
+			t.Errorf("legacy binary was not replaced: %s", f.installedVersion())
+		}
+		// present but of unknown version = upgrade, never a fresh install
+		contains(t, "stdout", out, "would run: systemctl restart stackstead")
+		notContains(t, "stdout", out, "enable --now", "enable")
+	})
+
+	t.Run("VersionComparison", func(t *testing.T) {
+		cases := []struct {
+			installed, requested string
+			replaced             bool
+		}{
+			{"1.2.3-rc.2", "1.2.3-rc.10", true}, // numeric pre-release identifiers
+			{"1.2.3-rc.10", "1.2.3-rc.2", false},
+			{"1.2.3-5-gabc1234", "1.2.3", false}, // a build after the tag is newer than the tag
+			{"1.2.3-5-gabc1234", "1.2.4", true},
+			{"1.2.3", "1.2.3-rc.1", false}, // release beats its pre-release
+		}
+		for _, c := range cases {
+			f := newFixture(t, c.requested)
+			writeFile(t, f.p("usr/local/bin/stackstead"), readFile(t, buildBinary(t, "linux", goarch(), c.installed)), 0o755)
+			out, errOut, code := f.run("--version", c.requested)
+			mustExit(t, code, 0, out, errOut)
+			want := "v" + c.installed
+			if c.replaced {
+				want = "v" + c.requested
+			}
+			if got := f.installedVersion(); got != want {
+				t.Errorf("installed %s, requested %s: now %s, want %s\n%s", c.installed, c.requested, got, want, out)
+			}
+		}
+	})
+
+	t.Run("NonDefaultBaseURLWarnsAndInsecureIsRefused", func(t *testing.T) {
+		f := newFixture(t, "1.0.0")
+		out, errOut, code := f.run("--version", "v1.0.0")
+		mustExit(t, code, 0, out, errOut)
+		contains(t, "stderr", errOut, "warning:", "non-default", f.base)
+
+		f = newFixture(t, "1.0.0")
+		before := len(requestsTo(f.base))
+		out, errOut, code = f.run("--base-url", "http://example.com/stackstead")
+		mustExit(t, code, 2, out, errOut)
+		contains(t, "stderr", errOut, "https")
+		if len(requestsTo(f.base)) != before {
+			t.Error("refused URL must not be fetched")
+		}
+		for _, u := range []string{"http://localhost:1", "http://[::1]:1", "http://127.0.0.1:1"} {
+			_, errOut, code = f.run("--base-url", u)
+			if code != 5 {
+				t.Errorf("loopback %s: exit %d, want 5 (download failure, not refusal)\n%s", u, code, errOut)
+			}
+		}
+		// the default URL is not warned about (uninstall needs no network)
+		out, errOut, code = f.run("--uninstall")
+		_ = out
+		notContains(t, "stderr", errOut, "non-default")
+	})
+
+	t.Run("RefusesRootSlash", func(t *testing.T) {
+		out, errOut, code := runScript(t, []string{"--root", "/", "--dry-run"}, nil, defaultStubs())
+		mustExit(t, code, 2, out, errOut)
+		out, errOut, code = runScript(t, []string{"--root", "//", "--dry-run"}, nil, defaultStubs())
+		mustExit(t, code, 2, out, errOut)
+	})
+
+	t.Run("ExistingStacksDirNotWritableWarnsAndIsNotChanged", func(t *testing.T) {
+		f := newFixture(t, "1.0.0")
+		if err := os.MkdirAll(f.p("opt/stacks"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		_ = os.Chmod(f.p("opt/stacks"), 0o755)
+		out, errOut, code := f.run()
+		mustExit(t, code, 0, out, errOut)
+		contains(t, "stderr", errOut, "warning:", "chgrp docker /opt/stacks && chmod 2775 /opt/stacks")
+		assertMode(t, f.p("opt/stacks"), 0o755)
+		notContains(t, "stdout", out, "chown")
+
+		f = newFixture(t, "1.0.0")
+		if err := os.MkdirAll(f.p("opt/stacks"), 0o777); err != nil {
+			t.Fatal(err)
+		}
+		_ = os.Chmod(f.p("opt/stacks"), 0o777)
+		out, errOut, code = f.run()
+		mustExit(t, code, 0, out, errOut)
+		notContains(t, "stderr", errOut, "chgrp docker")
+
+		// a directory the installer just created needs no warning
+		f = newFixture(t, "1.0.0")
+		_, errOut, code = f.run()
+		mustExit(t, code, 0, "", errOut)
+		notContains(t, "stderr", errOut, "chgrp docker")
+	})
+
+	t.Run("ServiceUserJoinsDockerGroup", func(t *testing.T) {
+		f := newFixture(t, "1.0.0")
+		out, errOut, code := f.run()
+		mustExit(t, code, 0, out, errOut)
+		line := out[strings.Index(out, "would run: useradd"):]
+		line = line[:strings.Index(line, "\n")]
+		contains(t, "useradd", line, "-G docker")
+
+		// existing user, not in docker: usermod -aG
+		f = newFixture(t, "1.0.0")
+		f.stubs["id"] = `case "$1" in -u) echo 1000 ;; -nG) echo stackstead ;; esac; exit 0`
+		out, errOut, code = f.run()
+		mustExit(t, code, 0, out, errOut)
+		contains(t, "stdout", out, "would run: usermod -aG docker stackstead\n")
+		notContains(t, "stdout", out, "useradd")
+
+		// existing user already in docker: nothing to do
+		f = newFixture(t, "1.0.0")
+		f.stubs["id"] = `case "$1" in -u) echo 1000 ;; -nG) echo "stackstead docker" ;; esac; exit 0`
+		out, errOut, code = f.run()
+		mustExit(t, code, 0, out, errOut)
+		notContains(t, "stdout", out, "usermod", "useradd")
+
+		// busybox
+		f = newFixture(t, "1.0.0")
+		delete(f.stubs, "usermod")
+		delete(f.stubs, "useradd")
+		delete(f.stubs, "groupadd")
+		f.stubs["adduser"] = `exit 0`
+		f.stubs["addgroup"] = `exit 0`
+		f.path = minimalPath(t)
+		out, errOut, code = f.run()
+		mustExit(t, code, 0, out, errOut)
+		contains(t, "stdout", out, "would run: addgroup stackstead docker\n")
+	})
+
+	t.Run("UnsafeTarballMembersAreRefused", func(t *testing.T) {
+		for name, opts := range map[string]releaseOpts{"dotdot": {UnsafeMember: true}, "symlink": {SymlinkUnit: true}} {
+			r := newRun(t)
+			dist := fakeRelease(t, r, "1.0.0", nil, opts)
+			f := &fixture{t: t, r: r, dist: dist, stubs: defaultStubs(), root: filepath.Join(r.Dir, "root"), tmpDir: filepath.Join(r.Dir, "tmp")}
+			f.base = serveRelease(t, dist, "v1.0.0")
+			_ = os.MkdirAll(f.root, 0o755)
+			_ = os.MkdirAll(f.tmpDir, 0o755)
+			out, errOut, code := f.run("--version", "v1.0.0")
+			if code != 6 {
+				t.Errorf("%s: exit %d, want 6\n%s%s", name, code, out, errOut)
+			}
+			assertNothingStaged(t, f)
+			if _, err := os.Stat(filepath.Join(r.Dir, "evil")); err == nil {
+				t.Errorf("%s: member escaped the extraction directory", name)
+			}
+		}
+	})
+
+	t.Run("PartialNameInSumsDoesNotMatch", func(t *testing.T) {
+		f := newFixture(t, "1.0.0")
+		sums := filepath.Join(f.dist, "v1.0.0", "SHA256SUMS")
+		var kept []string
+		for _, l := range strings.Split(strings.TrimSpace(string(readFile(t, sums))), "\n") {
+			if strings.Contains(l, "_linux_") {
+				// only a longer, different asset name remains, with a plausible hash
+				l = l[:64] + "  x" + strings.TrimSpace(l[64:])
+			}
+			kept = append(kept, l)
+		}
+		writeFile(t, sums, []byte(strings.Join(kept, "\n")+"\n"), 0o644)
+		out, errOut, code := f.run("--version", "v1.0.0")
+		mustExit(t, code, 6, out, errOut)
+		assertNothingStaged(t, f)
+	})
+
+	t.Run("StarNameInSumsIsAccepted", func(t *testing.T) {
+		f := newFixture(t, "1.0.0")
+		sums := filepath.Join(f.dist, "v1.0.0", "SHA256SUMS")
+		b := strings.ReplaceAll(string(readFile(t, sums)), "  stackstead_", " *stackstead_")
+		writeFile(t, sums, []byte(b), 0o644)
+		out, errOut, code := f.run()
+		mustExit(t, code, 0, out, errOut)
+		contains(t, "latest", out, "v1.0.0")
 	})
 }
 

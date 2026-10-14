@@ -52,6 +52,7 @@ Exit codes:
   6  verification failure (checksum or signature)
   7  an install step failed (user, directories, unit, service)
   8  refused (not root, or a package-managed install is present)
+  130  interrupted (INT, TERM or HUP)
 EOF
 }
 
@@ -102,9 +103,9 @@ trap 'DIED=1; exit 130' INT TERM HUP
 
 # ---------------------------------------------------------------- options
 
-VERSION_ARG=${STACKSTEAD_VERSION:-}
-BASE_URL=${STACKSTEAD_BASE_URL:-$DEFAULT_BASE_URL}
-SIGNERS=${STACKSTEAD_INSTALL_SIGNERS_FILE:-}
+VERSION_ARG=
+BASE_URL=
+SIGNERS=
 PREFIX=/usr/local
 ROOT=
 NO_START=
@@ -118,55 +119,40 @@ need_value() { # option remaining-arg-count
 	[ "$2" -ge 2 ] || usage_error "$1 needs a value"
 }
 
-while [ $# -gt 0 ]; do
-	case $1 in
-	--version) need_value "$1" $#; VERSION_ARG=$2; shift 2 ;;
-	--version=*) VERSION_ARG=${1#*=}; shift ;;
-	--prefix) need_value "$1" $#; PREFIX=$2; shift 2 ;;
-	--prefix=*) PREFIX=${1#*=}; shift ;;
-	--signers) need_value "$1" $#; SIGNERS=$2; shift 2 ;;
-	--signers=*) SIGNERS=${1#*=}; shift ;;
-	--base-url) need_value "$1" $#; BASE_URL=$2; shift 2 ;;
-	--base-url=*) BASE_URL=${1#*=}; shift ;;
-	--root) need_value "$1" $#; ROOT=$2; shift 2 ;;
-	--root=*) ROOT=${1#*=}; shift ;;
-	--no-start) NO_START=1; shift ;;
-	--force) FORCE=1; shift ;;
-	--dry-run) DRY_RUN=1; shift ;;
-	--uninstall) UNINSTALL=1; shift ;;
-	--purge) PURGE=1; shift ;;
-	--print-paths) PRINT_PATHS=1; shift ;;
-	-h | --help) usage; exit 0 ;;
-	*) usage_error "unknown option: $1" ;;
-	esac
-done
-
-[ -z "$PURGE" ] || [ -n "$UNINSTALL" ] || usage_error "--purge only makes sense with --uninstall"
-case $PREFIX in
-/*) ;;
-*) usage_error "--prefix must be an absolute path: $PREFIX" ;;
-esac
-case $PREFIX in
-*[!A-Za-z0-9/._+-]*) usage_error "--prefix may only contain letters, digits and / . _ + -: $PREFIX" ;;
-esac
-PREFIX=${PREFIX%/}
-[ -n "$PREFIX" ] || PREFIX=/
-case $ROOT in
-"" | /*) ;;
-*) usage_error "--root must be an absolute path: $ROOT" ;;
-esac
-ROOT=${ROOT%/}
-BASE_URL=${BASE_URL%/}
+parse_args() {
+	VERSION_ARG=${STACKSTEAD_VERSION:-}
+	BASE_URL=${STACKSTEAD_BASE_URL:-$DEFAULT_BASE_URL}
+	SIGNERS=${STACKSTEAD_INSTALL_SIGNERS_FILE:-}
+	while [ $# -gt 0 ]; do
+		case $1 in
+		--version) need_value "$1" $#; VERSION_ARG=$2; shift 2 ;;
+		--version=*) VERSION_ARG=${1#*=}; shift ;;
+		--prefix) need_value "$1" $#; PREFIX=$2; shift 2 ;;
+		--prefix=*) PREFIX=${1#*=}; shift ;;
+		--signers) need_value "$1" $#; SIGNERS=$2; shift 2 ;;
+		--signers=*) SIGNERS=${1#*=}; shift ;;
+		--base-url) need_value "$1" $#; BASE_URL=$2; shift 2 ;;
+		--base-url=*) BASE_URL=${1#*=}; shift ;;
+		--root) need_value "$1" $#; ROOT=$2; shift 2 ;;
+		--root=*) ROOT=${1#*=}; shift ;;
+		--no-start) NO_START=1; shift ;;
+		--force) FORCE=1; shift ;;
+		--dry-run) DRY_RUN=1; shift ;;
+		--uninstall) UNINSTALL=1; shift ;;
+		--purge) PURGE=1; shift ;;
+		--print-paths) PRINT_PATHS=1; shift ;;
+		-h | --help) usage; exit 0 ;;
+		*) usage_error "unknown option: $1" ;;
+		esac
+	done
+}
 
 # ---------------------------------------------------------------- paths
 
-# rp PATH: where an absolute PATH lands (prefixed with --root when staging).
-rp() { printf '%s%s' "$ROOT" "$1"; }
-
-BIN_DIR=$PREFIX/bin
-BIN=$BIN_DIR/stackstead
-HELPER_DIR=$PREFIX/share/stackstead
-HELPER=$HELPER_DIR/install.sh
+BIN_DIR=
+BIN=
+HELPER_DIR=
+HELPER=
 UNIT=/etc/systemd/system/$SERVICE_NAME.service
 CONFIG_DIR=/etc/stackstead
 CONFIG=$CONFIG_DIR/config.yaml
@@ -174,12 +160,41 @@ DATA_DIR=/var/lib/stackstead
 STACKS_DIR=/opt/stacks
 DEFAULT_LISTEN=127.0.0.1:8420
 
-if [ -n "$PRINT_PATHS" ]; then
+# rp PATH: where an absolute PATH lands (prefixed with --root when staging).
+rp() { printf '%s%s' "$ROOT" "$1"; }
+
+setup_paths() {
+	[ -z "$PURGE" ] || [ -n "$UNINSTALL" ] || usage_error "--purge only makes sense with --uninstall"
+	case $PREFIX in
+	/*) ;;
+	*) usage_error "--prefix must be an absolute path: $PREFIX" ;;
+	esac
+	case $PREFIX in
+	*[!A-Za-z0-9/._+-]*) usage_error "--prefix may only contain letters, digits and / . _ + -: $PREFIX" ;;
+	esac
+	PREFIX=${PREFIX%/}
+	case $ROOT in
+	"" | /*) ;;
+	*) usage_error "--root must be an absolute path: $ROOT" ;;
+	esac
+	case $ROOT in
+	*[!/]*) ;;
+	"") ;;
+	*) usage_error "--root / is the real system; omit --root to install there" ;;
+	esac
+	ROOT=${ROOT%/}
+	BASE_URL=${BASE_URL%/}
+	BIN_DIR=$PREFIX/bin
+	BIN=$BIN_DIR/stackstead
+	HELPER_DIR=$PREFIX/share/stackstead
+	HELPER=$HELPER_DIR/install.sh
+}
+
+print_paths() {
 	printf 'PREFIX=%s\nBIN=%s\nHELPER=%s\nUNIT=%s\nCONFIG=%s\nDATA_DIR=%s\nSTACKS_DIR=%s\nSERVICE_USER=%s\nROOT=%s\n' \
 		"$(rp "$PREFIX")" "$(rp "$BIN")" "$(rp "$HELPER")" "$(rp "$UNIT")" "$(rp "$CONFIG")" \
 		"$(rp "$DATA_DIR")" "$(rp "$STACKS_DIR")" "$SERVICE_USER" "$ROOT"
-	exit 0
-fi
+}
 
 # ---------------------------------------------------------------- helpers
 
@@ -243,7 +258,10 @@ detect_downloader() {
 # try_fetch URL DEST: download; the status says whether it worked.
 try_fetch() {
 	if [ "$DOWNLOADER" = curl ]; then
-		curl -fsSL --retry 2 --connect-timeout 15 -o "$2" "$1"
+		case $1 in
+		https://*) curl -fsSL --proto '=https' --proto-redir '=https' --retry 2 --connect-timeout 15 --max-time 300 -o "$2" "$1" ;;
+		*) curl -fsSL --retry 2 --connect-timeout 15 --max-time 300 -o "$2" "$1" ;;
+		esac
 	else
 		wget -q -O "$2" -T 30 "$1"
 	fi
@@ -271,6 +289,18 @@ sha256_of() {
 		shasum -a 256 "$1" | awk '{print $1}'
 	else
 		openssl dgst -sha256 "$1" | awk '{print $NF}'
+	fi
+}
+
+# check_base_url: warn about a non-default source; plain http only for loopback.
+check_base_url() {
+	case $BASE_URL in
+	https://*) ;;
+	http://127.0.0.1 | http://127.0.0.1[:/]* | http://localhost | http://localhost[:/]* | http://\[::1\] | http://\[::1\][:/]*) ;;
+	*) usage_error "--base-url must be https (plain http is only accepted for 127.0.0.1, localhost and [::1]): $BASE_URL" ;;
+	esac
+	if [ -z "$UNINSTALL" ] && [ "$BASE_URL" != "$DEFAULT_BASE_URL" ]; then
+		warn "using a non-default release source: $BASE_URL"
 	fi
 }
 
@@ -331,60 +361,110 @@ refuse_package_install() {
 # plain_version V: strip a leading v.
 plain_version() { printf '%s' "${1#v}"; }
 
+# valid_version V: vX.Y.Z with an optional suffix, no whitespace or newlines.
 valid_version() {
-	printf '%s' "$1" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+([-+.~][0-9A-Za-z.+~-]*)?$'
+	vv=${1#v}
+	case $vv in
+	"" | *[!0-9A-Za-z.+~-]*) return 1 ;;
+	esac
+	vcore=${vv%%[-+~]*}
+	case $vcore in
+	*[!0-9.]* | .* | *. | *..*) return 1 ;;
+	*.*.*.*) return 1 ;;
+	[0-9]*.[0-9]*.[0-9]*) return 0 ;;
+	esac
+	return 1
 }
 
-# ver_cmp A B: print -1, 0 or 1 (semver precedence; no prerelease beats a prerelease).
+# ver_cmp A B: print -1, 0 or 1. Semver precedence, except that a build made
+# after a tag (N-g<sha>) is newer than the tag itself.
 ver_cmp() {
 	awk -v a="$(plain_version "$1")" -v b="$(plain_version "$2")" '
-	function split_ver(s, out,    core, pre, i) {
+	function parse(s, o,    i, core, pre, n, parts) {
 		sub(/\+.*/, "", s)
 		i = index(s, "-")
 		if (i) { core = substr(s, 1, i - 1); pre = substr(s, i + 1) } else { core = s; pre = "" }
-		out["pre"] = pre
-		out["n"] = split(core, parts, ".")
-		for (i = 1; i <= 3; i++) out[i] = (i <= out["n"]) ? parts[i] + 0 : 0
+		split(core, parts, ".")
+		for (i = 1; i <= 3; i++) o[i] = parts[i] + 0
+		o["post"] = 0
+		if (pre ~ /^[0-9]+-g[0-9a-f]+/) { o["post"] = 1; pre = substr(pre, 1, index(pre, "-") - 1) + 0 }
+		o["pre"] = pre
+	}
+	function idcmp(x, y) {
+		if (x ~ /^[0-9]+$/ && y ~ /^[0-9]+$/) return (x + 0 < y + 0) ? -1 : ((x + 0 > y + 0) ? 1 : 0)
+		if (x ~ /^[0-9]+$/) return -1
+		if (y ~ /^[0-9]+$/) return 1
+		return (x < y) ? -1 : ((x > y) ? 1 : 0)
+	}
+	function precmp(x, y,    nx, ny, xs, ys, i, c) {
+		nx = split(x, xs, "."); ny = split(y, ys, ".")
+		for (i = 1; i <= nx && i <= ny; i++) { c = idcmp(xs[i], ys[i]); if (c) return c }
+		return (nx < ny) ? -1 : ((nx > ny) ? 1 : 0)
 	}
 	BEGIN {
-		split_ver(a, A); split_ver(b, B)
+		parse(a, A); parse(b, B)
 		for (i = 1; i <= 3; i++) {
 			if (A[i] < B[i]) { print -1; exit }
 			if (A[i] > B[i]) { print 1; exit }
 		}
-		if (A["pre"] == B["pre"]) { print 0; exit }
-		if (A["pre"] == "") { print 1; exit }
-		if (B["pre"] == "") { print -1; exit }
-		print (A["pre"] < B["pre"]) ? -1 : 1
+		# rank: pre-release < release < build after the tag
+		ra = A["post"] ? 2 : (A["pre"] == "" ? 1 : 0)
+		rb = B["post"] ? 2 : (B["pre"] == "" ? 1 : 0)
+		if (ra != rb) { print (ra < rb) ? -1 : 1; exit }
+		if (ra == 1) { print 0; exit }
+		if (ra == 2) { print (A["pre"] < B["pre"]) ? -1 : ((A["pre"] > B["pre"]) ? 1 : 0); exit }
+		print precmp(A["pre"], B["pre"])
 	}'
 }
 
-# bounded CMD...: run with a time limit when timeout(1) exists.
-bounded() {
+# limited SECONDS OUTFILE CMD...: run CMD with no stdin, output to OUTFILE and a
+# time limit; timeout(1) when present, otherwise poll and kill. Returns CMD's
+# status (non-zero when it had to be killed).
+limited() {
+	lim_secs=$1
+	lim_out=$2
+	shift 2
 	if have timeout; then
-		timeout 5 "$@"
-	else
-		"$@"
+		timeout "$lim_secs" "$@" </dev/null >"$lim_out" 2>&1
+		return
 	fi
+	"$@" </dev/null >"$lim_out" 2>&1 &
+	lim_pid=$!
+	lim_i=0
+	while kill -0 "$lim_pid" 2>/dev/null; do
+		if [ "$lim_i" -ge "$lim_secs" ]; then
+			kill "$lim_pid" 2>/dev/null || true
+			sleep 1
+			kill -9 "$lim_pid" 2>/dev/null || true
+			wait "$lim_pid" 2>/dev/null || true
+			return 124
+		fi
+		lim_i=$((lim_i + 1))
+		sleep 1
+	done
+	lim_rc=0
+	wait "$lim_pid" || lim_rc=$?
+	return "$lim_rc"
 }
 
 # installed_version: print the installed version, or nothing when unknown.
-# Wraps whichever form the CLI offers: `version --short`, `version -o json`,
-# then the second field of `version`.
+# Older binaries ignore unknown arguments and start the server, so nothing but
+# --help (which never serves) is run until the help text shows a `version`
+# command; then `version --short`, then `version -o json`.
 installed_version() {
 	bin=$(rp "$BIN")
 	[ -x "$bin" ] || return 0
-	v=$(bounded "$bin" version --short 2>/dev/null | head -n 1) || v=
+	probe=$TMP/probe.out
+	limited 5 "$probe" "$bin" --help || true
+	grep -qw version "$probe" 2>/dev/null || return 0
+	limited 5 "$probe" "$bin" version --short || true
+	v=$(head -n 1 "$probe")
 	if valid_version "$v"; then
 		printf '%s' "$v"
 		return 0
 	fi
-	v=$(bounded "$bin" version -o json 2>/dev/null | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1) || v=
-	if valid_version "$v"; then
-		printf '%s' "$v"
-		return 0
-	fi
-	v=$(bounded "$bin" version 2>/dev/null | head -n 1 | awk '{print $2}') || v=
+	limited 5 "$probe" "$bin" version -o json || true
+	v=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$probe" | head -n 1)
 	if valid_version "$v"; then
 		printf '%s' "$v"
 	fi
@@ -410,8 +490,9 @@ resolve_and_download() {
 		say "Resolving the latest release"
 		fetch "$BASE_URL/releases/latest/download/SHA256SUMS" "$TMP/latest-sums"
 		name=$(awk -v suffix="_${OS}_${ARCH}.tar.gz" '
-			index($2, "stackstead_") == 1 && length($2) > length(suffix) &&
-			substr($2, length($2) - length(suffix) + 1) == suffix { print $2; exit }' "$TMP/latest-sums")
+			{ n = $2; sub(/^\*/, "", n) }
+			index(n, "stackstead_") == 1 && length(n) > length(suffix) &&
+			substr(n, length(n) - length(suffix) + 1) == suffix { print n; exit }' "$TMP/latest-sums")
 		[ -n "$name" ] || die 6 "the latest release lists no stackstead tarball for ${OS}/${ARCH}"
 		name=${name#stackstead_}
 		VERSION=${name%_"${OS}_${ARCH}.tar.gz"}
@@ -425,13 +506,15 @@ resolve_and_download() {
 # exits 0 for "same version" and "newer installed" unless --force.
 check_installed() {
 	cur=$(installed_version)
+	if [ -x "$(rp "$BIN")" ]; then
+		UPGRADE=1
+	fi
 	if [ -z "$cur" ]; then
 		if [ -x "$(rp "$BIN")" ]; then
 			note "could not determine the installed version; reinstalling"
 		fi
 		return 0
 	fi
-	UPGRADE=1
 	rel=$(ver_cmp "$cur" "$VERSION")
 	if [ -z "$FORCE" ]; then
 		if [ "$rel" = 0 ]; then
@@ -457,7 +540,7 @@ download_and_verify() {
 		fi
 		note "SHA256SUMS signature OK"
 	fi
-	want=$(awk -v n="$ASSET" '$2 == n || $2 == "*" n { print $1; exit }' "$TMP/SHA256SUMS")
+	want=$(awk -v n="$ASSET" '{ f = $2; sub(/^\*/, "", f) } f == n { print $1; exit }' "$TMP/SHA256SUMS")
 	[ -n "$want" ] || die 6 "$ASSET is not listed in SHA256SUMS"
 	fetch "$RELEASE_URL/$ASSET" "$TMP/$ASSET"
 	got=$(sha256_of "$TMP/$ASSET")
@@ -465,12 +548,31 @@ download_and_verify() {
 		die 6 "checksum mismatch for $ASSET (expected $want, got $got); nothing was installed"
 	fi
 	note "checksum OK"
-	if tar -tzf "$TMP/$ASSET" 2>/dev/null | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+	# Only regular files, only known names, nothing that could escape the stage dir.
+	tar -tvzf "$TMP/$ASSET" >"$TMP/tar.long" 2>/dev/null || die 6 "cannot read $ASSET"
+	tar -tzf "$TMP/$ASSET" >"$TMP/tar.names" 2>/dev/null || die 6 "cannot read $ASSET"
+	if awk '{ c = substr($1, 1, 1); if (c != "-" && c != "d") bad = 1 } END { exit !bad }' "$TMP/tar.long"; then
+		die 6 "$ASSET contains links or special files; nothing was installed"
+	fi
+	if grep -Eq '(^/|(^|/)\.\.(/|$))' "$TMP/tar.names"; then
 		die 6 "$ASSET contains unsafe paths; nothing was installed"
 	fi
-	tar -xzf "$TMP/$ASSET" -C "$STAGE" || die 6 "cannot unpack $ASSET"
+	members=
+	for f in stackstead stackstead.service config.example.yaml install.sh; do
+		if grep -qx "$f" "$TMP/tar.names"; then
+			members="$members $f"
+		elif grep -qx "./$f" "$TMP/tar.names"; then
+			members="$members ./$f"
+		fi
+	done
+	noown=
+	if tar --help 2>&1 | grep -q -- --no-same-owner; then
+		noown=--no-same-owner
+	fi
+	# shellcheck disable=SC2086
+	tar -xzf "$TMP/$ASSET" -C "$STAGE" $noown $members || die 6 "cannot unpack $ASSET"
 	for f in stackstead stackstead.service config.example.yaml; do
-		[ -f "$STAGE/$f" ] || die 6 "$ASSET does not contain $f"
+		{ [ -f "$STAGE/$f" ] && [ ! -L "$STAGE/$f" ]; } || die 6 "$ASSET does not contain $f"
 	done
 }
 
@@ -516,16 +618,27 @@ ensure_account() {
 		fi
 	fi
 	if user_exists; then
+		# the unit also grants the group, but the packages put the user in /etc/group
+		if ! id -nG "$SERVICE_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+			if have usermod; then
+				acct usermod -aG docker "$SERVICE_USER"
+			elif have addgroup; then
+				acct addgroup "$SERVICE_USER" docker
+			else
+				warn "cannot add $SERVICE_USER to the docker group: no usermod or addgroup"
+			fi
+		fi
 		return 0
 	fi
 	shell=$(nologin_shell)
 	if have useradd; then
-		acct useradd --system --user-group --home-dir "$DATA_DIR" --no-create-home --shell "$shell" "$SERVICE_USER"
+		acct useradd --system --user-group -G docker --home-dir "$DATA_DIR" --no-create-home --shell "$shell" "$SERVICE_USER"
 	elif have adduser; then
 		if ! group_exists "$SERVICE_USER"; then
 			acct addgroup -S "$SERVICE_USER"
 		fi
 		acct adduser -S -D -H -h "$DATA_DIR" -s "$shell" -G "$SERVICE_USER" "$SERVICE_USER"
+		acct addgroup "$SERVICE_USER" docker
 	else
 		die 7 "cannot create the $SERVICE_USER user: no useradd or adduser"
 	fi
@@ -550,10 +663,36 @@ put_file() {
 	mv -f "$2.new" "$2"
 }
 
+# check_stacks_dir: an existing stacks dir is never chown'ed or chmod'ed; warn
+# when neither the service user nor the docker group (nor anyone) can write.
+check_stacks_dir() {
+	sd_line=$(ls -ld "$(rp "$STACKS_DIR")")
+	# shellcheck disable=SC2086
+	set -- $sd_line
+	sd_mode=$1
+	sd_owner=$3
+	sd_group=$4
+	sd_ok=
+	case $sd_mode in ????????w*) sd_ok=1 ;; esac
+	case $sd_mode in
+	??w*) [ "$sd_owner" != "$SERVICE_USER" ] || sd_ok=1 ;;
+	esac
+	case $sd_mode in
+	?????w*) [ "$sd_group" != docker ] || sd_ok=1 ;;
+	esac
+	if [ -z "$sd_ok" ]; then
+		warn "$STACKS_DIR exists but $SERVICE_USER cannot write to it; to let the service create stacks run: chgrp docker $STACKS_DIR && chmod 2775 $STACKS_DIR"
+	fi
+}
+
 install_files() {
 	make_dir "$CONFIG_DIR" 0755 ""
 	make_dir "$DATA_DIR" 0700 "$SERVICE_USER"
-	make_dir "$STACKS_DIR" 2775 "$SERVICE_USER:docker"
+	if [ -d "$(rp "$STACKS_DIR")" ]; then
+		check_stacks_dir
+	else
+		make_dir "$STACKS_DIR" 2775 "$SERVICE_USER:docker"
+	fi
 
 	if [ ! -e "$(rp "$CONFIG")" ]; then
 		put_file "$STAGE/config.example.yaml" "$(rp "$CONFIG")" 0640
@@ -611,7 +750,7 @@ configure_service() {
 		return 0
 	fi
 	if [ -n "${UPGRADE:-}" ]; then
-		svc systemctl enable "$SERVICE_NAME"
+		# never re-enable a service the admin disabled
 		if [ -n "$was_active" ]; then
 			svc systemctl restart "$SERVICE_NAME"
 			STARTED=1
@@ -640,7 +779,10 @@ wait_ready() {
 		if http_ok "http://$listen/api/health" || http_ok "http://$listen/api/setup/status"; then
 			if have runuser && [ -x "$BIN" ]; then
 				note "stackstead health (summary only):"
-				runuser -u "$SERVICE_USER" -- "$BIN" health --config "$CONFIG" 2>&1 | sed 's/^/      /' || true
+				hrc=0
+				limited 10 "$TMP/health.out" runuser -u "$SERVICE_USER" -- "$BIN" health --config "$CONFIG" || hrc=$?
+				sed 's/^/      /' "$TMP/health.out"
+				note "stackstead health exit code: $hrc (informational)"
 			fi
 			say "Stackstead is running"
 			note "Open http://$listen/ from this machine to create the admin account"
@@ -727,6 +869,13 @@ UPGRADE=
 CONFIG_WRITTEN=
 
 main() {
+	parse_args "$@"
+	setup_paths
+	if [ -n "$PRINT_PATHS" ]; then
+		print_paths
+		exit 0
+	fi
+	check_base_url
 	detect_platform
 	require_root
 	refuse_package_install
@@ -751,4 +900,4 @@ main() {
 	do_install
 }
 
-main
+main "$@"
