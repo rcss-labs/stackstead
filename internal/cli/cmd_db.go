@@ -207,8 +207,9 @@ func dbBackup(ctx context.Context, env *Env, cfg config.Config, dest string, for
 
 // Seams for tests: verification of a fresh copy and the rename used to publish.
 var (
-	verifyDatabase = verifyDatabaseFile
-	renameFile     = os.Rename
+	checkpointDatabase = checkpointCurrent
+	verifyDatabase     = verifyDatabaseFile
+	renameFile         = os.Rename
 )
 
 // verifyDatabaseFile opens a copy read-only and runs quick_check on it.
@@ -264,7 +265,7 @@ func dbRestore(ctx context.Context, env *Env, cfg config.Config, src string, yes
 		if err != nil {
 			return err
 		}
-		if err := checkpointCurrent(ctx, current); err != nil {
+		if err := checkpointDatabase(ctx, env, current); err != nil {
 			return err
 		}
 		bak, err := swapInDatabase(env, current, tmp)
@@ -306,20 +307,33 @@ func openRestoreSource(ctx context.Context, src string) (*sql.DB, error) {
 
 // checkpointCurrent folds a WAL left by a crashed server into the current
 // database file, so committed rows live in the main file that is kept as the
-// .bak and are not orphaned in a -wal if the swap is interrupted. A missing
-// database is fine (nothing to protect).
-func checkpointCurrent(ctx context.Context, current string) error {
-	if _, err := os.Stat(current); errors.Is(err, fs.ErrNotExist) {
+// .bak and are not orphaned in a -wal if the swap is interrupted. Without a
+// -wal there is nothing to do. A database that cannot be opened or
+// checkpointed (garbage, corrupt, newer schema) is exactly what restore is
+// for, so that only warns: the swap then moves the -wal next to the .bak. A
+// busy database is refused, since a server may still be using it.
+func checkpointCurrent(ctx context.Context, env *Env, current string) error {
+	if _, err := os.Stat(current + "-wal"); err != nil {
 		return nil
 	}
-	db, err := store.OpenExisting(current, store.OpenOptions{AllowOlderSchema: true})
+	if _, err := os.Stat(current); err != nil {
+		return nil
+	}
+	warn := func(err error) error {
+		fmt.Fprintf(env.Stderr, "warning: could not checkpoint %s before restoring (%v); its -wal is kept next to the backup\n", current, err)
+		return nil
+	}
+	// Plain read-write open: no schema gate, no migration, never creates.
+	escaped := strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(current)
+	db, err := sql.Open("sqlite", "file:"+escaped+"?mode=rw&_pragma=busy_timeout(5000)")
 	if err != nil {
-		return fmt.Errorf("open the current database to checkpoint it: %w", err)
+		return warn(err)
 	}
 	defer db.Close()
+	db.SetMaxOpenConns(1)
 	var busy, logFrames, checkpointed int
 	if err := db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &logFrames, &checkpointed); err != nil {
-		return fmt.Errorf("checkpoint the current database before restoring: %w", err)
+		return warn(err)
 	}
 	if busy != 0 {
 		return fmt.Errorf("checkpoint the current database before restoring: database is busy (is the server still running?)")

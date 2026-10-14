@@ -380,3 +380,97 @@ func TestRestoreAbortsWhenWalCannotBeMoved(t *testing.T) {
 		}
 	}
 }
+
+func bakFiles(h *localHost) []string {
+	all, _ := filepath.Glob(h.dbPath + ".bak-*")
+	var out []string
+	for _, b := range all {
+		if !strings.HasSuffix(b, "-wal") {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+func TestRestoreOverGarbageCurrentDatabase(t *testing.T) {
+	h := newLocalHost(t, true)
+	snap := snapshot(t, h)
+	os.WriteFile(h.dbPath, []byte(strings.Repeat("not a database ", 500)), 0o600)
+	os.Remove(h.dbPath + "-wal")
+	os.Remove(h.dbPath + "-shm")
+
+	wantCode(t, runLocal(newTestEnv(t, nil), "db", "restore", snap, "--yes", "--config", h.cfgPath), ExitOK)
+	if n := countUsers(t, h.dbPath); n != 0 {
+		t.Errorf("restored db has %d users, want 0", n)
+	}
+	if len(bakFiles(h)) != 1 {
+		t.Errorf("want the broken database kept as one .bak, got %v", bakFiles(h))
+	}
+}
+
+func TestRestoreOverNewerSchemaCurrentDatabase(t *testing.T) {
+	h := newLocalHost(t, true)
+	snap := snapshot(t, h)
+	db, err := store.OpenExisting(h.dbPath, store.OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Exec("PRAGMA user_version = 999")
+	db.Close()
+
+	wantCode(t, runLocal(newTestEnv(t, nil), "db", "restore", snap, "--yes", "--config", h.cfgPath), ExitOK)
+	if len(bakFiles(h)) != 1 {
+		t.Errorf("want the newer-schema database kept as one .bak, got %v", bakFiles(h))
+	}
+}
+
+func TestRestoreRollbackPutsWalBackWhenCheckpointFailed(t *testing.T) {
+	h := newLocalHost(t, true)
+	snap := snapshot(t, h)
+	os.WriteFile(h.dbPath, []byte(strings.Repeat("not a database ", 500)), 0o600)
+	os.WriteFile(h.dbPath+"-wal", []byte("stale-wal"), 0o600)
+	dbBefore := readFile(t, h.dbPath)
+
+	// SQLite itself may consume a bad -wal while failing to open, so the
+	// "checkpoint failed, -wal still there" state is simulated.
+	origCP := checkpointDatabase
+	checkpointDatabase = func(context.Context, *Env, string) error { return nil }
+	t.Cleanup(func() { checkpointDatabase = origCP })
+	orig := renameFile
+	renameFile = func(from, to string) error {
+		if to == h.dbPath && strings.HasSuffix(from, ".restore-tmp") {
+			return errors.New("injected rename failure")
+		}
+		return orig(from, to)
+	}
+	t.Cleanup(func() { renameFile = orig })
+
+	err := runLocal(newTestEnv(t, nil), "db", "restore", snap, "--yes", "--config", h.cfgPath)
+	if codeFor(err) == ExitOK {
+		t.Fatal("restore reported success")
+	}
+	if readFile(t, h.dbPath) != dbBefore {
+		t.Error("the current database changed")
+	}
+	if readFile(t, h.dbPath+"-wal") != "stale-wal" {
+		t.Error("the -wal was not put back")
+	}
+}
+
+func TestRestoreRefusesWhenCheckpointIsBusy(t *testing.T) {
+	h := newLocalHost(t, true)
+	snap := snapshot(t, h)
+	addAdmin(t, h.dbPath, "admin")
+	dbBefore := readFile(t, h.dbPath)
+	origCP := checkpointDatabase
+	checkpointDatabase = func(context.Context, *Env, string) error { return errors.New("database is busy") }
+	t.Cleanup(func() { checkpointDatabase = origCP })
+
+	err := runLocal(newTestEnv(t, nil), "db", "restore", snap, "--yes", "--config", h.cfgPath)
+	if codeFor(err) == ExitOK {
+		t.Fatal("restore reported success")
+	}
+	if readFile(t, h.dbPath) != dbBefore || len(bakFiles(h)) != 0 {
+		t.Error("a refused restore changed things")
+	}
+}
