@@ -27,17 +27,17 @@ const hc = (patch: Partial<ServiceForm['healthcheck']>) => ({ ...emptyForm().hea
 
 describe('toForm / fromForm', () => {
   it('round-trips a full config', () => {
-    expect(fromForm(toForm(full, []))).toEqual(full);
+    expect(fromForm(toForm(full, []), full)).toEqual(full);
   });
 
   it('round-trips an image config and always keeps limits', () => {
     const cfg: ServiceConfig = { image: 'redis:7', limits: {} };
     expect(toForm(cfg, []).source).toBe('image');
-    expect(fromForm(toForm(cfg, []))).toEqual(cfg);
+    expect(fromForm(toForm(cfg, []), cfg)).toEqual(cfg);
   });
 
   it('emits only limits for an empty form', () => {
-    expect(fromForm(emptyForm())).toEqual({ limits: {} });
+    expect(fromForm(emptyForm(), null)).toEqual({ limits: {} });
   });
 
   it('omits blank rows and empty values', () => {
@@ -47,7 +47,7 @@ describe('toForm / fromForm', () => {
       env: [{ name: '', value: '' }, { name: 'X', value: 'y' }],
       networks: [{ name: '', ipv4Address: '' }, { name: 'lan', ipv4Address: '' }],
     });
-    expect(fromForm(f)).toEqual({
+    expect(fromForm(f, null)).toEqual({
       image: 'nginx:1',
       ports: ['80'],
       environment: [{ name: 'X', value: 'y' }],
@@ -58,12 +58,12 @@ describe('toForm / fromForm', () => {
 
   it('uses build and omits an empty dockerfile when source is build', () => {
     const f = form({ source: 'build', buildContext: '.', image: '' });
-    expect(fromForm(f)).toEqual({ build: { context: '.' }, limits: {} });
+    expect(fromForm(f, null)).toEqual({ build: { context: '.' }, limits: {} });
   });
 
   it('keeps the original config out of enumerable keys', () => {
     expect(Object.keys(toForm(full, []))).not.toContain('_orig');
-    expect(JSON.stringify(Object.keys(toForm(full, [])).sort())).toBe(JSON.stringify(Object.keys(emptyForm()).sort()));
+    expect(Object.keys(toForm(full, [])).sort()).toEqual(Object.keys(emptyForm()).sort());
   });
 
   describe('healthcheck test', () => {
@@ -76,25 +76,25 @@ describe('toForm / fromForm', () => {
         const cfg: ServiceConfig = { image: 'a', limits: {}, healthcheck: { test } };
         const f = toForm(cfg, []);
         expect(f.healthcheck.test).toBe(shown);
-        expect(fromForm(f).healthcheck?.test).toEqual(test);
+        expect(fromForm(f, cfg).healthcheck?.test).toEqual(test);
       });
     }
     it('explicit CMD-SHELL prefix keeps the rest as one string', () => {
       const f = form({ healthcheck: hc({ test: 'CMD-SHELL curl -f  http://x' }) });
-      expect(fromForm(f).healthcheck?.test).toEqual(['CMD-SHELL', 'curl -f  http://x']);
+      expect(fromForm(f, null).healthcheck?.test).toEqual(['CMD-SHELL', 'curl -f  http://x']);
     });
     it('explicit CMD prefix splits on whitespace', () => {
       const f = form({ healthcheck: hc({ test: 'CMD  a   b' }) });
-      expect(fromForm(f).healthcheck?.test).toEqual(['CMD', 'a', 'b']);
+      expect(fromForm(f, null).healthcheck?.test).toEqual(['CMD', 'a', 'b']);
     });
     it('bare text becomes a single shell string', () => {
       const f = form({ healthcheck: hc({ test: 'curl -f http://x' }) });
-      expect(fromForm(f).healthcheck?.test).toEqual(['CMD-SHELL', 'curl -f http://x']);
+      expect(fromForm(f, null).healthcheck?.test).toEqual(['CMD-SHELL', 'curl -f http://x']);
     });
     it('retries 0 is kept, blank retries omitted, disabled healthcheck omitted', () => {
-      expect(fromForm(form({ healthcheck: hc({ retries: '0' }) })).healthcheck?.retries).toBe(0);
-      expect(fromForm(form({ healthcheck: hc({}) })).healthcheck).not.toHaveProperty('retries');
-      expect(fromForm(form({ healthcheck: { ...hc({}), enabled: false } }))).not.toHaveProperty('healthcheck');
+      expect(fromForm(form({ healthcheck: hc({ retries: '0' }) }), null).healthcheck?.retries).toBe(0);
+      expect(fromForm(form({ healthcheck: hc({}) }), null).healthcheck).not.toHaveProperty('retries');
+      expect(fromForm(form({ healthcheck: { ...hc({}), enabled: false } }), null)).not.toHaveProperty('healthcheck');
     });
   });
 
@@ -107,7 +107,7 @@ describe('toForm / fromForm', () => {
       g.ports = [];
       g.memory = '';
       g.cpus = '';
-      expect(fromForm(g)).toEqual({ image: 'app', ports: ['8080:80'], limits: { memory: '1G' } });
+      expect(fromForm(g, orig)).toEqual({ image: 'app', ports: ['8080:80'], limits: { memory: '1G' } });
     });
 
     it('ignores edits to a read-only group', () => {
@@ -117,7 +117,7 @@ describe('toForm / fromForm', () => {
       g.networks = [];
       g.volumes = ['x:/y'];
       g.restart = 'always';
-      expect(fromForm(g)).toEqual(full);
+      expect(fromForm(g, full)).toEqual(full);
     });
 
     it('keeps image and build from the original when either is read-only', () => {
@@ -125,16 +125,16 @@ describe('toForm / fromForm', () => {
       const g = toForm(orig, ['build']);
       g.source = 'image';
       g.image = 'evil';
-      expect(fromForm(g)).toEqual(orig);
+      expect(fromForm(g, orig)).toEqual(orig);
     });
   });
 });
 
 describe('validateForm', () => {
-  const ok = (f: ServiceForm, opts = {}) => expect(validateForm(f, opts)).toEqual({});
-  const bad = (f: ServiceForm, path: string, opts = {}) => expect(validateForm(f, opts)).toHaveProperty([path]);
+  const ok = (f: ServiceForm, opts = {}) => expect(validateForm(f, { original: null, ...opts })).toEqual({});
+  const bad = (f: ServiceForm, path: string, opts = {}) => expect(validateForm(f, { original: null, ...opts })).toHaveProperty([path]);
 
-  it('accepts a valid form', () => ok(toForm(full, []), { name: 'web', requireName: true }));
+  it('accepts a valid form', () => ok(toForm(full, []), { name: 'web', requireName: true, original: full }));
 
   describe('name', () => {
     for (const n of ['web', 'a', '0app', 'my_app-2', 'a'.repeat(63)]) it(`accepts ${n.slice(0, 10)}`, () => ok(form(), { name: n, requireName: true }));
@@ -164,7 +164,7 @@ describe('validateForm', () => {
     for (const n of ['A', '_x', 'A1_b', 'discovery.type', 'a-b', '1A']) it(`accepts ${n}`, () => ok(form({ env: [{ name: n, value: '' }] })));
     for (const n of ['a b', 'A=B', 'a\tb', 'a\u0001']) it(`rejects ${n}`, () => bad(form({ env: [{ name: n, value: '' }] }), 'env[0].name'));
     it('flags the second duplicate only', () => {
-      const e = validateForm(form({ env: [{ name: 'A', value: '1' }, { name: 'B', value: '' }, { name: 'A', value: '2' }] }), {});
+      const e = validateForm(form({ env: [{ name: 'A', value: '1' }, { name: 'B', value: '' }, { name: 'A', value: '2' }] }), { original: null });
       expect(Object.keys(e)).toEqual(['env[2].name']);
     });
     it('name required when a value is set', () => bad(form({ env: [{ name: '', value: 'x' }] }), 'env[0].name'));
@@ -194,7 +194,7 @@ describe('validateForm', () => {
     for (const d of ['30s', '500ms', '2m', '1h', '1m30s', '1.5s', '2h45m', '0s', '0', '10us', '5ns']) it(`accepts duration ${d}`, () => ok(form({ healthcheck: hc({ interval: d, timeout: d, startPeriod: d }) })));
     for (const d of ['30', 's', '1d', '1 s', 'abc']) {
       it(`rejects duration ${d}`, () => {
-        const e = validateForm(form({ healthcheck: hc({ interval: d, timeout: d, startPeriod: d }) }), {});
+        const e = validateForm(form({ healthcheck: hc({ interval: d, timeout: d, startPeriod: d }) }), { original: null });
         expect(Object.keys(e).sort()).toEqual(['healthcheck.interval', 'healthcheck.startPeriod', 'healthcheck.timeout']);
       });
     }
@@ -267,7 +267,7 @@ describe('fieldOf', () => {
 });
 
 describe('round-trip identity of real-world shapes', () => {
-  const same = (cfg: ServiceConfig, ro: import('../api/types').Field[] = []) => expect(fromForm(toForm(cfg, ro))).toEqual(cfg);
+  const same = (cfg: ServiceConfig, ro: import('../api/types').Field[] = []) => expect(fromForm(toForm(cfg, ro), cfg)).toEqual(cfg);
 
   it('keeps image alongside build', () => same({ image: 'me/app:1', build: { context: '.' }, limits: {} }));
   it('keeps exec-form args containing spaces', () =>
@@ -284,38 +284,42 @@ describe('round-trip identity of real-world shapes', () => {
     }));
 
   it('passes validation', () => {
-    const f = toForm(
-      {
-        image: 'a',
-        limits: { memory: '1GiB' },
-        environment: [{ name: 'discovery.type', value: 'single-node' }],
-        healthcheck: { interval: '1m30s', timeout: '1.5s' },
-      },
-      [],
-    );
-    expect(validateForm(f, {})).toEqual({});
+    const cfg: ServiceConfig = {
+      image: 'a',
+      limits: { memory: '1GiB' },
+      environment: [{ name: 'discovery.type', value: 'single-node' }],
+      healthcheck: { interval: '1m30s', timeout: '1.5s' },
+    };
+    expect(validateForm(toForm(cfg, []), { original: cfg })).toEqual({});
+    expect(validateForm(toForm(cfg, []), { original: null })).toEqual({});
   });
 
   it('does not block unchanged legacy values the stricter rules would reject', () => {
-    const f = toForm({ image: 'a', limits: { cpus: '0' }, ports: ['bogus:thing'] }, []);
-    expect(validateForm(f, {})).toEqual({});
+    const cfg: ServiceConfig = { image: 'a', limits: { cpus: '0' }, ports: ['bogus:thing'] };
+    const f = toForm(cfg, []);
+    expect(validateForm(f, { original: cfg })).toEqual({});
     f.ports.push('bogus2');
-    expect(Object.keys(validateForm(f, {}))).toEqual(['ports[1]']);
+    expect(Object.keys(validateForm(f, { original: cfg }))).toEqual(['ports[1]']);
   });
 
   describe('original config', () => {
     const cfg: ServiceConfig = { image: 'app', limits: { memory: '1G' }, ports: ['8080:80'] };
-    it('survives only when passed explicitly after a structuredClone', () => {
-      const copy = structuredClone(toForm(cfg, ['ports', 'limits']));
-      expect(() => fromForm(copy)).toThrow(/original/);
-      expect(fromForm(copy, cfg)).toEqual(cfg);
+    it('throws without the original when read-only groups exist, instead of clearing them', () => {
+      expect(() => fromForm(toForm(cfg, ['ports']), null)).toThrow(/original/);
     });
-    it('throws on a copy lacking the original when read-only groups exist, not silently clearing', () => {
-      const copy = { ...toForm(cfg, ['ports']) };
-      expect(() => fromForm(copy)).toThrow();
+    it('a cloned form round-trips when the original is passed', () => {
+      const hcCfg: ServiceConfig = { image: 'a', limits: {}, healthcheck: { test: ['CMD', 'sh', '-c', 'curl -f http://x || exit 1'] } };
+      for (const copy of [structuredClone(toForm(hcCfg, [])), { ...toForm(hcCfg, []) }]) {
+        expect(fromForm(copy, hcCfg)).toEqual(hcCfg);
+      }
+      expect(fromForm(structuredClone(toForm(cfg, ['ports', 'limits'])), cfg)).toEqual(cfg);
     });
-    it('needs no original without read-only groups', () => {
-      expect(fromForm(structuredClone(toForm(cfg, [])))).toEqual(cfg);
+    it('a build with a dockerfile but no context round-trips and validates when unchanged', () => {
+      const b: ServiceConfig = { build: { context: '', dockerfile: 'Dockerfile.x' }, limits: {} };
+      const f = toForm(b, []);
+      expect(fromForm(f, b)).toEqual(b);
+      expect(validateForm(f, { original: b })).toEqual({});
+      expect(validateForm(f, { original: null })).toHaveProperty(['build.context']);
     });
   });
 });

@@ -38,9 +38,6 @@ const CPUS_RE = /^(\d+(\.\d+)?|\.\d+)$/;
 const DURATION_RE = /^(0|[+-]?((\d+(\.\d*)?|\.\d+)(ns|us|µs|μs|ms|s|m|h))+)$/;
 const RETRIES_RE = /^\d+$/;
 
-/** The unedited config, kept off the enumerable keys so read-only groups can be copied through on save. */
-const ORIG = '_orig';
-
 export function emptyForm(): ServiceForm {
   return {
     source: 'image',
@@ -92,7 +89,6 @@ export function toForm(cfg: ServiceConfig, readOnly: Field[]): ServiceForm {
     };
   }
   f.readOnly = new Set(readOnly);
-  Object.defineProperty(f, ORIG, { value: structuredClone(cfg), enumerable: false, writable: true });
   return f;
 }
 
@@ -105,17 +101,14 @@ function textToHealthcheckTest(text: string): string[] {
   return ['CMD-SHELL', t];
 }
 
-function origOf(f: ServiceForm, explicit?: ServiceConfig): ServiceConfig | undefined {
-  return explicit ?? (f as unknown as Record<string, ServiceConfig | undefined>)[ORIG];
-}
-
 /**
- * `original` defaults to the config `toForm` stored on the form. That hidden copy does not survive
- * structuredClone, spread or reactive snapshots, so a form with read-only groups and no original
- * throws instead of silently clearing those groups on save.
+ * `original` is the config the form was loaded from (edit flow) or null (create flow). It is passed
+ * explicitly because anything hidden on the form is lost by structuredClone, spread and reactive
+ * snapshots. It supplies read-only groups and the unchanged healthcheck command, so a form with
+ * read-only groups and a null original throws rather than clearing them on save.
  */
-export function fromForm(f: ServiceForm, original?: ServiceConfig): ServiceConfig {
-  const orig = origOf(f, original);
+export function fromForm(f: ServiceForm, original: ServiceConfig | null): ServiceConfig {
+  const orig = original ?? undefined;
   if (f.readOnly.size > 0 && !orig) {
     throw new Error('fromForm: the original config is required when the form has read-only fields (pass it explicitly)');
   }
@@ -130,7 +123,8 @@ export function fromForm(f: ServiceForm, original?: ServiceConfig): ServiceConfi
     set('build', orig?.build);
   } else if (f.source === 'build') {
     const context = f.buildContext.trim();
-    if (context) cfg.build = f.dockerfile.trim() ? { context, dockerfile: f.dockerfile.trim() } : { context };
+    // A build with only a dockerfile (no context) is kept as found; validation decides whether that is allowed.
+    if (context || f.dockerfile.trim()) cfg.build = f.dockerfile.trim() ? { context, dockerfile: f.dockerfile.trim() } : { context };
     // compose allows image alongside build (the tag to give the built image); never drop it.
     if (f.image.trim()) cfg.image = f.image.trim();
   } else if (f.image.trim()) {
@@ -271,11 +265,11 @@ function checkPort(spec: string): string | null {
   return null;
 }
 
-export function validateForm(f: ServiceForm, opts: { name?: string; requireName?: boolean; original?: ServiceConfig }): FormErrors {
+export function validateForm(f: ServiceForm, opts: { name?: string; requireName?: boolean; original: ServiceConfig | null }): FormErrors {
   const errors: FormErrors = {};
   const ro = (g: Field) => f.readOnly.has(g);
   // Like the server, only complain about what the user changed: values already in the file are not ours to block.
-  const orig = origOf(f, opts.original);
+  const orig = opts.original ?? undefined;
   const origPorts = new Set(orig?.ports ?? []);
   const origEnv = new Set((orig?.environment ?? []).map((e) => `${e.name}\0${e.value}`));
   const origNets = new Set((orig?.networks ?? []).map((n) => `${n.name}\0${n.ipv4Address ?? ''}`));
@@ -289,7 +283,7 @@ export function validateForm(f: ServiceForm, opts: { name?: string; requireName?
   if (!ro('image') && !ro('build')) {
     if (f.source === 'image') {
       if (!f.image.trim()) errors.image = 'image is required';
-    } else if (!f.buildContext.trim()) {
+    } else if (!f.buildContext.trim() && !(orig?.build && orig.build.context === '' && (orig.build.dockerfile ?? '') === f.dockerfile.trim())) {
       errors['build.context'] = 'build context is required';
     }
   }
@@ -373,7 +367,7 @@ function rowIndex(rows: boolean[], serverIndex: number): number | null {
   return null;
 }
 
-function mapPath(field: string, f: ServiceForm, path: string): string | null {
+function mapPath(f: ServiceForm, path: string): string | null {
   let m = /^(ports|volumes)\[(\d+)\]$/.exec(path);
   if (m) {
     const rows = f[m[1] as 'ports' | 'volumes'].map((p) => p.trim() !== '');
@@ -414,7 +408,7 @@ export function mapServerErrors(fields: FieldError[], f: ServiceForm, service?: 
     } else {
       local = local.replace(/^services\.[^.]+\./, '');
     }
-    const path = mapPath(fe.field, f, local) ?? '_form';
+    const path = mapPath(f, local) ?? '_form';
     errors[path] = errors[path] ? `${errors[path]}; ${fe.message}` : fe.message;
   }
   return errors;
