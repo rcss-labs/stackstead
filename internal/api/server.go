@@ -60,6 +60,7 @@ func New(opts Options) http.Handler {
 
 	mux.Handle("POST /api/logout", s.requireSession(s.handleLogout))
 	mux.Handle("GET /api/me", s.requireSession(s.handleMe))
+	mux.Handle("POST /api/password", s.requireSession(s.handleChangePassword))
 
 	if opts.Stacks != nil && opts.Operations != nil {
 		s.registerStackRoutes(mux)

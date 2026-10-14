@@ -267,3 +267,79 @@ func TestAuthenticateRejectsUnknownToken(t *testing.T) {
 		}
 	}
 }
+
+const newPassword = "another sturdy passphrase"
+
+func TestChangePasswordKeepsCurrentSessionDropsOthers(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	ctx := context.Background()
+	if err := svc.CreateAdmin(ctx, "admin", goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	tokenA, err := svc.Login(ctx, "admin", goodPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenB, err := svc.Login(ctx, "admin", goodPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := svc.Authenticate(ctx, tokenA)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.ChangePassword(ctx, user.ID, goodPassword, newPassword, tokenA); err != nil {
+		t.Fatalf("ChangePassword: %v", err)
+	}
+	if _, err := svc.Authenticate(ctx, tokenA); err != nil {
+		t.Errorf("current session after change: %v, want valid", err)
+	}
+	if _, err := svc.Authenticate(ctx, tokenB); !errors.Is(err, ErrInvalidSession) {
+		t.Errorf("other session after change: %v, want ErrInvalidSession", err)
+	}
+	if _, err := svc.Login(ctx, "admin", goodPassword); !errors.Is(err, ErrInvalidCredentials) {
+		t.Errorf("login with old password: %v, want ErrInvalidCredentials", err)
+	}
+	if _, err := svc.Login(ctx, "admin", newPassword); err != nil {
+		t.Errorf("login with new password: %v", err)
+	}
+}
+
+func TestChangePasswordRejectsWithoutSideEffects(t *testing.T) {
+	svc, db, _ := newTestService(t)
+	ctx := context.Background()
+	if err := svc.CreateAdmin(ctx, "admin", goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	tokenA, _ := svc.Login(ctx, "admin", goodPassword)
+	tokenB, _ := svc.Login(ctx, "admin", goodPassword)
+	user, err := svc.Authenticate(ctx, tokenA)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name          string
+		current, next string
+		want          error
+	}{
+		{"wrong current", "not the password", newPassword, ErrInvalidCredentials},
+		{"too short", goodPassword, "short", ErrWeakPassword},
+		{"same password", goodPassword, goodPassword, ErrSamePassword},
+	}
+	for _, tc := range cases {
+		if err := svc.ChangePassword(ctx, user.ID, tc.current, tc.next, tokenA); !errors.Is(err, tc.want) {
+			t.Errorf("%s: err = %v, want %v", tc.name, err, tc.want)
+		}
+	}
+	if _, err := svc.Login(ctx, "admin", goodPassword); err != nil {
+		t.Errorf("old password no longer works: %v", err)
+	}
+	if _, err := svc.Authenticate(ctx, tokenB); err != nil {
+		t.Errorf("other session was dropped: %v", err)
+	}
+	if n := countRows(t, db, "sessions"); n != 3 { // A, B and the login above
+		t.Errorf("sessions = %d, want 3", n)
+	}
+}
