@@ -181,7 +181,7 @@ func dbBackup(ctx context.Context, env *Env, cfg config.Config, dest string, for
 		}
 		return err
 	}
-	schema, size, err := verifyDatabaseFile(ctx, target)
+	schema, size, err := verifyDatabase(ctx, target)
 	if err != nil {
 		if !force {
 			os.Remove(target)
@@ -197,6 +197,12 @@ func dbBackup(ctx context.Context, env *Env, cfg config.Config, dest string, for
 	fmt.Fprintf(env.Stdout, "backup %s (%s, schema %d)\n", dest, formatBytes(uint64(size)), schema)
 	return nil
 }
+
+// Seams for tests: verification of a fresh copy and the rename used to publish.
+var (
+	verifyDatabase = verifyDatabaseFile
+	renameFile     = os.Rename
+)
 
 // verifyDatabaseFile opens a copy read-only and runs quick_check on it.
 func verifyDatabaseFile(ctx context.Context, path string) (schema int, size int64, err error) {
@@ -285,19 +291,19 @@ func swapInDatabase(env *Env, current, src string) (string, error) {
 	bak := ""
 	if _, err := os.Stat(current); err == nil {
 		bak = fmt.Sprintf("%s.bak-%s", current, env.Now().UTC().Format("20060102T150405Z"))
-		if err := os.Rename(current, bak); err != nil {
+		if err := renameFile(current, bak); err != nil {
 			os.Remove(tmp)
 			return "", err
 		}
 		// A WAL left by a crash belongs to the old file; keep it with it.
 		if _, err := os.Stat(current + "-wal"); err == nil {
-			os.Rename(current+"-wal", bak+"-wal")
+			renameFile(current+"-wal", bak+"-wal")
 		}
 	}
-	if err := os.Rename(tmp, current); err != nil {
+	if err := renameFile(tmp, current); err != nil {
 		if bak != "" {
-			os.Rename(bak, current)
-			os.Rename(bak+"-wal", current+"-wal")
+			renameFile(bak, current)
+			renameFile(bak+"-wal", current+"-wal")
 		}
 		os.Remove(tmp)
 		return "", err
