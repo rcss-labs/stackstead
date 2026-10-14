@@ -117,6 +117,7 @@ describe('Setup', () => {
     await submit(u);
     await waitFor(() => expect(get(route).path).toBe('/login'));
     expect(get(toasts).some((t) => /already complete/i.test(t.message))).toBe(true);
+    expect(get(session).state).toBe('anonymous');
   });
 
   it('setup ok but login fails: toast and go to /login', async () => {
@@ -132,6 +133,7 @@ describe('Setup', () => {
     await submit(u);
     await waitFor(() => expect(get(route).path).toBe('/login'));
     expect(get(toasts).some((t) => /account was created/i.test(t.message))).toBe(true);
+    expect(get(session).state).toBe('anonymous');
   });
 
   it('focuses the first invalid field on client-side failure', async () => {

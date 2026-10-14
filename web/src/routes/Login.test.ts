@@ -37,6 +37,8 @@ describe('safeNext', () => {
     '/\t/evil',
     '/a\\b',
     '/\n/evil',
+    '/.//evil',
+    '/a/..//evil',
     'JAVASCRIPT:alert(1)',
     'data:text/html,x',
     '',

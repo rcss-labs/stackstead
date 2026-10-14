@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { api, ApiError } from '../lib/api/client';
-  import { login, session } from '../lib/api/session';
+  import { expireSession, login, session } from '../lib/api/session';
   import { toasts } from '../lib/stores/toasts';
   import Button from '../lib/components/Button.svelte';
   import Field from '../lib/components/Field.svelte';
@@ -54,11 +54,13 @@
     } catch (err) {
       if (created) {
         toasts.push({ kind: 'warning', message: 'Your account was created, but signing in failed. Please sign in.' });
+        expireSession();
         navigate('/login', { replace: true });
         return;
       }
       if (err instanceof ApiError && err.status === 409) {
         toasts.push({ kind: 'info', message: 'Setup is already complete — sign in' });
+        expireSession();
         navigate('/login', { replace: true });
         return;
       }

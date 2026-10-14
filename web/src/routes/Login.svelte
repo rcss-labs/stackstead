@@ -11,6 +11,8 @@
     try {
       const url = new URL(next, window.location.origin);
       if (url.origin !== window.location.origin) return '/';
+      // Normalisation can collapse '/.//evil' into the protocol-relative '//evil'.
+      if (url.pathname.startsWith('//') || url.pathname.includes('\\')) return '/';
       return url.pathname + url.search + url.hash;
     } catch {
       return '/';
