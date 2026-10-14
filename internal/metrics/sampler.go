@@ -12,6 +12,7 @@ import (
 const (
 	maxStatsConcurrency = 4
 	maxStatsTimeout     = 5 * time.Second
+	minStatsTimeout     = 3 * time.Second // Docker needs about 1s to compute the CPU delta
 	pruneEvery          = time.Hour
 	warnEvery           = time.Minute
 	subscriberBuffer    = 256
@@ -159,10 +160,7 @@ func (s *Sampler) tick(ctx context.Context) {
 		}
 	}
 
-	timeout := maxStatsTimeout
-	if s.interval > 0 && s.interval < timeout {
-		timeout = s.interval
-	}
+	timeout := statsTimeout(s.interval)
 	results := make([]*Sample, len(targets))
 	sem := make(chan struct{}, maxStatsConcurrency)
 	var wg sync.WaitGroup
@@ -253,4 +251,9 @@ func (s *Sampler) prune(ctx context.Context) {
 	if _, err := s.store.Prune(ctx, now.Add(-s.retention)); err != nil && ctx.Err() == nil {
 		s.log.Warn("metrics: prune failed", "err", err)
 	}
+}
+
+// statsTimeout bounds one stats call: the interval, but within [3s, 5s].
+func statsTimeout(interval time.Duration) time.Duration {
+	return max(minStatsTimeout, min(maxStatsTimeout, interval))
 }
