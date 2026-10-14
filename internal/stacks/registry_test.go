@@ -143,3 +143,27 @@ func TestSetProjectUpdatesOnlyProject(t *testing.T) {
 		t.Errorf("got %+v, want project renamed and path unchanged", got)
 	}
 }
+
+func TestDuplicateProjectIsErrProjectTaken(t *testing.T) {
+	r := newRegistry(t)
+	ctx := context.Background()
+	a := entry("a")
+	a.Project = "shared"
+	if err := r.Add(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	b := entry("b")
+	b.Project = "shared"
+	if err := r.Add(ctx, b); !errors.Is(err, stacks.ErrProjectTaken) {
+		t.Errorf("Add err = %v", err)
+	}
+	if err := r.Add(ctx, entry("c")); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetProject(ctx, "c", "shared"); !errors.Is(err, stacks.ErrProjectTaken) {
+		t.Errorf("SetProject err = %v", err)
+	}
+	if err := r.Add(ctx, a); !errors.Is(err, stacks.ErrStackExists) {
+		t.Errorf("name collision err = %v, want ErrStackExists", err)
+	}
+}

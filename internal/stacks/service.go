@@ -97,7 +97,12 @@ type Service struct {
 	stacksDir string
 	roots     []string
 
-	locks sync.Map // stack name -> *sync.Mutex, serializes saves of one stack
+	// Lock order: a stack's lock (lockStack) first, then projectMu; never the
+	// reverse. projectMu makes "is this compose project free?" and the write
+	// that claims it (Add, SetProject, adoption) one step across all stacks;
+	// the unique index on stacks.project is the backstop.
+	locks     sync.Map // stack name -> *sync.Mutex, serializes saves of one stack
+	projectMu sync.Mutex
 }
 
 func NewService(d Deps) *Service {
@@ -173,10 +178,9 @@ func (s *Service) Sync(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	byName, byPath, byProject := map[string]bool{}, map[string]bool{}, map[string]string{}
+	byName, byPath := map[string]bool{}, map[string]bool{}
 	for _, e := range known {
 		byName[e.Name], byPath[resolved(e.ComposePath)] = true, true
-		byProject[e.Project] = e.Name
 	}
 	var errs []error
 	for _, d := range dirs {
@@ -198,18 +202,35 @@ func (s *Service) Sync(ctx context.Context) error {
 			errs = append(errs, fmt.Errorf("adopt %s: %w", d.Name(), err))
 			continue
 		}
-		if owner, taken := byProject[project]; taken {
-			errs = append(errs, fmt.Errorf("skipped %s: compose project %q is already used by stack %s", d.Name(), project, owner))
-			continue
-		}
-		err = s.reg.Add(ctx, Entry{Name: d.Name(), ComposePath: path, Origin: OriginManaged, Project: project})
-		if err != nil && !errors.Is(err, ErrStackExists) {
+		err = s.adopt(ctx, Entry{Name: d.Name(), ComposePath: path, Origin: OriginManaged, Project: project})
+		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		byName[d.Name()], byPath[path], byProject[project] = true, true, d.Name()
+		byName[d.Name()], byPath[path] = true, true
 	}
 	return errors.Join(errs...)
+}
+
+// adopt registers e unless its project is taken; a skip is reported as an error.
+func (s *Service) adopt(ctx context.Context, e Entry) error {
+	s.projectMu.Lock() // see Service for lock order
+	defer s.projectMu.Unlock()
+	owner, taken, err := s.projectOwner(ctx, e.Project, "")
+	if err != nil {
+		return err
+	}
+	if taken {
+		return fmt.Errorf("skipped %s: compose project %q is already used by stack %s", e.Name, e.Project, owner)
+	}
+	err = s.reg.Add(ctx, e)
+	if errors.Is(err, ErrStackExists) {
+		return nil // adopted concurrently
+	}
+	if errors.Is(err, ErrProjectTaken) {
+		return fmt.Errorf("skipped %s: compose project %q is already used by another stack", e.Name, e.Project)
+	}
+	return err
 }
 
 func resolved(p string) string {
@@ -232,6 +253,19 @@ func (s *Service) projectOwner(ctx context.Context, project, exclude string) (st
 		}
 	}
 	return "", false, nil
+}
+
+// mapProjectTaken turns the registry's unique-index violation into the same
+// ValidationError the ownership check gives; other errors pass through.
+func (s *Service) mapProjectTaken(ctx context.Context, err error, project, exclude string) error {
+	if !errors.Is(err, ErrProjectTaken) {
+		return err
+	}
+	if owner, taken, oerr := s.projectOwner(ctx, project, exclude); oerr == nil && taken {
+		return projectTaken(project, owner)
+	}
+	return &ValidationError{Fields: []FieldError{{Field: "name",
+		Message: fmt.Sprintf("compose project %q is already used by another stack", project)}}}
 }
 
 func projectTaken(project, owner string) error {
@@ -412,18 +446,21 @@ func (s *Service) Remove(ctx context.Context, stack string, withVolumes bool) (O
 // its containers may still exist: without the file they could never be
 // brought down through Stackstead.
 func (s *Service) confirmNoContainers(ctx context.Context, e Entry) error {
+	if e.Project == "" {
+		return fmt.Errorf("%w: compose file is missing and the stack records no compose project, so its containers cannot be identified", ErrStackUnavailable)
+	}
 	containers, err := s.engine.Containers(ctx)
 	if err != nil {
 		return fmt.Errorf("%w: compose file is missing and docker cannot be queried to confirm no containers of project %s remain: %v", ErrStackUnavailable, e.Project, err)
 	}
 	n := 0
 	for _, c := range containers {
-		if e.Project != "" && c.Project() == e.Project {
+		if c.Project() == e.Project {
 			n++
 		}
 	}
 	if n > 0 {
-		return fmt.Errorf("%w: compose file is missing but %d containers of project %s are still running; restore the file or stop them manually", ErrStackUnavailable, n, e.Project)
+		return fmt.Errorf("%w: compose file is missing but %d containers of project %s still exist; restore the file or stop them manually", ErrStackUnavailable, n, e.Project)
 	}
 	return nil
 }

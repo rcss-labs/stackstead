@@ -33,15 +33,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 	} else if !errors.Is(err, ErrStackNotFound) {
 		return Summary{}, err
 	}
-	if err := os.MkdirAll(s.stacksDir, 0o755); err != nil {
-		return Summary{}, fmt.Errorf("create stacks directory: %w", err)
-	}
-	base, err := filepath.EvalSymlinks(s.stacksDir)
-	if err != nil {
-		return Summary{}, err
-	}
-	dir := filepath.Join(base, req.Name)
-	path := filepath.Join(dir, composeFileName)
+	dir := filepath.Join(s.stacksDir, req.Name) // lexical until the folder is created
 	if _, err := os.Lstat(dir); err == nil {
 		return Summary{}, ErrStackExists
 	}
@@ -69,6 +61,15 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 	if err := s.requireCompose(ctx); err != nil {
 		return Summary{}, err
 	}
+	if err := os.MkdirAll(s.stacksDir, 0o755); err != nil {
+		return Summary{}, fmt.Errorf("create stacks directory: %w", err)
+	}
+	base, err := filepath.EvalSymlinks(s.stacksDir)
+	if err != nil {
+		return Summary{}, err
+	}
+	dir = filepath.Join(base, req.Name)
+	path := filepath.Join(dir, composeFileName)
 
 	// Mkdir (not MkdirAll) is the atomic "I created it" claim: it fails if the
 	// folder appeared since the check above.
@@ -99,9 +100,13 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 	if err != nil {
 		return Summary{}, err
 	}
-	if err := s.projectAvailable(ctx, project, req.Name); err != nil {
+	s.projectMu.Lock() // see Service for lock order
+	defer s.projectMu.Unlock()
+	p, err := s.projectAvailable(ctx, project, req.Name)
+	if err != nil {
 		return Summary{}, err
 	}
+	partial = partial || p
 	err = s.reg.Add(ctx, Entry{Name: req.Name, ComposePath: path, Origin: OriginManaged, Project: project})
 	if errors.Is(err, ErrStackExists) {
 		// Sync may have adopted our brand-new folder in the meantime; that
@@ -111,7 +116,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 		}
 	}
 	if err != nil {
-		return Summary{}, err
+		return Summary{}, s.mapProjectTaken(ctx, err, project, req.Name)
 	}
 	ok = true
 	return Summary{Name: req.Name, Path: path, Project: project, Origin: OriginManaged,
@@ -121,29 +126,30 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 // projectAvailable refuses a project that a registered stack already uses, or
 // that exists on the host without a registered owner (importing is the way to
 // adopt it): "up --remove-orphans" in a shared project would delete the other
-// stack's containers.
-func (s *Service) projectAvailable(ctx context.Context, project, stack string) error {
+// stack's containers. partial reports that the host check was skipped because
+// the engine is unreachable. Callers hold projectMu.
+func (s *Service) projectAvailable(ctx context.Context, project, stack string) (partial bool, err error) {
 	owner, taken, err := s.projectOwner(ctx, project, stack)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if taken {
-		return projectTaken(project, owner)
+		return false, projectTaken(project, owner)
 	}
 	containers, err := s.engine.Containers(ctx)
 	if err != nil {
 		if errors.Is(err, engine.ErrUnavailable) && ctx.Err() == nil {
-			return nil // the checks are partial; see ChecksPartial
+			return true, nil
 		}
-		return err
+		return false, err
 	}
 	for _, c := range containers {
 		if c.Project() == project {
-			return &ValidationError{Fields: []FieldError{{Field: "name",
+			return false, &ValidationError{Fields: []FieldError{{Field: "name",
 				Message: fmt.Sprintf("compose project %s already exists on this host; import it instead", project)}}}
 		}
 	}
-	return nil
+	return false, nil
 }
 
 // prepareConfig applies build defaults and confines the build context.
@@ -224,8 +230,22 @@ func (s *Service) Import(ctx context.Context, path string) (Summary, error) {
 		return Summary{}, err
 	}
 	entry := Entry{Name: project, ComposePath: resolved, Origin: OriginExternal, Project: project}
-	if err := s.reg.Add(ctx, entry); err != nil {
-		return Summary{}, err
+	// Importing may adopt a project that runs on the host unregistered; only
+	// a registered owner blocks it.
+	s.projectMu.Lock() // see Service for lock order
+	owner, taken, err := s.projectOwner(ctx, project, "")
+	if err == nil && taken {
+		err = projectTaken(project, owner)
+		if existing, gerr := s.reg.Get(ctx, project); gerr == nil && existing.ComposePath == resolved {
+			err = ErrStackExists // the very same file, imported twice
+		}
+	}
+	if err == nil {
+		err = s.reg.Add(ctx, entry)
+	}
+	s.projectMu.Unlock()
+	if err != nil {
+		return Summary{}, s.mapProjectTaken(ctx, err, project, "")
 	}
 	containers, engErr := s.engine.Containers(ctx)
 	return s.describe(entry, containers, engErr).Summary, nil

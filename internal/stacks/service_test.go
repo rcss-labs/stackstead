@@ -3,6 +3,7 @@ package stacks_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -49,12 +50,13 @@ func (f *fakeCompose) Config(_ context.Context, file string) error {
 
 func (f *fakeCompose) ProjectName(_ context.Context, file string) (string, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.projectErr != nil {
-		return "", f.projectErr
+	perr, fn := f.projectErr, f.projectFn
+	f.mu.Unlock()
+	if perr != nil {
+		return "", perr
 	}
-	if f.projectFn != nil {
-		return f.projectFn(file), nil
+	if fn != nil {
+		return fn(file), nil
 	}
 	return filepath.Base(filepath.Dir(file)), nil
 }
@@ -82,13 +84,17 @@ func (f *fakeCompose) lastRun() runCall {
 }
 
 type fakeEngine struct {
-	err        error
-	containers []engine.Container
-	networks   []engine.Network
+	onContainers func() // test hook, runs on every Containers call
+	err          error
+	containers   []engine.Container
+	networks     []engine.Network
 }
 
 func (e *fakeEngine) Ping(context.Context) error { return e.err }
 func (e *fakeEngine) Containers(context.Context) ([]engine.Container, error) {
+	if e.onContainers != nil {
+		e.onContainers()
+	}
 	return e.containers, e.err
 }
 func (e *fakeEngine) Networks(context.Context) ([]engine.Network, error) { return e.networks, e.err }
@@ -933,7 +939,7 @@ func TestRemoveMissingFileRefusedWhileProjectContainersExistOrEngineDown(t *test
 
 	h.eng.containers = []engine.Container{publishing("web", 8080)}
 	_, err := h.svc.Remove(ctx, "web", false)
-	if !errors.Is(err, stacks.ErrStackUnavailable) || !strings.Contains(err.Error(), "1 containers of project web") {
+	if !errors.Is(err, stacks.ErrStackUnavailable) || !strings.Contains(err.Error(), "1 containers of project web still exist") {
 		t.Errorf("containers present: err = %v", err)
 	}
 	h.eng.containers, h.eng.err = nil, engine.ErrUnavailable
@@ -1042,5 +1048,158 @@ func TestConcurrentUpdatesWithSameHashExactlyOneWins(t *testing.T) {
 	}
 	if ok != 1 || conflict != 1 {
 		t.Errorf("ok=%d conflict=%d", ok, conflict)
+	}
+}
+
+// ---- Fix round 2 ----
+
+func TestImportRefusesProjectOwnedByRenamedStack(t *testing.T) {
+	h := newHarness(t)
+	h.compose.projectFn = projectFromFile
+	h.create(t, "alpha", webCfg())
+	_, hash, _ := h.svc.Raw(context.Background(), "alpha")
+	if _, err := h.svc.SaveRaw(context.Background(), "alpha", rawWithName("gamma", "alpha"), hash); err != nil {
+		t.Fatal(err)
+	}
+	ext := filepath.Join(t.TempDir(), "compose.yaml")
+	os.WriteFile(ext, rawWithName("gamma", "app"), 0o644)
+	_, err := h.svc.Import(context.Background(), ext)
+	if fs := fieldsOf(t, err); fs[0].Field != "name" || !strings.Contains(fs[0].Message, "stack alpha") {
+		t.Errorf("fields = %+v", fs)
+	}
+	if rows, _ := h.reg.List(context.Background()); len(rows) != 1 {
+		t.Errorf("rows = %+v", rows)
+	}
+}
+
+func TestConcurrentSaveRawToSameProjectLetsExactlyOneWin(t *testing.T) {
+	h := newHarness(t)
+	h.compose.projectFn = projectFromFile
+	ctx := context.Background()
+	for i := 0; i < 50; i++ {
+		x, y := fmt.Sprintf("x%d", i), fmt.Sprintf("y%d", i)
+		h.create(t, x, webCfg())
+		h.create(t, y, webCfg())
+		target := fmt.Sprintf("p%d", i)
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		errs := make([]error, 2)
+		for n, name := range []string{x, y} {
+			_, hash, _ := h.svc.Raw(ctx, name)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				_, errs[n] = h.svc.SaveRaw(ctx, name, rawWithName(target, name), hash)
+			}()
+		}
+		close(start)
+		wg.Wait()
+		ok := 0
+		for _, err := range errs {
+			if err == nil {
+				ok++
+			} else if fs := fieldsOf(t, err); fs[0].Field != "name" {
+				t.Fatalf("iteration %d: %+v", i, fs)
+			}
+		}
+		if ok != 1 {
+			t.Fatalf("iteration %d: %d saves succeeded, want 1", i, ok)
+		}
+	}
+}
+
+func TestCreateVersusEditClaimingSameProjectGivesOneWinner(t *testing.T) {
+	h := newHarness(t)
+	h.compose.projectFn = projectFromFile
+	ctx := context.Background()
+	h.create(t, "x", webCfg())
+	_, hash, _ := h.svc.Raw(ctx, "x")
+	var editErr error
+	h.compose.projectFn = func(file string) string {
+		if filepath.Base(filepath.Dir(file)) == "web" { // Create's ProjectName: an edit lands first
+			_, editErr = h.svc.SaveRaw(ctx, "x", rawWithName("web", "x"), hash)
+		}
+		return projectFromFile(file)
+	}
+	_, createErr := h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Config: webCfg()})
+	if (editErr == nil) == (createErr == nil) {
+		t.Fatalf("edit err %v, create err %v: want exactly one success", editErr, createErr)
+	}
+	owners := 0
+	rows, _ := h.reg.List(ctx)
+	for _, r := range rows {
+		if r.Project == "web" {
+			owners++
+		}
+	}
+	if owners != 1 {
+		t.Errorf("%d stacks own project web", owners)
+	}
+}
+
+func TestRegistryProjectConflictIsMappedToValidationError(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	// A writer outside the service sneaks in after the ownership check.
+	h.eng.onContainers = func() {
+		h.eng.onContainers = nil
+		h.reg.Add(ctx, stacks.Entry{Name: "sneaky", ComposePath: "/s/compose.yaml", Origin: stacks.OriginExternal, Project: "web"})
+	}
+	_, err := h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Config: webCfg()})
+	if fs := fieldsOf(t, err); fs[0].Field != "name" {
+		t.Errorf("fields = %+v", fs)
+	}
+	if _, err := os.Stat(filepath.Join(h.dir, "web")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("folder left: %v", err)
+	}
+}
+
+func TestCreateWithEngineDownIsPartialEvenWithoutPorts(t *testing.T) {
+	h := newHarness(t)
+	h.eng.err = engine.ErrUnavailable
+	sum, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "web", Config: composefile.ServiceConfig{Image: "nginx"}})
+	if err != nil || !sum.ChecksPartial {
+		t.Errorf("sum = %+v err = %v", sum, err)
+	}
+}
+
+func TestCreateDoesNotTouchStacksDirWhenComposeMissing(t *testing.T) {
+	h := newHarness(t)
+	h.compose.versionErr = composecli.ErrComposeUnavailable
+	h.svc.Create(context.Background(), stacks.CreateRequest{Name: "web", Config: webCfg()})
+	if _, err := os.Stat(h.dir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("stacks dir created: %v", err)
+	}
+}
+
+func TestEditRenamingToUnregisteredHostProjectIsRefusedOrPartial(t *testing.T) {
+	h := newHarness(t)
+	h.compose.projectFn = projectFromFile
+	h.create(t, "alpha", webCfg())
+	ctx := context.Background()
+	_, hash, _ := h.svc.Raw(ctx, "alpha")
+
+	h.eng.containers = []engine.Container{publishing("legacy", 8080)}
+	_, err := h.svc.SaveRaw(ctx, "alpha", rawWithName("legacy", "alpha"), hash)
+	if fs := fieldsOf(t, err); fs[0].Field != "name" || !strings.Contains(fs[0].Message, "import it instead") {
+		t.Errorf("fields = %+v", fs)
+	}
+	h.eng.containers, h.eng.err = nil, engine.ErrUnavailable
+	res, err := h.svc.SaveRaw(ctx, "alpha", rawWithName("legacy", "alpha"), hash)
+	if err != nil || !res.ChecksPartial {
+		t.Errorf("engine down: %+v %v", res, err)
+	}
+}
+
+func TestRemoveMissingFileWithEmptyProjectIsRefused(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.reg.Add(ctx, stacks.Entry{Name: "p", ComposePath: filepath.Join(h.dir, "p", "compose.yaml"), Origin: stacks.OriginExternal})
+	if _, err := h.svc.Remove(ctx, "p", false); !errors.Is(err, stacks.ErrStackUnavailable) {
+		t.Errorf("err = %v", err)
+	}
+	if _, err := h.reg.Get(ctx, "p"); err != nil {
+		t.Errorf("row dropped: %v", err)
 	}
 }

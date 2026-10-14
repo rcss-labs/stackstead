@@ -13,6 +13,22 @@ import (
 	"github.com/rcss-labs/stackstead/internal/engine"
 )
 
+// lockedEntry takes the stack's lock and then reads its entry, so the entry is
+// never stale relative to an edit that finished while we waited. The first Get
+// only avoids creating lock records for names that do not exist.
+func (s *Service) lockedEntry(ctx context.Context, stack string) (Entry, func(), error) {
+	if _, err := s.reg.Get(ctx, stack); err != nil {
+		return Entry{}, nil, err
+	}
+	unlock := s.lockStack(stack)
+	e, err := s.reg.Get(ctx, stack)
+	if err != nil {
+		unlock()
+		return Entry{}, nil, err
+	}
+	return e, unlock, nil
+}
+
 // EditResult is the outcome of a saved edit. ChecksPartial is set when the
 // engine was unreachable so only stack-declared ports were checked.
 type EditResult struct {
@@ -23,11 +39,11 @@ type EditResult struct {
 // UpdateService applies a form edit to one service. It shares its save
 // pipeline (commit) with SaveRaw.
 func (s *Service) UpdateService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) (EditResult, error) {
-	e, err := s.reg.Get(ctx, stack)
+	e, unlock, err := s.lockedEntry(ctx, stack)
 	if err != nil {
 		return EditResult{}, err
 	}
-	defer s.lockStack(stack)()
+	defer unlock()
 
 	data, current, err := loadFile(e)
 	if err != nil {
@@ -49,11 +65,11 @@ func (s *Service) UpdateService(ctx context.Context, stack, service string, cfg 
 
 // SaveRaw replaces the whole compose file with content.
 func (s *Service) SaveRaw(ctx context.Context, stack string, content []byte, hash string) (EditResult, error) {
-	e, err := s.reg.Get(ctx, stack)
+	e, unlock, err := s.lockedEntry(ctx, stack)
 	if err != nil {
 		return EditResult{}, err
 	}
-	defer s.lockStack(stack)()
+	defer unlock()
 
 	data, current, err := loadFile(e)
 	if err != nil {
@@ -101,21 +117,28 @@ func (s *Service) commit(ctx context.Context, e Entry, old, edited *composefile.
 		return EditResult{}, err
 	}
 	if project != e.Project {
-		// A shared project would make "up --remove-orphans" delete the
-		// other stack's containers.
-		if owner, taken, err := s.projectOwner(ctx, project, e.Name); err != nil {
+		// Claiming a project is check-then-act across stacks, so it is
+		// serialized by projectMu (taken after the stack lock, see Service).
+		s.projectMu.Lock()
+		defer s.projectMu.Unlock()
+		p, err := s.projectAvailable(ctx, project, e.Name)
+		if err != nil {
 			return EditResult{}, err
-		} else if taken {
-			return EditResult{}, projectTaken(project, owner)
 		}
+		partial = partial || p
+		// Claim the project before saving so a failed claim writes nothing;
+		// hand it back if the save then fails.
+		if err := s.reg.SetProject(ctx, e.Name, project); err != nil {
+			return EditResult{}, s.mapProjectTaken(ctx, err, project, e.Name)
+		}
+		if err := composefile.Save(e.ComposePath, candidate, hash); err != nil {
+			s.reg.SetProject(ctx, e.Name, e.Project)
+			return EditResult{}, err
+		}
+		return EditResult{Hash: composefile.Hash(candidate), ChecksPartial: partial}, nil
 	}
 	if err := composefile.Save(e.ComposePath, candidate, hash); err != nil {
 		return EditResult{}, err
-	}
-	if project != e.Project {
-		if err := s.reg.SetProject(ctx, e.Name, project); err != nil && !errors.Is(err, ErrStackNotFound) {
-			return EditResult{Hash: composefile.Hash(candidate), ChecksPartial: partial}, err
-		}
 	}
 	return EditResult{Hash: composefile.Hash(candidate), ChecksPartial: partial}, nil
 }

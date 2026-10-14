@@ -4,6 +4,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -29,6 +30,41 @@ var migrations = []string{
 		project      TEXT    NOT NULL,
 		created_at   INTEGER NOT NULL
 	);`,
+	// Two stacks sharing a compose project would act on each other's
+	// containers. migrate() refuses, with a clear message, a database that
+	// already has duplicates (see checkUniqueProjects); there are no deployed
+	// users to migrate, so we do not guess which row to drop.
+	`CREATE UNIQUE INDEX stacks_project_unique ON stacks(project);`,
+}
+
+// preMigration checks run inside the migration's transaction, before its SQL.
+var preMigration = map[int]func(tx *sql.Tx) error{
+	2: checkUniqueProjects,
+}
+
+func checkUniqueProjects(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT project, group_concat(name, ', ') FROM
+		(SELECT project, name FROM stacks ORDER BY name)
+		GROUP BY project HAVING COUNT(*) > 1 ORDER BY project`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var problems []string
+	for rows.Next() {
+		var project, names string
+		if err := rows.Scan(&project, &names); err != nil {
+			return err
+		}
+		problems = append(problems, fmt.Sprintf("compose project %q is used by stacks %s", project, names))
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("cannot enforce unique compose projects: %s; remove or fix the duplicate stacks and start again", strings.Join(problems, "; "))
+	}
+	return nil
 }
 
 // Open opens (or creates) the database at path and migrates it to the latest schema.
@@ -60,6 +96,12 @@ func migrate(db *sql.DB) error {
 		tx, err := db.Begin()
 		if err != nil {
 			return fmt.Errorf("begin migration %d: %w", i+1, err)
+		}
+		if check := preMigration[i]; check != nil {
+			if err := check(tx); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("migration %d: %w", i+1, err)
+			}
 		}
 		if _, err := tx.Exec(migrations[i]); err != nil {
 			tx.Rollback()

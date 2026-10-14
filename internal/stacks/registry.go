@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"modernc.org/sqlite"
@@ -23,6 +24,8 @@ const (
 var (
 	ErrStackExists   = errors.New("a stack with this name or compose file already exists")
 	ErrStackNotFound = errors.New("stack not found")
+	// ErrProjectTaken means another stack already records this compose project.
+	ErrProjectTaken = errors.New("another stack already uses this compose project")
 )
 
 // Entry is one registered stack. Project is the compose project name as
@@ -50,6 +53,14 @@ func (r *Registry) Add(ctx context.Context, e Entry) error {
 		`INSERT INTO stacks (name, compose_path, origin, project, created_at) VALUES (?, ?, ?, ?, ?)`,
 		e.Name, e.ComposePath, string(e.Origin), e.Project, r.now().Unix())
 	if isUniqueViolation(err) {
+		// SQLite reports whichever constraint it checks first, so look at the
+		// name and path ourselves: they take precedence over the project.
+		var n int
+		qerr := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM stacks WHERE name = ? OR compose_path = ?`,
+			e.Name, e.ComposePath).Scan(&n)
+		if qerr == nil && n == 0 && isProjectViolation(err) {
+			return ErrProjectTaken
+		}
 		return ErrStackExists
 	}
 	if err != nil {
@@ -100,6 +111,9 @@ func (r *Registry) Remove(ctx context.Context, name string) error {
 
 func (r *Registry) SetProject(ctx context.Context, name, project string) error {
 	res, err := r.db.ExecContext(ctx, `UPDATE stacks SET project = ? WHERE name = ?`, project, name)
+	if isProjectViolation(err) {
+		return ErrProjectTaken
+	}
 	return expectOneRow(res, err, "set project of", name)
 }
 
@@ -138,4 +152,10 @@ func isUniqueViolation(err error) bool {
 	}
 	c := se.Code()
 	return c == sqlite3.SQLITE_CONSTRAINT_UNIQUE || c == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY
+}
+
+// isProjectViolation reports a violation of the unique index on project.
+// SQLite names the offending column in the message.
+func isProjectViolation(err error) bool {
+	return isUniqueViolation(err) && strings.Contains(err.Error(), "stacks.project")
 }
