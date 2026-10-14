@@ -35,7 +35,7 @@ var (
 var extraCleanups []func()
 
 func TestMain(m *testing.M) {
-	code := m.Run()
+	code := guardRealHomes(m.Run)
 	for _, f := range extraCleanups {
 		f()
 	}

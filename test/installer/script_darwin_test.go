@@ -464,26 +464,54 @@ exec ` + real + ` "$@"`
 	})
 }
 
+// hermeticUser is the account name real-mode tests run as; no such account exists.
+const hermeticUser = "stackstead-itest-nosuchuser"
+
+// realModeFixture prepares a run without --root as the test's own, non-root
+// uid: a throwaway home (from the dscl stub) and prefix, stubbed sudo,
+// launchctl and docker.
+func realModeFixture(t *testing.T) (f *fixture, home, prefix string, env map[string]string) {
+	t.Helper()
+	requireNonRoot(t)
+	r := newRun(t)
+	dist := publishRelease(t, r, "1.0.0", "darwin", nil, nil)
+	f = fixtureFromDist(t, r, dist, "1.0.0", darwinStubs(false))
+	// The test's real uid (launchctl's gui/<uid> domain) under an account name
+	// that does not exist, so nothing in install.sh (`~name`, the real dscl)
+	// can map it to the developer's home: the home only comes from the dscl stub.
+	uid := fmt.Sprint(os.Getuid())
+	f.stubs["id"] = `case "$*" in -u) echo ` + uid + ` ;; -un) echo ` + hermeticUser + ` ;; "-u ` + hermeticUser + `") echo ` + uid + ` ;; "-gn "*) echo staff ;; *) exit 1 ;; esac`
+	home = filepath.Join(r.Dir, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prefix = filepath.Join(r.Dir, "prefix")
+	env = map[string]string{"FAKE_HOME": home, "FAKE_STACKSTEAD_LOG": filepath.Join(r.Dir, "stackstead.log")}
+	f.stubD = stubPath(t, f.stubs)
+	return f, home, prefix, env
+}
+
+// A real-mode test must never be able to resolve the developer's own home:
+// if the dscl stub is missing or its output cannot be parsed, the script's
+// `~user` fallback must not find a real account. --print-paths resolves the
+// paths and exits before writing anything, so this cannot leave files behind.
+func TestDarwinRealModeNeverResolvesTheRealHome(t *testing.T) {
+	f, _, prefix, env := realModeFixture(t)
+	f.stubs["dscl"] = `exit 1`
+	f.stubD = stubPath(t, f.stubs)
+	env["STUBS_DIR"] = f.stubD
+	out, errOut, _ := runScript(t, []string{"--print-paths", "--prefix", prefix}, env, nil)
+	for _, home := range realHomes() {
+		notContains(t, "paths", out+errOut, home+"/Library")
+	}
+}
+
 // TestDarwinRealMode runs without --root against a throwaway home and prefix:
 // sudo, launchctl and docker are stubs, the home comes from the dscl stub, and
 // the service answers on a port of the test's own (never the demo's 8420).
 func TestDarwinRealMode(t *testing.T) {
 	requireNonRoot(t)
-	setup := func(t *testing.T) (f *fixture, home, prefix string, env map[string]string) {
-		t.Helper()
-		r := newRun(t)
-		dist := publishRelease(t, r, "1.0.0", "darwin", nil, nil)
-		f = fixtureFromDist(t, r, dist, "1.0.0", darwinStubs(false))
-		delete(f.stubs, "id") // the real id: this test runs as the real, non-root user
-		home = filepath.Join(r.Dir, "home")
-		if err := os.MkdirAll(home, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		prefix = filepath.Join(r.Dir, "prefix")
-		env = map[string]string{"FAKE_HOME": home, "FAKE_STACKSTEAD_LOG": filepath.Join(r.Dir, "stackstead.log")}
-		f.stubD = stubPath(t, f.stubs)
-		return f, home, prefix, env
-	}
+	setup := realModeFixture
 	runReal := func(f *fixture, env map[string]string, args ...string) (string, string, int) {
 		e := map[string]string{"STUBS_DIR": f.stubD, "TMPDIR": f.tmpDir}
 		for k, v := range env {
@@ -900,19 +928,13 @@ func TestDarwinHomeWithASpaceFromDscl(t *testing.T) {
 
 // Something else already answering on the listen address must not be reported as our service.
 func TestDarwinWarnsWhenAnotherProcessHoldsThePort(t *testing.T) {
-	requireNonRoot(t)
-	r := newRun(t)
-	dist := publishRelease(t, r, "1.0.0", "darwin", nil, nil)
-	f := fixtureFromDist(t, r, dist, "1.0.0", darwinStubs(false))
-	delete(f.stubs, "id")
-	home := filepath.Join(r.Dir, "home")
+	f, home, prefix, env := realModeFixture(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { _, _ = io.WriteString(w, `{"ok":true}`) }))
 	t.Cleanup(srv.Close)
 	u, _ := url.Parse(srv.URL)
 	writeFile(t, filepath.Join(home, "Library", "Application Support", "Stackstead", "config.yaml"), []byte("listen: "+u.Host+"\n"), 0o600)
-	f.stubD = stubPath(t, f.stubs)
-	env := map[string]string{"STUBS_DIR": f.stubD, "TMPDIR": f.tmpDir, "FAKE_HOME": home, "FAKE_STACKSTEAD_LOG": filepath.Join(r.Dir, "ss.log")}
-	out, errOut, code := runScript(t, []string{"--base-url", f.base, "--prefix", filepath.Join(r.Dir, "prefix")}, env, nil)
+	env["STUBS_DIR"], env["TMPDIR"] = f.stubD, f.tmpDir
+	out, errOut, code := runScript(t, []string{"--base-url", f.base, "--prefix", prefix}, env, nil)
 	mustExit(t, code, 0, out, errOut)
 	contains(t, "stderr", errOut, "already answering on "+u.Host)
 	notContains(t, "stdout", out, "Stackstead is running")
