@@ -20,16 +20,6 @@ type Sample struct {
 	NetRx, NetTx, BlkRead, BlkWrite uint64
 }
 
-// Point is a Query result row: per (service, bucket) the gauges (CPU, Mem,
-// MemLimit) are averaged and the cumulative counters take their maximum.
-type Point struct {
-	TS                              time.Time
-	Service                         string
-	CPU                             float64
-	Mem, MemLimit                   uint64
-	NetRx, NetTx, BlkRead, BlkWrite uint64
-}
-
 // Store persists samples in SQLite. SQLite integers are signed 64-bit, so
 // uint64 values above math.MaxInt64 are clamped to math.MaxInt64 on insert
 // (real memory and byte counters never get near 8 EiB).
@@ -80,55 +70,6 @@ func (s *Store) InsertBatch(ctx context.Context, samples []Sample) error {
 		return fmt.Errorf("commit metrics insert: %w", err)
 	}
 	return nil
-}
-
-// Query returns samples of project with from <= ts < to (whole seconds),
-// ordered by service then time. An empty service means all services. With
-// step > 0 rows are aggregated per service into step-sized buckets (a Point's
-// TS is its bucket start; steps are rounded down to whole seconds, minimum 1);
-// with step <= 0 the raw rows are returned.
-func (s *Store) Query(ctx context.Context, project, service string, from, to time.Time, step time.Duration) ([]Point, error) {
-	var query string
-	args := []any{project, service, service, from.Unix(), to.Unix()}
-	if step > 0 {
-		secs := int64(step / time.Second)
-		if secs < 1 {
-			secs = 1
-		}
-		query = `SELECT ts - ts % ?, service, AVG(cpu), CAST(AVG(mem) AS INTEGER), CAST(AVG(mem_limit) AS INTEGER),
-				MAX(net_rx), MAX(net_tx), MAX(blk_read), MAX(blk_write)
-			FROM metric_samples
-			WHERE project = ? AND (? = '' OR service = ?) AND ts >= ? AND ts < ?
-			GROUP BY service, ts - ts % ? ORDER BY service, 1`
-		args = append([]any{secs}, args...)
-		args = append(args, secs)
-	} else {
-		query = `SELECT ts, service, cpu, mem, mem_limit, net_rx, net_tx, blk_read, blk_write
-			FROM metric_samples
-			WHERE project = ? AND (? = '' OR service = ?) AND ts >= ? AND ts < ?
-			ORDER BY service, ts`
-	}
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("query metrics: %w", err)
-	}
-	defer rows.Close()
-	var out []Point
-	for rows.Next() {
-		var p Point
-		var ts int64
-		var mem, limit, rx, tx, br, bw int64
-		if err := rows.Scan(&ts, &p.Service, &p.CPU, &mem, &limit, &rx, &tx, &br, &bw); err != nil {
-			return nil, fmt.Errorf("scan metrics: %w", err)
-		}
-		p.TS = time.Unix(ts, 0)
-		p.Mem, p.MemLimit, p.NetRx, p.NetTx, p.BlkRead, p.BlkWrite = uint64(mem), uint64(limit), uint64(rx), uint64(tx), uint64(br), uint64(bw)
-		out = append(out, p)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("query metrics: %w", err)
-	}
-	return out, nil
 }
 
 // QueryContainers returns, for project (and service unless empty), each

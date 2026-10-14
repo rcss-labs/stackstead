@@ -29,8 +29,8 @@ type ServicePoint struct {
 }
 
 // maxRateGapBuckets is how many buckets back a container's previous bucket may
-// be and still be used for a rate; further back it counts as a fresh start
-// (the live client forgets a container after 3 unseen ticks, likewise).
+// be and still be used for a rate. A gap of more than maxRateGapBuckets means
+// the previous bucket is treated as a fresh start (no rate computed).
 const maxRateGapBuckets = 3
 
 // AggregateServices turns per-container buckets into per-service points.

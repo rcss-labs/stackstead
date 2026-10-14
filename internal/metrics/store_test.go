@@ -3,7 +3,6 @@ package metrics_test
 import (
 	"context"
 	"database/sql"
-	"math"
 	"path/filepath"
 	"testing"
 	"time"
@@ -52,96 +51,6 @@ func TestInsertBatchThousandRows(t *testing.T) {
 	}
 }
 
-func TestQueryBucketsAveragesGaugesAndMaxesCounters(t *testing.T) {
-	s, _ := newStore(t)
-	ctx := context.Background()
-	b := base.Truncate(time.Minute)
-	err := s.InsertBatch(ctx, []metrics.Sample{
-		sample(b.Add(10*time.Second), "p", "web", 10, 100, 5),
-		sample(b.Add(20*time.Second), "p", "web", 30, 300, 9),
-		sample(b.Add(70*time.Second), "p", "web", 50, 500, 12),
-		sample(b.Add(10*time.Second), "p", "db", 2, 20, 1),
-		sample(b.Add(10*time.Second), "other", "web", 99, 99, 99),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	pts, err := s.Query(ctx, "p", "", b, b.Add(2*time.Minute), time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(pts) != 3 {
-		t.Fatalf("points = %+v, want 3", pts)
-	}
-	// ordered by service then ts: db, web@0, web@1m
-	if pts[0].Service != "db" || pts[1].Service != "web" || pts[2].Service != "web" {
-		t.Fatalf("order = %+v", pts)
-	}
-	w := pts[1]
-	if !w.TS.Equal(b) || w.CPU != 20 || w.Mem != 200 || w.NetRx != 9 || w.BlkWrite != 9 || w.MemLimit != 1000 {
-		t.Errorf("web bucket 0 = %+v", w)
-	}
-	if !pts[2].TS.Equal(b.Add(time.Minute)) || pts[2].CPU != 50 {
-		t.Errorf("web bucket 1 = %+v", pts[2])
-	}
-
-	only, _ := s.Query(ctx, "p", "web", b, b.Add(2*time.Minute), time.Minute)
-	if len(only) != 2 {
-		t.Errorf("service filter returned %d points, want 2", len(only))
-	}
-}
-
-func TestQueryWindowIsFromInclusiveToExclusive(t *testing.T) {
-	s, _ := newStore(t)
-	ctx := context.Background()
-	s.InsertBatch(ctx, []metrics.Sample{
-		sample(base.Add(-time.Second), "p", "web", 1, 1, 1),
-		sample(base, "p", "web", 2, 1, 1),
-		sample(base.Add(time.Second), "p", "web", 3, 1, 1),
-		sample(base.Add(2*time.Second), "p", "web", 4, 1, 1),
-	})
-	raw, err := s.Query(ctx, "p", "", base, base.Add(2*time.Second), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(raw) != 2 || raw[0].CPU != 2 || raw[1].CPU != 3 {
-		t.Errorf("raw = %+v, want cpu 2,3", raw)
-	}
-}
-
-func TestPruneRemovesOnlyOlderRows(t *testing.T) {
-	s, _ := newStore(t)
-	ctx := context.Background()
-	s.InsertBatch(ctx, []metrics.Sample{
-		sample(base.Add(-2*time.Second), "p", "web", 1, 1, 1),
-		sample(base.Add(-time.Second), "p", "web", 1, 1, 1),
-		sample(base, "p", "web", 1, 1, 1),
-	})
-	n, err := s.Prune(ctx, base)
-	if err != nil || n != 2 {
-		t.Fatalf("Prune = %d, %v; want 2", n, err)
-	}
-	left, _ := s.Query(ctx, "p", "", base.Add(-time.Hour), base.Add(time.Hour), 0)
-	if len(left) != 1 {
-		t.Errorf("left = %d, want 1", len(left))
-	}
-}
-
-func TestHugeCountersClampToInt64Max(t *testing.T) {
-	s, _ := newStore(t)
-	ctx := context.Background()
-	if err := s.InsertBatch(ctx, []metrics.Sample{sample(base, "p", "web", 1, math.MaxUint64, math.MaxUint64)}); err != nil {
-		t.Fatal(err)
-	}
-	pts, err := s.Query(ctx, "p", "", base, base.Add(time.Second), 0)
-	if err != nil || len(pts) != 1 {
-		t.Fatalf("%v %v", pts, err)
-	}
-	if pts[0].Mem != math.MaxInt64 || pts[0].NetRx != math.MaxInt64 {
-		t.Errorf("clamped = %d, want MaxInt64", pts[0].Mem)
-	}
-}
-
 func TestTokenHashSetGetClear(t *testing.T) {
 	s, _ := newStore(t)
 	ctx := context.Background()
@@ -162,23 +71,6 @@ func TestTokenHashSetGetClear(t *testing.T) {
 	}
 	if h, _ := s.TokenHash(ctx); h != "" {
 		t.Errorf("cleared hash = %q", h)
-	}
-}
-
-func TestQueryRawRowsOrderedByServiceThenTime(t *testing.T) {
-	s, _ := newStore(t)
-	ctx := context.Background()
-	s.InsertBatch(ctx, []metrics.Sample{
-		sample(base.Add(2*time.Second), "p", "web", 3, 1, 1),
-		sample(base.Add(time.Second), "p", "web", 2, 1, 1),
-		sample(base.Add(3*time.Second), "p", "db", 1, 1, 1),
-	})
-	pts, err := s.Query(ctx, "p", "", base, base.Add(time.Minute), -time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(pts) != 3 || pts[0].Service != "db" || pts[1].CPU != 2 || pts[2].CPU != 3 {
-		t.Errorf("raw order = %+v, want db, web@1s, web@2s", pts)
 	}
 }
 

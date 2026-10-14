@@ -106,7 +106,7 @@ export function createLiveAggregator() {
       for (const s of list) {
         const before = prev.get(s.container);
         const dt = before ? (pendingT - before.t) / 1000 : 0;
-        if (before && dt > 0) {
+        if (before && dt > 0 && tickNo - before.seenTick <= PREV_MAX_AGE_TICKS) {
           for (const k of COUNTERS) {
             const rate = s[k] >= before.counters[k] ? (s[k] - before.counters[k]) / dt : 0;
             p[k] = (p[k] ?? 0) + rate;
