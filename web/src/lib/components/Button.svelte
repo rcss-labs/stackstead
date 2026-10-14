@@ -24,7 +24,6 @@
   const uid = $props.id();
   // A disabledReason (or loading) soft-disables: aria-disabled + click ignored, but still
   // focusable so the reason can be found. Without a reason, `disabled` is a real disabled button.
-  // aria-disabled keeps the button focusable so the reason can be discovered.
   const soft = $derived(Boolean(disabledReason) || loading);
 
   function handleClick(event: MouseEvent) {

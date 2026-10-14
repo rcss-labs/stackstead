@@ -73,5 +73,6 @@
     border-radius: var(--radius-md);
   }
   .field :global([aria-invalid='true']) { border-color: var(--danger); }
-  .field :global(:read-only:not(button)) { background: var(--surface-raised); color: var(--muted); }
+  .field :global(:is(input, textarea):read-only),
+  .field :global(:is(input, select, textarea):disabled) { background: var(--surface-raised); color: var(--muted); }
 </style>

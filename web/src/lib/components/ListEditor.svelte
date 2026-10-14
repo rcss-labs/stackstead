@@ -1,5 +1,5 @@
 <script lang="ts" generics="T">
-  import type { Snippet } from 'svelte';
+  import { tick, type Snippet } from 'svelte';
 
   let {
     items,
@@ -19,8 +19,6 @@
     readonly?: boolean;
     errors?: Record<number, string>;
   } = $props();
-
-  import { tick } from 'svelte';
 
   const uid = $props.id();
   const FIELD = 'input, select, textarea, button:not([data-remove])';
@@ -71,7 +69,7 @@
   <ul bind:this={list} class="rows">
     {#each items as item, i (i)}
       <li>
-        <div class="row" role="group" aria-describedby={errors[i] ? `${uid}-err-${i}` : undefined}>
+        <div class="row" role="group" aria-label="Item {i + 1}" aria-describedby={errors[i] ? `${uid}-err-${i}` : undefined}>
           <div class="cell">{@render row(item, i, (value: T) => update(i, value))}</div>
           {#if !readonly}
             <button type="button" data-remove aria-label="Remove item {i + 1}" onclick={() => remove(i)}>×</button>

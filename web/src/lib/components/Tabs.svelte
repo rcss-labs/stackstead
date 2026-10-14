@@ -45,7 +45,15 @@
   }
 </script>
 
-<div role="tablist" class="tablist" aria-label={ariaLabel}>
+<!-- Forget the remembered tab on leaving the list so re-entry lands on the selected one. -->
+<div
+  role="tablist"
+  class="tablist"
+  aria-label={ariaLabel}
+  onfocusout={(e) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) focused = undefined;
+  }}
+>
   {#each tabs as tab, i (tab.id)}
     <button
       bind:this={buttons[tab.id]}

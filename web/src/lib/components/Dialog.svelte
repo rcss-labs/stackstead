@@ -1,3 +1,8 @@
+<script module lang="ts">
+  // Open dialogs, oldest first. Escape closes only the last one.
+  const openStack: symbol[] = [];
+</script>
+
 <script lang="ts">
   import type { Snippet } from 'svelte';
 
@@ -55,13 +60,19 @@
   // Escape is handled on the document so it works wherever focus happens to be.
   $effect(() => {
     if (!open) return;
+    const me = Symbol('dialog');
+    openStack.push(me);
     const onEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (openStack[openStack.length - 1] !== me) return; // only the topmost dialog reacts
       event.preventDefault();
       onclose();
     };
     document.addEventListener('keydown', onEscape);
-    return () => document.removeEventListener('keydown', onEscape);
+    return () => {
+      document.removeEventListener('keydown', onEscape);
+      openStack.splice(openStack.indexOf(me), 1);
+    };
   });
 
   function onkeydown(event: KeyboardEvent) {

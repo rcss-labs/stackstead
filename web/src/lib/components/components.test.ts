@@ -125,6 +125,24 @@ describe('Dialog', () => {
     expect(onclose).toHaveBeenCalledTimes(1);
   });
 
+  it('closes only the topmost of nested dialogs per Escape, and ignores handled keys', async () => {
+    const user = userEvent.setup();
+    const outer = vi.fn();
+    const inner = vi.fn();
+    render(Dialog, { open: true, title: 'Outer', onclose: outer, children: body });
+    const innerView = render(Dialog, { open: true, title: 'Inner', onclose: inner, children: body });
+    await user.keyboard('{Escape}');
+    expect(inner).toHaveBeenCalledTimes(1);
+    expect(outer).not.toHaveBeenCalled();
+    innerView.unmount();
+    const handled = (e: KeyboardEvent) => e.preventDefault();
+    window.addEventListener('keydown', handled, { capture: true, once: true });
+    await user.keyboard('{Escape}');
+    expect(outer).not.toHaveBeenCalled(); // already handled by someone else
+    await user.keyboard('{Escape}');
+    expect(outer).toHaveBeenCalledTimes(1);
+  });
+
   it('does not focus hidden controls', async () => {
     render(Dialog, {
       open: true,
@@ -397,7 +415,7 @@ describe('Tabs', () => {
 
 describe('ListEditor', () => {
   const row = createRawSnippet<[string, number, (v: string) => void]>((item, index) => ({
-    render: () => `<input aria-label="Item ${index() + 1}" value="${item()}" />`,
+    render: () => `<input aria-label="Value ${index() + 1}" value="${item()}" />`,
   }));
 
   function setup(initial: string[], extra: Record<string, unknown> = {}) {
@@ -421,7 +439,7 @@ describe('ListEditor', () => {
     const { onchange } = setup(['a']);
     await user.click(screen.getByRole('button', { name: 'Add item' }));
     expect(onchange).toHaveBeenCalledWith(['a', '']);
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Item 2')));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Value 2')));
   });
 
   it('removing a row focuses the previous row; removing the first focuses the next', async () => {
@@ -429,10 +447,10 @@ describe('ListEditor', () => {
     const { onchange } = setup(['a', 'b', 'c']);
     await user.click(screen.getByRole('button', { name: 'Remove item 3' }));
     expect(onchange).toHaveBeenLastCalledWith(['a', 'b']);
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Item 2')));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Value 2')));
     await user.click(screen.getByRole('button', { name: 'Remove item 1' }));
     expect(onchange).toHaveBeenLastCalledWith(['b']);
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Item 1')));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Value 1')));
   });
 
   it('removing the last remaining row focuses the add button', async () => {
@@ -444,7 +462,7 @@ describe('ListEditor', () => {
 
   it('links each row error to its row via aria-describedby', () => {
     setup(['a', 'b'], { errors: { 1: 'Invalid port' } });
-    const row = screen.getByLabelText('Item 2').closest('[aria-describedby]') as HTMLElement;
+    const row = screen.getByLabelText('Value 2').closest('[aria-describedby]') as HTMLElement;
     expect(document.getElementById(row.getAttribute('aria-describedby')!)?.textContent).toContain('Invalid port');
   });
 
