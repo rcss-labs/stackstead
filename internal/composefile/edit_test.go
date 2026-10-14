@@ -1,0 +1,383 @@
+package composefile
+
+import (
+	"errors"
+	"strings"
+	"testing"
+
+	"go.yaml.in/yaml/v3"
+)
+
+func scalar(v string) *yaml.Node { return &yaml.Node{Kind: yaml.ScalarNode, Value: v} }
+
+func quoted(v string) *yaml.Node {
+	return &yaml.Node{Kind: yaml.ScalarNode, Value: v, Style: yaml.DoubleQuotedStyle}
+}
+
+func seqOf(items ...*yaml.Node) *yaml.Node {
+	return &yaml.Node{Kind: yaml.SequenceNode, Content: items}
+}
+
+func path(p string) []string { return strings.Split(p, ".") }
+
+// doc trims the leading newline so test YAML can start on its own line.
+func doc(s string) string { return strings.TrimPrefix(s, "\n") }
+
+func TestApplyEditsGolden(t *testing.T) {
+	tests := []struct {
+		name  string
+		in    string
+		edits []edit
+		want  string
+	}{
+		{
+			name: "replace inline scalar keeps comment and spacing",
+			in: doc(`
+services:
+  web:
+    image: "nginx:1.27"   # pinned
+    restart: always
+`),
+			edits: []edit{{path("services.web.image"), scalar("nginx:1.28")}},
+			want: doc(`
+services:
+  web:
+    image: nginx:1.28   # pinned
+    restart: always
+`),
+		},
+		{
+			name: "replace compact block sequence keeps surrounding blank lines",
+			in: doc(`
+# My lab
+services:
+  web:
+    ports:
+    - "8080:80"
+    - 8443:443
+
+    environment:
+      TZ: Europe/Berlin
+`),
+			edits: []edit{{path("services.web.ports"), seqOf(quoted("9090:80"))}},
+			want: doc(`
+# My lab
+services:
+  web:
+    ports:
+    - "9090:80"
+
+    environment:
+      TZ: Europe/Berlin
+`),
+		},
+		{
+			name: "replace indented sequence keeps key-line comment",
+			in: doc(`
+services:
+  web:
+    ports: # published
+      - "80:80"
+    restart: always
+`),
+			edits: []edit{{path("services.web.ports"), seqOf(quoted("81:80"), quoted("443:443"))}},
+			want: doc(`
+services:
+  web:
+    ports: # published
+      - "81:80"
+      - "443:443"
+    restart: always
+`),
+		},
+		{
+			name: "insert new key after last entry, before trailing blank lines",
+			in: doc(`
+services:
+  web:
+    image: nginx
+
+  db:
+    image: postgres
+`),
+			edits: []edit{{path("services.web.restart"), scalar("unless-stopped")}},
+			want: doc(`
+services:
+  web:
+    image: nginx
+    restart: unless-stopped
+
+  db:
+    image: postgres
+`),
+		},
+		{
+			name: "create nested path",
+			in: doc(`
+services:
+  web:
+    image: nginx
+`),
+			edits: []edit{{path("services.web.deploy.resources.limits.memory"), scalar("512M")}},
+			want: doc(`
+services:
+  web:
+    image: nginx
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+`),
+		},
+		{
+			name: "four-space indentation is respected",
+			in: doc(`
+services:
+    web:
+        image: nginx
+`),
+			edits: []edit{{path("services.web.deploy.resources.limits.cpus"), quoted("0.5")}},
+			want: doc(`
+services:
+    web:
+        image: nginx
+        deploy:
+            resources:
+                limits:
+                    cpus: "0.5"
+`),
+		},
+		{
+			name: "delete key with block value",
+			in: doc(`
+services:
+  web:
+    image: nginx
+    volumes:
+      - data:/data   # app data
+      - ./conf:/conf
+    restart: always
+`),
+			edits: []edit{{path("services.web.volumes"), nil}},
+			want: doc(`
+services:
+  web:
+    image: nginx
+    restart: always
+`),
+		},
+		{
+			name:  "deleting a missing key is a no-op",
+			in:    "services:\n  web:\n    image: nginx\n",
+			edits: []edit{{path("services.web.restart"), nil}},
+			want:  "services:\n  web:\n    image: nginx\n",
+		},
+		{
+			name: "deleting the only key leaves an empty mapping",
+			in: doc(`
+services:
+  web:
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+`),
+			edits: []edit{{path("services.web.deploy.resources.limits.memory"), nil}},
+			want: doc(`
+services:
+  web:
+    deploy:
+      resources:
+        limits: {}
+`),
+		},
+		{
+			name: "edit inside flow mapping rewrites it in block style",
+			in: doc(`
+services:
+  web:
+    deploy: {resources: {limits: {cpus: "1"}}}
+    image: nginx
+`),
+			edits: []edit{{path("services.web.deploy.resources.limits.memory"), scalar("1G")}},
+			want: doc(`
+services:
+  web:
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+    image: nginx
+`),
+		},
+		{
+			name: "null value becomes nested mapping",
+			in: doc(`
+services:
+  web:
+    deploy:
+    image: nginx
+`),
+			edits: []edit{{path("services.web.deploy.resources.limits.memory"), scalar("1G")}},
+			want: doc(`
+services:
+  web:
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    image: nginx
+`),
+		},
+		{
+			name: "block scalar replaced by inline scalar",
+			in: doc(`
+services:
+  db:
+    command: >
+      postgres -c max_connections=200
+    image: postgres
+`),
+			edits: []edit{{path("services.db.command"), scalar("postgres")}},
+			want: doc(`
+services:
+  db:
+    command: postgres
+    image: postgres
+`),
+		},
+		{
+			name:  "insert into file without trailing newline",
+			in:    "services:\n  web:\n    image: nginx",
+			edits: []edit{{path("services.web.restart"), scalar("always")}},
+			want:  "services:\n  web:\n    image: nginx\n    restart: always",
+		},
+		{
+			name: "top-level insert goes after trailing comments of deeper entries only",
+			in: doc(`
+services:
+  web:
+    image: nginx
+# end of services
+`),
+			edits: []edit{{path("networks.lan.external"), scalar("true")}},
+			want: doc(`
+services:
+  web:
+    image: nginx
+networks:
+  lan:
+    external: true
+# end of services
+`),
+		},
+		{
+			name:  "insert after multi-line flow sequence closing at key indent",
+			in:    "services:\n  web:\n    command: [\n      \"a\",\n    ]\n",
+			edits: []edit{{path("services.web.restart"), scalar("always")}},
+			want:  "services:\n  web:\n    command: [\n      \"a\",\n    ]\n    restart: always\n",
+		},
+		{
+			name:  "replace multi-line flow sequence closing at key indent",
+			in:    "services:\n  web:\n    command: [\n      \"a\",\n    ]\n    image: x\n",
+			edits: []edit{{path("services.web.command"), scalar("b")}},
+			want:  "services:\n  web:\n    command: b\n    image: x\n",
+		},
+		{
+			name:  "comment after a tab is kept",
+			in:    "services:\n  web:\n    image: nginx\t# pinned\n",
+			edits: []edit{{path("services.web.image"), scalar("httpd")}},
+			want:  "services:\n  web:\n    image: httpd\t# pinned\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := applyEdits([]byte(tt.in), tt.edits)
+			if err != nil {
+				t.Fatalf("applyEdits: %v", err)
+			}
+			if string(got) != tt.want {
+				t.Errorf("got:\n%s\nwant:\n%s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyEditsRefuses(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		e    edit
+		want error
+	}{
+		{
+			name: "anchored value",
+			in:   "x-base: &base\n  restart: always\nservices:\n  web:\n    <<: *base\n",
+			e:    edit{path("x-base.restart"), scalar("no")},
+			want: errSharedNode,
+		},
+		{
+			name: "alias value",
+			in:   "x-env: &env\n  A: b\nservices:\n  web:\n    environment: *env\n",
+			e:    edit{path("services.web.environment.A"), scalar("c")},
+			want: errSharedNode,
+		},
+		{
+			name: "path through a scalar",
+			in:   "services:\n  web:\n    image: nginx\n",
+			e:    edit{path("services.web.image.tag"), scalar("x")},
+			want: errPathNotMapping,
+		},
+		{
+			name: "CRLF line endings",
+			in:   "services:\r\n  web:\r\n    image: nginx\r\n",
+			e:    edit{path("services.web.image"), scalar("x")},
+			want: errUnsupportedLayout,
+		},
+		{
+			name: "flow mapping root",
+			in:   "{services: {}}\n",
+			e:    edit{path("services.web"), scalar("x")},
+			want: errUnsupportedLayout,
+		},
+		{
+			name: "anchor inside flow mapping",
+			in:   "services:\n  a:\n    deploy: {resources: &q {limits: {cpus: \"1\"}}}\n  b:\n    deploy: {resources: *q}\n",
+			e:    edit{path("services.a.deploy.resources.limits.memory"), scalar("1G")},
+			want: errSharedNode,
+		},
+		{
+			name: "alias inside flow mapping",
+			in:   "x-r: &r {reservations: {cpus: \"1\"}}\nservices:\n  a:\n    deploy: {resources: *r}\n",
+			e:    edit{path("services.a.deploy.resources.limits.memory"), scalar("1G")},
+			want: errSharedNode,
+		},
+		{
+			name: "path through scalar inside flow mapping",
+			in:   "services:\n  a:\n    deploy: {resources: 5}\n",
+			e:    edit{path("services.a.deploy.resources.limits.memory"), scalar("1G")},
+			want: errPathNotMapping,
+		},
+		{
+			name: "replacing value with nested anchor",
+			in:   "services:\n  a:\n    environment: {A: &v foo}\n  b:\n    environment: {A: *v}\n",
+			e:    edit{path("services.a.environment"), &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{scalar("A"), scalar("bar")}}},
+			want: errSharedNode,
+		},
+		{
+			name: "deleting value with nested anchor",
+			in:   "services:\n  a:\n    environment:\n      A: &v foo\n    image: x\n  b:\n    environment:\n      A: *v\n",
+			e:    edit{path("services.a.environment"), nil},
+			want: errSharedNode,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := applyEdits([]byte(tt.in), []edit{tt.e})
+			if !errors.Is(err, tt.want) {
+				t.Errorf("err = %v, want %v", err, tt.want)
+			}
+		})
+	}
+}
