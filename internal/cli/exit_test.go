@@ -93,6 +93,12 @@ func TestExitCodeMappingForClientErrors(t *testing.T) {
 	}
 }
 
+func TestCleanTextDropsFormatCharacters(t *testing.T) {
+	if got, want := cleanText("exe\u202egpj.txt\u200b"), "exegpj.txt"; got != want {
+		t.Errorf("cleanText = %q, want %q", got, want)
+	}
+}
+
 func TestCleanTextStripsControlCharacters(t *testing.T) {
 	if got, want := cleanText("a\x1b[31mb\rc\x07d\ne\tf\x7fg\u009bh"), "a[31mbcd\ne\tfgh"; got != want {
 		t.Errorf("cleanText = %q, want %q", got, want)

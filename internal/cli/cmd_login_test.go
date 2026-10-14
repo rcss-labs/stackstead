@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -157,8 +158,8 @@ func TestLoginRejectsBadInput(t *testing.T) {
 
 func TestLoginWarnsOnPlainHTTPToRemoteHost(t *testing.T) {
 	te := newTestEnv(t, nil)
-	te.Stdin = strings.NewReader("hunter2-pw\n")
-	_ = t6Run(te, "login", "http://stackstead.invalid:8420", "--password-stdin", "--timeout", "2s")
+	te.Stdin = strings.NewReader("") // stops at the empty password, before any network
+	_ = t6Run(te, "login", "http://stackstead.invalid:8420", "--password-stdin")
 	if !strings.Contains(te.Err.String(), "is not TLS") {
 		t.Errorf("stderr = %q, want the clear-text warning", te.Err.String())
 	}
@@ -209,8 +210,30 @@ func TestLoginCAFileMustExist(t *testing.T) {
 	}
 }
 
-func TestLoginStoresAbsoluteCAFileAndInsecure(t *testing.T) {
-	srv := t6API(t, map[string]http.HandlerFunc{"POST /api/login": t6LoginOK})
+func TestLoginStoresAbsoluteCAFile(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t6LoginOK(w, r) }))
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+	if err := os.WriteFile(filepath.Join(dir, "ca.pem"), pemBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	te := newTestEnv(t, nil)
+	te.Stdin = strings.NewReader("hunter2-pw\n")
+	if err := t6Run(te, "login", srv.URL, "--context", "lab", "--password-stdin", "--ca-file", "ca.pem"); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := newContextStore(te.Env).Load()
+	got := c.Contexts["lab"].CAFile
+	if !filepath.IsAbs(got) || filepath.Base(got) != "ca.pem" {
+		t.Errorf("stored CAFile = %q, want an absolute path to ca.pem", got)
+	}
+}
+
+func TestLoginStoresInsecureAndWarns(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t6LoginOK(w, r) }))
+	t.Cleanup(srv.Close)
 	te := newTestEnv(t, nil)
 	te.Stdin = strings.NewReader("hunter2-pw\n")
 	if err := t6Run(te, "login", srv.URL, "--context", "lab", "--password-stdin", "--insecure"); err != nil {
@@ -225,13 +248,80 @@ func TestLoginStoresAbsoluteCAFileAndInsecure(t *testing.T) {
 	}
 }
 
+func TestLoginRejectsInsecureCombinations(t *testing.T) {
+	ca := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(ca, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"login", "https://host.example", "--insecure", "--ca-file", ca, "--password-stdin"},
+		{"login", "http://127.0.0.1:1", "--insecure", "--password-stdin"},
+	} {
+		te := newTestEnv(t, nil)
+		te.Stdin = strings.NewReader("x\n")
+		if err := t6Run(te, args...); t6Code(err) != ExitUsage {
+			t.Errorf("%v: code = %d (%v), want 2", args, t6Code(err), err)
+		}
+	}
+}
+
+func TestLoginRefusesToOverwriteContextOfAnotherServer(t *testing.T) {
+	srv := t6API(t, map[string]http.HandlerFunc{"POST /api/login": t6LoginOK})
+	te := newTestEnv(t, map[string]string{"STACKSTEAD_CONTEXT": "home"})
+	st := newContextStore(te.Env)
+	home := Context{URL: "https://home.example", Username: "admin", Session: "HOME-SESSION"}
+	if err := st.Save(Contexts{Version: 1, Current: "home", Contexts: map[string]Context{"home": home}}); err != nil {
+		t.Fatal(err)
+	}
+	te.Stdin = strings.NewReader("hunter2-pw\n")
+	err := t6Run(te, "login", srv.URL, "--password-stdin")
+	if t6Code(err) != ExitConflict || err == nil || !strings.Contains(err.Error(), "already points at https://home.example") {
+		t.Fatalf("err = %v code %d, want exit 5 naming the existing URL", err, t6Code(err))
+	}
+	if c, _ := st.Load(); c.Contexts["home"] != home {
+		t.Errorf("home context was modified: %+v", c.Contexts["home"])
+	}
+
+	// Same host, different port: the derived name collides and must be refused too.
+	te = newTestEnv(t, nil)
+	te.ConfigDir = filepath.Dir(st.Path)
+	if err := st.Save(Contexts{Version: 1, Current: "127-0-0-1", Contexts: map[string]Context{"127-0-0-1": {URL: "http://127.0.0.1:1", Session: "S"}}}); err != nil {
+		t.Fatal(err)
+	}
+	te.Stdin = strings.NewReader("hunter2-pw\n")
+	if err := t6Run(te, "login", srv.URL, "--password-stdin"); t6Code(err) != ExitConflict {
+		t.Errorf("same host other port: code %d (%v), want 5", t6Code(err), err)
+	}
+
+	// Re-login to the same URL replaces the session.
+	if err := st.Save(Contexts{Version: 1, Current: "lab", Contexts: map[string]Context{"lab": {URL: srv.URL, Session: "OLD"}}}); err != nil {
+		t.Fatal(err)
+	}
+	te.Stdin = strings.NewReader("hunter2-pw\n")
+	if err := t6Run(te, "login", srv.URL, "--context", "lab", "--password-stdin"); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := st.Load(); c.Contexts["lab"].Session != t6Session {
+		t.Error("re-login to the same URL must replace the session")
+	}
+}
+
 func TestUnauthorizedClearsSessionAndExits3(t *testing.T) {
 	srv := t6API(t, map[string]http.HandlerFunc{"GET /api/me": func(w http.ResponseWriter, r *http.Request) {
 		t6JSON(w, 401, apitypes.ErrorBody{Error: "unauthorized"})
 	}})
 	te := newTestEnv(t, nil)
 	st := t6Seed(t, te, srv.URL)
+	if err := st.Update(func(c *Contexts) error {
+		c.Contexts["other"] = Context{URL: "https://other.example", Session: "OTHER-SESSION"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	err := t6Run(te, "whoami")
+	if c, _ := st.Load(); c.Contexts["other"].Session != "OTHER-SESSION" {
+		t.Error("another context's session must survive")
+	}
 	if t6Code(err) != ExitAuth {
 		t.Fatalf("code = %d (%v), want 3", t6Code(err), err)
 	}
@@ -471,7 +561,7 @@ func TestContextLsUseRm(t *testing.T) {
 	if err := t6Run(te, "context", "ls", "-o", "json"); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(te.Out.String(), t6Session) || !json.Valid([]byte(te.Out.String())) {
+	if strings.Contains(te.Out.String(), t6Session) || !json.Valid([]byte(te.Out.String())) || !strings.Contains(te.Out.String(), "sessionState") {
 		t.Errorf("json = %q", te.Out.String())
 	}
 
@@ -554,5 +644,40 @@ func TestStatusNotesVersionMismatch(t *testing.T) {
 	}
 	if !strings.Contains(te2.Err.String(), "note:") || strings.Contains(te2.Out.String(), "note") {
 		t.Errorf("note must stay on stderr: out %q err %q", te2.Out.String(), te2.Err.String())
+	}
+}
+
+func TestUnauthorizedKeepsSessionSavedByConcurrentLogin(t *testing.T) {
+	var te *testEnv
+	var st *ContextStore
+	srv := t6API(t, map[string]http.HandlerFunc{"GET /api/me": func(w http.ResponseWriter, r *http.Request) {
+		// another terminal logs in again while this request is in flight
+		_ = st.Update(func(c *Contexts) error {
+			cx := c.Contexts["lab"]
+			cx.Session = "FRESH-SESSION"
+			c.Contexts["lab"] = cx
+			return nil
+		})
+		t6JSON(w, 401, apitypes.ErrorBody{Error: "unauthorized"})
+	}})
+	te = newTestEnv(t, nil)
+	st = t6Seed(t, te, srv.URL)
+	if err := t6Run(te, "whoami"); t6Code(err) != ExitAuth {
+		t.Errorf("code = %d, want 3", t6Code(err))
+	}
+	if c, _ := st.Load(); c.Contexts["lab"].Session != "FRESH-SESSION" {
+		t.Errorf("session = %q, the fresh login was wiped", c.Contexts["lab"].Session)
+	}
+}
+
+func TestSingleLineMessagesCannotForgeLines(t *testing.T) {
+	srv := t6API(t, map[string]http.HandlerFunc{"GET /api/me": func(w http.ResponseWriter, r *http.Request) {
+		t6JSON(w, 500, apitypes.ErrorBody{Error: "boom\nstackstead: fake line"})
+	}})
+	te := newTestEnv(t, nil)
+	t6Seed(t, te, srv.URL)
+	err := t6Run(te, "whoami")
+	if err == nil || strings.Contains(err.Error(), "\n") {
+		t.Errorf("err = %q, want a single line", err)
 	}
 }

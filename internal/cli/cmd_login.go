@@ -68,21 +68,36 @@ func withAPI(env *Env, g *globalFlags, fn func(c *client.Client, name string, cx
 	if err != nil {
 		return err
 	}
-	return onUnauthorized(env, newContextStore(env), name, fn(c, name, cx))
+	return clearIfUnauthorized(env, newContextStore(env), name, cx, fn(c, name, cx))
 }
 
 // onUnauthorized turns a 401 into "log in again" (clearing the dead session
 // locally) and any other API error into an ExitError with a mapped code and
-// text safe to print. Other errors pass through unchanged.
+// text safe to print. Other errors pass through unchanged. Prefer withAPI,
+// which also protects a session a concurrent login just saved.
 func onUnauthorized(env *Env, store *ContextStore, name string, err error) error {
+	return clearIfUnauthorized(env, store, name, Context{}, err)
+}
+
+// clearIfUnauthorized is onUnauthorized for a request made with used's
+// session: the stored session is cleared only if it is still that one (when
+// used has no session, unconditionally).
+func clearIfUnauthorized(env *Env, store *ContextStore, name string, used Context, err error) error {
 	var ce *client.Error
 	if !errors.As(err, &ce) || ce.Status != http.StatusUnauthorized {
 		return apiFailure(err)
 	}
-	var target string
+	target := used.URL
 	if uerr := store.Update(func(c *Contexts) error {
-		if cx, ok := c.Contexts[name]; ok {
+		cx, ok := c.Contexts[name]
+		if !ok {
+			target = ""
+			return nil
+		}
+		if target == "" {
 			target = cx.URL
+		}
+		if used.Session == "" || cx.Session == used.Session {
 			cx.Session = ""
 			c.Contexts[name] = cx
 		}
@@ -90,10 +105,11 @@ func onUnauthorized(env *Env, store *ContextStore, name string, err error) error
 	}); uerr != nil {
 		fmt.Fprintf(env.Stderr, "warning: could not clear the saved session: %v\n", uerr)
 	}
-	return &ExitError{Code: ExitAuth, Err: &cleanError{
-		msg: fmt.Sprintf("not logged in to %s (%s): run stackstead login %s", name, target, target),
-		err: err,
-	}}
+	msg := fmt.Sprintf("not logged in to %s (%s): run stackstead login %s", name, target, target)
+	if target == "" {
+		msg = fmt.Sprintf("not logged in to %s: run stackstead login <url>", name)
+	}
+	return &ExitError{Code: ExitAuth, Err: &cleanError{msg: msg, err: err}}
 }
 
 // apiFailure converts a *client.Error into an ExitError whose message has
@@ -105,9 +121,9 @@ func apiFailure(err error) error {
 	if err == nil || errors.As(err, &ee) || !errors.As(err, &ce) {
 		return err
 	}
-	msg := cleanText(ce.Message)
+	msg := oneLine(ce.Message)
 	for _, f := range ce.Fields {
-		msg += fmt.Sprintf("\n  %s: %s", cleanText(f.Field), cleanText(f.Message))
+		msg += fmt.Sprintf("\n  %s: %s", oneLine(f.Field), oneLine(f.Message))
 	}
 	if ce.Status == http.StatusTooManyRequests && ce.RetryAfter > 0 {
 		msg += fmt.Sprintf(" (retry in %s)", formatDuration(ce.RetryAfter))
@@ -157,6 +173,12 @@ func loginCommand() *Command {
 			if err := validateContextName(name); err != nil {
 				return err
 			}
+			if insecure && caFile != "" {
+				return exitf(ExitUsage, "--insecure and --ca-file cannot be combined")
+			}
+			if insecure && u.Scheme == "http" {
+				return exitf(ExitUsage, "--insecure only applies to https URLs")
+			}
 			if caFile != "" {
 				abs, err := filepath.Abs(caFile)
 				if err != nil {
@@ -195,6 +217,9 @@ func loginCommand() *Command {
 			if err := newContextStore(env).Update(func(all *Contexts) error {
 				if all.Contexts == nil {
 					all.Contexts = map[string]Context{}
+				}
+				if old, ok := all.Contexts[name]; ok && old.URL != baseURL {
+					return exitf(ExitConflict, "context %s already points at %s; use --context <new-name> or stackstead context rm %s first", name, old.URL, name)
 				}
 				all.Version = contextsVersion
 				all.Contexts[name] = Context{URL: baseURL, Username: username, Session: session, ExpiresAt: expires, CAFile: caFile, Insecure: insecure}
@@ -274,7 +299,7 @@ type contextView struct {
 	Current   bool      `json:"current"`
 	URL       string    `json:"url"`
 	Username  string    `json:"username"`
-	Session   string    `json:"session"` // none | valid | expired
+	Session   string    `json:"sessionState"` // none | valid | expired
 	ExpiresAt time.Time `json:"expiresAt"`
 	TLS       string    `json:"tls"` // system | ca:<file> | insecure
 }
