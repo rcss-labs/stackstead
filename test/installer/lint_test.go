@@ -279,6 +279,22 @@ func TestPackagesRefuseDevVersion(t *testing.T) {
 	}
 }
 
+// An unparseable version is not a dev version: the message must be mkrelease's own.
+func TestPackagesReportTheRealVersionError(t *testing.T) {
+	d := newLintDirs(t)
+	buildBinaries(t, d, lintTestVersion, "linux/amd64")
+	out, err := lintMake(t, d.args("packages", "VERSION=not a version", "PKG_ARCHES=amd64")...)
+	if err == nil {
+		t.Fatalf("make packages with an unparseable VERSION must fail\n%s", out)
+	}
+	if !strings.Contains(out, "cannot normalise version") {
+		t.Errorf("the real mkrelease error must be shown\n%s", out)
+	}
+	if strings.Contains(out, "is a dev version") {
+		t.Errorf("an unparseable version must not be blamed on being a dev version\n%s", out)
+	}
+}
+
 func TestPackagesPrereleaseUsesTilde(t *testing.T) {
 	d := buildPackages(t, "v0.0.1-rc1", "linux/amd64", "amd64")
 	deb, rpm := "stackstead_0.0.1~rc1_amd64.deb", "stackstead-0.0.1~rc1-1.x86_64.rpm"

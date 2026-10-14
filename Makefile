@@ -1,6 +1,6 @@
 # Stackstead build entry point. Only `ui`, `build`, `release`, `ui-check`,
 # `ui-test` and `check` need Node; `test` and `e2e` do not build the UI.
-.PHONY: help ui ui-check ui-test build build-go binaries release dist verify-release dist-clean packages pkg pkg-skip package-lint lint-image print-lint-image test check e2e clean
+.PHONY: help ui ui-check ui-test build build-go binaries release dist verify-release dist-clean packages pkg pkg-skip package-lint lint-image print-lint-image installer-test test check e2e clean
 
 BIN := bin
 
@@ -105,7 +105,7 @@ LINT_IMAGE = stackstead-itest/lint:$(shell (sha256sum $(LINT_DOCKERFILE) 2>/dev/
 packages: ## Build deb + rpm into dist/ from the binaries made by `make binaries` (run before release so SHA256SUMS covers them)
 	@set -e; \
 	info=$$(go run ./tools/mkrelease -version '$(RELEASE_VERSION)' $(if $(filter 1,$(ALLOW_DEV_RELEASE)),-allow-dev) -print-version) \
-		|| { echo "cannot build packages: $(RELEASE_VERSION) is a dev version (tag the commit, or set ALLOW_DEV_RELEASE=1)"; exit 1; }; \
+		|| { echo "cannot build packages (see the mkrelease error above)"; exit 1; }; \
 	for arch in $(PKG_ARCHES); do \
 		[ -f "$(BIN)/stackstead-linux-$$arch" ] || { echo "missing binary $(BIN)/stackstead-linux-$$arch: run make binaries first"; exit 1; }; \
 	done; \
@@ -137,6 +137,16 @@ package-lint: ## Run lintian and rpmlint over the packages in dist/ in a contain
 		sh -c 'set -eu; \
 		set -- /dist/*.deb; if [ -e "$$1" ]; then lintian --fail-on error,warning --tag-display-limit 0 "$$@"; fi; \
 		set -- /dist/*.rpm; if [ -e "$$1" ]; then rpmlint --strict -c /pkg/rpmlint.toml -r /pkg/rpmlintrc "$$@"; fi'
+
+# -count=1: these tests drive make, install.sh and deploy/ in subprocesses that go test's result
+# cache does not track, so a cached pass can hide a broken script or Makefile. Needs Docker for the
+# container tests (they skip without it); macOS-only pkg tests skip elsewhere.
+installer-test: ## Run the installer tests (host and, with Docker, container suites; never cached)
+	go vet -tags installer ./...
+	go test -tags installer -count=1 -parallel 4 -timeout 1800s ./test/installer/ ./deploy/... ./tools/...
+	@if command -v dash >/dev/null 2>&1; then echo "host tests again under dash"; \
+		STACKSTEAD_TEST_SHELL=dash go test -tags installer -count=1 -timeout 1800s -skip InContainer ./test/installer/; \
+	else echo "dash not installed: skipping the dash run"; fi
 
 verify-release: ## Verify dist/SHA256SUMS (and SHA256SUMS.sig when SIGNERS=<allowed_signers> is given)
 	@cd $(DIST) && test -s SHA256SUMS || { echo "$(DIST)/SHA256SUMS is missing or empty"; exit 1; }; \
@@ -211,7 +221,7 @@ pkg: ## Build dist/stackstead_<ver>_darwin.pkg (macOS host; unsigned unless all 
 	for tool in lipo codesign pkgbuild productbuild; do command -v $$tool >/dev/null || { echo "missing $$tool (install the Xcode command line tools)"; exit 1; }; done; \
 	for arch in amd64 arm64; do [ -f "$(BIN)/stackstead-darwin-$$arch" ] || { echo "missing binary $(BIN)/stackstead-darwin-$$arch: run make binaries first"; exit 1; }; done; \
 	info=$$(go run ./tools/mkrelease -version '$(RELEASE_VERSION)' $(if $(filter 1,$(ALLOW_DEV_RELEASE)),-allow-dev) -print-version) \
-		|| { echo "cannot build the pkg: $(RELEASE_VERSION) is a dev version (tag the commit, or set ALLOW_DEV_RELEASE=1)"; exit 1; }; \
+		|| { echo "cannot build the pkg (see the mkrelease error above)"; exit 1; }; \
 	ver=$$(printf '%s' "$$info" | cut -f1); pkgver=$$(printf '%s' "$$info" | cut -f2); pkgver=$${pkgver%%~*}; \
 	$(CHECK_BIN_VERSION); chk "$(BIN)/stackstead-darwin-amd64" "$$ver"; chk "$(BIN)/stackstead-darwin-arm64" "$$ver"; \
 	mkdir -p "$(DIST)"; out="$(abspath $(DIST))/stackstead_$${ver}_darwin.pkg"; \

@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -86,7 +87,8 @@ func darwinStubs(asRoot bool) map[string]string {
 	return map[string]string{
 		"uname": `case "$1" in -m) echo "${FAKE_UNAME_M:-arm64}" ;; *) echo Darwin ;; esac`,
 		"id":    idBody,
-		"dscl":  `echo "NFSHomeDirectory: ${FAKE_HOME:-/Users/alice}"`,
+		// real dscl prints the value on an indented second line when it contains a space
+		"dscl": `if [ -n "${FAKE_DSCL_MULTILINE:-}" ]; then echo "NFSHomeDirectory:"; echo " ${FAKE_HOME:-/Users/alice}"; else echo "NFSHomeDirectory: ${FAKE_HOME:-/Users/alice}"; fi`,
 		"docker": `[ -z "${FAKE_DOCKER_FAIL:-}" ] || exit 1
 case "$1 $2" in
 "context inspect") echo "${FAKE_DOCKER_ENDPOINT:-unix:///Users/alice/.docker/run/docker.sock}" ;;
@@ -492,8 +494,11 @@ func TestDarwinRealMode(t *testing.T) {
 
 	t.Run("SudoOnlyForThePrefixAndReadinessProbe", func(t *testing.T) {
 		f, home, prefix, env := setup(t)
+		// the first probe is the installer's check that nobody else holds the port, made before it
+		// starts the agent; the service "comes up" after that
+		var probes atomic.Int32
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			if req.URL.Path == "/api/health" {
+			if req.URL.Path == "/api/health" && probes.Add(1) > 1 {
 				_, _ = io.WriteString(w, `{"ok":true}`)
 				return
 			}
@@ -768,6 +773,149 @@ func TestDarwinRootNeverActsInTheUsersHome(t *testing.T) {
 			t.Errorf("a tool planted in the user's home ran as root: %s", readFile(t, marker))
 		}
 	})
+}
+
+// sudoLines returns the sudo stub's log, one invocation per line.
+func sudoLines(f *fixture) []string {
+	return strings.Split(strings.TrimSpace(stubLog(f.stubD, "sudo")), "\n")
+}
+
+// hasSudoLine reports whether some `sudo` line starts with prefix and ends with suffix.
+func hasSudoLine(f *fixture, prefix, suffix string) bool {
+	for _, l := range sudoLines(f) {
+		if strings.HasPrefix(l, prefix) && strings.HasSuffix(l, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// Everything that touches the user's files or runs their tools goes through
+// `sudo -H -u <user>`: config validate, health, reading the config and the
+// plist, and uninstall/purge removals.
+func TestDarwinRootSimRunsUserWorkAsTheUser(t *testing.T) {
+	t.Run("ConfigValidateRunsAsTheUser", func(t *testing.T) {
+		f, home, prefix, env := rootSim(t)
+		out, errOut, code := runRootSim(t, f, env, prefix)
+		mustExit(t, code, 0, out, errOut)
+		cfg := filepath.Join(home, "Library", "Application Support", "Stackstead", "config.yaml")
+		if !hasSudoLine(f, "-H -u alice env PATH=", " "+filepath.Join(prefix, "bin", "stackstead")+" config validate --config "+cfg) {
+			t.Errorf("config validate did not run as 'sudo -H -u alice env PATH=... stackstead config validate --config ...':\n%s", stubLog(f.stubD, "sudo"))
+		}
+	})
+
+	t.Run("HealthRunsAsTheUser", func(t *testing.T) {
+		f, home, prefix, env := rootSim(t)
+		var probes atomic.Int32 // the first probe is the installer's pre-start port check
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if probes.Add(1) == 1 {
+				http.NotFound(w, req)
+				return
+			}
+			_, _ = io.WriteString(w, `{"ok":true}`)
+		}))
+		t.Cleanup(srv.Close)
+		u, _ := url.Parse(srv.URL)
+		cfg := filepath.Join(home, "Library", "Application Support", "Stackstead", "config.yaml")
+		writeFile(t, cfg, []byte("listen: "+u.Host+"\n"), 0o600)
+		out, errOut, code := runScript(t, []string{"--base-url", f.base, "--prefix", prefix}, env, nil)
+		mustExit(t, code, 0, out, errOut)
+		contains(t, "stdout", out, "Open http://"+u.Host+"/")
+		if !hasSudoLine(f, "-H -u alice env PATH=", " "+filepath.Join(prefix, "bin", "stackstead")+" health --config "+cfg) {
+			t.Errorf("health did not run as 'sudo -H -u alice env PATH=... stackstead health --config ...':\n%s", stubLog(f.stubD, "sudo"))
+		}
+	})
+
+	t.Run("ConfigAndPlistAreReadAsTheUser", func(t *testing.T) {
+		f, home, prefix, env := rootSim(t)
+		cfg := filepath.Join(home, "Library", "Application Support", "Stackstead", "config.yaml")
+		plist := filepath.Join(home, "Library", "LaunchAgents", darwinLabel+".plist")
+		for i := 0; i < 2; i++ { // the second run compares the rendered plist with the installed one
+			out, errOut, code := runRootSim(t, f, env, prefix, "--force")
+			mustExit(t, code, 0, out, errOut)
+		}
+		if !hasSudoLine(f, "-H -u alice sed ", " "+cfg) {
+			t.Errorf("the config was not read as the user (sudo -H -u alice sed ... config.yaml):\n%s", stubLog(f.stubD, "sudo"))
+		}
+		if !hasSudoLine(f, "-H -u alice cmp ", " "+plist) {
+			t.Errorf("the installed plist was not compared as the user (sudo -H -u alice cmp ... plist):\n%s", stubLog(f.stubD, "sudo"))
+		}
+		if !hasSudoLine(f, "-H -u alice test -e ", " "+cfg) {
+			t.Errorf("the config existence check must run as the user:\n%s", stubLog(f.stubD, "sudo"))
+		}
+		if !hasSudoLine(f, "-H -u alice test -f ", " "+plist) {
+			t.Errorf("the plist existence check must run as the user:\n%s", stubLog(f.stubD, "sudo"))
+		}
+	})
+
+	t.Run("UninstallAndPurgeRemoveThroughTheUser", func(t *testing.T) {
+		f, home, prefix, env := rootSim(t)
+		out, errOut, code := runRootSim(t, f, env, prefix)
+		mustExit(t, code, 0, out, errOut)
+		support := filepath.Join(home, "Library", "Application Support", "Stackstead")
+		logs := filepath.Join(home, "Library", "Logs", "Stackstead")
+		plist := filepath.Join(home, "Library", "LaunchAgents", darwinLabel+".plist")
+		out, errOut, code = runScript(t, []string{"--uninstall", "--purge", "--yes", "--prefix", prefix}, env, nil)
+		mustExit(t, code, 0, out, errOut)
+		if !hasSudoLine(f, "-H -u alice rm -f ", " "+plist) {
+			t.Errorf("the plist was not removed as the user:\n%s", stubLog(f.stubD, "sudo"))
+		}
+		if !hasSudoLine(f, "-H -u alice rm -rf ", " "+support+" "+logs) {
+			t.Errorf("the purge did not remove the support and log directories as the user:\n%s", stubLog(f.stubD, "sudo"))
+		}
+		for _, p := range []string{plist, support, logs, filepath.Join(prefix, "bin", "stackstead")} {
+			if fileExists(p) {
+				t.Errorf("%s still exists after --uninstall --purge", p)
+			}
+		}
+	})
+}
+
+// A user-controlled PATH reaching a root run (sudo -E, a login shell) must not
+// let a tool in the user's home bin run as root.
+func TestDarwinRootIgnoresHomeBinInIncomingPATH(t *testing.T) {
+	f, home, prefix, env := rootSim(t)
+	marker := filepath.Join(home, "marker")
+	bin := filepath.Join(home, "bin")
+	for _, tool := range []string{"timeout", "sha256sum", "shasum", "awk", "tar", "sed", "cmp", "mktemp", "grep"} {
+		writeFile(t, filepath.Join(bin, tool), []byte("#!/bin/sh\necho "+tool+" >> "+marker+"\nexit 1\n"), 0o755)
+	}
+	env["PATH"] = bin + ":" + os.Getenv("PATH") // after the stub dir, ahead of the system directories
+	out, errOut, code := runRootSim(t, f, env, prefix)
+	mustExit(t, code, 0, out, errOut)
+	if fileExists(marker) {
+		t.Errorf("a tool from the home bin directory ran: %s", readFile(t, marker))
+	}
+}
+
+// A home with a space: dscl prints the value on a second, indented line.
+func TestDarwinHomeWithASpaceFromDscl(t *testing.T) {
+	f := newDarwinFixture(t, true, "1.0.0")
+	f.stubD = stubPath(t, f.stubs)
+	out, errOut, code := runScript(t, []string{"--print-paths", "--root", "/r"}, map[string]string{
+		"STUBS_DIR": f.stubD, "SUDO_USER": "alice", "FAKE_HOME": "/Users/Jane Doe", "FAKE_DSCL_MULTILINE": "1"}, nil)
+	mustExit(t, code, 0, out, errOut)
+	contains(t, "paths", out, "CONFIG=/r/Users/Jane Doe/Library/Application Support/Stackstead/config.yaml")
+}
+
+// Something else already answering on the listen address must not be reported as our service.
+func TestDarwinWarnsWhenAnotherProcessHoldsThePort(t *testing.T) {
+	requireNonRoot(t)
+	r := newRun(t)
+	dist := publishRelease(t, r, "1.0.0", "darwin", nil, nil)
+	f := fixtureFromDist(t, r, dist, "1.0.0", darwinStubs(false))
+	delete(f.stubs, "id")
+	home := filepath.Join(r.Dir, "home")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { _, _ = io.WriteString(w, `{"ok":true}`) }))
+	t.Cleanup(srv.Close)
+	u, _ := url.Parse(srv.URL)
+	writeFile(t, filepath.Join(home, "Library", "Application Support", "Stackstead", "config.yaml"), []byte("listen: "+u.Host+"\n"), 0o600)
+	f.stubD = stubPath(t, f.stubs)
+	env := map[string]string{"STUBS_DIR": f.stubD, "TMPDIR": f.tmpDir, "FAKE_HOME": home, "FAKE_STACKSTEAD_LOG": filepath.Join(r.Dir, "ss.log")}
+	out, errOut, code := runScript(t, []string{"--base-url", f.base, "--prefix", filepath.Join(r.Dir, "prefix")}, env, nil)
+	mustExit(t, code, 0, out, errOut)
+	contains(t, "stderr", errOut, "already answering on "+u.Host)
+	notContains(t, "stdout", out, "Stackstead is running")
 }
 
 func TestDarwinRefusesUIDZeroTarget(t *testing.T) {
