@@ -332,6 +332,9 @@ func run(args []string, getenv func(string) string, stdout io.Writer) error {
 		return err
 	}
 	if *printVersion {
+		if v.Dev && !*allowDev {
+			return fmt.Errorf("refusing dev version %s (tag the commit, or set ALLOW_DEV_RELEASE=1)", v.Ver)
+		}
 		_, err = fmt.Fprintf(stdout, "%s\t%s\t%s\n", v.Ver, v.PkgVer, v.Prerelease)
 		return err
 	}

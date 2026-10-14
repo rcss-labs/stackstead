@@ -1,6 +1,6 @@
 # Stackstead build entry point. Only `ui`, `build`, `release`, `ui-check`,
 # `ui-test` and `check` need Node; `test` and `e2e` do not build the UI.
-.PHONY: help ui ui-check ui-test build release verify-release dist-clean test check e2e clean
+.PHONY: help ui ui-check ui-test build binaries release dist verify-release dist-clean packages package-lint lint-image print-lint-image test check e2e clean
 
 BIN := bin
 
@@ -46,15 +46,28 @@ MKRELEASE_EXTRAS = \
 	-extra linux:stackstead.service=deploy/systemd/stackstead.service \
 	-extra darwin:launchagent.plist.in=deploy/macos/launchagent.plist.in
 
-release: ui ## Build release tarballs + SHA256SUMS in dist/ (run after packages/pkg; unsigned unless SIGNING_KEY is set)
-	mkdir -p $(DIST)
-	cp install.sh $(DIST)/install.sh
-	chmod 755 $(DIST)/install.sh
+# One build of the release binaries, shared by the tarballs (release) and the packages
+# (packages). Recursive (=) so Plan 6's LDFLAGS is seen wherever it is defined. SKIP_UI=1
+# leaves out the Node-based UI build (used by the packaging tests; never for a real release).
+RELEASE_LDFLAGS = -s -w $(LDFLAGS)
+
+binaries: $(if $(filter 1,$(SKIP_UI)),,ui) ## Build every RELEASE_TARGETS binary into bin/ (shared by release and packages)
+	@mkdir -p $(BIN)
 	@for t in $(RELEASE_TARGETS); do \
 		os=$${t%/*}; arch=$${t#*/}; \
 		echo "build $$os/$$arch"; \
-		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN)/stackstead-$$os-$$arch ./cmd/stackstead || exit 1; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(BIN)/stackstead-$$os-$$arch ./cmd/stackstead || exit 1; \
 	done
+
+# Order matters: binaries, then packages, then release (which writes SHA256SUMS over
+# everything in dist/). Plan 7 T7 adds the macOS `pkg` step between packages and release.
+dist: binaries packages release ## Build binaries, deb/rpm and release archives with checksums (full release build)
+.NOTPARALLEL: dist
+
+release: binaries ## Build release tarballs + SHA256SUMS in dist/ (run after packages/pkg; unsigned unless SIGNING_KEY is set)
+	mkdir -p $(DIST)
+	cp install.sh $(DIST)/install.sh
+	chmod 755 $(DIST)/install.sh
 	SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH) go run ./tools/mkrelease -version '$(RELEASE_VERSION)' -dist $(DIST) -bin $(BIN) \
 		-targets $(subst $(space),$(comma),$(strip $(RELEASE_TARGETS))) $(MKRELEASE_EXTRAS) \
 		$(if $(filter 1,$(ALLOW_DEV_RELEASE)),-allow-dev)
@@ -64,6 +77,51 @@ ifneq ($(strip $(SIGNING_KEY)),)
 else
 	@rm -f $(DIST)/SHA256SUMS.sig  # a stale signature would not match the regenerated sums
 endif
+
+# --- Packages (deb + rpm via nfpm). NFPM_VERSION is pinned to an exact release (never
+# latest) so builds are reproducible; `go run pkg@version` is verified by the Go sumdb and
+# needs no go.mod change. Override NFPM= to use a local nfpm binary.
+NFPM_VERSION := v2.43.1
+NFPM ?= go run github.com/goreleaser/nfpm/v2/cmd/nfpm@$(NFPM_VERSION)
+PKG_ARCHES ?= amd64 arm64
+# Version fields come from `mkrelease -print-version` (ver<TAB>pkgver<TAB>prerelease), the same
+# normalisation as the archives; it refuses dev versions unless ALLOW_DEV_RELEASE=1.
+LINT_DOCKERFILE := test/installer/images/lint.Dockerfile
+LINT_IMAGE = stackstead-itest/lint:$(shell (sha256sum $(LINT_DOCKERFILE) 2>/dev/null || shasum -a 256 $(LINT_DOCKERFILE)) | cut -c1-12)
+
+packages: ## Build deb + rpm into dist/ from the binaries made by `make binaries` (run before release so SHA256SUMS covers them)
+	@set -e; \
+	info=$$(go run ./tools/mkrelease -version '$(RELEASE_VERSION)' $(if $(filter 1,$(ALLOW_DEV_RELEASE)),-allow-dev) -print-version) \
+		|| { echo "cannot build packages: $(RELEASE_VERSION) is a dev version (tag the commit, or set ALLOW_DEV_RELEASE=1)"; exit 1; }; \
+	for arch in $(PKG_ARCHES); do \
+		[ -f "$(BIN)/stackstead-linux-$$arch" ] || { echo "missing binary $(BIN)/stackstead-linux-$$arch: run make binaries first"; exit 1; }; \
+	done; \
+	mkdir -p $(DIST); \
+	pkgver=$$(printf '%s' "$$info" | cut -f2); pre=$$(printf '%s' "$$info" | cut -f3); \
+	for arch in $(PKG_ARCHES); do \
+		case $$arch in amd64) rpmarch=x86_64;; arm64) rpmarch=aarch64;; *) echo "unsupported arch $$arch"; exit 1;; esac; \
+		for fmt in deb rpm; do \
+			if [ $$fmt = deb ]; then out=stackstead_$${pkgver}_$$arch.deb; else out=stackstead-$${pkgver}-1.$$rpmarch.rpm; fi; \
+			ARCH=$$arch VERSION=$${pkgver%%~*} PRERELEASE=$$pre BIN=$(abspath $(BIN))/stackstead-linux-$$arch \
+				$(NFPM) package --config deploy/nfpm.yaml --packager $$fmt --target $(abspath $(DIST))/$$out; \
+		done; \
+	done
+
+lint-image: ## Build the package lint image (lintian + rpmlint)
+	docker build -q -t $(LINT_IMAGE) -f $(LINT_DOCKERFILE) test/installer/images >/dev/null
+
+print-lint-image:
+	@echo $(LINT_IMAGE)
+
+# One labelled, uniquely named container; --rm removes it, and nothing else is touched.
+package-lint: ## Run lintian and rpmlint over the packages in dist/ in a container
+	@test -n "$$(ls $(DIST)/*.deb $(DIST)/*.rpm 2>/dev/null)" || { echo "no packages in $(DIST): run make packages"; exit 1; }
+	@$(MAKE) --no-print-directory lint-image
+	docker run --rm --name stackstead-itest-lint-$$$$ --label stackstead.test=lint \
+		-v "$(abspath $(DIST))":/dist:ro -v "$(abspath deploy/pkg)":/pkg:ro $(LINT_IMAGE) \
+		sh -c 'set -eu; \
+		set -- /dist/*.deb; if [ -e "$$1" ]; then lintian --fail-on error,warning --tag-display-limit 0 "$$@"; fi; \
+		set -- /dist/*.rpm; if [ -e "$$1" ]; then rpmlint -c /pkg/rpmlint.toml -r /pkg/rpmlintrc "$$@"; fi'
 
 verify-release: ## Verify dist/SHA256SUMS (and SHA256SUMS.sig when SIGNERS=<allowed_signers> is given)
 	@cd $(DIST) && test -s SHA256SUMS || { echo "$(DIST)/SHA256SUMS is missing or empty"; exit 1; }; \

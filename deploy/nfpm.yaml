@@ -9,7 +9,7 @@ prerelease: ${PRERELEASE}
 release: "1"
 maintainer: Stackstead maintainers <noreply@users.noreply.github.com>
 description: |
-  Docker stack manager with a web UI.
+  Docker stack manager with a web UI
   Manages Docker Compose stacks, their logs and metrics from a single binary.
 homepage: https://github.com/rcss-labs/stackstead
 license: AGPL-3.0-only
