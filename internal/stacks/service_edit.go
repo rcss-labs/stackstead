@@ -1,0 +1,369 @@
+package stacks
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/netip"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/rcss-labs/stackstead/internal/composefile"
+	"github.com/rcss-labs/stackstead/internal/engine"
+)
+
+// UpdateService applies a form edit to one service. It shares its save
+// pipeline (commit) with SaveRaw.
+func (s *Service) UpdateService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) (string, error) {
+	e, err := s.reg.Get(ctx, stack)
+	if err != nil {
+		return "", err
+	}
+	defer s.lockStack(stack)()
+
+	data, current, err := composefile.Load(e.ComposePath)
+	if err != nil {
+		return "", err
+	}
+	if current != hash {
+		return "", composefile.ErrConflict
+	}
+	old, err := parseFile(data)
+	if err != nil {
+		return "", err
+	}
+	edited, err := old.UpdateService(service, cfg)
+	if err != nil {
+		return "", err
+	}
+	return s.commit(ctx, e, old, edited, hash, false)
+}
+
+// SaveRaw replaces the whole compose file with content.
+func (s *Service) SaveRaw(ctx context.Context, stack string, content []byte, hash string) (string, error) {
+	e, err := s.reg.Get(ctx, stack)
+	if err != nil {
+		return "", err
+	}
+	defer s.lockStack(stack)()
+
+	data, current, err := composefile.Load(e.ComposePath)
+	if err != nil {
+		return "", err
+	}
+	if current != hash {
+		return "", composefile.ErrConflict
+	}
+	edited, err := parseFile(content)
+	if err != nil {
+		return "", err
+	}
+	old, _ := parseFile(data) // a currently broken file just means every port counts as changed
+	return s.commit(ctx, e, old, edited, hash, true)
+}
+
+// commit is the save pipeline: check the ports and IPs that changed, check
+// the candidate bytes with compose, then replace the file under the loaded
+// hash and refresh the recorded project name. old may be nil.
+func (s *Service) commit(ctx context.Context, e Entry, old, edited *composefile.File, hash string, qualify bool) (string, error) {
+	newServices, err := configsOf(edited)
+	if err != nil {
+		return "", err
+	}
+	cs := changeSet{stack: e.Name, project: e.Project, services: newServices, qualify: qualify}
+	if old != nil {
+		if oldServices, err := configsOf(old); err == nil {
+			cs.old = map[string]composefile.ServiceConfig{}
+			for _, o := range oldServices {
+				cs.old[o.Name] = o.Config
+			}
+		}
+	}
+	if _, err := s.checkChanges(ctx, cs); err != nil {
+		return "", err
+	}
+
+	candidate := edited.Bytes()
+	if err := s.validateCandidate(ctx, e.ComposePath, candidate); err != nil {
+		return "", err
+	}
+	if err := composefile.Save(e.ComposePath, candidate, hash); err != nil {
+		return "", err
+	}
+	// The file is saved; a failure to re-derive the project must not turn
+	// that into an error. The next successful edit or sync refreshes it.
+	if project, err := s.compose.ProjectName(ctx, e.ComposePath); err == nil && project != e.Project {
+		if err := s.reg.SetProject(ctx, e.Name, project); err != nil && !errors.Is(err, ErrStackNotFound) {
+			return composefile.Hash(candidate), err
+		}
+	}
+	return composefile.Hash(candidate), nil
+}
+
+// validateCandidate runs `compose config` on data placed next to the real
+// file so relative paths, .env and the project name resolve identically.
+func (s *Service) validateCandidate(ctx context.Context, realPath string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(realPath), ".stackstead-check-*.yaml")
+	if err != nil {
+		return fmt.Errorf("create check file: %w", err)
+	}
+	defer os.Remove(tmp.Name())
+	_, werr := tmp.Write(data)
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		return fmt.Errorf("write check file: %w", werr)
+	}
+	return s.compose.Config(ctx, tmp.Name())
+}
+
+func configsOf(f *composefile.File) ([]namedConfig, error) {
+	names, err := f.Services()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]namedConfig, 0, len(names))
+	for _, n := range names {
+		svc, err := f.Service(n)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, namedConfig{Name: n, Config: svc.Config})
+	}
+	return out, nil
+}
+
+type namedConfig struct {
+	Name   string
+	Config composefile.ServiceConfig
+}
+
+// changeSet describes the services a write will produce, and what they were.
+type changeSet struct {
+	stack   string // stack being edited: its declared ports are not "other stacks'"
+	project string // its compose project: its containers are not conflicts
+	// services is every service of the resulting file; old holds their
+	// previous configs. Only ports and IPs absent from old are checked.
+	services []namedConfig
+	old      map[string]composefile.ServiceConfig
+	qualify  bool // prefix field names with "services.<name>." (multi-service input)
+}
+
+// checkChanges validates the new host ports and static IPs of cs against
+// the engine's containers and networks and the ports declared by other
+// stacks and sibling services. When the engine is unreachable it still
+// checks declared ports and reports partial = true.
+func (s *Service) checkChanges(ctx context.Context, cs changeSet) (partial bool, err error) {
+	type job struct {
+		svc          namedConfig
+		changedPorts map[int]bool
+		changedIPs   []int
+	}
+	var jobs []job
+	for _, svc := range cs.services {
+		old := cs.old[svc.Name]
+		j := job{svc: svc, changedPorts: map[int]bool{}}
+		oldPorts := setOf(old.Ports)
+		for i, p := range svc.Config.Ports {
+			if !oldPorts[p] {
+				j.changedPorts[i] = true
+			}
+		}
+		for i, n := range svc.Config.Networks {
+			if n.IPv4Address != "" && !hasAttachment(old.Networks, n) {
+				j.changedIPs = append(j.changedIPs, i)
+			}
+		}
+		if len(j.changedPorts) > 0 || len(j.changedIPs) > 0 {
+			jobs = append(jobs, j)
+		}
+	}
+	if len(jobs) == 0 {
+		return false, nil
+	}
+
+	declared, err := s.declaredPorts(ctx, cs.stack)
+	if err != nil {
+		return false, err
+	}
+	containers, nets, engErr := s.engineView(ctx)
+	if engErr != nil {
+		if !errors.Is(engErr, engine.ErrUnavailable) || ctx.Err() != nil {
+			return false, engErr
+		}
+		partial = true
+	}
+	inUse := append(declared, containerPorts(containers, cs.project)...)
+	usedIPs := containerIPs(containers, cs.project)
+
+	var fields []FieldError
+	for _, j := range jobs {
+		prefix := ""
+		if cs.qualify {
+			prefix = "services." + j.svc.Name + "."
+		}
+		use := append([]PortUse(nil), inUse...)
+		for _, sib := range cs.services {
+			if sib.Name != j.svc.Name {
+				use = append(use, declaredBy("service "+sib.Name, sib.Config.Ports)...)
+			}
+		}
+		for _, fe := range PortConflicts("ports", j.svc.Config.Ports, use) {
+			var idx int
+			if _, err := fmt.Sscanf(fe.Field, "ports[%d]", &idx); err == nil && !j.changedPorts[idx] {
+				continue
+			}
+			fe.Field = prefix + fe.Field
+			fields = append(fields, fe)
+		}
+		if partial {
+			continue
+		}
+		for _, i := range j.changedIPs {
+			n := j.svc.Config.Networks[i]
+			network := resolveNetwork(nets, cs.project, n.Name)
+			for _, fe := range CheckStaticIP(fmt.Sprintf("%snetworks.%s.ipv4_address", prefix, n.Name), network, n.IPv4Address, nets, usedIPs) {
+				fields = append(fields, fe)
+			}
+		}
+	}
+	if len(fields) > 0 {
+		return partial, &ValidationError{Fields: fields}
+	}
+	return partial, nil
+}
+
+func (s *Service) engineView(ctx context.Context) ([]engine.Container, []engine.Network, error) {
+	containers, err := s.engine.Containers(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	nets, err := s.engine.Networks(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return containers, nets, nil
+}
+
+func setOf(items []string) map[string]bool {
+	m := make(map[string]bool, len(items))
+	for _, it := range items {
+		m[it] = true
+	}
+	return m
+}
+
+func hasAttachment(list []composefile.NetworkAttachment, n composefile.NetworkAttachment) bool {
+	for _, o := range list {
+		if o.Name == n.Name && o.IPv4Address == n.IPv4Address {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveNetwork maps a compose network key to the engine's network name:
+// external networks keep their name, the project's own networks are prefixed
+// with the project name.
+func resolveNetwork(nets []engine.Network, project, key string) string {
+	for _, n := range nets {
+		if n.Name == key {
+			return key
+		}
+	}
+	if project != "" {
+		for _, n := range nets {
+			if n.Name == project+"_"+key {
+				return n.Name
+			}
+		}
+	}
+	return key
+}
+
+// declaredPorts collects the fixed host ports declared by every registered
+// stack except exclude. Unreadable stacks and long-syntax ports are skipped.
+func (s *Service) declaredPorts(ctx context.Context, exclude string) ([]PortUse, error) {
+	entries, err := s.reg.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []PortUse
+	for _, e := range entries {
+		if e.Name == exclude {
+			continue
+		}
+		_, _, f, err := readFile(e)
+		if err != nil {
+			continue
+		}
+		services, err := configsOf(f)
+		if err != nil {
+			continue
+		}
+		for _, svc := range services {
+			out = append(out, declaredBy("stack "+e.Name, svc.Config.Ports)...)
+		}
+	}
+	return out, nil
+}
+
+func declaredBy(owner string, specs []string) []PortUse {
+	var out []PortUse
+	for _, spec := range specs {
+		ports, err := ParsePorts(spec)
+		if err != nil {
+			continue // reported separately by PortConflicts
+		}
+		for _, p := range ports {
+			out = append(out, PortUse{HostPort: p, Owner: owner})
+		}
+	}
+	return out
+}
+
+// containerPorts lists the host ports engine containers publish, leaving out
+// the containers of ownProject. An unparsable bind address is treated as a
+// wildcard so that the check fails closed.
+func containerPorts(containers []engine.Container, ownProject string) []PortUse {
+	var out []PortUse
+	for _, c := range containers {
+		if ownProject != "" && c.Project() == ownProject {
+			continue
+		}
+		for _, p := range c.Ports {
+			if p.PublicPort == 0 {
+				continue
+			}
+			var ip netip.Addr
+			if p.IP != "" {
+				if a, err := netip.ParseAddr(p.IP); err == nil {
+					ip = a
+				}
+			}
+			proto := strings.ToLower(p.Type)
+			if proto == "" {
+				proto = "tcp"
+			}
+			out = append(out, PortUse{HostPort: HostPort{IP: ip, Port: p.PublicPort, Proto: proto}, Owner: "container " + c.Name})
+		}
+	}
+	return out
+}
+
+func containerIPs(containers []engine.Container, ownProject string) map[string][]IPUse {
+	used := map[string][]IPUse{}
+	for _, c := range containers {
+		if ownProject != "" && c.Project() == ownProject {
+			continue
+		}
+		for network, ip := range c.Networks {
+			if a, err := netip.ParseAddr(ip); err == nil {
+				used[network] = append(used[network], IPUse{Addr: a, Owner: "container " + c.Name})
+			}
+		}
+	}
+	return used
+}
