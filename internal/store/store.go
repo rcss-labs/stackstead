@@ -18,7 +18,7 @@ var migrations = []string{
 		created_at    INTEGER NOT NULL
 	);
 	CREATE TABLE sessions (
-		token_hash TEXT    PRIMARY KEY,
+		token_hash TEXT    NOT NULL PRIMARY KEY,
 		user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 		expires_at INTEGER NOT NULL
 	);`,

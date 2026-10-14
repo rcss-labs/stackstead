@@ -45,6 +45,9 @@ func Load(path string, getenv func(string) string) (Config, error) {
 		if err != nil {
 			return Config{}, fmt.Errorf("read config: %w", err)
 		}
+		if err := rejectBareDurations(data); err != nil {
+			return Config{}, fmt.Errorf("parse config %s: %w", path, err)
+		}
 		dec := yaml.NewDecoder(bytes.NewReader(data))
 		dec.KnownFields(true)
 		if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
@@ -66,6 +69,23 @@ func Load(path string, getenv func(string) string) (Config, error) {
 		cfg.AllowedRoots[i] = filepath.Clean(root)
 	}
 	return cfg, nil
+}
+
+var durationKeys = []string{"metrics_retention", "metrics_interval", "operation_timeout"}
+
+// rejectBareDurations gives a clear error for `operation_timeout: 900`, which
+// YAML would otherwise report without the key name (or read as 900ns).
+func rejectBareDurations(data []byte) error {
+	var raw map[string]yaml.Node
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil // malformed YAML is reported by the strict decode
+	}
+	for _, key := range durationKeys {
+		if n, ok := raw[key]; ok && n.Kind == yaml.ScalarNode && n.Tag == "!!int" {
+			return fmt.Errorf("%s must include units (e.g. 15m), got bare number %s", key, n.Value)
+		}
+	}
+	return nil
 }
 
 func applyEnv(cfg *Config, getenv func(string) string) error {
@@ -121,8 +141,8 @@ func (c Config) validate() error {
 		"metrics_interval":  c.MetricsInterval,
 		"operation_timeout": c.OperationTimeout,
 	} {
-		if d <= 0 {
-			return fmt.Errorf("%s must be positive, got %s", name, d)
+		if d < time.Second {
+			return fmt.Errorf("%s must be at least 1s (use units, e.g. 15m), got %s", name, d)
 		}
 	}
 	return nil

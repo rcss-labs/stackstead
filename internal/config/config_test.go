@@ -115,6 +115,8 @@ func TestLoadRejectsInvalidConfig(t *testing.T) {
 		{name: "relative stacks dir", env: map[string]string{"STACKSTEAD_STACKS_DIR": "stacks"}, wantErr: "stacks_dir"},
 		{name: "relative allowed root", file: "allowed_roots: [rel]\n", wantErr: "allowed_roots"},
 		{name: "zero interval", env: map[string]string{"STACKSTEAD_METRICS_INTERVAL": "0s"}, wantErr: "metrics_interval"},
+		{name: "bare integer duration", file: "operation_timeout: 900\n", wantErr: "operation_timeout"},
+		{name: "sub-second duration", env: map[string]string{"STACKSTEAD_OPERATION_TIMEOUT": "900ns"}, wantErr: "operation_timeout must be at least 1s"},
 		{name: "unparseable duration", env: map[string]string{"STACKSTEAD_METRICS_RETENTION": "three days"}, wantErr: "STACKSTEAD_METRICS_RETENTION"},
 	}
 	for _, tt := range tests {

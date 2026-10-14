@@ -38,6 +38,16 @@ func TestOpenCreatesSchema(t *testing.T) {
 	}
 }
 
+func TestSessionRequiresTokenHash(t *testing.T) {
+	db := openTemp(t)
+	if _, err := db.Exec(`INSERT INTO users (username, password_hash, created_at) VALUES ('admin', 'x', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (NULL, 1, 0)`); err == nil {
+		t.Error("inserting a session with NULL token_hash succeeded, want error")
+	}
+}
+
 func TestReopenKeepsData(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "stackstead.db")
 	db, err := store.Open(path)
