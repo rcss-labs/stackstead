@@ -108,8 +108,8 @@ func TestOpenCreatesStacksTableAtLatestVersion(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 3 {
-		t.Errorf("user_version = %d, want 3", version)
+	if version != 4 {
+		t.Errorf("user_version = %d, want 4", version)
 	}
 	if _, err := db.Exec(`INSERT INTO stacks (name, compose_path, origin, project, created_at) VALUES ('a', '/a/compose.yaml', 'managed', 'a', 0)`); err != nil {
 		t.Fatalf("insert stack: %v", err)
@@ -198,5 +198,37 @@ func TestOpenRefusesDuplicateProjectsWithClearMessage(t *testing.T) {
 	_, err := store.Open(path)
 	if err == nil || !strings.Contains(err.Error(), `"shared"`) || !strings.Contains(err.Error(), "a, b") {
 		t.Fatalf("err = %v, want message naming project shared and stacks a, b", err)
+	}
+}
+
+func TestOpenUpgradesVersion3DatabaseKeepingStacks(t *testing.T) {
+	path := v2Database(t, `INSERT INTO stacks (name, compose_path, origin, project, created_at) VALUES ('a', '/a/compose.yaml', 'managed', 'a', 0)`)
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`CREATE UNIQUE INDEX stacks_project_unique ON stacks(project)`,
+		`PRAGMA user_version = 3`,
+	} {
+		if _, err := raw.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw.Close()
+
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open v3 database: %v", err)
+	}
+	defer db.Close()
+	if n := count(t, db, "stacks"); n != 1 {
+		t.Errorf("stacks = %d after upgrade, want 1", n)
+	}
+	if n := count(t, db, "metric_samples"); n != 0 {
+		t.Errorf("metric_samples = %d, want 0", n)
+	}
+	if _, err := db.Exec(`INSERT INTO settings (key, value) VALUES ('k', 'v')`); err != nil {
+		t.Fatalf("settings table missing: %v", err)
 	}
 }
