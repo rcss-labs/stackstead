@@ -5,6 +5,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -142,5 +144,52 @@ func TestListErrors(t *testing.T) {
 	}
 	if _, err := List([]string{tr.root}, tr.sibling); !errors.Is(err, ErrOutsideRoots) {
 		t.Errorf("outside: err = %v", err)
+	}
+}
+
+func TestResolveDanglingLinkToOutside(t *testing.T) {
+	tr := newTree(t)
+	roots := []string{tr.root}
+	symlink(t, filepath.Join(tr.outside, "nothere"), filepath.Join(tr.root, "dangling_out"))
+	for name, p := range map[string]string{
+		"dangling":      filepath.Join(tr.root, "dangling_out"),
+		"dangling + /x": filepath.Join(tr.root, "dangling_out", "x"),
+	} {
+		_, err := Resolve(roots, p)
+		if !errors.Is(err, ErrOutsideRoots) {
+			t.Errorf("%s: err = %v, want ErrOutsideRoots", name, err)
+		} else if strings.Contains(err.Error(), tr.outside) {
+			t.Errorf("%s: error leaks outside path: %v", name, err)
+		}
+	}
+}
+
+func TestResolveDanglingLinkInsideRoot(t *testing.T) {
+	tr := newTree(t)
+	link := filepath.Join(tr.root, "dangling_in")
+	symlink(t, filepath.Join(tr.root, "missing"), link)
+	_, err := Resolve([]string{tr.root}, link)
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("err = %v, want ErrNotExist", err)
+	}
+}
+
+func TestResolveNonDirectoryComponent(t *testing.T) {
+	tr := newTree(t)
+	roots := []string{tr.root}
+	outFile := filepath.Join(tr.outside, "file")
+	inFile := filepath.Join(tr.root, "file")
+	for _, f := range []string{outFile, inFile} {
+		if err := os.WriteFile(f, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := Resolve(roots, filepath.Join(outFile, "x"))
+	if !errors.Is(err, ErrOutsideRoots) {
+		t.Errorf("outside file/x: err = %v, want ErrOutsideRoots", err)
+	}
+	_, err = Resolve(roots, filepath.Join(inFile, "x"))
+	if !errors.Is(err, syscall.ENOTDIR) || errors.Is(err, ErrOutsideRoots) {
+		t.Errorf("inside file/x: err = %v, want ENOTDIR", err)
 	}
 }

@@ -6,6 +6,7 @@ package fsguard
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -24,32 +25,49 @@ type Entry struct {
 
 // Resolve cleans p, requires it to be absolute, resolves symlinks and returns
 // the resolved path if it lies within (or equals) one of roots, which are
-// resolved too. A path that does not exist yields an error wrapping
-// fs.ErrNotExist, unless its nearest existing ancestor (resolved) is outside
-// every root: then it is ErrOutsideRoots, so existence outside the roots is
-// not revealed.
+// resolved too.
+//
+// When resolution fails, the error reveals nothing about paths outside the
+// roots: if the component that failed (or its nearest existing ancestor) is
+// outside every root the result is ErrOutsideRoots; otherwise the underlying
+// error kind (fs.ErrNotExist, ENOTDIR, ...) is returned naming only p.
 func Resolve(roots []string, p string) (string, error) {
-	if !filepath.IsAbs(p) {
-		return "", fmt.Errorf("path %q is not absolute", p)
-	}
-	p = filepath.Clean(p)
+	return resolveWith(resolveRoots(roots), p)
+}
 
-	var resolvedRoots []string
+// resolveRoots resolves the roots once; unresolvable or relative roots are
+// dropped, so a bad root fails closed.
+func resolveRoots(roots []string) []string {
+	var resolved []string
 	for _, root := range roots {
 		if !filepath.IsAbs(root) {
 			continue
 		}
 		if r, err := filepath.EvalSymlinks(root); err == nil {
-			resolvedRoots = append(resolvedRoots, r)
+			resolved = append(resolved, r)
 		}
 	}
+	return resolved
+}
+
+func resolveWith(resolvedRoots []string, p string) (string, error) {
+	if !filepath.IsAbs(p) {
+		return "", fmt.Errorf("path %q is not absolute", p)
+	}
+	p = filepath.Clean(p)
 
 	resolved, err := filepath.EvalSymlinks(p)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) && !existingAncestorWithin(resolvedRoots, p) {
+		failed := p
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) {
+			failed = pathErr.Path
+			err = pathErr.Err
+		}
+		if !existingAncestorWithin(resolvedRoots, failed) {
 			return "", ErrOutsideRoots
 		}
-		return "", err
+		return "", &fs.PathError{Op: "resolve", Path: p, Err: err}
 	}
 	if !withinAny(resolvedRoots, resolved) {
 		return "", ErrOutsideRoots
@@ -61,7 +79,8 @@ func Resolve(roots []string, p string) (string, error) {
 // files, each group sorted by name. Symlinks that resolve outside roots, and
 // broken ones, are omitted; a symlink to a directory is listed as a directory.
 func List(roots []string, dir string) ([]Entry, error) {
-	resolved, err := Resolve(roots, dir)
+	resolvedRoots := resolveRoots(roots)
+	resolved, err := resolveWith(resolvedRoots, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -71,14 +90,17 @@ func List(roots []string, dir string) ([]Entry, error) {
 	}
 	entries := make([]Entry, 0, len(items))
 	for _, item := range items {
-		full := filepath.Join(resolved, item.Name())
+		var info fs.FileInfo
 		if item.Type()&os.ModeSymlink != 0 {
-			if _, err := Resolve(roots, full); err != nil {
+			full := filepath.Join(resolved, item.Name())
+			target, err := resolveWith(resolvedRoots, full)
+			if err != nil {
 				continue
 			}
-		}
-		info, err := os.Stat(full) // follows links; the target is confined above
-		if err != nil {
+			if info, err = os.Stat(target); err != nil {
+				continue
+			}
+		} else if info, err = item.Info(); err != nil { // Lstat: never follows a swapped-in link
 			continue
 		}
 		e := Entry{Name: item.Name(), IsDir: info.IsDir()}
