@@ -39,7 +39,7 @@ describe('NetworkPicker', () => {
     const onchange = vi.fn();
     render(NetworkPicker, { value: [{ name: 'frontend', ipv4Address: '' }], onchange });
     const ip = (await screen.findByLabelText(/static ipv4/i)) as HTMLInputElement;
-    await waitFor(() => expect(ip.placeholder).toBe('172.20.0.0/16'));
+    await waitFor(() => expect(ip.placeholder).toBe('e.g. in 172.20.0.0/16'));
     await userEvent.type(ip, '1');
     expect(onchange).toHaveBeenLastCalledWith([{ name: 'frontend', ipv4Address: '1' }]);
   });
@@ -83,5 +83,29 @@ describe('NetworkPicker', () => {
     expect(select.disabled).toBe(true);
     expect((screen.getByLabelText(/static ipv4/i) as HTMLInputElement).readOnly).toBe(true);
     expect(screen.queryByRole('button', { name: /add network/i })).toBeNull();
+  });
+
+  it('clearing the network name also clears the static IP', async () => {
+    fake = installFakeFetch({ 'GET /api/networks': { body: nets } });
+    const onchange = vi.fn();
+    render(NetworkPicker, { value: [{ name: 'frontend', ipv4Address: '172.20.0.5' }], onchange });
+    await screen.findByRole('option', { name: /backend/ });
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /network/i }), '');
+    expect(onchange).toHaveBeenLastCalledWith([{ name: '', ipv4Address: '' }]);
+  });
+
+  it('uses stable ids from idPrefix and flags the control a row error belongs to', async () => {
+    fake = installFakeFetch({ 'GET /api/networks': { body: nets } });
+    render(NetworkPicker, {
+      value: [{ name: 'frontend', ipv4Address: 'bad' }, { name: '', ipv4Address: '' }],
+      onchange: vi.fn(),
+      idPrefix: 'svc-networks',
+      errors: { 0: 'not an IPv4 address', 1: 'network name is required' },
+    });
+    await screen.findAllByRole('option', { name: /backend/ });
+    const ip = document.getElementById('svc-networks-0-ip')!;
+    expect(ip.getAttribute('aria-invalid')).toBe('true');
+    expect(document.getElementById('svc-networks-0-name')!.getAttribute('aria-invalid')).toBeNull();
+    expect(document.getElementById('svc-networks-1-name')!.getAttribute('aria-invalid')).toBe('true');
   });
 });

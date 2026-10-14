@@ -121,4 +121,74 @@ describe('FileBrowser', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
     expect(onclose).toHaveBeenCalled();
   });
+
+  it('keeps focus inside the dialog after entering a directory and after a breadcrumb click', async () => {
+    setup();
+    await userEvent.click(await screen.findByRole('button', { name: '/srv/stacks' }));
+    await screen.findByRole('button', { name: 'web' });
+    const dialog = screen.getByRole('dialog');
+    await waitFor(() => expect(dialog.contains(document.activeElement) && document.activeElement !== dialog).toBe(true));
+    await userEvent.click(screen.getByRole('button', { name: 'web' }));
+    await screen.findByText('index.html');
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+    expect(document.activeElement).not.toBe(document.body);
+    expect(screen.getByRole('status').textContent).toContain('/srv/stacks/web');
+    await userEvent.click(screen.getByRole('button', { name: '/srv/stacks' }));
+    await screen.findByRole('button', { name: 'web' });
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it('ignores a stale response that arrives after a newer navigation', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    setup(
+      {},
+      {
+        'GET /api/fs?path=%2Fsrv%2Fstacks': async () => {
+          await gate;
+          return { body: [dir('slow-child')] };
+        },
+        'GET /api/fs?path=%2Fhome%2Fme': { body: [dir('fast-child')] },
+      },
+    );
+    await userEvent.click(await screen.findByRole('button', { name: '/srv/stacks' }));
+    await userEvent.click(screen.getByRole('button', { name: '/home/me' }));
+    await screen.findByRole('button', { name: 'fast-child' });
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole('button', { name: 'slow-child' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'fast-child' })).toBeTruthy();
+  });
+
+  it('handles an allowed root of "/" in joins and breadcrumbs', async () => {
+    const { onpick } = setup(
+      {},
+      {
+        'GET /api/fs': { body: [dir('/')] },
+        'GET /api/fs?path=%2F': { body: [dir('etc')] },
+        'GET /api/fs?path=%2Fetc': { body: [file('hosts')] },
+      },
+    );
+    await userEvent.click(await screen.findByRole('button', { name: '/' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'etc' }));
+    await screen.findByText('hosts');
+    expect(fake.calls.at(-1)!.path).toBe('/api/fs?path=%2Fetc');
+    expect(screen.getByRole('navigation', { name: 'Current location' }).textContent).not.toContain('//');
+    await userEvent.click(screen.getByRole('button', { name: 'Use this directory' }));
+    expect(onpick).toHaveBeenCalledWith('/etc');
+  });
+
+  it('lists duplicate roots without crashing', async () => {
+    setup({}, { 'GET /api/fs': { body: [dir('/srv/stacks'), dir('/srv/stacks')] } });
+    await screen.findAllByRole('button', { name: '/srv/stacks' });
+    expect(screen.getAllByRole('button', { name: '/srv/stacks' })).toHaveLength(2);
+  });
+
+  it('disables file buttons in dir mode', async () => {
+    setup();
+    await userEvent.click(await screen.findByRole('button', { name: '/srv/stacks' }));
+    const f = await screen.findByRole('button', { name: 'notes.txt' });
+    expect((f as HTMLButtonElement).disabled).toBe(true);
+  });
 });
