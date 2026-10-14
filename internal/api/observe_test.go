@@ -46,7 +46,7 @@ type fakeObserve struct {
 	logCtxs map[string]context.Context
 	logOpts map[string]engine.LogOptions
 
-	points     []metrics.Point
+	points     []metrics.ContainerBucket
 	queryErr   error
 	gotProject string
 	gotService string
@@ -104,7 +104,7 @@ func (f *fakeObserve) SubscribeSamples(project string) (<-chan metrics.Sample, f
 	return f.samples, func() { f.samplesOnce.Do(func() { close(f.samplesCancelled) }) }
 }
 func (f *fakeObserve) Latest() []metrics.ExpositionSample { return f.latest }
-func (f *fakeObserve) Query(_ context.Context, project, service string, from, to time.Time, step time.Duration) ([]metrics.Point, error) {
+func (f *fakeObserve) QueryContainers(_ context.Context, project, service string, from, to time.Time, step time.Duration) ([]metrics.ContainerBucket, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.gotProject, f.gotService, f.gotFrom, f.gotTo, f.gotStep = project, service, from, to, step
@@ -640,10 +640,14 @@ func TestMetricsStepIsClamped(t *testing.T) {
 func TestMetricsRatesFromCounters(t *testing.T) {
 	fake := newFakeObserve()
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	fake.points = []metrics.Point{
-		{TS: base, Service: "app", CPU: 1.5, Mem: 10, MemLimit: 100, NetRx: 100, NetTx: 1000, BlkRead: 0, BlkWrite: 500},
-		{TS: base.Add(10 * time.Second), Service: "app", CPU: 2.5, Mem: 20, MemLimit: 100, NetRx: 160, NetTx: 1000, BlkRead: 50, BlkWrite: 100}, // blkWrite fell: restart
-		{TS: base, Service: "db", NetRx: 7},
+	bucket := func(service, container string, sec int, cpu float64, mem, rx, tx, br, bw uint64) metrics.ContainerBucket {
+		return metrics.ContainerBucket{TS: base.Add(time.Duration(sec) * time.Second), Service: service, Container: container, Samples: 1,
+			CPUSum: cpu, MemSum: mem, MemLimitSum: 100, NetRx: rx, NetTx: tx, BlkRead: br, BlkWrite: bw}
+	}
+	fake.points = []metrics.ContainerBucket{
+		bucket("app", "app-1", 0, 1.5, 10, 100, 1000, 0, 500),
+		bucket("app", "app-1", 10, 2.5, 20, 160, 1000, 50, 100), // blkWrite fell: restart
+		bucket("db", "db-1", 0, 0, 0, 7, 0, 0, 0),
 	}
 	env, cookie := newObserveEnv(t, fake)
 	points := getMetrics(t, env, cookie, "?from=2026-01-01T00:00:00Z&to=2026-01-01T00:01:00Z&step=10s")
@@ -671,6 +675,33 @@ func TestMetricsRatesFromCounters(t *testing.T) {
 	}
 	if second.BlkWriteBytesPerSec == nil || *second.BlkWriteBytesPerSec != 0 {
 		t.Errorf("blk write rate after a counter reset = %v, want 0 (clamped)", second.BlkWriteBytesPerSec)
+	}
+}
+
+func TestMetricsRatesAreTotalsAcrossReplicas(t *testing.T) {
+	fake := newFakeObserve()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	rep := func(container string, sec int, cpu float64, rx uint64) metrics.ContainerBucket {
+		return metrics.ContainerBucket{TS: base.Add(time.Duration(sec) * time.Second), Service: "app", Container: container,
+			Samples: 1, CPUSum: cpu, MemSum: 10, MemLimitSum: 100, NetRx: rx}
+	}
+	fake.points = []metrics.ContainerBucket{
+		rep("app-1", 0, 10, 0), rep("app-1", 10, 10, 1_000_0),
+		rep("app-2", 0, 30, 5), rep("app-2", 10, 30, 5+1_000_0),
+	}
+	env, cookie := newObserveEnv(t, fake)
+	points := getMetrics(t, env, cookie, "?from=2026-01-01T00:00:00Z&to=2026-01-01T00:01:00Z&step=10s&service=app")
+	if len(points) != 2 {
+		t.Fatalf("points = %+v", points)
+	}
+	if points[0].NetRxBytesPerSec != nil {
+		t.Errorf("first bucket must carry no rate: %+v", points[0])
+	}
+	if got := points[1].NetRxBytesPerSec; got == nil || *got != 2000 {
+		t.Errorf("net rx = %v, want 2000/s (two replicas at 1000/s)", got)
+	}
+	if points[1].CPU != 20 {
+		t.Errorf("cpu = %v, want the 20 average", points[1].CPU)
 	}
 }
 

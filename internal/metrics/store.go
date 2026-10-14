@@ -131,6 +131,44 @@ func (s *Store) Query(ctx context.Context, project, service string, from, to tim
 	return out, nil
 }
 
+// QueryContainers returns, for project (and service unless empty), each
+// container's samples with from <= ts < to grouped into step-sized buckets
+// (minimum 1s; TS is the bucket start), ordered by service, container, TS.
+// Gauges come back as sums with a sample count and counters as the bucket's
+// maximum, the shape AggregateServices consumes.
+func (s *Store) QueryContainers(ctx context.Context, project, service string, from, to time.Time, step time.Duration) ([]ContainerBucket, error) {
+	secs := int64(step / time.Second)
+	if secs < 1 {
+		secs = 1
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT ts - ts % ?, service, container, COUNT(*), SUM(cpu), SUM(mem), SUM(mem_limit),
+			MAX(net_rx), MAX(net_tx), MAX(blk_read), MAX(blk_write)
+		FROM metric_samples
+		WHERE project = ? AND (? = '' OR service = ?) AND ts >= ? AND ts < ?
+		GROUP BY service, container, ts - ts % ? ORDER BY service, container, 1`,
+		secs, project, service, service, from.Unix(), to.Unix(), secs)
+	if err != nil {
+		return nil, fmt.Errorf("query metrics: %w", err)
+	}
+	defer rows.Close()
+	var out []ContainerBucket
+	for rows.Next() {
+		var b ContainerBucket
+		var ts, n, mem, limit, rx, tx, br, bw int64
+		if err := rows.Scan(&ts, &b.Service, &b.Container, &n, &b.CPUSum, &mem, &limit, &rx, &tx, &br, &bw); err != nil {
+			return nil, fmt.Errorf("scan metrics: %w", err)
+		}
+		b.TS = time.Unix(ts, 0)
+		b.Samples, b.MemSum, b.MemLimitSum = uint64(n), uint64(mem), uint64(limit)
+		b.NetRx, b.NetTx, b.BlkRead, b.BlkWrite = uint64(rx), uint64(tx), uint64(br), uint64(bw)
+		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("query metrics: %w", err)
+	}
+	return out, nil
+}
+
 // Prune deletes samples with ts < olderThan and returns how many were removed.
 func (s *Store) Prune(ctx context.Context, olderThan time.Time) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM metric_samples WHERE ts < ?`, olderThan.Unix())
