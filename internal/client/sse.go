@@ -6,8 +6,10 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math/rand/v2"
+	"mime"
 	"net/http"
 	"strings"
 	"time"
@@ -53,6 +55,9 @@ func (p *sseParser) feed(chunk []byte, onEvent func(Event) error, onComment func
 	for {
 		i := bytes.IndexByte(p.buf, '\n')
 		if i < 0 {
+			if len(p.buf) > maxEventBytes {
+				return fatalError{errEventTooLarge}
+			}
 			return nil
 		}
 		line := bytes.TrimSuffix(p.buf[:i], []byte("\r"))
@@ -92,6 +97,9 @@ func (p *sseParser) line(line []byte, onEvent func(Event) error, onComment func(
 		}
 		p.data = append(p.data, value...)
 		p.hasData = true
+		if len(p.data) > maxEventBytes {
+			return fatalError{errEventTooLarge}
+		}
 	case "id":
 		if !strings.Contains(value, "\x00") {
 			p.id = value
@@ -148,20 +156,7 @@ func (c *Client) Stream(ctx context.Context, path string, opts StreamOptions, fn
 	if c.cfg.Session == "" {
 		return ErrNoSession
 	}
-	hb := opts.HeartbeatTimeout
-	if hb <= 0 {
-		hb = 45 * time.Second
-	}
-	minB, maxB := opts.Backoff.Min, opts.Backoff.Max
-	if minB <= 0 {
-		minB = time.Second
-	}
-	if maxB <= 0 {
-		maxB = 30 * time.Second
-	}
-	if maxB < minB {
-		maxB = minB
-	}
+	hb, minB, maxB := streamDefaults(opts)
 	st := &streamState{}
 	attempt := 0
 	for {
@@ -244,8 +239,7 @@ func (c *Client) streamOnce(ctx context.Context, path string, opts StreamOptions
 	resp, err := c.stream.Do(req)
 	if err != nil {
 		err = wrapNetwork(c.base.Host, err)
-		var certErr *tls.CertificateVerificationError
-		if errors.Is(err, errRedirectHost) || errors.As(err, &certErr) || !st.everOpened {
+		if isFatalConnectError(err) || !st.everOpened {
 			return false, fatalError{err}
 		}
 		return false, err
@@ -253,10 +247,17 @@ func (c *Client) streamOnce(ctx context.Context, path string, opts StreamOptions
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		apiErr := readError(resp)
-		if resp.StatusCode >= 500 {
+		if resp.StatusCode >= 500 && st.everOpened {
 			return false, apiErr
 		}
 		return false, fatalError{apiErr}
+	}
+	if mt, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type")); mt != "text/event-stream" {
+		notStream := fmt.Errorf("server did not answer with an event stream (Content-Type %q)", resp.Header.Get("Content-Type"))
+		if !st.everOpened {
+			return false, fatalError{notStream}
+		}
+		return false, notStream
 	}
 	st.everOpened = true
 
@@ -309,4 +310,34 @@ func (c *Client) streamOnce(ctx context.Context, path string, opts StreamOptions
 			}
 		}
 	}
+}
+
+// errEventTooLarge is returned when a single SSE line or event exceeds maxEventBytes.
+var errEventTooLarge = errors.New("server-sent event too large")
+
+const maxEventBytes = 4 << 20
+
+// streamDefaults resolves zero StreamOptions values.
+func streamDefaults(opts StreamOptions) (hb, minB, maxB time.Duration) {
+	hb, minB, maxB = opts.HeartbeatTimeout, opts.Backoff.Min, opts.Backoff.Max
+	if hb <= 0 {
+		hb = 45 * time.Second
+	}
+	if minB <= 0 {
+		minB = time.Second
+	}
+	if maxB <= 0 {
+		maxB = 30 * time.Second
+	}
+	if maxB < minB {
+		maxB = minB
+	}
+	return hb, minB, maxB
+}
+
+// isFatalConnectError reports whether a connect error must end Stream:
+// certificate verification failures and refused redirects never fix themselves.
+func isFatalConnectError(err error) bool {
+	var certErr *tls.CertificateVerificationError
+	return errors.Is(err, errRedirectHost) || errors.As(err, &certErr)
 }

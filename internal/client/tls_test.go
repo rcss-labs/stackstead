@@ -5,11 +5,13 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -146,5 +148,44 @@ func TestStreamDoesNotRetryCertificateErrors(t *testing.T) {
 	var unknown x509.UnknownAuthorityError
 	if !errors.As(err, &unknown) || calls != 0 {
 		t.Fatalf("err = %v, reconnects = %d", err, calls)
+	}
+}
+
+func TestCAFileReplacesSystemRoots(t *testing.T) {
+	srv := tlsServer(t)
+	path := writeCert(t, srv)
+	c, err := tlsClient(t, srv, Config{CAFile: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := x509.NewCertPool()
+	pemBytes, _ := os.ReadFile(path)
+	want.AppendCertsFromPEM(pemBytes)
+	for name, cl := range map[string]*http.Client{"unary": c.unary, "stream": c.stream} {
+		cfg := cl.Transport.(*http.Transport).TLSClientConfig
+		if cfg.RootCAs == nil || !cfg.RootCAs.Equal(want) {
+			t.Errorf("%s RootCAs is not exactly the CA file's pool", name)
+		}
+	}
+}
+
+func TestTLSMinVersion12(t *testing.T) {
+	c, err := tlsClient(t, tlsServer(t), Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := c.unary.Transport.(*http.Transport).TLSClientConfig.MinVersion; v < tls.VersionTLS12 {
+		t.Errorf("MinVersion = %#x", v)
+	}
+	old := httptest.NewUnstartedServer(jsonReply(200, apitypes.Health{OK: true}))
+	old.TLS = &tls.Config{MaxVersion: tls.VersionTLS11}
+	old.StartTLS()
+	t.Cleanup(old.Close)
+	c, err = tlsClient(t, old, Config{Insecure: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Health(context.Background()); err == nil {
+		t.Error("handshake with a TLS 1.1-only server succeeded")
 	}
 }

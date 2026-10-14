@@ -315,3 +315,22 @@ func TestNewRejectsBadBaseURL(t *testing.T) {
 		t.Error("ftp scheme accepted")
 	}
 }
+
+func TestRedirectRefusedOnSchemeChange(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://"+r.Host+"/api/stacks", http.StatusFound)
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	c, err := New(Config{BaseURL: u, Session: "s", Insecure: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Stacks(context.Background()); !errors.Is(err, errRedirectHost) {
+		t.Errorf("unary err = %v", err)
+	}
+	err = c.Stream(context.Background(), "/api/events", StreamOptions{}, func(Event) error { return nil })
+	if !errors.Is(err, errRedirectHost) {
+		t.Errorf("stream err = %v", err)
+	}
+}

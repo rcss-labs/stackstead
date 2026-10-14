@@ -31,7 +31,7 @@ const (
 
 // errRedirectHost is returned by CheckRedirect when a redirect leaves the
 // configured host, so a session cookie can never be sent elsewhere.
-var errRedirectHost = errors.New("refusing to follow a redirect to a different host")
+var errRedirectHost = errors.New("refusing to follow a redirect to a different host or scheme")
 
 // Config configures a Client.
 type Config struct {
@@ -91,10 +91,10 @@ func New(cfg Config) (*Client, error) {
 		t.ResponseHeaderTimeout = cfg.Timeout
 		return t
 	}
-	host := cfg.BaseURL.Host
+	host, scheme := cfg.BaseURL.Host, cfg.BaseURL.Scheme
 	checkRedirect := func(req *http.Request, _ []*http.Request) error {
-		if req.URL.Host != host {
-			return fmt.Errorf("%w (%s)", errRedirectHost, req.URL.Host)
+		if req.URL.Host != host || req.URL.Scheme != scheme {
+			return fmt.Errorf("%w (%s://%s)", errRedirectHost, req.URL.Scheme, req.URL.Host)
 		}
 		return nil
 	}

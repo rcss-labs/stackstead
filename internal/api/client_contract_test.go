@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -12,11 +14,21 @@ import (
 	"github.com/rcss-labs/stackstead/internal/stacks"
 )
 
+func evalTemp(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 // TestClientAgainstRealRouter is the oracle that internal/client and
 // internal/apitypes decode what the real router sends and send what it
 // accepts (CSRF JSON rule, cookie, error bodies, SSE framing).
 func TestClientAgainstRealRouter(t *testing.T) {
 	fake := newFakeStacks()
+	fake.roots = []string{evalTemp(t)}
 	fake.replay = []string{"pulling", "started"}
 	fake.live = make(chan string)
 	close(fake.live)
@@ -116,7 +128,7 @@ func TestClientAgainstRealRouter(t *testing.T) {
 		t.Errorf("lines = %v, done = %s", lines, final)
 	}
 
-	if ops, err := c.Operations(ctx, ""); err != nil || len(ops) != 1 {
+	if ops, err := c.Operations(ctx, "running"); err != nil || len(ops) != 1 {
 		t.Fatalf("Operations = %+v %v", ops, err)
 	}
 	if ops, err := c.StackOperations(ctx, "web"); err != nil || len(ops) != 1 {
@@ -130,6 +142,19 @@ func TestClientAgainstRealRouter(t *testing.T) {
 	}
 	if hist, err := c.MetricsHistory(ctx, "web", client.MetricsQuery{Step: time.Minute}); err != nil {
 		t.Fatalf("MetricsHistory = %+v %v", hist, err)
+	}
+
+	if roots, err := c.FS(ctx, ""); err != nil || len(roots) != 1 || !roots[0].IsDir || roots[0].Name != fake.roots[0] {
+		t.Fatalf("FS roots = %+v %v", roots, err)
+	}
+	if err := os.WriteFile(filepath.Join(fake.roots[0], "compose.yaml"), []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := c.FS(ctx, fake.roots[0]); err != nil || len(entries) != 1 || entries[0].Name != "compose.yaml" || entries[0].IsDir {
+		t.Fatalf("FS dir = %+v %v", entries, err)
+	}
+	if _, err := c.FS(ctx, "/"); !errors.Is(err, client.ErrForbidden) {
+		t.Fatalf("FS outside roots err = %v", err)
 	}
 
 	if st, err := c.MetricsTokenStatus(ctx); err != nil || st.Configured {

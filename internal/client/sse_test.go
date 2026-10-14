@@ -2,12 +2,15 @@ package client
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -145,7 +148,7 @@ func TestStreamReconnectsWithLastEventID(t *testing.T) {
 	reconnects := 0
 	opts := fastOpts()
 	opts.OnReconnect = func(int, error) { reconnects++ }
-	err := c.StreamOperation(context.Background(), "op1", opts, func(e Event) error {
+	err := c.StreamOperation(tctx(t), "op1", opts, func(e Event) error {
 		names = append(names, e.Name+":"+e.ID)
 		if e.Name == "done" {
 			return ErrStreamDone
@@ -175,7 +178,7 @@ func TestStreamAsksCallerForLastEventIDEveryConnect(t *testing.T) {
 	c := streamClient(t, s)
 	opts := fastOpts()
 	opts.LastEventID = func() string { return "a:1:1,b:2:1" }
-	err := c.Stream(context.Background(), "/api/stacks/web/logs", opts, func(e Event) error {
+	err := c.Stream(tctx(t), "/api/stacks/web/logs", opts, func(e Event) error {
 		if e.Name == "end" {
 			return ErrStreamDone
 		}
@@ -195,7 +198,7 @@ func TestServerEOFWithoutDoneReconnects(t *testing.T) {
 		func(w http.ResponseWriter, r *http.Request) { writeSSE(w, "event: done\ndata: {}\n\n") },
 	}}
 	c := streamClient(t, s)
-	err := c.Stream(context.Background(), "/api/events", fastOpts(), func(e Event) error { return ErrStreamDone })
+	err := c.Stream(tctx(t), "/api/events", fastOpts(), func(e Event) error { return ErrStreamDone })
 	if err != nil || len(s.ids()) != 2 {
 		t.Fatalf("err = %v, requests = %d", err, len(s.ids()))
 	}
@@ -206,7 +209,7 @@ func TestStreamStopsOnAuthAndMissing(t *testing.T) {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			s := &sseServer{script: []http.HandlerFunc{jsonReply(status, map[string]string{"error": "nope"})}}
 			c := streamClient(t, s)
-			err := c.Stream(context.Background(), "/api/events", fastOpts(), func(Event) error { return nil })
+			err := c.Stream(tctx(t), "/api/events", fastOpts(), func(Event) error { return nil })
 			var apiErr *Error
 			if !errors.As(err, &apiErr) || apiErr.Status != status || apiErr.Message != "nope" {
 				t.Fatalf("err = %v", err)
@@ -224,26 +227,9 @@ func TestStreamStopsOn401MidStream(t *testing.T) {
 		jsonReply(401, map[string]string{"error": "authentication required"}),
 	}}
 	c := streamClient(t, s)
-	err := c.Stream(context.Background(), "/api/events", fastOpts(), func(Event) error { return nil })
+	err := c.Stream(tctx(t), "/api/events", fastOpts(), func(Event) error { return nil })
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestStreamReconnectsOn5xx(t *testing.T) {
-	s := &sseServer{script: []http.HandlerFunc{
-		jsonReply(503, map[string]string{"error": "docker unavailable"}),
-		func(w http.ResponseWriter, r *http.Request) { writeSSE(w, "event: done\ndata: {}\n\n") },
-	}}
-	c := streamClient(t, s)
-	var causes []error
-	opts := fastOpts()
-	opts.OnReconnect = func(_ int, err error) { causes = append(causes, err) }
-	if err := c.Stream(context.Background(), "/x", opts, func(Event) error { return ErrStreamDone }); err != nil {
-		t.Fatal(err)
-	}
-	if len(causes) != 1 || !errors.Is(causes[0], ErrUnavailable) {
-		t.Errorf("causes = %v", causes)
 	}
 }
 
@@ -252,7 +238,7 @@ func TestStreamFirstConnectNetworkErrorIsReturned(t *testing.T) {
 	url := srv.URL
 	srv.Close()
 	c := newClientFor(t, url, "s")
-	err := c.Stream(context.Background(), "/x", fastOpts(), func(Event) error { return nil })
+	err := c.Stream(tctx(t), "/x", fastOpts(), func(Event) error { return nil })
 	if err == nil || errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v", err)
 	}
@@ -262,7 +248,7 @@ func TestStreamHandlerErrorStopsWithoutReconnect(t *testing.T) {
 	s := &sseServer{script: []http.HandlerFunc{func(w http.ResponseWriter, r *http.Request) { writeSSE(w, "data: 1\n\n") }}}
 	c := streamClient(t, s)
 	boom := errors.New("boom")
-	if err := c.Stream(context.Background(), "/x", fastOpts(), func(Event) error { return boom }); !errors.Is(err, boom) {
+	if err := c.Stream(tctx(t), "/x", fastOpts(), func(Event) error { return boom }); !errors.Is(err, boom) {
 		t.Fatalf("err = %v", err)
 	}
 	if n := len(s.ids()); n != 1 {
@@ -289,7 +275,7 @@ func TestStreamHeartbeatTimeout(t *testing.T) {
 	var causes []error
 	opts.OnReconnect = func(_ int, err error) { causes = append(causes, err) }
 	start := time.Now()
-	if err := c.Stream(context.Background(), "/x", opts, func(Event) error { return ErrStreamDone }); err != nil {
+	if err := c.Stream(tctx(t), "/x", opts, func(Event) error { return ErrStreamDone }); err != nil {
 		t.Fatal(err)
 	}
 	if len(causes) != 1 || !errors.Is(causes[0], errHeartbeat) {
@@ -311,7 +297,7 @@ func TestCommentsKeepTheStreamAlive(t *testing.T) {
 	c := streamClient(t, s)
 	opts := fastOpts()
 	opts.HeartbeatTimeout = 200 * time.Millisecond
-	if err := c.Stream(context.Background(), "/x", opts, func(Event) error { return ErrStreamDone }); err != nil {
+	if err := c.Stream(tctx(t), "/x", opts, func(Event) error { return ErrStreamDone }); err != nil {
 		t.Fatal(err)
 	}
 	if n := len(s.ids()); n != 1 {
@@ -330,7 +316,7 @@ func TestDroppedReconnectsImmediately(t *testing.T) {
 	var slept []time.Duration
 	c.sleep = func(ctx context.Context, d time.Duration) error { slept = append(slept, d); return nil }
 	var names []string
-	err := c.Stream(context.Background(), "/x", fastOpts(), func(e Event) error {
+	err := c.Stream(tctx(t), "/x", fastOpts(), func(e Event) error {
 		names = append(names, e.Name)
 		if e.Name == "done" {
 			return ErrStreamDone
@@ -353,6 +339,7 @@ func TestDroppedReconnectsImmediately(t *testing.T) {
 
 func TestBackoffGrowsAndResetsAfterProgress(t *testing.T) {
 	s := &sseServer{script: []http.HandlerFunc{
+		func(w http.ResponseWriter, r *http.Request) { writeSSE(w, ": hi\n\n") }, // connects first, so 5xx may retry
 		jsonReply(500, map[string]string{"error": "x"}),
 		jsonReply(500, map[string]string{"error": "x"}),
 		jsonReply(500, map[string]string{"error": "x"}),
@@ -366,10 +353,10 @@ func TestBackoffGrowsAndResetsAfterProgress(t *testing.T) {
 	opts := StreamOptions{HeartbeatTimeout: time.Second}
 	opts.Backoff.Min, opts.Backoff.Max = 100*time.Millisecond, 250*time.Millisecond
 	opts.OnReconnect = func(a int, _ error) { attempts = append(attempts, a) }
-	if err := c.Stream(context.Background(), "/x", opts, func(Event) error { return ErrStreamDone }); err != nil {
+	if err := c.Stream(tctx(t), "/x", opts, func(Event) error { return ErrStreamDone }); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(attempts, []int{1, 2, 3, 1}) {
+	if !reflect.DeepEqual(attempts, []int{1, 2, 3, 4, 1}) {
 		t.Errorf("attempts = %v", attempts)
 	}
 	for i, d := range slept {
@@ -394,7 +381,7 @@ func TestStreamCtxCancelReturnsCanceled(t *testing.T) {
 	}}}
 	srv := httptest.NewServer(s.handler())
 	c := newClientFor(t, srv.URL, "s")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(tctx(t))
 	errc := make(chan error, 1)
 	go func() {
 		errc <- c.Stream(ctx, "/x", fastOpts(), func(Event) error { return nil })
@@ -439,9 +426,212 @@ func TestStreamSendsSessionAndAcceptHeaders(t *testing.T) {
 		writeSSE(w, "event: done\ndata: {}\n\n")
 	}}}
 	c := streamClient(t, s)
-	_ = c.Stream(context.Background(), "/x", fastOpts(), func(Event) error { return ErrStreamDone })
+	_ = c.Stream(tctx(t), "/x", fastOpts(), func(Event) error { return ErrStreamDone })
 	h := hdr.Load().(http.Header)
 	if h.Get("Cookie") != "stackstead_session=sess" || h.Get("Accept") != "text/event-stream" {
 		t.Errorf("headers = %v", h)
 	}
+}
+
+func tctx(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	t.Cleanup(cancel)
+	return ctx
+}
+
+func TestStreamFirstConnect5xxIsFatal(t *testing.T) {
+	s := &sseServer{script: []http.HandlerFunc{jsonReply(503, map[string]string{"error": "docker unavailable"})}}
+	c := streamClient(t, s)
+	err := c.Stream(tctx(t), "/x", fastOpts(), func(Event) error { return nil })
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("err = %v, want ErrUnavailable", err)
+	}
+	if n := len(s.ids()); n != 1 {
+		t.Errorf("%d requests, want exactly 1", n)
+	}
+}
+
+func TestStreamReconnectsOn5xxAfterConnecting(t *testing.T) {
+	s := &sseServer{script: []http.HandlerFunc{
+		func(w http.ResponseWriter, r *http.Request) { writeSSE(w, "id: 0\nevent: line\ndata: 1\n\n") },
+		jsonReply(503, map[string]string{"error": "docker unavailable"}),
+		func(w http.ResponseWriter, r *http.Request) { writeSSE(w, "event: done\ndata: {}\n\n") },
+	}}
+	c := streamClient(t, s)
+	var causes []error
+	opts := fastOpts()
+	opts.OnReconnect = func(_ int, err error) { causes = append(causes, err) }
+	err := c.Stream(tctx(t), "/x", opts, func(e Event) error {
+		if e.Name == "done" {
+			return ErrStreamDone
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(causes) != 2 || causes[0] != nil || !errors.Is(causes[1], ErrUnavailable) {
+		t.Errorf("causes = %v", causes)
+	}
+	if ids := s.ids(); !reflect.DeepEqual(ids, []string{"", "0", "0"}) {
+		t.Errorf("ids = %q", ids)
+	}
+}
+
+func TestStreamRedirectToOtherHostIsFatal(t *testing.T) {
+	var leaked atomic.Bool
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { leaked.Store(true) }))
+	defer other.Close()
+	s := &sseServer{script: []http.HandlerFunc{func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/api/events", http.StatusFound)
+	}}}
+	c := streamClient(t, s)
+	err := c.Stream(tctx(t), "/api/events", fastOpts(), func(Event) error { return nil })
+	if !errors.Is(err, errRedirectHost) {
+		t.Fatalf("err = %v", err)
+	}
+	if leaked.Load() || len(s.ids()) != 1 {
+		t.Errorf("leaked=%v requests=%d", leaked.Load(), len(s.ids()))
+	}
+}
+
+func TestLastEventIDHeaderAbsentWhenUnknown(t *testing.T) {
+	var values atomic.Int32
+	values.Store(-1)
+	s := &sseServer{script: []http.HandlerFunc{func(w http.ResponseWriter, r *http.Request) {
+		values.Store(int32(len(r.Header.Values("Last-Event-ID"))))
+		writeSSE(w, "event: done\ndata: {}\n\n")
+	}}}
+	c := streamClient(t, s)
+	opts := fastOpts()
+	opts.LastEventID = func() string { return "" }
+	if err := c.Stream(tctx(t), "/x", opts, func(Event) error { return ErrStreamDone }); err != nil {
+		t.Fatal(err)
+	}
+	if values.Load() != 0 {
+		t.Errorf("Last-Event-ID header present %d times, want absent", values.Load())
+	}
+}
+
+func TestStreamDefaults(t *testing.T) {
+	hb, minB, maxB := streamDefaults(StreamOptions{})
+	if hb != 45*time.Second || minB != time.Second || maxB != 30*time.Second {
+		t.Errorf("defaults = %v %v %v", hb, minB, maxB)
+	}
+	var o StreamOptions
+	o.HeartbeatTimeout = time.Second
+	o.Backoff.Min, o.Backoff.Max = time.Millisecond, 2*time.Millisecond
+	hb, minB, maxB = streamDefaults(o)
+	if hb != time.Second || minB != time.Millisecond || maxB != 2*time.Millisecond {
+		t.Errorf("explicit = %v %v %v", hb, minB, maxB)
+	}
+}
+
+func TestBackoffGrowsExponentiallyWithJitter(t *testing.T) {
+	minD, maxD := time.Second, 30*time.Second
+	for attempt, capD := range map[int]time.Duration{1: time.Second, 2: 2 * time.Second, 3: 4 * time.Second, 4: 8 * time.Second, 10: 30 * time.Second} {
+		var biggest time.Duration
+		for i := 0; i < 300; i++ {
+			d := backoffDelay(attempt, minD, maxD)
+			if d < minD || d > capD {
+				t.Fatalf("attempt %d: delay %v outside [%v, %v]", attempt, d, minD, capD)
+			}
+			biggest = max(biggest, d)
+		}
+		if capD > minD && biggest < minD+(capD-minD)/2 {
+			t.Errorf("attempt %d: largest of 300 delays %v shows no jitter up to %v", attempt, biggest, capD)
+		}
+	}
+}
+
+func TestParserRejectsOversizedLineAndEvent(t *testing.T) {
+	var p sseParser
+	err := p.feed([]byte("data: "+strings.Repeat("x", maxEventBytes+1)), func(Event) error { return nil }, func() {})
+	if !errors.Is(err, errEventTooLarge) {
+		t.Errorf("unterminated huge line: err = %v", err)
+	}
+	p = sseParser{}
+	line := "data: " + strings.Repeat("y", 1<<20) + "\n"
+	var feedErr error
+	for i := 0; i < 6 && feedErr == nil; i++ {
+		feedErr = p.feed([]byte(line), func(Event) error { return nil }, func() {})
+	}
+	if !errors.Is(feedErr, errEventTooLarge) {
+		t.Errorf("many data lines: err = %v", feedErr)
+	}
+}
+
+func TestStreamOversizedEventIsFatal(t *testing.T) {
+	s := &sseServer{script: []http.HandlerFunc{func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: ")
+		chunk := strings.Repeat("z", 1<<20)
+		for i := 0; i < 6; i++ {
+			if _, err := fmt.Fprint(w, chunk); err != nil {
+				return
+			}
+		}
+	}}}
+	c := streamClient(t, s)
+	err := c.Stream(tctx(t), "/x", fastOpts(), func(Event) error { return nil })
+	if !errors.Is(err, errEventTooLarge) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestIsFatalConnectError(t *testing.T) {
+	cert := fmt.Errorf("connect to h: %w", &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}})
+	if !isFatalConnectError(cert) {
+		t.Error("certificate error not fatal")
+	}
+	if !isFatalConnectError(fmt.Errorf("x: %w", errRedirectHost)) {
+		t.Error("redirect error not fatal")
+	}
+	if isFatalConnectError(errors.New("connection reset")) {
+		t.Error("plain network error is fatal")
+	}
+}
+
+func TestNonEventStreamResponseOnFirstConnectIsFatal(t *testing.T) {
+	s := &sseServer{script: []http.HandlerFunc{jsonReply(200, map[string]string{"hello": "world"})}}
+	c := streamClient(t, s)
+	err := c.Stream(tctx(t), "/x", fastOpts(), func(Event) error { return nil })
+	if err == nil || len(s.ids()) != 1 {
+		t.Fatalf("err = %v, requests = %d", err, len(s.ids()))
+	}
+}
+
+func TestManyReconnectsDoNotLeakGoroutines(t *testing.T) {
+	var n atomic.Int32
+	s := &sseServer{script: []http.HandlerFunc{func(w http.ResponseWriter, r *http.Request) {
+		if n.Add(1) > 20 {
+			writeSSE(w, "event: done\ndata: {}\n\n")
+			return
+		}
+		writeSSE(w, ": hi\n\n")
+	}}}
+	srv := httptest.NewServer(s.handler())
+	c := newClientFor(t, srv.URL, "s")
+	c.sleep = func(ctx context.Context, d time.Duration) error { return ctx.Err() }
+	before := runtime.NumGoroutine()
+	reconnects := 0
+	opts := fastOpts()
+	opts.OnReconnect = func(int, error) { reconnects++ }
+	if err := c.Stream(tctx(t), "/x", opts, func(Event) error { return ErrStreamDone }); err != nil {
+		t.Fatal(err)
+	}
+	if reconnects != 20 {
+		t.Fatalf("reconnects = %d", reconnects)
+	}
+	srv.Close()
+	c.stream.CloseIdleConnections()
+	var now int
+	for i := 0; i < 50; i++ {
+		if now = runtime.NumGoroutine(); now <= before+2 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Errorf("goroutines %d after 20 reconnects, baseline %d", now, before)
 }
