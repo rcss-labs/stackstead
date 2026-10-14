@@ -15,7 +15,7 @@
     import('./cm')
       .then(({ createDiffView }) => {
         if (cancelled) return;
-        view = createDiffView({ parent: el, original: o, modified: m, ariaLabel });
+        view = createDiffView({ parent: el, original: o, modified: m, ariaLabel: `${ariaLabel} (unified diff)` });
         ready = true;
       })
       .catch(() => {});
@@ -31,12 +31,14 @@
   <div bind:this={host}></div>
   {#if !ready}
     <!-- Plain-text fallback until CodeMirror loads: the proposed text, as text. -->
+    <p class="note">Diff unavailable (loading); showing your draft.</p>
     <pre class="fallback">{modified}</pre>
   {/if}
 </div>
 
 <style>
   .diff { min-width: 0; }
+  .note { margin: 0 0 var(--space-2); color: var(--muted); }
   .fallback {
     margin: 0;
     padding: var(--space-3);

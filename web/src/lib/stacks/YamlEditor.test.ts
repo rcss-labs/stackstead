@@ -2,15 +2,15 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import type { EditorOptions } from './cm';
 
-const created: { opts: EditorOptions; destroy: ReturnType<typeof vi.fn>; setValue: ReturnType<typeof vi.fn>; current: string }[] = [];
+const created: { opts: EditorOptions; destroy: ReturnType<typeof vi.fn>; setValue: ReturnType<typeof vi.fn>; setReadonly: ReturnType<typeof vi.fn>; current: string }[] = [];
 
 // jsdom cannot lay out CodeMirror, so the editor factory is stubbed; the real one is smoke-tested in cm.test.ts.
 vi.mock('./cm', () => ({
   createEditor: (opts: EditorOptions) => {
-    const rec = { opts, destroy: vi.fn(), setValue: vi.fn(), current: opts.value };
+    const rec = { opts, destroy: vi.fn(), setValue: vi.fn(), setReadonly: vi.fn(), current: opts.value };
     rec.setValue.mockImplementation((v: string) => (rec.current = v));
     created.push(rec);
-    return { getValue: () => rec.current, setValue: rec.setValue, goToLine: vi.fn(), focus: vi.fn(), destroy: rec.destroy };
+    return { getValue: () => rec.current, setValue: rec.setValue, setReadonly: rec.setReadonly, goToLine: vi.fn(), focus: vi.fn(), destroy: rec.destroy };
   },
 }));
 
@@ -63,5 +63,24 @@ describe('YamlEditor', () => {
     await waitFor(() => expect(created).toHaveLength(1));
     unmount();
     expect(created[0].destroy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('YamlEditor late chunk', () => {
+  it('does not create an editor when the chunk resolves after unmount', async () => {
+    created.length = 0;
+    const { unmount } = render(YamlEditor, { value: 'a', ariaLabel: 'x' });
+    unmount();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(created).toHaveLength(0);
+  });
+
+  it('toggling readonly reaches CodeMirror without recreating it', async () => {
+    created.length = 0;
+    const { rerender } = render(YamlEditor, { value: 'a', ariaLabel: 'x', readonly: false });
+    await waitFor(() => expect(created).toHaveLength(1));
+    await rerender({ value: 'a', ariaLabel: 'x', readonly: true });
+    await waitFor(() => expect(created[0].setReadonly).toHaveBeenCalledWith(true));
+    expect(created).toHaveLength(1);
   });
 });

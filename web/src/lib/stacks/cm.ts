@@ -4,7 +4,7 @@ import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { yaml } from '@codemirror/lang-yaml';
 import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { unifiedMergeView } from '@codemirror/merge';
-import { EditorState, type Extension } from '@codemirror/state';
+import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 
 export interface EditorOptions {
@@ -18,20 +18,24 @@ export interface EditorOptions {
 export interface EditorHandle {
   getValue(): string;
   setValue(value: string): void;
+  setReadonly(readonly: boolean): void;
   goToLine(line: number): void;
   focus(): void;
   destroy(): void;
 }
 
-function baseExtensions(ariaLabel: string, readonly: boolean): Extension[] {
+const readonlyExtensions = (readonly: boolean): Extension[] => [
+  EditorState.readOnly.of(readonly),
+  EditorView.editable.of(!readonly),
+];
+
+function baseExtensions(ariaLabel: string): Extension[] {
   return [
     lineNumbers(),
     yaml(),
     syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
     EditorView.lineWrapping,
     EditorView.contentAttributes.of({ 'aria-label': ariaLabel }),
-    EditorState.readOnly.of(readonly),
-    EditorView.editable.of(!readonly),
     EditorView.theme({
       '&': { border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--surface)', color: 'var(--text)' },
       '.cm-content': { fontFamily: 'var(--font-mono)' },
@@ -42,12 +46,14 @@ function baseExtensions(ariaLabel: string, readonly: boolean): Extension[] {
 }
 
 export function createEditor(opts: EditorOptions): EditorHandle {
+  const readonlyCompartment = new Compartment();
   const view = new EditorView({
     parent: opts.parent,
     state: EditorState.create({
       doc: opts.value,
       extensions: [
-        ...baseExtensions(opts.ariaLabel, opts.readonly),
+        ...baseExtensions(opts.ariaLabel),
+        readonlyCompartment.of(readonlyExtensions(opts.readonly)),
         history(),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         EditorView.updateListener.of((u) => {
@@ -62,6 +68,9 @@ export function createEditor(opts: EditorOptions): EditorHandle {
       const current = view.state.doc.toString();
       if (value === current) return;
       view.dispatch({ changes: { from: 0, to: current.length, insert: value } });
+    },
+    setReadonly(readonly) {
+      view.dispatch({ effects: readonlyCompartment.reconfigure(readonlyExtensions(readonly)) });
     },
     goToLine(line) {
       const n = Math.min(Math.max(1, line), view.state.doc.lines);
@@ -88,7 +97,8 @@ export function createDiffView(opts: DiffOptions): { destroy(): void } {
     state: EditorState.create({
       doc: opts.modified,
       extensions: [
-        ...baseExtensions(opts.ariaLabel, true),
+        ...baseExtensions(opts.ariaLabel),
+        ...readonlyExtensions(true),
         unifiedMergeView({
           original: opts.original,
           mergeControls: false,

@@ -13,7 +13,20 @@
     parseError,
     onsaved,
     onapply,
-  }: { stackName: string; parseError?: string; onsaved?: (hash: string) => void; onapply?: () => void } = $props();
+    composePath,
+    dirty = $bindable(false),
+    ondirtychange,
+  }: {
+    stackName: string;
+    parseError?: string;
+    onsaved?: (hash: string) => void;
+    onapply?: () => void;
+    /** Path of the compose file, used only to name the backup in the success message. */
+    composePath?: string;
+    /** True while the draft differs from the saved file; bind it to guard tab switches. */
+    dirty?: boolean;
+    ondirtychange?: (dirty: boolean) => void;
+  } = $props();
 
   // The component is keyed by stack in its parent; the name is fixed for its lifetime.
   // svelte-ignore state_referenced_locally
@@ -28,23 +41,34 @@
   const st = editor.state;
 
   let yaml: YamlEditor | undefined = $state();
-  const dirty = $derived($st.draft !== $st.content);
-  const showEditor = $derived($st.phase !== 'previewing' && !$st.loadFailed);
+  const isDirty = $derived($st.draft !== $st.content);
+  const showEditor = $derived($st.phase !== 'previewing');
+  const backupName = $derived(
+    composePath ? `${composePath.split('/').filter(Boolean).pop()}.bak` : 'a .bak file next to it',
+  );
+
+  $effect(() => {
+    dirty = isDirty;
+    ondirtychange?.(isDirty);
+  });
 
   onMount(() => {
     void editor.reload();
     const guard = (e: BeforeUnloadEvent) => {
-      if (dirty) e.preventDefault();
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = ''; // legacy browsers only show the prompt when this is set
+      }
     };
     window.addEventListener('beforeunload', guard);
     return () => window.removeEventListener('beforeunload', guard);
   });
 
   async function save() {
-    if (!dirty || $st.phase === 'saving' || $st.phase === 'loading') return;
+    if (!isDirty || $st.phase === 'saving' || $st.phase === 'loading') return;
     const ok = await editor.save();
     if (ok) {
-      toasts.push({ kind: 'success', message: 'Saved — previous version kept as compose.yaml.bak' });
+      toasts.push({ kind: 'success', message: `Saved — previous version kept as ${backupName}` });
       if ($st.checksPartial) {
         toasts.push({ kind: 'warning', message: 'Port and IP checks were partial (Docker unreachable)' });
       }
@@ -74,7 +98,7 @@
 
   {#if $st.phase === 'loading'}
     <p role="status">Loading compose file…</p>
-  {:else if $st.loadFailed}
+  {:else if $st.phase === 'loadFailed'}
     <Banner kind="danger" title="Could not load the compose file">{$st.error}</Banner>
     <Button variant="secondary" onclick={() => editor.reload()}>Retry</Button>
   {/if}
@@ -95,15 +119,14 @@
     <DiffView original={$st.content} modified={$st.draft} ariaLabel="Changes to compose.yaml" />
   {/if}
 
-  {#if $st.phase !== 'loading' && !$st.loadFailed}
+  {#if $st.phase !== 'loading' && $st.phase !== 'loadFailed'}
     <!-- Kept mounted (hidden) during preview so the editor and its undo history survive. -->
     <div hidden={!showEditor}>
       <YamlEditor
         bind:this={yaml}
         value={$st.draft}
         ariaLabel="Compose file"
-        readonly={$st.phase === 'saving'}
-        onchange={(v) => editor.setDraft(v)}
+                onchange={(v) => editor.setDraft(v)}
       />
     </div>
 
@@ -117,14 +140,18 @@
       {:else}
         <Button
           variant="secondary"
-          disabledReason={dirty ? undefined : 'No changes to preview'}
+          disabledReason={!isDirty
+            ? 'No changes to preview'
+            : $st.phase === 'conflict'
+              ? 'Resolve the conflict first (Reload or Discard)'
+              : undefined}
           onclick={() => editor.preview()}>Preview changes</Button
         >
       {/if}
       <Button
         variant="primary"
         loading={$st.phase === 'saving'}
-        disabledReason={dirty ? undefined : 'No changes to save'}
+        disabledReason={isDirty ? undefined : 'No changes to save'}
         onclick={save}>Save</Button
       >
       {#if $st.phase === 'saved'}

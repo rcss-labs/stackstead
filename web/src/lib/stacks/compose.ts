@@ -2,7 +2,7 @@ import { writable, type Readable } from 'svelte/store';
 import { ApiError } from '../api/client';
 
 export type ComposeState = {
-  phase: 'loading' | 'editing' | 'previewing' | 'saving' | 'conflict' | 'saved';
+  phase: 'loading' | 'loadFailed' | 'editing' | 'previewing' | 'saving' | 'conflict' | 'saved';
   content: string;
   draft: string;
   hash: string;
@@ -12,8 +12,6 @@ export type ComposeState = {
   conflictMessage?: string;
   /** The last successful save skipped some port/IP checks (Docker unreachable). */
   checksPartial?: boolean;
-  /** The initial load failed: there is nothing safe to edit. */
-  loadFailed?: boolean;
 };
 
 export interface ComposeDeps {
@@ -50,9 +48,9 @@ export function createComposeEditor(
     state: { subscribe: store.subscribe },
 
     setDraft(v) {
-      if (current.phase === 'loading' || current.phase === 'saving') return;
-      // Only a finished save goes back to editing; a conflict stays until the user resolves it.
-      // The 422 text stays until the next save.
+      if (current.phase === 'loading' || current.phase === 'loadFailed') return;
+      // Typing during a save is kept (the save carries a snapshot). Only a finished save goes
+      // back to editing; a conflict stays until the user resolves it. The 422 text stays until the next save.
       patch(current.phase === 'saved' ? { draft: v, phase: 'editing' } : { draft: v });
     },
 
@@ -65,12 +63,18 @@ export function createComposeEditor(
     },
 
     async save() {
-      if (current.phase === 'saving' || current.phase === 'loading' || current.loadFailed) return false;
+      if (current.phase === 'saving' || current.phase === 'loading' || current.phase === 'loadFailed') return false;
       const { draft, hash } = current;
       patch({ phase: 'saving', error: undefined, conflictMessage: undefined, checksPartial: undefined });
       try {
         const res = await deps.save(draft, hash);
-        patch({ phase: 'saved', content: draft, hash: res.hash, checksPartial: res.checksPartial === true });
+        // The file now holds the snapshot that was sent; edits typed meanwhile stay as an unsaved draft.
+        patch({
+          phase: current.draft === draft ? 'saved' : 'editing',
+          content: draft,
+          hash: res.hash,
+          checksPartial: res.checksPartial === true,
+        });
         return true;
       } catch (e) {
         if (e instanceof ApiError && e.status === 409) {
@@ -94,12 +98,11 @@ export function createComposeEditor(
           draft,
           error: undefined,
           conflictMessage: undefined,
-          loadFailed: false,
           // Show what the user would now overwrite: new file content against their draft.
           phase: keepDraft && draft !== raw.content ? 'previewing' : 'editing',
         });
       } catch (e) {
-        patch({ error: messageOf(e), loadFailed: !keepDraft, phase: keepDraft ? 'conflict' : 'loading' });
+        patch({ error: messageOf(e), phase: keepDraft ? 'conflict' : 'loadFailed' });
       }
     },
   };

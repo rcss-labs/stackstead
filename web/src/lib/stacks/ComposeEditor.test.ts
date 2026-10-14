@@ -42,6 +42,89 @@ async function loaded(props: Record<string, unknown> = {}) {
 const edit = (ta: HTMLTextAreaElement, v: string) => fireEvent.input(ta, { target: { value: v } });
 
 describe('ComposeEditor', () => {
+  it('a failed initial load shows the error with Retry, not a spinner', async () => {
+    getResponses = [{ status: 500, body: { error: 'disk on fire' } }];
+    render(ComposeEditor, { stackName: 'web' });
+    expect((await screen.findByRole('alert')).textContent).toContain('disk on fire');
+    expect(screen.queryByText(/Loading compose file/)).toBeNull();
+    getResponses = [{ body: { content: 'a: 1\n', hash: 'h1' } }];
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect((screen.getByRole('textbox', { name: /compose file/i }) as HTMLTextAreaElement).value).toBe('a: 1\n'));
+  });
+
+  it('a failed GET after Discard shows the error with Retry', async () => {
+    putResponses = [{ status: 409, body: { error: 'changed' } }];
+    const { ta } = await loaded();
+    await edit(ta, 'mine\n');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    getResponses = [{ status: 500, body: { error: 'reload broke' } }];
+    await userEvent.click(await screen.findByRole('button', { name: 'Discard my changes' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy());
+    expect(screen.queryByText(/Loading compose file/)).toBeNull();
+  });
+
+  it('typing during a save is kept and the editor stays dirty afterwards', async () => {
+    let release!: () => void;
+    fake.restore();
+    fake = installFakeFetch({
+      'GET /api/stacks/web/compose': { body: { content: 'a: 1\n', hash: 'h1' } },
+      'PUT /api/stacks/web/compose': () => new Promise<FakeResponse>((r) => { release = () => r({ body: { hash: 'h2' } }); }),
+    });
+    const { ta } = await loaded();
+    await edit(ta, 'sent\n');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(release).toBeTypeOf('function'));
+    const live = screen.getByRole('textbox', { name: /compose file/i }) as HTMLTextAreaElement;
+    expect(live.readOnly).toBe(false);
+    await edit(live, 'sent\nmore\n');
+    release();
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' }).getAttribute('aria-disabled')).not.toBe('true'));
+    expect((screen.getByRole('textbox', { name: /compose file/i }) as HTMLTextAreaElement).value).toBe('sent\nmore\n');
+  });
+
+  it('exposes dirty to the parent via bind:dirty', async () => {
+    const seen: boolean[] = [];
+    const { ta } = await loaded({ dirty: false, ondirtychange: (d: boolean) => seen.push(d) });
+    await edit(ta, 'x\n');
+    await waitFor(() => expect(seen.at(-1)).toBe(true));
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(seen.at(-1)).toBe(false));
+  });
+
+  it('names the backup after composePath, with a generic fallback', async () => {
+    const { ta } = await loaded({ composePath: '/srv/web/docker-compose.yml' });
+    await edit(ta, 'x\n');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(get(toasts).some((t) => t.message.includes('docker-compose.yml.bak'))).toBe(true));
+  });
+
+  it('falls back to a generic backup message without composePath', async () => {
+    const { ta } = await loaded();
+    await edit(ta, 'x\n');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(get(toasts).some((t) => t.message.includes('.bak file next to it'))).toBe(true));
+  });
+
+  it('soft-disables Preview changes during a conflict', async () => {
+    putResponses = [{ status: 409, body: { error: 'changed' } }];
+    const { ta } = await loaded();
+    await edit(ta, 'mine\n');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByRole('button', { name: 'Reload' });
+    expect(screen.getByRole('button', { name: 'Preview changes' }).getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('beforeunload is cancelled while dirty (returnValue is also set; jsdom plain Events coerce it, so only defaultPrevented is asserted)', async () => {
+    const { ta } = await loaded();
+    await edit(ta, 'changed\n');
+    await waitFor(() => {
+      const e = new Event('beforeunload', { cancelable: true }) as BeforeUnloadEvent;
+      window.dispatchEvent(e);
+      expect(e.defaultPrevented).toBe(true);
+    });
+  });
+
   it('loads and shows the file; Save is disabled until the draft changes', async () => {
     await loaded();
     expect(screen.getByRole('button', { name: 'Save' }).getAttribute('aria-disabled')).toBe('true');
@@ -56,7 +139,7 @@ describe('ComposeEditor', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(onsaved).toHaveBeenCalledWith('h2'));
     expect(puts()[0].body).toEqual({ content: 'a: 2\n', hash: 'h1' });
-    expect(get(toasts).some((t) => t.kind === 'success' && t.message.includes('compose.yaml.bak'))).toBe(true);
+    expect(get(toasts).some((t) => t.kind === 'success' && t.message.includes('.bak'))).toBe(true);
     await userEvent.click(await screen.findByRole('button', { name: 'Apply' }));
     expect(onapply).toHaveBeenCalledOnce();
   });

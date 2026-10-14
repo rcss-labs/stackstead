@@ -7,6 +7,7 @@ describe('DiffView with stubbed CodeMirror', () => {
     render(DiffView, { original: 'a: 1\n', modified: 'a: 2\n', ariaLabel: 'Changes' });
     const group = screen.getByRole('group', { name: 'Changes' });
     expect(group.textContent).toContain('a: 2');
+    expect(group.textContent).toMatch(/diff unavailable|loading diff/i);
   });
 });
 
@@ -19,6 +20,8 @@ describe('DiffView with real CodeMirror (jsdom)', () => {
     expect(group.textContent).toContain('b: 3');
     expect(group.querySelector('.cm-deletedChunk')?.textContent).toContain('b: 2');
     expect(group.querySelector('.cm-changedLine')).not.toBeNull();
+    // The inner editor is labelled differently from the wrapper group.
+    expect(group.querySelector('.cm-content')?.getAttribute('aria-label')).toBe('Changes (unified diff)');
   });
 
   it('destroys the view on unmount', async () => {

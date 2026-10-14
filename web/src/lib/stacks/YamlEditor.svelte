@@ -25,7 +25,9 @@
     import('./cm')
       .then(({ createEditor }) => {
         if (destroyed || !host) return;
+        const hadFocus = textarea !== undefined && document.activeElement === textarea;
         handle = createEditor({ parent: host, value, readonly, ariaLabel, onchange: update });
+        if (hadFocus) handle.focus(); // the textarea is about to be removed; do not drop the user's focus
       })
       .catch(() => {});
     return () => {
@@ -39,6 +41,11 @@
   $effect(() => {
     const v = value;
     if (handle && handle.getValue() !== v) handle.setValue(v);
+  });
+
+  $effect(() => {
+    const ro = readonly;
+    handle?.setReadonly(ro);
   });
 
   /** 1-based line; best effort. */

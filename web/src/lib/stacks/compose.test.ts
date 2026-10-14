@@ -107,7 +107,7 @@ describe('compose state machine', () => {
     const { ed, s } = setup({ load: async () => { throw new ApiError(500, 'boom'); } });
     await ed.reload();
     expect(s().error).toBe('boom');
-    expect(s().phase).not.toBe('editing');
+    expect(s().phase).toBe('loadFailed');
   });
 
   it('ignores a second save while one is in flight', async () => {
@@ -128,5 +128,17 @@ describe('compose state machine', () => {
     ed.setDraft('x');
     await ed.save();
     expect(s().checksPartial).toBe(true);
+  });
+
+  it('keeps edits made while a save is in flight: still dirty after the save', async () => {
+    let release!: () => void;
+    const { ed, s } = setup({ save: () => new Promise<Saved>((r) => { release = () => r({ hash: 'h2' }); }) });
+    await ed.reload();
+    ed.setDraft('sent');
+    const p = ed.save();
+    ed.setDraft('typed meanwhile');
+    release();
+    await p;
+    expect(s()).toMatchObject({ content: 'sent', draft: 'typed meanwhile', hash: 'h2', phase: 'editing' });
   });
 });
