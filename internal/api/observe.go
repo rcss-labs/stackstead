@@ -111,6 +111,7 @@ func (s *server) registerObserveRoutes(mux *http.ServeMux) {
 	route("GET /api/events", s.handleEvents)
 	route("POST /api/settings/metrics-token", s.handleCreateMetricsToken)
 	route("DELETE /api/settings/metrics-token", s.handleDeleteMetricsToken)
+	route("GET /api/settings/metrics-token", s.handleMetricsTokenStatus)
 	if s.opts.Stacks != nil {
 		route("GET /api/stacks/{name}/logs", s.handleLogs)
 		route("GET /api/stacks/{name}/metrics", s.handleMetricsHistory)
@@ -142,6 +143,7 @@ type logErrorDTO struct {
 }
 
 type logItem struct {
+	id        string // SSE event id (a logCursor), empty when the line has no usable timestamp
 	container engine.Container
 	line      engine.LogLine
 	err       error
@@ -194,6 +196,60 @@ func parseLogOptions(w http.ResponseWriter, r *http.Request) (engine.LogOptions,
 	return opts, true
 }
 
+// logCursor is a resume point in one container's log: the timestamp of the
+// last line delivered and how many lines with exactly that timestamp have been
+// delivered (1 for the first). Its string form is the SSE event id, so it is
+// newline-free by construction; a client sends the latest cursor of every
+// container, comma-separated, as Last-Event-ID.
+type logCursor struct {
+	Container string // first 12 hex digits of the container id
+	TS        int64  // unix nanoseconds
+	Ordinal   int
+}
+
+func (c logCursor) String() string {
+	return c.Container + ":" + strconv.FormatInt(c.TS, 10) + ":" + strconv.Itoa(c.Ordinal)
+}
+
+const cursorIDLen = 12
+
+func cursorContainer(id string) string {
+	if len(id) > cursorIDLen {
+		return id[:cursorIDLen]
+	}
+	return id
+}
+
+func isLowerHex(s string) bool {
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return s != ""
+}
+
+// parseLogCursors reads a Last-Event-ID header. Entries that are not
+// "<1-12 lowercase hex>:<positive ts>:<positive ordinal>" are skipped (the
+// header is client-controlled, and an operation-stream id may arrive here
+// from a shared client); for a repeated container the later entry wins.
+func parseLogCursors(header string) map[string]logCursor {
+	out := map[string]logCursor{}
+	for _, part := range strings.Split(header, ",") {
+		fields := strings.Split(strings.TrimSpace(part), ":")
+		if len(fields) != 3 || len(fields[0]) > cursorIDLen || !isLowerHex(fields[0]) {
+			continue
+		}
+		ts, err1 := strconv.ParseInt(fields[1], 10, 64)
+		ord, err2 := strconv.Atoi(fields[2])
+		if err1 != nil || err2 != nil || ts <= 0 || ord <= 0 {
+			continue
+		}
+		out[fields[0]] = logCursor{Container: fields[0], TS: ts, Ordinal: ord}
+	}
+	return out
+}
+
 // handleLogs streams the merged logs of a stack's containers.
 //
 // Events: "log" {service, container, stream, time, text} per line; "error"
@@ -202,6 +258,12 @@ func parseLogOptions(w http.ResponseWriter, r *http.Request) (engine.LogOptions,
 // means every container's stream ended on its own. A stack with no containers
 // (or none matching service) gets just "end". At most 50 containers (by name)
 // are read. Closing the request cancels every Docker stream.
+//
+// Every "log" event has an id (a logCursor). With a Last-Event-ID header, each
+// container that has a cursor is read from that timestamp with tail=all and
+// its first Ordinal lines at that exact timestamp are dropped, so lines are
+// neither repeated nor skipped; other containers use tail/since as usual.
+// Limits are Docker's: lines already rotated away cannot be replayed.
 func (s *server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	opts, ok := parseLogOptions(w, r)
 	if !ok {
@@ -237,16 +299,39 @@ func (s *server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel() // cancels every Docker stream and stops the pumps
 
+	cursors := parseLogCursors(r.Header.Get("Last-Event-ID"))
 	merged := make(chan logItem)
 	var wg sync.WaitGroup
 	for _, c := range cs {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			lines, errs := s.opts.Observe.Logs(ctx, c, opts)
+			copts := opts
+			cur := logCursor{Container: cursorContainer(c.ID)}
+			skip := 0
+			if resume, ok := cursors[cur.Container]; ok {
+				copts.Tail, copts.Since = -1, time.Unix(0, resume.TS)
+				cur.TS, cur.Ordinal, skip = resume.TS, resume.Ordinal, resume.Ordinal
+			}
+			lines, errs := s.opts.Observe.Logs(ctx, c, copts)
 			for l := range lines {
+				item := logItem{container: c, line: l}
+				if !l.Time.IsZero() { // a line without a timestamp cannot be a cursor
+					ts := l.Time.UnixNano()
+					if skip > 0 && ts == cur.TS {
+						skip--
+						continue
+					}
+					skip = 0
+					if ts == cur.TS {
+						cur.Ordinal++
+					} else {
+						cur.TS, cur.Ordinal = ts, 1
+					}
+					item.id = cur.String()
+				}
 				select {
-				case merged <- logItem{container: c, line: l}:
+				case merged <- item:
 				case <-ctx.Done():
 					return
 				}
@@ -279,7 +364,7 @@ func (s *server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			}
 			return false, sw.Event("error", "", logErrorDTO{Service: it.container.ComposeService(), Container: it.container.Name, Error: msg})
 		default:
-			return false, sw.Event("log", "", logEventDTO{Service: it.container.ComposeService(), Container: it.container.Name,
+			return false, sw.Event("log", it.id, logEventDTO{Service: it.container.ComposeService(), Container: it.container.Name,
 				Stream: it.line.Stream, Time: it.line.Time, Text: it.line.Text})
 		}
 	})
@@ -652,6 +737,18 @@ func (s *server) handleCreateMetricsToken(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]string{"token": token})
+}
+
+// handleMetricsTokenStatus reports only whether a token hash is stored, from
+// the same in-memory cache /metrics uses; it never exposes the hash.
+func (s *server) handleMetricsTokenStatus(w http.ResponseWriter, r *http.Request) {
+	hash, err := s.tokenHash(r.Context())
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]bool{"configured": hash != ""})
 }
 
 func (s *server) handleDeleteMetricsToken(w http.ResponseWriter, r *http.Request) {
