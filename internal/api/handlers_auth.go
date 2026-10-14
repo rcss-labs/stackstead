@@ -85,13 +85,12 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip := remoteHost(r)
-	if !s.opts.Limiter.Allowed(ip) {
+	if !s.opts.Limiter.Attempt(ip) {
 		writeError(w, http.StatusTooManyRequests, "too many failed login attempts, try again later")
 		return
 	}
 	token, err := s.opts.Auth.Login(r.Context(), req.Username, req.Password)
 	if errors.Is(err, auth.ErrInvalidCredentials) {
-		s.opts.Limiter.RecordFailure(ip)
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
