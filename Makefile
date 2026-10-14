@@ -1,6 +1,6 @@
 # Stackstead build entry point. Only `ui`, `build`, `release`, `ui-check`,
 # `ui-test` and `check` need Node; `test` and `e2e` do not build the UI.
-.PHONY: help ui ui-check ui-test build release verify-release dist-clean test check e2e clean
+.PHONY: help ui ui-check ui-test build release verify-release dist-clean packages package-lint lint-image print-lint-image test check e2e clean
 
 BIN := bin
 
@@ -64,6 +64,46 @@ ifneq ($(strip $(SIGNING_KEY)),)
 else
 	@rm -f $(DIST)/SHA256SUMS.sig  # a stale signature would not match the regenerated sums
 endif
+
+# --- Packages (deb + rpm via nfpm). NFPM_VERSION is pinned to an exact release (never
+# latest) so builds are reproducible; `go run pkg@version` is verified by the Go sumdb and
+# needs no go.mod change. Override NFPM= to use a local nfpm binary.
+NFPM_VERSION := v2.43.1
+NFPM ?= go run github.com/goreleaser/nfpm/v2/cmd/nfpm@$(NFPM_VERSION)
+PKG_ARCHES ?= amd64 arm64
+# Version fields come from mkrelease so they match the archives: ver<TAB>pkgver<TAB>prerelease.
+PKG_VERSION_INFO = $(shell go run ./tools/mkrelease -version '$(RELEASE_VERSION)' $(if $(filter 1,$(ALLOW_DEV_RELEASE)),-allow-dev) -print-version)
+LINT_DOCKERFILE := test/installer/images/lint.Dockerfile
+LINT_IMAGE = stackstead-itest/lint:$(shell shasum -a 256 $(LINT_DOCKERFILE) | cut -c1-12)
+
+packages: ## Build deb + rpm for linux amd64/arm64 into dist/ (run before release so SHA256SUMS covers them)
+	mkdir -p $(DIST) $(BIN)
+	@set -e; info='$(PKG_VERSION_INFO)'; \
+	[ -n "$$info" ] || { echo "could not determine the package version"; exit 1; }; \
+	pkgver=$$(printf '%s' "$$info" | cut -f2); pre=$$(printf '%s' "$$info" | cut -f3); \
+	for arch in $(PKG_ARCHES); do \
+		case $$arch in amd64) rpmarch=x86_64;; arm64) rpmarch=aarch64;; *) echo "unsupported arch $$arch"; exit 1;; esac; \
+		echo "build linux/$$arch"; \
+		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -ldflags "-s -w $(LDFLAGS)" -o $(BIN)/stackstead-linux-$$arch ./cmd/stackstead; \
+		for fmt in deb rpm; do \
+			if [ $$fmt = deb ]; then out=$(DIST)/stackstead_$${pkgver}_$$arch.deb; else out=$(DIST)/stackstead-$${pkgver}-1.$$rpmarch.rpm; fi; \
+			ARCH=$$arch VERSION=$${pkgver%%~*} PRERELEASE=$$pre BIN=$(abspath $(BIN))/stackstead-linux-$$arch \
+				$(NFPM) package --config deploy/nfpm.yaml --packager $$fmt --target $(abspath $(DIST))/$$(basename $$out); \
+		done; \
+	done
+
+lint-image: ## Build the package lint image (lintian + rpmlint)
+	docker build -q -t $(LINT_IMAGE) -f $(LINT_DOCKERFILE) test/installer/images >/dev/null
+
+print-lint-image:
+	@echo $(LINT_IMAGE)
+
+# One labelled, uniquely named container; --rm removes it, and nothing else is touched.
+package-lint: lint-image ## Run lintian and rpmlint over every package in dist/ in a container
+	@test -n "$$(ls $(DIST)/*.deb $(DIST)/*.rpm 2>/dev/null)" || { echo "no packages in $(DIST): run make packages"; exit 1; }
+	docker run --rm --name stackstead-itest-lint-$$$$ --label stackstead.test=lint \
+		-v "$(abspath $(DIST))":/dist:ro -v "$(abspath deploy/pkg)":/pkg:ro $(LINT_IMAGE) \
+		sh -c 'set -eu; lintian --fail-on error,warning --tag-display-limit 0 /dist/*.deb; rpmlint -r /pkg/rpmlintrc /dist/*.rpm'
 
 verify-release: ## Verify dist/SHA256SUMS (and SHA256SUMS.sig when SIGNERS=<allowed_signers> is given)
 	@cd $(DIST) && test -s SHA256SUMS || { echo "$(DIST)/SHA256SUMS is missing or empty"; exit 1; }; \

@@ -4,3 +4,24 @@ addFilter("no-manual-page-for-binary")
 addFilter("no-changelogname-tag")
 # /opt/stacks is setgid (2775 stackstead:docker) on purpose so compose projects share a group.
 addFilter("non-standard-dir-perm")
+# The unit is the only file under /usr/lib; the binary lives in /usr/bin.
+addFilter("only-non-binary-in-usr-lib")
+# The stackstead user and group are created by %pre (see deploy/pkg/rpm/pre); files owned by them are intentional.
+addFilter("non-standard-uid")
+addFilter("non-standard-gid")
+# The config is 0640 root:stackstead on purpose: it can hold secrets and only the service user may read it.
+addFilter("non-readable /etc/stackstead/config.yaml")
+# Releases are unsigned for now (SHA256SUMS only; user decision recorded in the Plan 7 header).
+addFilter("no-signature")
+# nfpm cannot emit a Group tag; the tag is deprecated in current rpm packaging guidelines.
+addFilter("no-group-tag")
+# The licence text is installed with %license; there is no separate documentation to ship yet.
+addFilter("no-documentation")
+# rpmlint 2.4 does not recognise the SPDX identifier AGPL-3.0-only that the project licence uses.
+addFilter("invalid-license")
+# %post chowns only /opt/stacks (created by the script itself) to stackstead:docker.
+addFilter("dangerous-command-in-%post")
+# False positive: nfpm stores absolute paths in the cpio payload, so rpmlint's `cpio -id`
+# extraction finds no files and cannot see the ELF binary. The binary is checked by lintian
+# in the deb built from the same file.
+addFilter("no-binary")
