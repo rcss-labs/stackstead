@@ -208,6 +208,15 @@
   }
 </script>
 
+{#snippet networkPicker(f: Form, rowErrors: Record<number, string>)}
+  <NetworkPicker
+    idPrefix="svc-networks"
+    value={f.networks}
+    onchange={(v) => (form.networks = v)}
+    errors={rowErrors}
+  />
+{/snippet}
+
 <div class="editor" bind:this={root}>
   <div class="visually-hidden" role="status" aria-live="polite">{announcement}</div>
 
@@ -250,8 +259,8 @@
       errors={$errors}
       onbrowse={(mode, cb) => (browse = { mode, cb })}
       onRawEditor={() => onRawEditor()}
-    >
-    </ServiceForm>
+      {networkPicker}
+    />
   </div>
 
   <div class="row">
