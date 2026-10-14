@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/rcss-labs/stackstead/internal/auth"
@@ -42,6 +43,11 @@ type Options struct {
 
 type server struct {
 	opts Options
+
+	// tokenCache is the /metrics token hash, loaded lazily (see tokenHash).
+	tokenMu     sync.Mutex
+	tokenCache  string
+	tokenLoaded bool
 }
 
 func New(opts Options) http.Handler {
@@ -61,6 +67,11 @@ func New(opts Options) http.Handler {
 
 	if opts.Observe != nil {
 		s.registerObserveRoutes(mux)
+	} else {
+		// Without this /metrics would fall through to the SPA's index.html.
+		mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+			writeError(w, http.StatusNotFound, "not found")
+		})
 	}
 
 	// Unknown API paths get a JSON 404 (after auth, so they don't reveal which

@@ -57,8 +57,9 @@ type fakeObserve struct {
 	samplesCancelled chan struct{}
 	samplesOnce      sync.Once
 
-	latest    []metrics.ExpositionSample
-	tokenHash string
+	latest     []metrics.ExpositionSample
+	tokenHash  string
+	tokenReads int
 }
 
 func newFakeObserve() *fakeObserve {
@@ -110,6 +111,7 @@ func (f *fakeObserve) Query(_ context.Context, project, service string, from, to
 func (f *fakeObserve) TokenHash(context.Context) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.tokenReads++
 	return f.tokenHash, nil
 }
 func (f *fakeObserve) SetTokenHash(_ context.Context, h string) error {
@@ -302,6 +304,9 @@ func TestObserveRoutesRequireSession(t *testing.T) {
 func TestObserveRoutesAbsentWithoutObserve(t *testing.T) {
 	fake := newFakeStacks()
 	env, cookie := newStacksEnv(t, fake)
+	if rec := env.do(t, "GET", "/metrics", ""); rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "spa") {
+		t.Errorf("/metrics with Observe nil = %d %q, want 404 (not the SPA)", rec.Code, rec.Body)
+	}
 	for _, path := range []string{"/api/events", "/api/stacks/web/logs", "/api/stacks/web/metrics"} {
 		if rec := env.do(t, "GET", path, "", withCookie(cookie)); rec.Code != http.StatusNotFound {
 			t.Errorf("GET %s with Observe nil = %d, want 404", path, rec.Code)
@@ -594,7 +599,7 @@ func TestMetricsRatesFromCounters(t *testing.T) {
 
 func TestMetricsBadParams(t *testing.T) {
 	env, cookie := newObserveEnv(t, newFakeObserve())
-	for _, q := range []string{"from=junk", "to=junk", "step=junk", "from=2026-01-02T00:00:00Z&to=2026-01-01T00:00:00Z"} {
+	for _, q := range []string{"from=junk", "to=junk", "step=junk", "step=NaN", "step=Inf", "step=-Inf", "step=1e30", "step=99999999999", "from=2026-01-02T00:00:00Z&to=2026-01-01T00:00:00Z"} {
 		if rec := env.do(t, "GET", "/api/stacks/web/metrics?"+q, "", withCookie(cookie)); rec.Code != http.StatusBadRequest {
 			t.Errorf("?%s = %d, want 400", q, rec.Code)
 		}
@@ -904,5 +909,39 @@ func TestStatusReportsEventsAndMetricsDegraded(t *testing.T) {
 	fake.setDegraded(true)
 	if m := get(); m["events"] != "disconnected" || m["metricsDegraded"] != true {
 		t.Errorf("status = %v", m)
+	}
+}
+
+func TestMetricsEndpointDoesNotReadStorePerRequest(t *testing.T) {
+	fake := newFakeObserve()
+	fake.tokenHash = sha("preconfigured") // as after a restart: set in the store, not through this server
+	env, cookie := newObserveEnv(t, fake)
+
+	for i := 0; i < 20; i++ {
+		if rec := scrape(t, env, fmt.Sprintf("Bearer wrong-%d", i)); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("wrong token = %d", rec.Code)
+		}
+	}
+	if rec := scrape(t, env, "Bearer preconfigured"); rec.Code != 200 {
+		t.Fatalf("right token = %d", rec.Code)
+	}
+	fake.mu.Lock()
+	reads := fake.tokenReads
+	fake.mu.Unlock()
+	if reads > 1 {
+		t.Errorf("token hash read from the store %d times for 21 scrapes, want at most 1", reads)
+	}
+
+	// Rotation and deletion still take effect immediately.
+	token := createToken(t, env, cookie)
+	if rec := scrape(t, env, "Bearer preconfigured"); rec.Code != http.StatusUnauthorized {
+		t.Errorf("old token after rotation = %d, want 401", rec.Code)
+	}
+	if rec := scrape(t, env, "Bearer "+token); rec.Code != 200 {
+		t.Errorf("new token = %d, want 200", rec.Code)
+	}
+	env.do(t, "DELETE", "/api/settings/metrics-token", "", withCookie(cookie))
+	if rec := scrape(t, env, "Bearer "+token); rec.Code != http.StatusNotFound {
+		t.Errorf("after delete = %d, want 404", rec.Code)
 	}
 }

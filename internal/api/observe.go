@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -69,10 +70,9 @@ func (o ObserveSources) SubscribeChanges() (<-chan state.Change, func()) {
 	return o.Cache.Subscribe()
 }
 
-// Logs always requests the non-TTY (multiplexed) framing: the cache does not
-// record whether a container has a TTY, and there is no inspect call. A TTY
-// container's raw stream would therefore be misread; once the cache carries
-// the flag, set opts.TTY here.
+// Logs requests multiplexed framing because the cache does not record whether
+// a container has a TTY. engine.Logs recognises a raw TTY stream from its first
+// bytes and reads it raw, so both kinds work without an inspect call.
 func (o ObserveSources) Logs(ctx context.Context, c engine.Container, opts engine.LogOptions) (<-chan engine.LogLine, <-chan error) {
 	opts.TTY = false
 	return o.Engine.Logs(ctx, c.ID, opts)
@@ -99,6 +99,7 @@ const (
 	defaultMaxPoints   = 700  // default step targets at most this many buckets (+1 for alignment)
 	maxMetricsPoints   = 5000 // upper bound on points per service, whatever step is requested
 	maxStatusPoll      = 2 * time.Second
+	maxStepSeconds     = 1e9 // about 31 years; anything larger is a typo
 )
 
 // registerObserveRoutes registers the routes that need only Observe, plus
@@ -306,6 +307,9 @@ func ceilSeconds(d time.Duration) time.Duration {
 // parseStep accepts a Go duration or a bare number of seconds.
 func parseStep(v string) (time.Duration, error) {
 	if n, err := strconv.ParseFloat(v, 64); err == nil {
+		if math.IsNaN(n) || math.IsInf(n, 0) || math.Abs(n) > maxStepSeconds {
+			return 0, errors.New("step out of range")
+		}
 		return time.Duration(n * float64(time.Second)), nil
 	}
 	return time.ParseDuration(v)
@@ -566,6 +570,33 @@ func (s *server) handleListOperations(w http.ResponseWriter, r *http.Request) {
 
 // ---- /metrics and its token ----
 
+// tokenHash returns the stored token hash, reading the store once and then
+// serving it from memory: /metrics is unauthenticated, so a flood of bad
+// requests must not turn into database reads. The token endpoints update the
+// cache, and they are the only writers.
+func (s *server) tokenHash(ctx context.Context) (string, error) {
+	s.tokenMu.Lock()
+	defer s.tokenMu.Unlock()
+	if !s.tokenLoaded {
+		h, err := s.opts.Observe.TokenHash(ctx)
+		if err != nil {
+			return "", err
+		}
+		s.tokenCache, s.tokenLoaded = h, true
+	}
+	return s.tokenCache, nil
+}
+
+func (s *server) setTokenHash(ctx context.Context, hash string) error {
+	s.tokenMu.Lock()
+	defer s.tokenMu.Unlock()
+	if err := s.opts.Observe.SetTokenHash(ctx, hash); err != nil {
+		return err
+	}
+	s.tokenCache, s.tokenLoaded = hash, true
+	return nil
+}
+
 func hashToken(token string) []byte {
 	sum := sha256.Sum256([]byte(token))
 	return sum[:]
@@ -575,7 +606,7 @@ func hashToken(token string) []byte {
 // token configured the endpoint does not exist (404). Digests of the presented
 // and stored tokens are compared in constant time.
 func (s *server) handlePrometheus(w http.ResponseWriter, r *http.Request) {
-	stored, err := s.opts.Observe.TokenHash(r.Context())
+	stored, err := s.tokenHash(r.Context())
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -614,7 +645,7 @@ func (s *server) handleCreateMetricsToken(w http.ResponseWriter, r *http.Request
 		return
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw[:])
-	if err := s.opts.Observe.SetTokenHash(r.Context(), hex.EncodeToString(hashToken(token))); err != nil {
+	if err := s.setTokenHash(r.Context(), hex.EncodeToString(hashToken(token))); err != nil {
 		s.internalError(w, r, err)
 		return
 	}
@@ -623,7 +654,7 @@ func (s *server) handleCreateMetricsToken(w http.ResponseWriter, r *http.Request
 }
 
 func (s *server) handleDeleteMetricsToken(w http.ResponseWriter, r *http.Request) {
-	if err := s.opts.Observe.SetTokenHash(r.Context(), ""); err != nil {
+	if err := s.setTokenHash(r.Context(), ""); err != nil {
 		s.internalError(w, r, err)
 		return
 	}

@@ -320,8 +320,21 @@ func (c *Client) streamLogs(ctx context.Context, containerID string, opts LogOpt
 // demuxLogs feeds payload bytes to fn, tagged with their stream, until the
 // reader ends or fn returns false. Reads are chunked so a bogus frame length
 // cannot force a large allocation, and frames may arrive split anywhere.
+//
+// A multiplexed stream starts with a frame header (stream 0-2, three zero
+// bytes). When the first bytes cannot be one, the stream is a raw TTY stream
+// whose flag the caller did not know, and it is read as such. Only the first
+// header is checked, which is where the two framings diverge.
 func demuxLogs(r *bufio.Reader, tty bool, fn func(stream string, p []byte) bool) error {
 	chunk := make([]byte, 32<<10)
+	if !tty {
+		// Peek does not consume. A short or failed peek leaves tty false so the
+		// normal loop reports the truncation.
+		first, _ := r.Peek(8)
+		if len(first) > 0 && !validFrameStart(first) {
+			tty = true
+		}
+	}
 	if tty {
 		for {
 			n, err := r.Read(chunk)
@@ -357,6 +370,20 @@ func demuxLogs(r *bufio.Reader, tty bool, fn func(stream string, p []byte) bool)
 			remaining -= n
 		}
 	}
+}
+
+// validFrameStart reports whether the leading bytes (up to 8) are consistent
+// with a multiplexed frame header: stream type 0-2 and three zero bytes.
+func validFrameStart(b []byte) bool {
+	if b[0] > 2 {
+		return false
+	}
+	for _, v := range b[1:min(len(b), 4)] {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // lineBuf accumulates bytes into lines. A line that outgrows its cap is
