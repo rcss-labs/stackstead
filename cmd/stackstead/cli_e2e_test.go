@@ -400,6 +400,21 @@ func TestE2ECLI(t *testing.T) {
 	r.sub(t, "backup and refused restore", func(t *testing.T) {
 		r.want(0, "", "db", "backup", backup, "--config", r.cfg)
 		r.want(0, "", "db", "check", "--config", r.cfg)
+		// Check the backup file itself: a data dir of its own holding it as stackstead.db.
+		bk := filepath.Join(r.dir, "bk")
+		if err := os.MkdirAll(bk, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := os.ReadFile(backup)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(bk, "stackstead.db"), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		bkCfg := filepath.Join(r.dir, "bk.yaml")
+		r.want(0, "", "config", "init", "--path", bkCfg, "--data-dir", bk)
+		r.want(0, "", "db", "check", "--config", bkCfg)
 		r.want(5, "", "db", "restore", backup, "--yes", "--config", r.cfg)
 	})
 
@@ -480,6 +495,34 @@ func TestE2ECLI(t *testing.T) {
 			if strings.Contains(srv.stderr.String(), tok) {
 				t.Errorf("server log contains metrics token %d", i+1)
 			}
+		}
+		// Everything the CLI left in its config directory: no password or token
+		// anywhere, and no session outside contexts.json (it was logged out of).
+		err := filepath.WalkDir(r.xdg, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			raw, rerr := os.ReadFile(path)
+			if rerr != nil {
+				return rerr
+			}
+			for name, secret := range secrets {
+				if strings.HasPrefix(name, "session") && path == r.contextsFile() {
+					continue
+				}
+				if strings.Contains(string(raw), secret) {
+					t.Errorf("%s contains the %s", path, name)
+				}
+			}
+			for i, tok := range tokens {
+				if strings.Contains(string(raw), tok) {
+					t.Errorf("%s contains metrics token %d", path, i+1)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Error(err)
 		}
 		if fi, err := os.Stat(r.contextsFile()); err != nil || fi.Mode().Perm() != 0o600 {
 			t.Errorf("contexts file: %v, mode %v, want 0600", err, fi)

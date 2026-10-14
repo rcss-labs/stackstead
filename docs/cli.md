@@ -38,7 +38,7 @@ stackstead ops ls --running
 | `context ls\|current\|use <name>\|rm <name>` | manage saved servers |
 | `stacks ls`, `stacks show <name>` | list stacks; services and containers of one |
 | `stacks up\|down\|restart\|pull\|build <name> [--detach]` | lifecycle actions; they wait for the operation unless `--detach` |
-| `stacks rm <name> [--volumes] [--yes]` | compose down; asks on a terminal, `--yes` is required without one |
+| `stacks rm <name> [--volumes] [--yes] [--detach]` | compose down; asks on a terminal, `--yes` is required without one |
 | `stacks import <path>` | import an existing compose directory |
 | `stacks compose get\|edit\|put <name>` | read, edit (in `$VISUAL`/`$EDITOR`) or replace (`-f FILE --hash H`) the compose file |
 | `ops ls\|show\|stream\|cancel` | operations and their output |
@@ -151,13 +151,12 @@ once. A running server picks up a rotate or clear within 5 seconds.
 
 The shipped unit runs `stackstead serve --config /etc/stackstead/config.yaml`,
 validates the config first (`ExecStartPre`), and uses `UMask=0007` so files the
-service creates are private to its user and group. The `stackstead` user must
-be in the `docker` group (`SupplementaryGroups=docker` in the unit, and a
-membership in `/etc/group` for the CLI). The unit sets `ProtectSystem=full`;
-to let the service write stack folders outside `/opt/stacks`, add a drop-in
-(`systemctl edit stackstead`) with `ReadWritePaths=/path/to/stacks`. After a
-manual rpm uninstall, remove leftovers with
-`sudo rm -rf /var/lib/stackstead && sudo userdel stackstead`.
+service creates are private to its user and group. The unit sets
+`ProtectSystem=full`, which makes only `/usr`, `/boot` and `/etc` read-only for
+the service; a drop-in (`systemctl edit stackstead`) with
+`ReadWritePaths=/path/to/stacks` is needed only for stack folders under those
+paths (and `PrivateTmp=no` if stacks live in `/tmp`). Account, group and
+cleanup details of packaged installs are described with the installers.
 
 The unit file lives at `deploy/stackstead.service` in this tree; the installers
 move it to `deploy/systemd/stackstead.service`. Earlier versions of the unit

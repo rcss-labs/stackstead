@@ -131,7 +131,7 @@ stackstead metrics web --from 2h
 stackstead stacks ls -o json                  # scriptable output
 sudo -u stackstead stackstead db backup /backups/stackstead.db
 sudo -u stackstead stackstead admin set-password   # forgot the admin password
-stackstead health                             # config, database, server, Docker
+sudo -u stackstead stackstead health         # config, database, server, Docker
 ```
 
 Exit codes are stable (`0` ok, `3` not logged in, `4` not found, `9` operation

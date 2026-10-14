@@ -167,6 +167,9 @@ func TestServeRefusesWhileAnotherServerHoldsTheLock(t *testing.T) {
 	if !strings.Contains(err.Error(), "another stackstead server is running (pid ") {
 		t.Errorf("message = %q", err)
 	}
+	if _, serr := os.Stat(filepath.Join(data, "stackstead.db")); serr == nil {
+		t.Error("a refused serve opened (and created) the database before taking the lock")
+	}
 }
 
 func TestServeReleasesTheLockWhenItReturns(t *testing.T) {
