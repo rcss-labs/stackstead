@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;background:#ffffff;color:#1a1d23;font:16px/1.5 system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif}
+a{color:#2563eb}a:hover{color:#1d4ed8}
+</style>
+</helmet>
+<div style="display:flex;flex-direction:column;gap:12px;min-height:100vh;background:#fff;color:#1a1d23;font:16px/1.5 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif">
+  <nav aria-label="Main" style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:8px 16px;border-bottom:1px solid #d5d9e0;background:#f6f7f9">
+    <ul style="list-style:none;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:8px">
+      <li><a href="#" onClick="{{ goList }}" style="color:{{ navListColor }};background:{{ navListBg }};text-decoration:none;padding:8px 12px;border-radius:8px;display:inline-block">Stacks</a></li>
+      <li><a href="#" onClick="{{ goCreate }}" style="color:{{ navCreateColor }};background:{{ navCreateBg }};text-decoration:none;padding:8px 12px;border-radius:8px;display:inline-block">New stack</a></li>
+      <li><a href="#" onClick="{{ goImport }}" style="color:#1a1d23;text-decoration:none;padding:8px 12px;border-radius:8px;display:inline-block" style-hover="background:#d5d9e0">Import</a></li>
+      <li><a href="#" onClick="{{ goSettings }}" style="color:{{ navSettingsColor }};background:{{ navSettingsBg }};text-decoration:none;padding:8px 12px;border-radius:8px;display:inline-block">Settings</a></li>
+    </ul>
+    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px">
+      <span style="color:#0e6ba8"><span aria-hidden="true">●</span> 1 running</span>
+      <span style="color:#5b6472">admin</span>
+      <button type="button" style="padding:4px 12px;background:transparent;border:1px solid #d5d9e0;border-radius:8px;cursor:pointer;font:inherit;color:inherit">Log out</button>
+    </div>
+  </nav>
+
+  <main style="width:100%;max-width:1200px;margin-inline:auto;padding:16px 16px">
+    <sc-if value="{{ isList }}" hint-placeholder-val="{{ true }}">
+      <section data-screen-label="Stack list">
+        <header style="display:flex;flex-wrap:wrap;align-items:baseline;gap:12px;margin-bottom:16px">
+          <h1 style="margin:0;font-size:2em;font-weight:700">Stacks</h1>
+          <span style="color:#5b6472">6 stacks</span>
+          <label style="margin-left:auto"><input type="search" placeholder="Search by name or project" style="min-width:14rem;font:inherit;padding:1px 2px"></label>
+        </header>
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th style="text-align:left;padding:8px 12px;border-bottom:1px solid #d5d9e0">Name</th>
+            <th style="text-align:left;padding:8px 12px;border-bottom:1px solid #d5d9e0">Status</th>
+            <th style="text-align:left;padding:8px 12px;border-bottom:1px solid #d5d9e0">Running</th>
+            <th style="text-align:left;padding:8px 12px;border-bottom:1px solid #d5d9e0">Origin</th>
+            <th style="text-align:left;padding:8px 12px;border-bottom:1px solid #d5d9e0">Project</th>
+            <th style="text-align:left;padding:8px 12px;border-bottom:1px solid #d5d9e0">Path</th>
+          </tr></thead>
+          <tbody>
+            <sc-for list="{{ stacks }}" as="s" hint-placeholder-count="6">
+              <tr>
+                <td style="padding:8px 12px;border-bottom:1px solid #d5d9e0"><span style="display:inline-flex;align-items:center;gap:8px"><a href="#" onClick="{{ s.open }}" style="color:#2563eb">{{ s.name }}</a></span></td>
+                <td style="padding:8px 12px;border-bottom:1px solid #d5d9e0"><span style="display:inline-flex;align-items:center;gap:4px;padding:0 8px;border:1px solid {{ s.tone }};border-radius:999px;color:{{ s.tone }};font-size:0.875rem;white-space:nowrap"><span aria-hidden="true">{{ s.icon }}</span><span>{{ s.status }}</span></span></td>
+                <td style="padding:8px 12px;border-bottom:1px solid #d5d9e0">{{ s.running }}/{{ s.serviceCount }}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #d5d9e0">{{ s.origin }}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #d5d9e0">{{ s.project }}</td>
+                <td style="padding:8px 12px;border-bottom:1px solid #d5d9e0;max-width:22rem"><span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:0.875rem">{{ s.path }}</span></td>
+              </tr>
+            </sc-for>
+          </tbody>
+        </table>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{ isDetail }}" hint-placeholder-val="{{ false }}">
+      <section data-screen-label="Stack detail" style="display:flex;flex-direction:column;gap:16px">
+        <header style="display:flex;flex-direction:column;gap:12px">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <h1 style="margin:0;font-size:2em;font-weight:700">{{ cur.name }}</h1>
+            <span style="display:inline-flex;align-items:center;gap:4px;padding:0 8px;border:1px solid {{ cur.tone }};border-radius:999px;color:{{ cur.tone }};font-size:0.875rem"><span aria-hidden="true">{{ cur.icon }}</span><span>{{ cur.status }}</span></span>
+          </div>
+          <dl style="display:flex;flex-wrap:wrap;gap:8px 24px;margin:0">
+            <div style="display:flex;gap:8px"><dt style="color:#5b6472">Origin</dt><dd style="margin:0">{{ cur.origin }}</dd></div>
+            <div style="display:flex;gap:8px"><dt style="color:#5b6472">Project</dt><dd style="margin:0">{{ cur.project }}</dd></div>
+            <div style="display:flex;gap:8px"><dt style="color:#5b6472">Path</dt><dd style="margin:0">{{ cur.path }}</dd></div>
+          </dl>
+          <div role="group" style="display:flex;flex-wrap:wrap;align-items:center;gap:12px">
+            <button type="button" style="display:inline-flex;align-items:center;gap:8px;padding:8px 16px;min-height:2.25rem;border:1px solid #2563eb;border-radius:8px;background:#2563eb;color:#fff;cursor:pointer;font:inherit">Up</button>
+            <button type="button" style="display:inline-flex;align-items:center;gap:8px;padding:8px 16px;min-height:2.25rem;border:1px solid #d5d9e0;border-radius:8px;background:#f6f7f9;color:inherit;cursor:pointer;font:inherit">Down</button>
+            <button type="button" style="display:inline-flex;align-items:center;gap:8px;padding:8px 16px;min-height:2.25rem;border:1px solid #d5d9e0;border-radius:8px;background:#f6f7f9;color:inherit;cursor:pointer;font:inherit">Restart</button>
+            <button type="button" style="display:inline-flex;align-items:center;gap:8px;padding:8px 16px;min-height:2.25rem;border:1px solid #d5d9e0;border-radius:8px;background:#f6f7f9;color:inherit;cursor:pointer;font:inherit">Pull</button>
+            <button type="button" style="display:inline-flex;align-items:center;gap:8px;padding:8px 16px;min-height:2.25rem;border:1px solid #d5d9e0;border-radius:8px;background:#f6f7f9;color:inherit;cursor:pointer;font:inherit">Build</button>
+            <button type="button" style="display:inline-flex;align-items:center;gap:8px;padding:8px 16px;min-height:2.25rem;border:1px solid #b42318;border-radius:8px;background:#b42318;color:#fff;cursor:pointer;font:inherit">Remove</button>
+          </div>
+        </header>
+        <div role="tablist" style="display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid #d5d9e0">
+          <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="5">
+            <button type="button" role="tab" onClick="{{ t.select }}" style="padding:8px 16px;background:none;border:0;border-bottom:3px solid {{ t.underline }};cursor:pointer;white-space:nowrap;font:inherit;font-weight:{{ t.weight }};color:inherit">{{ t.label }}</button>
+          </sc-for>
+        </div>
+        <div role="tabpanel" style="padding-block:16px">
+          <sc-if value="{{ tabServices }}" hint-placeholder-val="{{ true }}">
+            <div style="display:flex;flex-direction:column;gap:16px">
+              <sc-for list="{{ cur.services }}" as="svc" hint-placeholder-count="2">
+                <article style="border:1px solid #d5d9e0;border-radius:8px;background:#f6f7f9;padding:12px 16px">
+                  <header style="display:flex;flex-wrap:wrap;align-items:center;gap:12px">
+                    <h2 style="margin:0;font-size:1.1rem;font-weight:700">{{ svc.name }}</h2>
+                    <button type="button" style="display:inline-flex;align-items:center;padding:8px 16px;min-height:2.25rem;border:1px solid #d5d9e0;border-radius:8px;background:#f6f7f9;color:inherit;cursor:pointer;font:inherit">Edit</button>
+                  </header>
+                  <ul style="list-style:none;padding:0;margin:8px 0;display:flex;flex-wrap:wrap;gap:8px 16px">
+                    <li><code style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">{{ svc.image }}</code></li>
+                    <sc-for list="{{ svc.ports }}" as="p" hint-placeholder-count="1"><li><code style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">{{ p }}</code></li></sc-for>
+                    <li>restart: <code style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace">{{ svc.restart }}</code></li>
+                  </ul>
+                  <ul style="list-style:none;padding:0;margin:8px 0;display:flex;flex-direction:column;gap:8px">
+                    <sc-for list="{{ svc.containers }}" as="c" hint-placeholder-count="1">
+                      <li style="display:flex;gap:8px"><span>{{ c.name }}</span> <span style="color:#5b6472">{{ c.state }}</span> <span style="color:#5b6472">{{ c.status }}</span></li>
+                    </sc-for>
+                  </ul>
+                </article>
+              </sc-for>
+            </div>
+          </sc-if>
+          <sc-if value="{{ tabLogs }}" hint-placeholder-val="{{ false }}">
+            <section style="display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px">
+                <label>Service</label><select style="font:inherit"><option>All</option></select>
+                <label>Tail</label><select style="font:inherit"><option>200</option></select>
+                <label style="display:inline-flex;align-items:center;gap:4px"><input type="checkbox" checked> Follow</label>
+                <label>Stream</label><select style="font:inherit"><option>All</option></select>
+                <label>Search logs</label><input type="search" style="font:inherit">
+                <button type="button" style="padding:8px 16px;min-height:2.25rem;border:1px solid #d5d9e0;border-radius:8px;background:#f6f7f9;font:inherit;cursor:pointer">Pause</button>
+                <button type="button" style="padding:8px 16px;min-height:2.25rem;border:1px solid transparent;border-radius:8px;background:transparent;font:inherit;cursor:pointer">Clear</button>
+                <small style="color:#5b6472">live</small>
+              </div>
+              <div role="log" style="height:60vh;overflow:auto;background:#f6f7f9;border:1px solid #d5d9e0;border-radius:8px;padding:8px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:0.8rem">
+                <sc-for list="{{ logs }}" as="l" hint-placeholder-count="6">
+                  <div style="display:flex;gap:8px;align-items:baseline"><time style="flex:none;color:#5b6472">{{ l.time }}</time><small style="flex:none;font-weight:600;color:{{ l.color }}">{{ l.service }}</small><small style="flex:none;color:{{ l.streamColor }}">{{ l.stream }}</small><span style="white-space:pre-wrap;overflow-wrap:anywhere;min-width:0">{{ l.text }}</span></div>
+                </sc-for>
+              </div>
+            </section>
+          </sc-if>
+          <sc-if value="{{ tabOther }}" hint-placeholder-val="{{ false }}">
+            <p style="color:#5b6472;margin:0">{{ otherNote }}</p>
+          </sc-if>
+        </div>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{ isOther }}" hint-placeholder-val="{{ false }}">
+      <h1 style="margin:0;font-size:2em;font-weight:700">{{ otherTitle }}</h1>
+    </sc-if>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { view: 'list', stack: 'media', tab: 'services' };
+  renderVals() {
+    const { view, stack, tab } = this.state;
+    const looks = {
+      running: ['●', '#15803d'], partial: ['◐', '#a15c07'], stopped: ['■', '#5b6472'], unavailable: ['⚠', '#b42318'], unknown: ['?', '#5b6472'],
+    };
+    const data = [
+      { name: 'media', status: 'running', running: 3, serviceCount: 3, origin: 'managed', project: 'media', path: '/opt/stacks/media/compose.yaml',
+        services: [
+          { name: 'jellyfin', image: 'jellyfin/jellyfin:10.9', ports: ['8096:8096'], restart: 'unless-stopped', containers: [{ name: 'media-jellyfin-1', state: 'running', status: 'Up 3 days (healthy)' }] },
+          { name: 'sonarr', image: 'lscr.io/linuxserver/sonarr:4.0', ports: ['8989:8989'], restart: 'unless-stopped', containers: [{ name: 'media-sonarr-1', state: 'running', status: 'Up 3 days' }] },
+          { name: 'qbittorrent', image: 'lscr.io/linuxserver/qbittorrent', ports: ['8080:8080', '6881:6881'], restart: 'unless-stopped', containers: [{ name: 'media-qbittorrent-1', state: 'running', status: 'Up 3 days' }] },
+        ] },
+      { name: 'home-assistant', status: 'running', running: 2, serviceCount: 2, origin: 'external', project: 'homeassistant', path: '/home/ops/homeassistant/docker-compose.yml', services: [] },
+      { name: 'monitoring', status: 'partial', running: 2, serviceCount: 3, origin: 'managed', project: 'monitoring', path: '/opt/stacks/monitoring/compose.yaml', services: [] },
+      { name: 'gitea', status: 'running', running: 2, serviceCount: 2, origin: 'managed', project: 'gitea', path: '/opt/stacks/gitea/compose.yaml', services: [] },
+      { name: 'traefik', status: 'running', running: 1, serviceCount: 1, origin: 'managed', project: 'traefik', path: '/opt/stacks/traefik/compose.yaml', services: [] },
+      { name: 'paperless', status: 'stopped', running: 0, serviceCount: 4, origin: 'external', project: 'paperless', path: '/srv/paperless/docker-compose.yaml', services: [] },
+    ].map((s) => ({ ...s, icon: looks[s.status][0], tone: looks[s.status][1],
+      open: (e) => { e.preventDefault(); this.setState({ view: 'detail', stack: s.name, tab: 'services' }); } }));
+    const cur = data.find((s) => s.name === stack) || data[0];
+    const tabIds = ['services', 'compose', 'logs', 'metrics', 'operations'];
+    const tabs = tabIds.map((id) => ({ label: id[0].toUpperCase() + id.slice(1), underline: id === tab ? '#2563eb' : 'transparent', weight: id === tab ? 600 : 400,
+      select: () => this.setState({ tab: id }) }));
+    const nav = (v) => (e) => { e.preventDefault(); this.setState({ view: v }); };
+    const act = (v) => view === v;
+    const hue = (n) => { let h = 0; for (const ch of n) h = (h * 31 + ch.charCodeAt(0)) % 360; return `hsl(${h} 65% 50%)`; };
+    const logs = [
+      ['14:02:11', 'jellyfin', 'stdout', '[INF] Emby.Server.Implementations.ScheduledTasks.TaskManager: ExecuteQueuedTasks'],
+      ['14:02:12', 'sonarr', 'stdout', '[Info] RssSyncService: Starting RSS Sync'],
+      ['14:02:14', 'qbittorrent', 'stdout', '(N) 2026-10-14T14:02:14 - Peer ID: "-qB4650-"'],
+      ['14:02:15', 'sonarr', 'stderr', '[Warn] HttpClient: HTTP Error - Res: [GET] https://api.example.com/feed: 503.ServiceUnavailable'],
+      ['14:02:18', 'jellyfin', 'stdout', '[INF] Jellyfin.Api.Controllers.SessionController: Session ended'],
+      ['14:02:21', 'sonarr', 'stdout', '[Info] RssSyncService: RSS Sync Completed. Reports found: 42, Reports grabbed: 1'],
+    ].map(([time, service, stream, text]) => ({ time, service, stream, text, color: hue(service), streamColor: stream === 'stderr' ? '#b42318' : '#5b6472' }));
+    const activeNav = (on) => ({ color: on ? '#fff' : '#1a1d23', bg: on ? '#2563eb' : 'transparent' });
+    const l = activeNav(act('list') || act('detail')), c = activeNav(act('create')), st = activeNav(act('settings'));
+    return {
+      isList: act('list'), isDetail: act('detail'), isOther: act('create') || act('import') || act('settings'),
+      otherTitle: view === 'create' ? 'Create stack' : view === 'import' ? 'Import stack' : 'Settings',
+      stacks: data, cur, tabs,
+      tabServices: tab === 'services', tabLogs: tab === 'logs', tabOther: !['services', 'logs'].includes(tab),
+      otherNote: tab === 'operations' ? 'No operations yet.' : tab === 'compose' ? 'Loading compose file…' : 'Loading metrics',
+      logs,
+      goList: nav('list'), goCreate: nav('create'), goImport: nav('import'), goSettings: nav('settings'),
+      navListColor: l.color, navListBg: l.bg, navCreateColor: c.color, navCreateBg: c.bg, navSettingsColor: st.color, navSettingsBg: st.bg,
+    };
+  }
+}
+</script>
+</body>
+</html>

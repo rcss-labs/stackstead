@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0f1216;font-family:'IBM Plex Sans',system-ui,sans-serif}
+a{color:var(--accent)}a:hover{color:var(--text)}
+.ss{--bg:#0f1216;--surface:#161a20;--raised:#1c2129;--hover:#222934;--border:#2a313b;--border-strong:#3a4350;--text:#e6eaf0;--muted:#8b95a5;--faint:#5c6675;--accent:#34d399;--accent-ink:#062a1c;--accent-soft:rgba(52,211,153,.14);--success:#34d399;--warning:#fbbf24;--danger:#f87171;--info:#60a5fa;--success-soft:rgba(52,211,153,.14);--warning-soft:rgba(251,191,36,.14);--danger-soft:rgba(248,113,113,.14);--info-soft:rgba(96,165,250,.14);--muted-soft:rgba(139,149,165,.14);--shadow:0 1px 0 rgba(0,0,0,.4);--mono:'Geist Mono',ui-monospace,Menlo,monospace;--pad:6px;--row:36px}
+.ss[data-theme="light"]{--bg:#f3f5f7;--surface:#ffffff;--raised:#f7f9fa;--hover:#eef1f4;--border:#dfe4ea;--border-strong:#c9d1da;--text:#161a20;--muted:#5f6b7a;--faint:#8b95a5;--accent:#059669;--accent-ink:#ffffff;--accent-soft:rgba(5,150,105,.12);--success:#047857;--warning:#b45309;--danger:#b91c1c;--info:#1d4ed8;--success-soft:rgba(4,120,87,.12);--warning-soft:rgba(180,83,9,.12);--danger-soft:rgba(185,28,28,.12);--info-soft:rgba(29,78,216,.12);--muted-soft:rgba(95,107,122,.12);--shadow:0 1px 2px rgba(16,24,40,.06)}
+.ss[data-density="comfortable"]{--pad:10px;--row:44px}
+.ss input,.ss select,.ss button{font-family:inherit}
+.ss ::placeholder{color:var(--faint)}
+.ss input:focus-visible,.ss button:focus-visible,.ss select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.ss [data-sel="true"]{background:var(--accent-soft)}
+.ss [data-row]:hover{background:var(--hover)}
+@keyframes ss-pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.ss .live{animation:ss-pulse 1.6s ease-in-out infinite}
+</style>
+</helmet>
+<div class="ss" data-theme="{{ theme }}" data-density="{{ density }}" style="min-height:100vh;background:var(--bg);color:var(--text);font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:13px;line-height:1.45;display:flex">
+
+  <sc-if value="{{ isLogin }}" hint-placeholder-val="{{ false }}">
+    <div data-screen-label="Login" style="flex:1;display:grid;place-items:center;padding:24px">
+      <form onSubmit="{{ doLogin }}" style="width:100%;max-width:360px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:28px;display:flex;flex-direction:column;gap:16px;box-shadow:var(--shadow)">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:6px 0 2px">
+          <img src="assets/logo-art.png" alt="" style="width:168px;height:auto;display:block">
+          <div style="font-size:24px;font-weight:600;letter-spacing:-.02em;line-height:1">Stack<span style="font-weight:400">stead</span></div>
+          <div style="color:var(--muted);font-size:12px">docker-host-01 · 127.0.0.1:8420</div>
+        </div>
+        <label style="display:flex;flex-direction:column;gap:5px"><span style="font-weight:500;font-size:12px;color:var(--muted)">Username</span><input type="text" value="admin" autocomplete="username" style="height:34px;padding:0 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px"></label>
+        <label style="display:flex;flex-direction:column;gap:5px"><span style="font-weight:500;font-size:12px;color:var(--muted)">Password</span><input type="password" value="••••••••••••" autocomplete="current-password" style="height:34px;padding:0 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px"></label>
+        <button type="submit" style="height:34px;border:0;border-radius:6px;background:var(--accent);color:var(--accent-ink);font-weight:600;font-size:13px;cursor:pointer">Sign in</button>
+        <p style="margin:0;color:var(--faint);font-size:11px;text-align:center">Localhost only. For remote access use a TLS reverse proxy.</p>
+      </form>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isApp }}" hint-placeholder-val="{{ true }}">
+    <nav aria-label="Main" style="width:52px;flex:none;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px;position:sticky;top:0;height:100vh">
+      <a href="#" onClick="{{ goList }}" title="Stackstead" style="width:36px;height:36px;display:grid;place-items:center;text-decoration:none;margin-bottom:10px"><img src="assets/containers.png" alt="Stackstead" style="width:34px;height:34px;object-fit:contain;display:block"></a>
+      <sc-for list="{{ rail }}" as="r" hint-placeholder-count="4">
+        <a href="#" onClick="{{ r.go }}" title="{{ r.label }}" aria-current="{{ r.current }}" data-sel="{{ r.selStr }}" style="width:36px;height:36px;border-radius:7px;display:grid;place-items:center;color:{{ r.color }};text-decoration:none" style-hover="background:var(--hover)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="{{ r.icon }}"></path></svg>
+        </a>
+      </sc-for>
+      <div style="flex:1"></div>
+      <button type="button" onClick="{{ toggleTheme }}" title="Toggle theme" style="width:36px;height:36px;border-radius:7px;border:0;background:transparent;color:var(--muted);display:grid;place-items:center;cursor:pointer" style-hover="background:var(--hover);color:var(--text)">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="{{ themeIcon }}"></path></svg>
+      </button>
+      <button type="button" onClick="{{ doLogout }}" title="admin · Log out" style="width:28px;height:28px;border-radius:50%;border:1px solid var(--border-strong);background:var(--raised);color:var(--text);font-size:11px;font-weight:600;cursor:pointer;margin-top:6px">AD</button>
+    </nav>
+
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+      <header style="height:44px;flex:none;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--border);background:var(--surface);position:sticky;top:0;z-index:5">
+        <div style="display:flex;align-items:center;gap:6px;min-width:0;font-size:13px">
+          <a href="#" onClick="{{ goList }}" style="color:var(--muted);text-decoration:none" style-hover="color:var(--text)">Stacks</a>
+          <sc-if value="{{ crumb }}" hint-placeholder-val="{{ false }}">
+            <span style="color:var(--faint)">/</span><span style="font-weight:500;font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ crumb }}</span>
+          </sc-if>
+        </div>
+        <div style="flex:1"></div>
+        <sc-if value="{{ runningOps }}" hint-placeholder-val="{{ true }}">
+          <a href="#" onClick="{{ goOps }}" style="display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:999px;background:var(--info-soft);color:var(--info);font-size:12px;text-decoration:none"><span class="live" style="width:6px;height:6px;border-radius:50%;background:currentColor"></span>{{ runningOps }} running</a>
+        </sc-if>
+        <span style="display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:999px;border:1px solid var(--border);color:var(--muted);font-size:12px"><span style="width:6px;height:6px;border-radius:50%;background:var(--success)"></span>Docker 27.1.1</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:999px;border:1px solid var(--border);color:var(--muted);font-size:12px">compose v2.29.2</span>
+      </header>
+
+      <main style="flex:1;padding:20px 20px 40px;display:flex;flex-direction:column;gap:16px;min-width:0">
+
+        <sc-if value="{{ isList }}" hint-placeholder-val="{{ true }}">
+          <section data-screen-label="Overview" style="display:flex;flex-direction:column;gap:16px">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+              <h1 style="margin:0;font-size:18px;font-weight:600">Stacks</h1>
+              <span style="color:var(--muted)">docker-host-01</span>
+              <div style="flex:1"></div>
+              <a href="#" onClick="{{ goImport }}" style="height:30px;padding:0 12px;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);text-decoration:none;font-weight:500" style-hover="background:var(--hover)">Import</a>
+              <a href="#" onClick="{{ goCreate }}" style="height:30px;padding:0 12px;display:inline-flex;align-items:center;gap:6px;border-radius:6px;background:var(--accent);color:var(--accent-ink);text-decoration:none;font-weight:600"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>New stack</a>
+            </div>
+
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px">
+              <sc-for list="{{ host }}" as="h" hint-placeholder-count="9">
+                <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;box-shadow:var(--shadow);min-width:0">
+                  <div style="color:var(--muted);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ h.label }}</div>
+                  <div style="font-size:17px;font-weight:600;font-family:var(--mono);letter-spacing:-.01em;white-space:nowrap">{{ h.value }}</div>
+                  <div style="font-family:var(--mono);font-size:11px;color:{{ h.subColor }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ h.sub }}</div>
+                  <div style="height:3px;border-radius:2px;background:var(--border);overflow:hidden"><div style="height:100%;width:{{ h.pct }};background:{{ h.barColor }}"></div></div>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <sc-for list="{{ filters }}" as="f" hint-placeholder-count="4">
+                <button type="button" onClick="{{ f.select }}" style="height:26px;padding:0 10px;border-radius:999px;border:1px solid {{ f.border }};background:{{ f.bg }};color:{{ f.color }};font-size:12px;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;gap:6px">{{ f.label }}<span style="font-family:var(--mono);color:var(--muted)">{{ f.count }}</span></button>
+              </sc-for>
+              <div style="flex:1"></div>
+              <label style="position:relative"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--faint)"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg><input type="search" value="{{ query }}" onChange="{{ setQuery }}" placeholder="Filter by name, project or path" style="height:30px;width:260px;max-width:100%;padding:0 10px 0 28px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px"></label>
+            </div>
+
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow-x:auto;box-shadow:var(--shadow)">
+              <table style="width:100%;border-collapse:collapse;font-size:13px">
+                <thead><tr style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em">
+                  <th style="text-align:left;font-weight:500;padding:8px 12px;border-bottom:1px solid var(--border)">Stack</th>
+                  <th style="text-align:left;font-weight:500;padding:8px 12px;border-bottom:1px solid var(--border)">Status</th>
+                  <th style="text-align:left;font-weight:500;padding:8px 12px;border-bottom:1px solid var(--border)">Services</th>
+                  <th style="text-align:left;font-weight:500;padding:8px 12px;border-bottom:1px solid var(--border)">Health</th>
+                  <th style="text-align:left;font-weight:500;padding:8px 12px;border-bottom:1px solid var(--border)">Ports</th>
+                  <th style="text-align:right;font-weight:500;padding:8px 8px;border-bottom:1px solid var(--border)">CPU</th>
+                  <th style="text-align:right;font-weight:500;padding:8px 8px;border-bottom:1px solid var(--border)">Memory</th>
+                  <th style="text-align:right;font-weight:500;padding:8px 8px;border-bottom:1px solid var(--border)">Net RX / TX</th>
+                  <th style="text-align:right;font-weight:500;padding:8px 12px;border-bottom:1px solid var(--border)"></th>
+                </tr></thead>
+                <tbody>
+                  <sc-for list="{{ visible }}" as="s" hint-placeholder-count="6">
+                    <tr data-row="true" style="border-bottom:1px solid var(--border);height:var(--row)">
+                      <td style="padding:var(--pad) 12px"><a href="#" onClick="{{ s.open }}" style="color:var(--text);text-decoration:none;font-weight:500;display:inline-flex;align-items:center;gap:8px;white-space:nowrap" style-hover="color:var(--accent)"><span style="width:8px;height:8px;border-radius:2px;background:{{ s.tone }}"></span>{{ s.name }}<span style="font-size:10.5px;font-weight:500;color:var(--faint);border:1px solid var(--border);border-radius:3px;padding:0 4px;line-height:15px">{{ s.origin }}</span></a><div title="{{ s.path }}" style="font-family:var(--mono);font-size:10.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px;margin-top:1px">{{ s.path }}</div></td>
+                      <td style="padding:var(--pad) 12px"><span style="display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:4px;background:{{ s.toneSoft }};color:{{ s.tone }};font-size:11px;font-weight:600;letter-spacing:.02em;text-transform:uppercase">{{ s.status }}</span></td>
+                      <td style="padding:var(--pad) 12px"><div style="display:flex;align-items:center;gap:8px"><span style="font-family:var(--mono);font-size:12px">{{ s.running }}/{{ s.serviceCount }}</span><div style="display:flex;gap:2px"><sc-for list="{{ s.cells }}" as="c" hint-placeholder-count="3"><span style="width:10px;height:6px;border-radius:1px;background:{{ c }}"></span></sc-for></div></div></td>
+                      <td style="padding:var(--pad) 12px;white-space:nowrap"><span style="display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11.5px"><span style="display:inline-flex;align-items:center;gap:4px;color:var(--success)"><span style="width:6px;height:6px;border-radius:50%;background:currentColor"></span>{{ s.healthy }}</span><span style="display:inline-flex;align-items:center;gap:4px;color:{{ s.unhealthyColor }}"><span style="width:6px;height:6px;border-radius:50%;background:currentColor"></span>{{ s.unhealthy }}</span></span></td>
+                      <td style="padding:var(--pad) 12px;white-space:nowrap"><div style="display:flex;gap:4px" title="{{ s.portTitle }}"><sc-for list="{{ s.portList }}" as="p" hint-placeholder-count="2"><code style="font-family:var(--mono);font-size:10.5px;background:var(--raised);border:1px solid var(--border);border-radius:3px;padding:0 5px;line-height:16px;color:var(--muted)">{{ p }}</code></sc-for><sc-if value="{{ s.portMore }}" hint-placeholder-val="{{ false }}"><span style="font-family:var(--mono);font-size:10.5px;color:var(--faint);line-height:18px">+{{ s.portMore }}</span></sc-if></div></td>
+                      <td style="padding:var(--pad) 8px;text-align:right;white-space:nowrap"><span style="display:inline-flex;align-items:center;gap:6px;justify-content:flex-end"><svg viewBox="0 0 60 18" preserveAspectRatio="none" style="width:56px;height:18px;display:block"><path d="{{ s.cpuSpark }}" fill="none" stroke="var(--accent)" stroke-width="1.2" vector-effect="non-scaling-stroke"></path></svg><span style="font-family:var(--mono);font-size:12px;color:var(--text);min-width:38px;text-align:right">{{ s.cpu }}</span></span></td>
+                      <td style="padding:var(--pad) 8px;text-align:right;white-space:nowrap"><span style="display:inline-flex;align-items:center;gap:6px;justify-content:flex-end"><svg viewBox="0 0 60 18" preserveAspectRatio="none" style="width:56px;height:18px;display:block"><path d="{{ s.memSpark }}" fill="none" stroke="var(--info)" stroke-width="1.2" vector-effect="non-scaling-stroke"></path></svg><span style="font-family:var(--mono);font-size:12px;color:var(--text);min-width:48px;text-align:right">{{ s.mem }}</span></span></td>
+                      <td style="padding:var(--pad) 8px;text-align:right;font-family:var(--mono);font-size:11.5px;color:var(--muted);white-space:nowrap">{{ s.rx }} <span style="color:var(--faint)">/</span> {{ s.tx }}</td>
+                      <td style="padding:var(--pad) 12px;text-align:right;white-space:nowrap">
+                        <span style="display:inline-flex;gap:2px">
+                          <button type="button" title="Up" onClick="{{ s.up }}" style="width:26px;height:26px;border:0;border-radius:5px;background:transparent;color:var(--muted);cursor:pointer;display:grid;place-items:center" style-hover="background:var(--hover);color:var(--success)"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5v14l11-7z"></path></svg></button>
+                          <button type="button" title="Down" onClick="{{ s.down }}" style="width:26px;height:26px;border:0;border-radius:5px;background:transparent;color:var(--muted);cursor:pointer;display:grid;place-items:center" style-hover="background:var(--hover);color:var(--danger)"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"></rect></svg></button>
+                          <button type="button" title="Restart" onClick="{{ s.restart }}" style="width:26px;height:26px;border:0;border-radius:5px;background:transparent;color:var(--muted);cursor:pointer;display:grid;place-items:center" style-hover="background:var(--hover);color:var(--text)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"></path><path d="M21 3v6h-6"></path></svg></button>
+                        </span>
+                      </td>
+                    </tr>
+                  </sc-for>
+                </tbody>
+              </table>
+              <sc-if value="{{ noMatch }}" hint-placeholder-val="{{ false }}"><p style="margin:0;padding:16px;color:var(--muted);text-align:center">No stacks match the current filter.</p></sc-if>
+            </div>
+
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;align-items:start">
+              <section style="background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow)">
+                <h3 style="margin:0;padding:9px 12px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);display:flex;justify-content:space-between"><span>Alerts</span><span style="font-family:var(--mono);color:var(--warning)">{{ alertCount }}</span></h3>
+                <ul style="list-style:none;margin:0;padding:4px 0">
+                  <sc-for list="{{ alerts }}" as="a" hint-placeholder-count="3">
+                    <li style="display:flex;gap:10px;padding:7px 12px;font-size:12px;align-items:flex-start"><span style="width:7px;height:7px;border-radius:50%;background:{{ a.tone }};flex:none;margin-top:5px"></span><div style="min-width:0;flex:1"><div style="display:flex;gap:6px;align-items:baseline"><a href="#" onClick="{{ a.open }}" style="font-family:var(--mono);font-weight:500;color:var(--text);text-decoration:none" style-hover="color:var(--accent)">{{ a.stack }}</a><span style="color:{{ a.tone }};font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.02em">{{ a.kind }}</span></div><div style="color:var(--muted);overflow-wrap:anywhere">{{ a.text }}</div></div><span style="color:var(--faint);white-space:nowrap;font-size:11px">{{ a.when }}</span></li>
+                  </sc-for>
+                </ul>
+              </section>
+              <section style="background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow)">
+                <h3 style="margin:0;padding:9px 12px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);display:flex;justify-content:space-between;align-items:center"><span>Top consumers</span><span style="display:inline-flex;border:1px solid var(--border);border-radius:4px;overflow:hidden;text-transform:none;letter-spacing:0;font-weight:500"><button type="button" onClick="{{ topCpu }}" style="height:18px;padding:0 7px;border:0;background:{{ topCpuBg }};color:{{ topCpuColor }};font-size:11px;cursor:pointer">CPU</button><button type="button" onClick="{{ topMem }}" style="height:18px;padding:0 7px;border:0;border-left:1px solid var(--border);background:{{ topMemBg }};color:{{ topMemColor }};font-size:11px;cursor:pointer">Memory</button></span></h3>
+                <ul style="list-style:none;margin:0;padding:6px 0">
+                  <sc-for list="{{ top }}" as="t" hint-placeholder-count="5">
+                    <li style="display:grid;grid-template-columns:minmax(0,1fr) 64px;gap:10px;align-items:center;padding:5px 12px;font-size:12px"><div style="min-width:0"><div style="display:flex;justify-content:space-between;gap:8px"><span style="font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.name }}<span style="color:var(--faint)"> · {{ t.stack }}</span></span></div><div style="height:4px;border-radius:2px;background:var(--border);margin-top:4px;overflow:hidden"><div style="height:100%;width:{{ t.pct }};background:{{ t.color }}"></div></div></div><span style="font-family:var(--mono);text-align:right;color:var(--text)">{{ t.value }}</span></li>
+                  </sc-for>
+                </ul>
+              </section>
+              <section style="background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow)">
+                <h3 style="margin:0;padding:9px 12px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);display:flex;justify-content:space-between"><span>Docker events</span><span style="display:inline-flex;align-items:center;gap:5px;color:var(--success);text-transform:none;letter-spacing:0;font-weight:500"><span class="live" style="width:6px;height:6px;border-radius:50%;background:currentColor"></span>live</span></h3>
+                <ul style="list-style:none;margin:0;padding:4px 0;font-family:var(--mono);font-size:11.5px">
+                  <sc-for list="{{ events }}" as="e" hint-placeholder-count="7">
+                    <li style="display:grid;grid-template-columns:62px 58px minmax(0,1fr);gap:8px;padding:4px 12px;align-items:baseline"><time style="color:var(--faint)">{{ e.time }}</time><span style="color:{{ e.tone }};font-weight:500">{{ e.action }}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)">{{ e.container }}</span></li>
+                  </sc-for>
+                </ul>
+              </section>
+            </div>
+          </section>
+        </sc-if>
+
+        <sc-if value="{{ isDetail }}" hint-placeholder-val="{{ false }}">
+          <section data-screen-label="Stack detail" style="display:flex;flex-direction:column;gap:14px;min-width:0">
+            <header style="display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                <h1 style="margin:0;font-size:18px;font-weight:600;font-family:var(--mono)">{{ cur.name }}</h1>
+                <span style="display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:4px;background:{{ cur.toneSoft }};color:{{ cur.tone }};font-size:11px;font-weight:600;letter-spacing:.02em;text-transform:uppercase">{{ cur.status }}</span>
+                <span style="color:var(--muted);font-size:12px">{{ cur.running }}/{{ cur.serviceCount }} services up · {{ cur.origin }} · project <span style="font-family:var(--mono)">{{ cur.project }}</span></span>
+                <div style="flex:1"></div>
+                <div role="group" aria-label="Actions" style="display:flex;gap:6px;flex-wrap:wrap">
+                  <button type="button" onClick="{{ actUp }}" style="height:30px;padding:0 12px;border:0;border-radius:6px;background:var(--accent);color:var(--accent-ink);font-weight:600;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5v14l11-7z"></path></svg>Up</button>
+                  <button type="button" onClick="{{ actDown }}" style="height:30px;padding:0 12px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;cursor:pointer" style-hover="background:var(--hover)">Down</button>
+                  <button type="button" onClick="{{ actRestart }}" style="height:30px;padding:0 12px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;cursor:pointer" style-hover="background:var(--hover)">Restart</button>
+                  <button type="button" onClick="{{ actPull }}" style="height:30px;padding:0 12px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;cursor:pointer" style-hover="background:var(--hover)">Pull</button>
+                  <button type="button" onClick="{{ actBuild }}" style="height:30px;padding:0 12px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;cursor:pointer" style-hover="background:var(--hover)">Build</button>
+                  <button type="button" style="height:30px;padding:0 12px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--danger);font-size:13px;cursor:pointer" style-hover="background:var(--danger-soft)">Remove</button>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;font-family:var(--mono)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path></svg>{{ cur.path }}<button type="button" title="Copy path" style="border:0;background:transparent;color:var(--faint);cursor:pointer;padding:2px;display:grid" style-hover="color:var(--text)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button></div>
+            </header>
+
+            <div style="display:grid;grid-template-columns:minmax(0,1fr) {{ sideCol }};gap:16px;align-items:start">
+              <div style="min-width:0;display:flex;flex-direction:column;gap:12px">
+                <div role="tablist" style="display:flex;gap:2px;border-bottom:1px solid var(--border)">
+                  <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="5">
+                    <button type="button" role="tab" aria-selected="{{ t.selected }}" onClick="{{ t.select }}" style="height:34px;padding:0 12px;border:0;border-bottom:2px solid {{ t.underline }};margin-bottom:-1px;background:transparent;color:{{ t.color }};font-size:13px;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;gap:6px" style-hover="color:var(--text)">{{ t.label }}<sc-if value="{{ t.badge }}" hint-placeholder-val="{{ false }}"><span style="font-family:var(--mono);font-size:11px;color:var(--muted);background:var(--raised);border-radius:4px;padding:0 5px">{{ t.badge }}</span></sc-if></button>
+                  </sc-for>
+                </div>
+
+                <sc-if value="{{ tabServices }}" hint-placeholder-val="{{ true }}">
+                  <div style="display:flex;flex-direction:column;gap:8px">
+                    <sc-for list="{{ cur.services }}" as="svc" hint-placeholder-count="3">
+                      <article aria-label="{{ svc.name }}" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow)">
+                        <header style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)">
+                          <span style="width:8px;height:8px;border-radius:50%;background:{{ svc.tone }}"></span>
+                          <h2 style="margin:0;font-size:14px;font-weight:600;font-family:var(--mono)">{{ svc.name }}</h2>
+                          <span style="color:var(--muted);font-size:12px">{{ svc.health }}</span>
+                          <div style="flex:1"></div>
+                          <button type="button" onClick="{{ svc.logs }}" style="height:26px;padding:0 10px;border:1px solid var(--border);border-radius:5px;background:transparent;color:var(--muted);font-size:12px;cursor:pointer" style-hover="background:var(--hover);color:var(--text)">Logs</button>
+                          <button type="button" style="height:26px;padding:0 10px;border:1px solid var(--border-strong);border-radius:5px;background:var(--surface);color:var(--text);font-size:12px;font-weight:500;cursor:pointer" style-hover="background:var(--hover)">Edit</button>
+                        </header>
+                        <dl style="margin:0;padding:10px 14px;display:grid;grid-template-columns:90px minmax(0,1fr);gap:5px 12px;font-size:12.5px">
+                          <dt style="color:var(--muted)">Image</dt><dd style="margin:0;font-family:var(--mono);overflow-wrap:anywhere">{{ svc.image }}</dd>
+                          <dt style="color:var(--muted)">Ports</dt><dd style="margin:0;display:flex;gap:6px;flex-wrap:wrap"><sc-for list="{{ svc.ports }}" as="p" hint-placeholder-count="1"><code style="font-family:var(--mono);font-size:11.5px;background:var(--raised);border:1px solid var(--border);border-radius:4px;padding:1px 6px">{{ p }}</code></sc-for></dd>
+                          <dt style="color:var(--muted)">Volumes</dt><dd style="margin:0;display:flex;gap:6px;flex-wrap:wrap"><sc-for list="{{ svc.volumes }}" as="v" hint-placeholder-count="1"><code style="font-family:var(--mono);font-size:11.5px;background:var(--raised);border:1px solid var(--border);border-radius:4px;padding:1px 6px">{{ v }}</code></sc-for></dd>
+                          <dt style="color:var(--muted)">Restart</dt><dd style="margin:0;font-family:var(--mono)">{{ svc.restart }}</dd>
+                          <dt style="color:var(--muted)">Limits</dt><dd style="margin:0;font-family:var(--mono)">{{ svc.limits }}</dd>
+                        </dl>
+                      </article>
+                    </sc-for>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ tabCompose }}" hint-placeholder-val="{{ false }}">
+                  <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;box-shadow:var(--shadow)">
+                    <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);font-size:12px">
+                      <span style="font-family:var(--mono)">compose.yaml</span>
+                      <span style="color:var(--muted)">·</span><span style="color:var(--warning)">modified</span>
+                      <div style="flex:1"></div>
+                      <span style="color:var(--faint);font-family:var(--mono)">⌘S to save</span>
+                      <button type="button" style="height:26px;padding:0 10px;border:1px solid var(--border-strong);border-radius:5px;background:var(--surface);color:var(--text);font-size:12px;cursor:pointer" style-hover="background:var(--hover)">Preview diff</button>
+                      <button type="button" style="height:26px;padding:0 10px;border:0;border-radius:5px;background:var(--accent);color:var(--accent-ink);font-size:12px;font-weight:600;cursor:pointer">Save</button>
+                    </div>
+                    <div style="display:grid;grid-template-columns:40px minmax(0,1fr);font-family:var(--mono);font-size:12px;line-height:20px;padding:8px 0">
+                      <sc-for list="{{ yaml }}" as="y" hint-placeholder-count="12">
+                        <span style="text-align:right;padding-right:10px;color:var(--faint);user-select:none;background:{{ y.bg }}">{{ y.n }}</span>
+                        <span style="white-space:pre;padding-left:12px;background:{{ y.bg }}"><span style="color:{{ y.kc }}">{{ y.k }}</span><span style="color:{{ y.vc }}">{{ y.v }}</span></span>
+                      </sc-for>
+                    </div>
+                    <div style="padding:8px 12px;border-top:1px solid var(--border);color:var(--muted);font-size:12px">Saving keeps the previous version as <span style="font-family:var(--mono)">compose.yaml.bak</span>. Comments and key order are preserved.</div>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ tabLogs }}" hint-placeholder-val="{{ false }}">
+                  <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;box-shadow:var(--shadow);display:flex;flex-direction:column">
+                    <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);flex-wrap:wrap">
+                      <select style="height:26px;padding:0 8px;background:var(--raised);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:12px"><option>All services</option></select>
+                      <select style="height:26px;padding:0 8px;background:var(--raised);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:12px"><option>stdout + stderr</option></select>
+                      <select style="height:26px;padding:0 8px;background:var(--raised);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:12px"><option>Tail 200</option></select>
+                      <input type="search" placeholder="Search" style="height:26px;padding:0 8px;background:var(--raised);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:12px;width:180px">
+                      <div style="flex:1"></div>
+                      <span style="display:inline-flex;align-items:center;gap:6px;color:var(--success);font-size:12px"><span class="live" style="width:6px;height:6px;border-radius:50%;background:currentColor"></span>live · following</span>
+                      <button type="button" style="height:26px;padding:0 10px;border:1px solid var(--border-strong);border-radius:5px;background:var(--surface);color:var(--text);font-size:12px;cursor:pointer" style-hover="background:var(--hover)">Pause</button>
+                      <button type="button" style="height:26px;padding:0 10px;border:1px solid var(--border);border-radius:5px;background:transparent;color:var(--muted);font-size:12px;cursor:pointer" style-hover="background:var(--hover)">Clear</button>
+                    </div>
+                    <div role="log" style="height:420px;overflow:auto;background:var(--bg);padding:6px 0;font-family:var(--mono);font-size:11.5px;line-height:18px">
+                      <sc-for list="{{ logs }}" as="l" hint-placeholder-count="10">
+                        <div style="display:grid;grid-template-columns:72px 90px 44px minmax(0,1fr);gap:10px;padding:0 12px" style-hover="background:var(--surface)"><time style="color:var(--faint)">{{ l.time }}</time><span style="color:{{ l.color }};font-weight:500;overflow:hidden;text-overflow:ellipsis">{{ l.service }}</span><span style="color:{{ l.streamColor }}">{{ l.stream }}</span><span style="white-space:pre-wrap;overflow-wrap:anywhere;color:{{ l.textColor }}">{{ l.text }}</span></div>
+                      </sc-for>
+                    </div>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ tabMetrics }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;flex-direction:column;gap:10px">
+                    <div style="display:flex;align-items:center;gap:6px">
+                      <sc-for list="{{ ranges }}" as="r" hint-placeholder-count="4"><button type="button" onClick="{{ r.select }}" style="height:26px;padding:0 10px;border:1px solid {{ r.border }};border-radius:5px;background:{{ r.bg }};color:{{ r.color }};font-size:12px;font-family:var(--mono);cursor:pointer">{{ r.label }}</button></sc-for>
+                      <div style="flex:1"></div>
+                      <span style="color:var(--muted);font-size:12px">sampled every 10 s · retention 72 h</span>
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px">
+                      <sc-for list="{{ charts }}" as="c" hint-placeholder-count="6">
+                        <figure style="margin:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;box-shadow:var(--shadow)">
+                          <figcaption style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><span style="font-weight:500;font-size:12.5px">{{ c.title }}</span><span style="font-family:var(--mono);font-size:12px;color:var(--muted)">{{ c.latest }}</span></figcaption>
+                          <svg viewBox="0 0 300 90" preserveAspectRatio="none" style="width:100%;height:90px;display:block" role="img" aria-label="{{ c.title }}">
+                            <line x1="0" y1="89.5" x2="300" y2="89.5" stroke="var(--border)"></line><line x1="0" y1="45" x2="300" y2="45" stroke="var(--border)" stroke-dasharray="2 4"></line>
+                            <sc-for list="{{ c.series }}" as="s" hint-placeholder-count="2"><path d="{{ s.area }}" fill="{{ s.color }}" opacity="0.08"></path><path d="{{ s.path }}" fill="none" stroke="{{ s.color }}" stroke-width="1.5" vector-effect="non-scaling-stroke"></path></sc-for>
+                          </svg>
+                          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--muted)"><sc-for list="{{ c.series }}" as="s" hint-placeholder-count="2"><span style="display:inline-flex;align-items:center;gap:5px"><span style="width:8px;height:2px;background:{{ s.color }}"></span>{{ s.name }}</span></sc-for></div>
+                        </figure>
+                      </sc-for>
+                    </div>
+                  </div>
+                </sc-if>
+
+                <sc-if value="{{ tabOps }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;flex-direction:column;gap:10px">
+                    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;box-shadow:var(--shadow)">
+                      <sc-for list="{{ ops }}" as="o" hint-placeholder-count="4">
+                        <a href="#" onClick="{{ o.select }}" data-row="true" data-sel="{{ o.selStr }}" style="display:grid;grid-template-columns:70px 100px minmax(0,1fr) 110px 60px;gap:12px;align-items:center;padding:var(--pad) 12px;min-height:var(--row);border-bottom:1px solid var(--border);color:var(--text);text-decoration:none;font-size:12.5px">
+                          <span style="font-family:var(--mono);font-weight:500">{{ o.action }}</span>
+                          <span style="display:inline-flex;align-items:center;gap:6px;color:{{ o.tone }};font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.02em"><span style="width:6px;height:6px;border-radius:50%;background:currentColor"></span>{{ o.state }}</span>
+                          <span style="color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ o.summary }}</span>
+                          <span style="color:var(--muted);text-align:right">{{ o.when }}</span>
+                          <span style="color:var(--muted);text-align:right;font-family:var(--mono)">{{ o.dur }}</span>
+                        </a>
+                      </sc-for>
+                    </div>
+                    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;box-shadow:var(--shadow)">
+                      <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);font-size:12px">
+                        <span style="font-family:var(--mono);font-weight:500">docker compose {{ selOp.cmd }}</span>
+                        <span style="color:{{ selOp.tone }};font-weight:600;font-size:11px;text-transform:uppercase">{{ selOp.state }}</span>
+                        <span style="color:var(--muted)">{{ selOp.dur }} · exit {{ selOp.exit }}</span>
+                        <div style="flex:1"></div>
+                        <button type="button" style="height:24px;padding:0 8px;border:1px solid var(--border);border-radius:5px;background:transparent;color:var(--muted);font-size:12px;cursor:pointer" style-hover="background:var(--hover)">Copy output</button>
+                      </div>
+                      <div style="background:var(--bg);padding:8px 12px;font-family:var(--mono);font-size:11.5px;line-height:18px;max-height:260px;overflow:auto">
+                        <sc-for list="{{ selOp.lines }}" as="ln" hint-placeholder-count="6"><div style="white-space:pre-wrap;color:{{ ln.color }}">{{ ln.text }}</div></sc-for>
+                      </div>
+                    </div>
+                  </div>
+                </sc-if>
+              </div>
+
+              <sc-if value="{{ showSide }}" hint-placeholder-val="{{ true }}">
+                <aside style="display:flex;flex-direction:column;gap:12px;min-width:0">
+                  <section style="background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow)">
+                    <h3 style="margin:0;padding:9px 12px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)">Containers</h3>
+                    <ul style="list-style:none;margin:0;padding:4px 0">
+                      <sc-for list="{{ cur.containers }}" as="c" hint-placeholder-count="3">
+                        <li style="display:flex;align-items:center;gap:8px;padding:6px 12px;font-size:12px"><span style="width:7px;height:7px;border-radius:50%;background:{{ c.tone }};flex:none"></span><span style="font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1">{{ c.name }}</span><span style="color:var(--muted);white-space:nowrap">{{ c.status }}</span></li>
+                      </sc-for>
+                    </ul>
+                  </section>
+                  <section style="background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow)">
+                    <h3 style="margin:0;padding:9px 12px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)">Resources · now</h3>
+                    <dl style="margin:0;padding:8px 12px;display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:12px">
+                      <dt style="color:var(--muted)">CPU</dt><dd style="margin:0;font-family:var(--mono)">{{ cur.cpu }}</dd>
+                      <dt style="color:var(--muted)">Memory</dt><dd style="margin:0;font-family:var(--mono)">{{ cur.mem }}</dd>
+                      <dt style="color:var(--muted)">Net RX/TX</dt><dd style="margin:0;font-family:var(--mono)">{{ cur.net }}</dd>
+                    </dl>
+                  </section>
+                  <section style="background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow)">
+                    <h3 style="margin:0;padding:9px 12px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);display:flex;justify-content:space-between"><span>Recent operations</span><a href="#" onClick="{{ goOpsTab }}" style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--accent);text-decoration:none">All</a></h3>
+                    <ul style="list-style:none;margin:0;padding:4px 0">
+                      <sc-for list="{{ recentOps }}" as="o" hint-placeholder-count="3">
+                        <li style="display:flex;align-items:center;gap:8px;padding:6px 12px;font-size:12px"><span style="width:7px;height:7px;border-radius:50%;background:{{ o.tone }};flex:none"></span><span style="font-family:var(--mono);font-weight:500">{{ o.action }}</span><span style="color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ o.state }}</span><span style="color:var(--faint);white-space:nowrap">{{ o.when }}</span></li>
+                      </sc-for>
+                    </ul>
+                  </section>
+                </aside>
+              </sc-if>
+            </div>
+          </section>
+        </sc-if>
+
+        <sc-if value="{{ isCreate }}" hint-placeholder-val="{{ false }}">
+          <section data-screen-label="Create stack" style="max-width:720px;display:flex;flex-direction:column;gap:16px">
+            <div><h1 style="margin:0;font-size:18px;font-weight:600">New stack</h1><p style="margin:4px 0 0;color:var(--muted)">One service to start with. Stackstead writes <span style="font-family:var(--mono)">compose.yaml</span> under <span style="font-family:var(--mono)">/opt/stacks/&lt;name&gt;/</span>.</p></div>
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow)">
+              <div style="padding:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;border-bottom:1px solid var(--border)">
+                <label style="display:flex;flex-direction:column;gap:5px"><span style="font-weight:500;font-size:12px;color:var(--muted)">Stack name</span><input type="text" value="uptime-kuma" style="height:32px;padding:0 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:var(--mono)"><span style="font-size:11.5px;color:var(--faint)">Lowercase, digits, - and _. Max 63 characters.</span></label>
+                <label style="display:flex;flex-direction:column;gap:5px"><span style="font-weight:500;font-size:12px;color:var(--muted)">Service name</span><input type="text" value="uptime-kuma" style="height:32px;padding:0 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:var(--mono)"></label>
+              </div>
+              <div style="padding:14px;display:flex;flex-direction:column;gap:12px;border-bottom:1px solid var(--border)">
+                <div style="display:flex;align-items:center;gap:12px"><span style="font-weight:600;font-size:12.5px">Source</span><div role="radiogroup" style="display:inline-flex;border:1px solid var(--border-strong);border-radius:6px;overflow:hidden"><button type="button" style="height:26px;padding:0 10px;border:0;background:var(--accent-soft);color:var(--accent);font-size:12px;font-weight:600;cursor:pointer">Image</button><button type="button" style="height:26px;padding:0 10px;border:0;border-left:1px solid var(--border-strong);background:transparent;color:var(--muted);font-size:12px;cursor:pointer">Dockerfile</button></div></div>
+                <label style="display:flex;flex-direction:column;gap:5px"><span style="font-weight:500;font-size:12px;color:var(--muted)">Image</span><input type="text" value="louislam/uptime-kuma:1" style="height:32px;padding:0 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:var(--mono)"></label>
+              </div>
+              <sc-for list="{{ createGroups }}" as="g" hint-placeholder-count="3">
+                <div style="padding:14px;display:flex;flex-direction:column;gap:8px;border-bottom:1px solid var(--border)">
+                  <div style="display:flex;align-items:center;gap:8px"><span style="font-weight:600;font-size:12.5px">{{ g.title }}</span><span style="color:var(--faint);font-size:12px">{{ g.hint }}</span><div style="flex:1"></div><button type="button" style="height:24px;padding:0 8px;border:1px solid var(--border);border-radius:5px;background:transparent;color:var(--muted);font-size:12px;cursor:pointer" style-hover="background:var(--hover);color:var(--text)">+ Add</button></div>
+                  <sc-for list="{{ g.rows }}" as="row" hint-placeholder-count="1">
+                    <div style="display:flex;gap:8px"><input type="text" value="{{ row.a }}" style="height:30px;flex:1;min-width:0;padding:0 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px;font-family:var(--mono)"><sc-if value="{{ row.b }}" hint-placeholder-val="{{ false }}"><input type="text" value="{{ row.b }}" style="height:30px;flex:1;min-width:0;padding:0 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12.5px;font-family:var(--mono)"></sc-if><button type="button" title="Remove" style="width:30px;height:30px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--faint);cursor:pointer" style-hover="color:var(--danger)">×</button></div>
+                  </sc-for>
+                </div>
+              </sc-for>
+              <div style="padding:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;border-bottom:1px solid var(--border)">
+                <label style="display:flex;flex-direction:column;gap:5px"><span style="font-weight:500;font-size:12px;color:var(--muted)">Restart policy</span><select style="height:32px;padding:0 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px"><option>unless-stopped</option><option>always</option><option>on-failure</option><option>no</option></select></label>
+                <label style="display:flex;flex-direction:column;gap:5px"><span style="font-weight:500;font-size:12px;color:var(--muted)">CPUs</span><input type="text" value="0.5" style="height:32px;padding:0 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:var(--mono)"></label>
+                <label style="display:flex;flex-direction:column;gap:5px"><span style="font-weight:500;font-size:12px;color:var(--muted)">Memory</span><input type="text" value="512M" style="height:32px;padding:0 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:var(--mono)"></label>
+              </div>
+              <div style="padding:12px 14px;display:flex;align-items:center;gap:12px">
+                <label style="display:inline-flex;align-items:center;gap:8px;font-size:12.5px"><input type="checkbox" checked style="accent-color:var(--accent)">Start now <span style="font-family:var(--mono);color:var(--muted)">(up --build)</span></label>
+                <div style="flex:1"></div>
+                <a href="#" onClick="{{ goList }}" style="color:var(--muted);text-decoration:none;font-size:13px">Cancel</a>
+                <button type="button" onClick="{{ goList }}" style="height:30px;padding:0 14px;border:0;border-radius:6px;background:var(--accent);color:var(--accent-ink);font-weight:600;font-size:13px;cursor:pointer">Create stack</button>
+              </div>
+            </div>
+          </section>
+        </sc-if>
+
+        <sc-if value="{{ isImport }}" hint-placeholder-val="{{ false }}">
+          <section data-screen-label="Import stack" style="max-width:640px;display:flex;flex-direction:column;gap:16px">
+            <div><h1 style="margin:0;font-size:18px;font-weight:600">Import stack</h1><p style="margin:4px 0 0;color:var(--muted)">Register a compose file where it already lives. Nothing is moved or changed until you edit it.</p></div>
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;display:flex;flex-direction:column;gap:12px;box-shadow:var(--shadow)">
+              <label style="display:flex;flex-direction:column;gap:5px"><span style="font-weight:500;font-size:12px;color:var(--muted)">Compose file path</span><div style="display:flex;gap:8px"><input type="text" value="/home/ops/immich/docker-compose.yml" style="height:32px;flex:1;min-width:0;padding:0 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:var(--mono)"><button type="button" style="height:32px;padding:0 12px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;cursor:pointer" style-hover="background:var(--hover)">Browse…</button></div><span style="font-size:11.5px;color:var(--faint)">Absolute path. Browse lists the allowed directories only.</span></label>
+              <div style="border:1px solid var(--border);border-radius:6px;background:var(--bg);padding:10px 12px;display:flex;flex-direction:column;gap:4px;font-size:12px">
+                <div style="display:flex;justify-content:space-between;color:var(--muted)"><span>Preview</span><span style="color:var(--success)">parses OK</span></div>
+                <div style="display:flex;gap:16px;font-family:var(--mono)"><span>project <span style="color:var(--text)">immich</span></span><span>services <span style="color:var(--text)">4</span></span><span>ports <span style="color:var(--text)">2283</span></span></div>
+                <div style="color:var(--warning);display:flex;gap:6px;align-items:center"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path></svg>compose.override.yml found; override files are not supported yet.</div>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;justify-content:flex-end"><a href="#" onClick="{{ goList }}" style="color:var(--muted);text-decoration:none">Cancel</a><button type="button" onClick="{{ goList }}" style="height:30px;padding:0 14px;border:0;border-radius:6px;background:var(--accent);color:var(--accent-ink);font-weight:600;font-size:13px;cursor:pointer">Import stack</button></div>
+            </div>
+          </section>
+        </sc-if>
+
+        <sc-if value="{{ isSettings }}" hint-placeholder-val="{{ false }}">
+          <section data-screen-label="Settings" style="max-width:720px;display:flex;flex-direction:column;gap:16px">
+            <h1 style="margin:0;font-size:18px;font-weight:600">Settings</h1>
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow)">
+              <h2 style="margin:0;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600">System status</h2>
+              <dl style="margin:0;padding:10px 14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;font-size:12.5px">
+                <sc-for list="{{ sysStatus }}" as="s" hint-placeholder-count="4"><div><dt style="color:var(--muted);font-size:11.5px">{{ s.k }}</dt><dd style="margin:2px 0 0;display:flex;align-items:center;gap:6px;font-family:var(--mono)"><span style="width:7px;height:7px;border-radius:50%;background:{{ s.tone }}"></span>{{ s.v }}</dd></div></sc-for>
+              </dl>
+            </div>
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow)">
+              <h2 style="margin:0;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px">Prometheus token<span style="margin-left:auto;font-size:11px;color:var(--success);font-weight:600;text-transform:uppercase">configured</span></h2>
+              <div style="padding:12px 14px;display:flex;flex-direction:column;gap:10px;font-size:12.5px">
+                <p style="margin:0;color:var(--muted)"><span style="font-family:var(--mono);color:var(--text)">/metrics</span> is protected by a bearer token. Rotating issues a new one and revokes the old one immediately.</p>
+                <pre style="margin:0;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;font-family:var(--mono);font-size:11.5px;line-height:17px;color:var(--muted);overflow:auto">scrape_configs:
+  - job_name: stackstead
+    metrics_path: /metrics
+    authorization:
+      credentials: ••••••••••••••••
+    static_configs:
+      - targets: ['docker-host-01:8420']</pre>
+                <div style="display:flex;gap:8px"><button type="button" style="height:28px;padding:0 12px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);font-size:12.5px;cursor:pointer" style-hover="background:var(--hover)">Rotate token</button><button type="button" style="height:28px;padding:0 12px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--danger);font-size:12.5px;cursor:pointer" style-hover="background:var(--danger-soft)">Disable</button></div>
+              </div>
+            </div>
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow)">
+              <h2 style="margin:0;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600">Appearance</h2>
+              <div style="padding:12px 14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;font-size:12.5px">
+                <div style="display:flex;flex-direction:column;gap:5px"><span style="font-weight:500;font-size:12px;color:var(--muted)">Theme</span><div style="display:inline-flex;border:1px solid var(--border-strong);border-radius:6px;overflow:hidden;width:max-content"><button type="button" onClick="{{ setDark }}" style="height:26px;padding:0 12px;border:0;background:{{ darkBg }};color:{{ darkColor }};font-size:12px;font-weight:600;cursor:pointer">Dark</button><button type="button" onClick="{{ setLight }}" style="height:26px;padding:0 12px;border:0;border-left:1px solid var(--border-strong);background:{{ lightBg }};color:{{ lightColor }};font-size:12px;font-weight:600;cursor:pointer">Light</button></div></div>
+                <div style="display:flex;flex-direction:column;gap:5px"><span style="font-weight:500;font-size:12px;color:var(--muted)">Density</span><div style="display:inline-flex;border:1px solid var(--border-strong);border-radius:6px;overflow:hidden;width:max-content"><button type="button" onClick="{{ setCompact }}" style="height:26px;padding:0 12px;border:0;background:{{ compactBg }};color:{{ compactColor }};font-size:12px;font-weight:600;cursor:pointer">Compact</button><button type="button" onClick="{{ setComfy }}" style="height:26px;padding:0 12px;border:0;border-left:1px solid var(--border-strong);background:{{ comfyBg }};color:{{ comfyColor }};font-size:12px;font-weight:600;cursor:pointer">Comfortable</button></div></div>
+              </div>
+            </div>
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow)">
+              <h2 style="margin:0;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600">Account</h2>
+              <div style="padding:12px 14px;display:flex;flex-direction:column;gap:12px;font-size:12.5px">
+                <p style="margin:0;color:var(--muted)">Signed in as <strong style="color:var(--text)">admin</strong>. Changing the password signs out other sessions.</p>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">
+                  <label style="display:flex;flex-direction:column;gap:5px"><span style="font-weight:500;font-size:12px;color:var(--muted)">Current password</span><input type="password" style="height:32px;padding:0 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text)"></label>
+                  <label style="display:flex;flex-direction:column;gap:5px"><span style="font-weight:500;font-size:12px;color:var(--muted)">New password</span><input type="password" style="height:32px;padding:0 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text)"><span style="font-size:11.5px;color:var(--faint)">At least 12 characters.</span></label>
+                  <label style="display:flex;flex-direction:column;gap:5px"><span style="font-weight:500;font-size:12px;color:var(--muted)">Confirm</span><input type="password" style="height:32px;padding:0 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text)"></label>
+                </div>
+                <div style="display:flex;gap:8px"><button type="button" style="height:28px;padding:0 12px;border:0;border-radius:6px;background:var(--accent);color:var(--accent-ink);font-size:12.5px;font-weight:600;cursor:pointer">Change password</button><button type="button" onClick="{{ doLogout }}" style="height:28px;padding:0 12px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);font-size:12.5px;cursor:pointer" style-hover="background:var(--hover)">Log out</button></div>
+              </div>
+            </div>
+          </section>
+        </sc-if>
+      </main>
+    </div>
+
+    <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+      <div role="status" style="position:fixed;right:16px;bottom:16px;z-index:50;display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--surface);border:1px solid var(--border-strong);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.25);font-size:12.5px"><span style="width:7px;height:7px;border-radius:50%;background:var(--info)"></span>{{ toast }}<button type="button" onClick="{{ dismissToast }}" style="border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:16px;line-height:1;padding:0 2px">×</button></div>
+    </sc-if>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;dark&quot;,&quot;light&quot;],&quot;default&quot;:&quot;dark&quot;,&quot;tsType&quot;:&quot;'dark' | 'light'&quot;,&quot;section&quot;:&quot;Appearance&quot;},&quot;density&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;compact&quot;,&quot;comfortable&quot;],&quot;default&quot;:&quot;compact&quot;,&quot;tsType&quot;:&quot;'compact' | 'comfortable'&quot;,&quot;section&quot;:&quot;Appearance&quot;},&quot;sidePanel&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Stack detail&quot;}}">
+class Component extends DCLogic {
+  state = { view: 'list', stack: 'media', tab: 'services', filter: 'all', query: '', range: '6h', op: 'op3', toast: '', theme: null, density: null, ops: 1, topBy: 'cpu' };
+
+  renderVals() {
+    const st = this.state;
+    const theme = st.theme ?? this.props.theme ?? 'dark';
+    const density = st.density ?? this.props.density ?? 'compact';
+    const showSide = this.props.sidePanel ?? true;
+    const tone = { running: 'var(--success)', partial: 'var(--warning)', stopped: 'var(--muted)', unavailable: 'var(--danger)', unknown: 'var(--muted)', succeeded: 'var(--success)', failed: 'var(--danger)', cancelled: 'var(--muted)', timed_out: 'var(--warning)', healthy: 'var(--success)', exited: 'var(--muted)', restarting: 'var(--warning)' };
+    const soft = { running: 'var(--success-soft)', partial: 'var(--warning-soft)', stopped: 'var(--muted-soft)', unavailable: 'var(--danger-soft)', unknown: 'var(--muted-soft)' };
+    const go = (view, extra = {}) => (e) => { e && e.preventDefault && e.preventDefault(); this.setState({ view, ...extra }); };
+    const toast = (msg) => { this.setState({ toast: msg }); clearTimeout(this._t); this._t = setTimeout(() => this.setState({ toast: '' }), 3500); };
+
+    const svc = (name, image, ports, volumes, restart, limits, state, health) => ({ name, image, ports, volumes, restart, limits, tone: tone[state], health,
+      logs: () => this.setState({ tab: 'logs' }) });
+    const raw = [
+      { name: 'media', status: 'running', running: 3, serviceCount: 3, origin: 'managed', project: 'media', path: '/opt/stacks/media/compose.yaml', cpu: '4.2%', mem: '1.8 GB', net: '12 MB/s · 0.6 MB/s',
+        services: [
+          svc('jellyfin', 'jellyfin/jellyfin:10.9.11', ['8096:8096', '7359:7359/udp'], ['./config:/config', '/mnt/media:/media:ro'], 'unless-stopped', '2 cpus · 4G', 'running', 'healthy · up 3d'),
+          svc('sonarr', 'lscr.io/linuxserver/sonarr:4.0.9', ['8989:8989'], ['./sonarr:/config', '/mnt/media/tv:/tv'], 'unless-stopped', '—', 'running', 'up 3d'),
+          svc('qbittorrent', 'lscr.io/linuxserver/qbittorrent:4.6.5', ['8080:8080', '6881:6881', '6881:6881/udp'], ['./qbt:/config', '/mnt/downloads:/downloads'], 'unless-stopped', '1 cpu · 1G', 'running', 'up 3d'),
+        ],
+        containers: [['media-jellyfin-1', 'running', 'Up 3 days (healthy)'], ['media-sonarr-1', 'running', 'Up 3 days'], ['media-qbittorrent-1', 'running', 'Up 3 days']] },
+      { name: 'home-assistant', status: 'running', running: 2, serviceCount: 2, origin: 'external', project: 'homeassistant', path: '/home/ops/homeassistant/docker-compose.yml', cpu: '2.1%', mem: '612 MB', net: '0.4 MB/s · 0.1 MB/s',
+        services: [svc('homeassistant', 'ghcr.io/home-assistant/home-assistant:2026.10', ['8123:8123'], ['./config:/config'], 'unless-stopped', '—', 'running', 'up 12d'), svc('mosquitto', 'eclipse-mosquitto:2.0', ['1883:1883'], ['./mosquitto:/mosquitto'], 'always', '—', 'running', 'up 12d')],
+        containers: [['homeassistant', 'running', 'Up 12 days'], ['mosquitto', 'running', 'Up 12 days']] },
+      { name: 'monitoring', status: 'partial', running: 2, serviceCount: 3, origin: 'managed', project: 'monitoring', path: '/opt/stacks/monitoring/compose.yaml', cpu: '1.3%', mem: '940 MB', net: '0.2 MB/s · 0.1 MB/s',
+        services: [svc('prometheus', 'prom/prometheus:v2.54.1', ['9090:9090'], ['./prom:/etc/prometheus', 'prom-data:/prometheus'], 'unless-stopped', '—', 'running', 'up 6h'), svc('grafana', 'grafana/grafana:11.2.0', ['3000:3000'], ['grafana-data:/var/lib/grafana'], 'unless-stopped', '—', 'running', 'up 6h'), svc('loki', 'grafana/loki:3.1.1', ['3100:3100'], ['./loki:/etc/loki'], 'unless-stopped', '—', 'exited', 'exited (1) · 2h ago')],
+        containers: [['monitoring-prometheus-1', 'running', 'Up 6 hours'], ['monitoring-grafana-1', 'running', 'Up 6 hours'], ['monitoring-loki-1', 'exited', 'Exited (1) 2h ago']] },
+      { name: 'gitea', status: 'running', running: 2, serviceCount: 2, origin: 'managed', project: 'gitea', path: '/opt/stacks/gitea/compose.yaml', cpu: '0.4%', mem: '388 MB', net: '0.1 MB/s · 0.1 MB/s',
+        services: [svc('gitea', 'gitea/gitea:1.22', ['3001:3000', '2222:22'], ['./data:/data'], 'always', '—', 'running', 'up 9d'), svc('db', 'postgres:16-alpine', [], ['pg:/var/lib/postgresql/data'], 'always', '—', 'running', 'healthy · up 9d')],
+        containers: [['gitea-gitea-1', 'running', 'Up 9 days'], ['gitea-db-1', 'running', 'Up 9 days (healthy)']] },
+      { name: 'traefik', status: 'running', running: 1, serviceCount: 1, origin: 'managed', project: 'traefik', path: '/opt/stacks/traefik/compose.yaml', cpu: '0.6%', mem: '96 MB', net: '3.1 MB/s · 3.0 MB/s',
+        services: [svc('traefik', 'traefik:v3.1', ['80:80', '443:443'], ['/var/run/docker.sock:/var/run/docker.sock:ro', './acme:/acme'], 'always', '—', 'running', 'up 21d')],
+        containers: [['traefik-traefik-1', 'running', 'Up 21 days']] },
+      { name: 'paperless', status: 'stopped', running: 0, serviceCount: 4, origin: 'external', project: 'paperless', path: '/srv/paperless/docker-compose.yaml', cpu: '—', mem: '—', net: '—',
+        services: [svc('webserver', 'ghcr.io/paperless-ngx/paperless-ngx:2.12', ['8000:8000'], ['./data:/usr/src/paperless/data'], 'unless-stopped', '—', 'exited', 'exited (0)'), svc('broker', 'redis:7', [], [], 'unless-stopped', '—', 'exited', 'exited (0)'), svc('db', 'postgres:16', [], ['pgdata:/var/lib/postgresql/data'], 'unless-stopped', '—', 'exited', 'exited (0)'), svc('tika', 'apache/tika:2.9', [], [], 'unless-stopped', '—', 'exited', 'exited (0)')],
+        containers: [['paperless-webserver-1', 'exited', 'Exited (0) 5d ago'], ['paperless-broker-1', 'exited', 'Exited (0) 5d ago'], ['paperless-db-1', 'exited', 'Exited (0) 5d ago'], ['paperless-tika-1', 'exited', 'Exited (0) 5d ago']] },
+    ];
+    const seed = (str) => { let x = 0; for (const c of str) x = (x * 33 + c.charCodeAt(0)) >>> 0; return () => { x = (x * 1664525 + 1013904223) >>> 0; return x / 4294967296; }; };
+    const miniSpark = (key, base, amp) => { if (base === 0) return 'M0 17L60 17'; const rnd = seed(key); let v = base; const pts = []; for (let i = 0; i <= 20; i++) { v = Math.max(1, Math.min(16, v + (rnd() - 0.5) * amp)); pts.push(`${i ? 'L' : 'M'}${i * 3} ${(17 - v).toFixed(1)}`); } return pts.join(''); };
+    const netOf = { media: ['12 MB/s', '0.6 MB/s'], 'home-assistant': ['0.4 MB/s', '0.1 MB/s'], monitoring: ['0.2 MB/s', '0.1 MB/s'], gitea: ['0.1 MB/s', '0.1 MB/s'], traefik: ['3.1 MB/s', '3.0 MB/s'], paperless: ['—', '—'] };
+    const stacks = raw.map((s) => ({ ...s, tone: tone[s.status], toneSoft: soft[s.status],
+      healthy: s.running, unhealthy: s.serviceCount - s.running, unhealthyColor: s.serviceCount - s.running > 0 ? (s.status === 'stopped' ? 'var(--muted)' : 'var(--danger)') : 'var(--faint)',
+      ...((all) => ({ portList: all.slice(0, 3), portMore: Math.max(0, all.length - 3), portTitle: all.join(', ') }))(s.services.flatMap((x) => x.ports.map((p) => p.split(':')[0])).filter((p, i, a) => a.indexOf(p) === i)),
+      rx: netOf[s.name][0], tx: netOf[s.name][1],
+      cpuSpark: miniSpark(s.name + 'cpu', s.status === 'stopped' ? 0 : 6, 5), memSpark: miniSpark(s.name + 'mem', s.status === 'stopped' ? 0 : 9, 1.5),
+      cells: Array.from({ length: s.serviceCount }, (_, i) => (i < s.running ? tone.running : 'var(--border-strong)')),
+      containers: s.containers.map(([name, state, status]) => ({ name, status, tone: tone[state] })),
+      open: go('detail', { stack: s.name, tab: 'services' }),
+      up: () => toast(`docker compose up -d · ${s.name}`), down: () => toast(`docker compose down · ${s.name}`), restart: () => toast(`docker compose restart · ${s.name}`) }));
+    const cur = stacks.find((s) => s.name === st.stack) || stacks[0];
+
+    const counts = { all: stacks.length, running: 0, partial: 0, stopped: 0 };
+    stacks.forEach((s) => counts[s.status]++);
+    const filters = ['all', 'running', 'partial', 'stopped'].map((id) => { const on = st.filter === id; return { label: id[0].toUpperCase() + id.slice(1), count: counts[id], border: on ? 'var(--accent)' : 'var(--border)', bg: on ? 'var(--accent-soft)' : 'var(--surface)', color: on ? 'var(--accent)' : 'var(--text)', select: () => this.setState({ filter: id }) }; });
+    const q = st.query.trim().toLowerCase();
+    const visible = stacks.filter((s) => (st.filter === 'all' || s.status === st.filter) && (!q || s.name.includes(q) || s.project.includes(q) || s.path.includes(q)));
+
+    const host = [
+      { label: 'Containers', value: '10 running', sub: '4 exited · 1 bad', subColor: 'var(--warning)', pct: '67%', barColor: 'var(--success)' },
+      { label: 'CPU', value: '18%', sub: '8 cores', subColor: 'var(--muted)', pct: '18%', barColor: 'var(--accent)' },
+      { label: 'Memory', value: '6.2 / 16 GB', sub: '39% · swap 0', subColor: 'var(--muted)', pct: '39%', barColor: 'var(--accent)' },
+      { label: 'Disk · /opt/stacks', value: '412 GB free', sub: 'of 1.0 TB', subColor: 'var(--muted)', pct: '59%', barColor: 'var(--info)' },
+      { label: 'Network', value: '16 / 4 MB/s', sub: 'rx / tx · eth0', subColor: 'var(--muted)', pct: '16%', barColor: 'var(--info)' },
+      { label: 'Disk I/O', value: '1.6 MB/s', sub: 'r 1.2 · w 0.4 MB/s', subColor: 'var(--muted)', pct: '8%', barColor: 'var(--info)' },
+      { label: 'Volumes', value: '14', sub: '38 GB · 2 dangling', subColor: 'var(--warning)', pct: '14%', barColor: 'var(--muted)' },
+      { label: 'Uptime', value: '21d 4h', sub: 'load 1.42 / 1.10', subColor: 'var(--muted)', pct: '18%', barColor: 'var(--muted)' },
+      { label: 'Restarts · 24h', value: '3', sub: 'loki ×2 · sonarr ×1', subColor: 'var(--danger)', pct: '30%', barColor: 'var(--danger)' },
+    ];
+    const alerts = [
+      ['monitoring', 'exited', 'loki exited (1) and restart policy is unless-stopped; 2 restarts in 24h', '2h ago', 'failed'],
+      ['media', 'port clash', 'sonarr wants 8989 but it is held by a non-compose container (uptime-kuma)', 'yesterday', 'timed_out'],
+      ['paperless', 'override', 'compose.override.yaml found; override files are not supported yet', '5d ago', 'unknown'],
+    ].map(([stack, kind, text, when, t]) => ({ stack, kind, text, when, tone: tone[t], open: go('detail', { stack, tab: 'services' }) }));
+    const topData = {
+      cpu: [['jellyfin', 'media', 3.1, '3.1%'], ['homeassistant', 'home-assistant', 1.9, '1.9%'], ['prometheus', 'monitoring', 1.0, '1.0%'], ['qbittorrent', 'media', 0.8, '0.8%'], ['traefik', 'traefik', 0.6, '0.6%']],
+      mem: [['jellyfin', 'media', 1120, '1.1 GB'], ['prometheus', 'monitoring', 640, '640 MB'], ['homeassistant', 'home-assistant', 512, '512 MB'], ['qbittorrent', 'media', 410, '410 MB'], ['grafana', 'monitoring', 290, '290 MB']],
+    };
+    const topMax = topData[st.topBy][0][2];
+    const top = topData[st.topBy].map(([name, stack, n, value]) => ({ name, stack, value, pct: `${Math.round((n / topMax) * 100)}%`, color: st.topBy === 'cpu' ? 'var(--accent)' : 'var(--info)' }));
+    const evTone = { start: 'running', die: 'failed', stop: 'stopped', health: 'running', restart: 'timed_out', pull: 'unknown', create: 'running' };
+    const events = [
+      ['14:02:30', 'health', 'media-jellyfin-1 → healthy'], ['14:02:14', 'start', 'media-qbittorrent-1'], ['14:02:11', 'create', 'media-qbittorrent-1'], ['14:01:58', 'stop', 'media-qbittorrent-1'],
+      ['13:40:02', 'pull', 'jellyfin/jellyfin:10.9.11'], ['12:05:41', 'die', 'monitoring-loki-1 (exit 1)'], ['12:05:40', 'restart', 'monitoring-loki-1'],
+    ].map(([time, action, container]) => ({ time, action, container, tone: tone[evTone[action]] }));
+    const tb = (on) => ({ bg: on ? 'var(--accent-soft)' : 'transparent', color: on ? 'var(--accent)' : 'var(--muted)' });
+    const tcpu = tb(st.topBy === 'cpu'), tmem = tb(st.topBy === 'mem');
+
+    const rail = [
+      ['Stacks', 'list', 'M3 7 12 3l9 4-9 4-9-4zM3 12l9 4 9-4M3 17l9 4 9-4', ['list', 'detail']],
+      ['New stack', 'create', 'M12 5v14M5 12h14', ['create']],
+      ['Import', 'import', 'M12 3v12M7 10l5 5 5-5M4 21h16', ['import']],
+      ['Settings', 'settings', 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z', ['settings']],
+    ].map(([label, view, icon, views]) => { const on = views.includes(st.view); return { label, icon, go: go(view), current: on ? 'page' : undefined, selStr: on ? 'true' : 'false', color: on ? 'var(--accent)' : 'var(--muted)' }; });
+
+    const tabIds = [['services', 'Services', cur.serviceCount], ['compose', 'Compose', null], ['logs', 'Logs', null], ['metrics', 'Metrics', null], ['operations', 'Operations', 4]];
+    const tabs = tabIds.map(([id, label, badge]) => { const on = st.tab === id; return { label, badge, selected: on, underline: on ? 'var(--accent)' : 'transparent', color: on ? 'var(--text)' : 'var(--muted)', select: () => this.setState({ tab: id }) }; });
+
+    const hue = (n) => { let h = 0; for (const ch of n) h = (h * 31 + ch.charCodeAt(0)) % 360; return `hsl(${h} 60% ${theme === 'dark' ? 65 : 42}%)`; };
+    const logs = [
+      ['14:02:11.204', 'jellyfin', 'stdout', '[INF] Emby.Server.Implementations.ScheduledTasks.TaskManager: ExecuteQueuedTasks'],
+      ['14:02:12.017', 'sonarr', 'stdout', '[Info] RssSyncService: Starting RSS Sync'],
+      ['14:02:14.550', 'qbittorrent', 'stdout', '(N) 2026-10-14T14:02:14 - Peer ID: "-qB4650-"'],
+      ['14:02:15.102', 'sonarr', 'stderr', '[Warn] HttpClient: HTTP Error - Res: [GET] https://api.example.com/feed: 503.ServiceUnavailable'],
+      ['14:02:18.390', 'jellyfin', 'stdout', '[INF] Jellyfin.Api.Controllers.SessionController: Session ended for user ops'],
+      ['14:02:21.771', 'sonarr', 'stdout', '[Info] RssSyncService: RSS Sync Completed. Reports found: 42, Reports grabbed: 1'],
+      ['14:02:22.008', 'qbittorrent', 'stdout', '(N) Torrent "ubuntu-24.04.1-live-server-amd64.iso" added'],
+      ['14:02:25.115', 'jellyfin', 'stdout', '[INF] Jellyfin.Server.Implementations.Library.LibraryManager: Scan complete, 1 item updated'],
+      ['14:02:26.440', 'sonarr', 'stderr', '[Error] DownloadService: Couldn\'t add report to download queue. Connection refused (localhost:8080)'],
+      ['14:02:30.002', 'jellyfin', 'stdout', '[INF] Microsoft.AspNetCore.Hosting.Diagnostics: Request finished HTTP/1.1 GET /System/Info/Public 200'],
+      ['14:02:31.590', 'qbittorrent', 'stdout', '(I) DHT bootstrap complete, 318 nodes'],
+      ['14:02:33.228', 'sonarr', 'stdout', '[Info] RefreshSeriesService: Updating 3 series'],
+    ].map(([time, service, stream, text]) => ({ time, service, stream, text, color: hue(service), streamColor: stream === 'stderr' ? 'var(--danger)' : 'var(--faint)', textColor: text.includes('[Error]') ? 'var(--danger)' : text.includes('[Warn]') ? 'var(--warning)' : 'var(--text)' }));
+
+    const kc = 'var(--info)', vc = 'var(--text)', sc = 'var(--success)', cc = 'var(--faint)';
+    const yaml = [
+      ['# media stack - edited by hand, Stackstead keeps this comment', '', cc, cc],
+      ['services:', '', kc, vc], ['  jellyfin:', '', kc, vc], ['    image:', ' jellyfin/jellyfin:10.9.11', kc, sc],
+      ['    ports:', '', kc, vc], ['      - ', '"8096:8096"', vc, sc], ['      - ', '"7359:7359/udp"', vc, sc],
+      ['    volumes:', '', kc, vc], ['      - ', './config:/config', vc, sc], ['      - ', '/mnt/media:/media:ro', vc, sc],
+      ['    restart:', ' unless-stopped', kc, sc, true],
+      ['    deploy:', '', kc, vc, true], ['      resources:', '', kc, vc, true], ['        limits:', '', kc, vc, true], ['          cpus:', ' "2"', kc, sc, true], ['          memory:', ' 4G', kc, sc, true],
+      ['  sonarr:', '', kc, vc], ['    image:', ' lscr.io/linuxserver/sonarr:4.0.9', kc, sc], ['    ports:', '', kc, vc], ['      - ', '"8989:8989"', vc, sc],
+    ].map(([k, v, kcol, vcol, mod], i) => ({ n: i + 1, k, v, kc: kcol, vc: vcol, bg: mod ? 'var(--success-soft)' : 'transparent' }));
+
+    const ranges = ['1h', '6h', '24h', '72h'].map((r) => { const on = st.range === r; return { label: r, border: on ? 'var(--accent)' : 'var(--border)', bg: on ? 'var(--accent-soft)' : 'var(--surface)', color: on ? 'var(--accent)' : 'var(--muted)', select: () => this.setState({ range: r }) }; });
+    const palette = ['#3b82f6', '#f97316', '#10b981', '#eab308', '#ec4899', '#8b5cf6'];
+    const spark = (name, base, amp) => { const rnd = seed(name + st.range); let v = base; const pts = []; for (let i = 0; i <= 40; i++) { v = Math.max(2, Math.min(88, v + (rnd() - 0.5) * amp)); pts.push([i * 7.5, 90 - v]); } const path = pts.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(''); return { path, area: `${path}L300 90L0 90Z` }; };
+    const names = cur.services.map((s) => s.name);
+    const chart = (title, latest, bases, amp) => ({ title, latest, series: names.map((n, i) => ({ name: n, color: palette[i % palette.length], ...spark(n + title, bases[i % bases.length], amp) })) });
+    const charts = [chart('CPU (avg %)', cur.cpu, [30, 15, 10], 10), chart('Memory per container', cur.mem, [55, 30, 20], 2), chart('Network RX', '12.1 MB/s', [40, 20, 60], 20), chart('Network TX', '0.6 MB/s', [10, 8, 15], 8), chart('Block read', '1.2 MB/s', [20, 10, 30], 25), chart('Block write', '340 kB/s', [12, 6, 18], 18)];
+
+    const opsRaw = [
+      ['op1', 'up', 'running', 'docker compose up -d --build', 'just now', '0:42', '', ['[+] Building 12.4s (9/9) FINISHED', ' => [jellyfin internal] load build definition', ' => => transferring dockerfile: 412B', '[+] Running 3/3', ' ✔ Container media-jellyfin-1     Recreated', ' ✔ Container media-sonarr-1       Running', ' ⠿ Container media-qbittorrent-1  Starting']],
+      ['op2', 'pull', 'succeeded', 'docker compose pull', '2h ago', '0:18', '0', ['[+] Pulling 3/3', ' ✔ jellyfin Pulled', ' ✔ sonarr Pulled', ' ✔ qbittorrent Pulled']],
+      ['op3', 'restart', 'failed', 'docker compose restart sonarr', 'yesterday', '0:09', '1', ['[+] Restarting 1/1', ' ✘ Container media-sonarr-1  Error', 'Error response from daemon: driver failed programming external connectivity on endpoint media-sonarr-1:', 'Bind for 0.0.0.0:8989 failed: port is already allocated']],
+      ['op4', 'up', 'succeeded', 'docker compose up -d', '3d ago', '0:31', '0', ['[+] Running 4/4', ' ✔ Network media_default          Created', ' ✔ Container media-jellyfin-1     Started', ' ✔ Container media-sonarr-1       Started', ' ✔ Container media-qbittorrent-1  Started']],
+    ].map(([id, action, state, summary, when, dur, exit, lines]) => ({ id, action, state: state.replace('_', ' '), summary, when, dur, exit: exit || '—', cmd: summary.replace('docker compose ', ''), tone: tone[state], selStr: st.op === id ? 'true' : 'false', select: go('detail', { tab: 'operations', op: id }),
+      lines: lines.map((text) => ({ text, color: /✘|Error|failed/.test(text) ? 'var(--danger)' : /✔/.test(text) ? 'var(--success)' : 'var(--text)' })) }));
+    const selOp = opsRaw.find((o) => o.id === st.op) || opsRaw[0];
+
+    const sysStatus = [['Docker', '27.1.1 · ok', 'running'], ['Compose', 'v2.29.2', 'running'], ['Events', 'connected', 'running'], ['Metrics', 'ok · 10 s', 'running']].map(([k, v, s]) => ({ k, v, tone: tone[s] }));
+    const createGroups = [
+      { title: 'Ports', hint: 'host:container', rows: [{ a: '3001:3001', b: '' }] },
+      { title: 'Volumes', hint: 'host:container[:ro]', rows: [{ a: './data:/app/data', b: '' }] },
+      { title: 'Environment', hint: 'paste a .env to add many', rows: [{ a: 'TZ', b: 'Europe/Amsterdam' }, { a: 'PUID', b: '1000' }] },
+    ];
+    const seg = (on) => ({ bg: on ? 'var(--accent-soft)' : 'transparent', color: on ? 'var(--accent)' : 'var(--muted)' });
+    const d = seg(theme === 'dark'), l = seg(theme === 'light'), cp = seg(density === 'compact'), cf = seg(density === 'comfortable');
+    const act = (label) => () => { this.setState({ tab: 'operations', op: 'op1', ops: 1 }); toast(`Started: docker compose ${label} · ${cur.name}`); };
+
+    return {
+      theme, density, showSide, sideCol: showSide ? '300px' : '0px',
+      isLogin: st.view === 'login', isApp: st.view !== 'login', isList: st.view === 'list', isDetail: st.view === 'detail', isCreate: st.view === 'create', isImport: st.view === 'import', isSettings: st.view === 'settings',
+      crumb: st.view === 'detail' ? cur.name : st.view === 'create' ? 'new' : st.view === 'import' ? 'import' : st.view === 'settings' ? 'settings' : '',
+      runningOps: st.ops, goOps: go('detail', { stack: 'media', tab: 'operations', op: 'op1' }), goOpsTab: (e) => { e.preventDefault(); this.setState({ tab: 'operations' }); },
+      rail, host, filters, visible, noMatch: visible.length === 0,
+      alerts, alertCount: alerts.length, top, events, topCpu: () => this.setState({ topBy: 'cpu' }), topMem: () => this.setState({ topBy: 'mem' }),
+      topCpuBg: tcpu.bg, topCpuColor: tcpu.color, topMemBg: tmem.bg, topMemColor: tmem.color, query: st.query, setQuery: (e) => this.setState({ query: e.target.value }),
+      cur, tabs, tabServices: st.tab === 'services', tabCompose: st.tab === 'compose', tabLogs: st.tab === 'logs', tabMetrics: st.tab === 'metrics', tabOps: st.tab === 'operations',
+      yaml, logs, ranges, charts, ops: opsRaw, selOp, recentOps: opsRaw.slice(0, 3), sysStatus, createGroups,
+      actUp: act('up -d'), actDown: act('down'), actRestart: act('restart'), actPull: act('pull'), actBuild: act('build'),
+      goList: go('list'), goCreate: go('create'), goImport: go('import'), goSettings: go('settings'),
+      doLogin: (e) => { e.preventDefault(); this.setState({ view: 'list' }); }, doLogout: go('login'),
+      toggleTheme: () => this.setState({ theme: theme === 'dark' ? 'light' : 'dark' }),
+      themeIcon: theme === 'dark' ? 'M12 3v1M12 20v1M4.2 4.2l.7.7M19.1 19.1l.7.7M3 12h1M20 12h1M4.2 19.8l.7-.7M19.1 4.9l.7-.7M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z' : 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z',
+      setDark: () => this.setState({ theme: 'dark' }), setLight: () => this.setState({ theme: 'light' }), setCompact: () => this.setState({ density: 'compact' }), setComfy: () => this.setState({ density: 'comfortable' }),
+      darkBg: d.bg, darkColor: d.color, lightBg: l.bg, lightColor: l.color, compactBg: cp.bg, compactColor: cp.color, comfyBg: cf.bg, comfyColor: cf.color,
+      toast: st.toast, dismissToast: () => this.setState({ toast: '' }),
+    };
+  }
+}
+</script>
+</body>
+</html>
