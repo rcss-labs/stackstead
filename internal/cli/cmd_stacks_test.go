@@ -41,8 +41,9 @@ func t8Setup(t *testing.T, routes map[string]http.HandlerFunc) *testEnv {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { opStreamBackoff.Min, opStreamBackoff.Max = 0, 0 })
-	opStreamBackoff.Min, opStreamBackoff.Max = 5*time.Millisecond, 10*time.Millisecond
+	orig := streamBackoff
+	t.Cleanup(func() { streamBackoff = orig })
+	streamBackoff.Min, streamBackoff.Max = 5*time.Millisecond, 10*time.Millisecond
 	return te
 }
 

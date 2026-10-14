@@ -13,10 +13,6 @@ import (
 	"github.com/rcss-labs/stackstead/internal/client"
 )
 
-// opStreamBackoff tunes reconnect delays of operation streams; zero values
-// use the client defaults. Tests shrink it.
-var opStreamBackoff struct{ Min, Max time.Duration }
-
 // streamOperation streams one operation to completion, shared by the
 // lifecycle commands and `ops stream`.
 //
@@ -34,14 +30,8 @@ var opStreamBackoff struct{ Min, Max time.Duration }
 // client tracks it; the id-less "earlier lines dropped" note never moves it).
 func streamOperation(ctx context.Context, env *Env, p *Printer, c *client.Client, op apitypes.Operation) error {
 	var final *apitypes.Operation
-	opts := client.StreamOptions{
-		OnReconnect: func(attempt int, _ error) {
-			if !p.JSON {
-				fmt.Fprintf(env.Stderr, "note: connection to the server lost, reconnecting (attempt %d)...\n", attempt)
-			}
-		},
-	}
-	opts.Backoff.Min, opts.Backoff.Max = opStreamBackoff.Min, opStreamBackoff.Max
+	// The stream resumes from the highest line id, tracked by the client.
+	opts := streamOptions(env, nil, p.JSON)
 
 	err := c.StreamOperation(ctx, op.ID, opts, func(ev client.Event) error {
 		switch ev.Name {

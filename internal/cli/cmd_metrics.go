@@ -158,7 +158,7 @@ func metricsLive(ctx context.Context, env *Env, g *globalFlags, stack string) er
 	p := newPrinter(env, g)
 	return withAPI(env, g, func(c *client.Client, _ string, _ Context) error {
 		headerDone := false
-		err := c.StreamMetricsLive(ctx, stack, liveStreamOptions(env, nil), func(ev client.Event) error {
+		err := c.StreamMetricsLive(ctx, stack, streamOptions(env, nil, false), func(ev client.Event) error {
 			if ev.Name != "sample" {
 				return nil // "dropped": the client reconnects by itself
 			}
@@ -193,7 +193,7 @@ func eventsCommand() *Command {
 		Run: func(ctx context.Context, env *Env, g *globalFlags, args []string) error {
 			p := newPrinter(env, g)
 			return withAPI(env, g, func(c *client.Client, _ string, _ Context) error {
-				err := c.StreamEvents(ctx, liveStreamOptions(env, nil), func(ev client.Event) error {
+				err := c.StreamEvents(ctx, streamOptions(env, nil, false), func(ev client.Event) error {
 					if p.JSON {
 						if ev.Name == "status" || ev.Name == "change" {
 							return p.NDJSON(ev.Name, ev.ID, eventData(ev))

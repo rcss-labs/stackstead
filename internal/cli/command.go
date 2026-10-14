@@ -54,6 +54,9 @@ type Command struct {
 	Run              func(ctx context.Context, env *Env, g *globalFlags, args []string) error
 	Sub              []*Command
 	Hidden           bool
+	// Group is the heading this command is listed under in its parent's help
+	// ("" lists it in the default section).
+	Group string
 	// RawArgs hands Run the arguments untouched, without flag parsing (the
 	// command parses its own). Only `-h`/`--help` as the first argument is
 	// intercepted to print usage.
@@ -200,16 +203,27 @@ func usageText(env *Env, cmd *Command, path []string) string {
 		fmt.Fprintf(&b, "\n%s\n", cmd.Long)
 	}
 	if len(cmd.Sub) > 0 {
-		b.WriteString("\nCommands:\n")
 		width := 0
+		var groups []string // headings in order of first use
 		for _, s := range cmd.Sub {
-			if !s.Hidden {
-				width = max(width, len(s.Name))
+			if s.Hidden {
+				continue
+			}
+			width = max(width, len(s.Name))
+			if !slices.Contains(groups, s.Group) {
+				groups = append(groups, s.Group)
 			}
 		}
-		for _, s := range cmd.Sub {
-			if !s.Hidden {
-				fmt.Fprintf(&b, "  %-*s  %s\n", width, s.Name, s.Short)
+		for _, group := range groups {
+			heading := "Commands:"
+			if group != "" {
+				heading = group + ":"
+			}
+			b.WriteString("\n" + heading + "\n")
+			for _, s := range cmd.Sub {
+				if !s.Hidden && s.Group == group {
+					fmt.Fprintf(&b, "  %-*s  %s\n", width, s.Name, s.Short)
+				}
 			}
 		}
 	}
@@ -275,14 +289,4 @@ func isBareServeInvocation(args []string) bool {
 	fs := newFlagSet("serve")
 	fs.String("config", "", "")
 	return fs.Parse(args) == nil && fs.NArg() == 0
-}
-
-// rootCommand is the command tree. Task 10 moves it to commands.go and adds
-// the client and admin commands.
-func rootCommand() *Command {
-	return &Command{
-		Name:  "stackstead",
-		Short: "Stackstead: manage Docker Compose stacks",
-		Sub:   []*Command{serveCommand(), versionCommand()},
-	}
 }

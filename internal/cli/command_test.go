@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // testTree builds stackstead > stacks > {up <name> [--detach], ls}; got
@@ -351,5 +353,33 @@ func TestServeBadFlagExits2AndPrintsOnce(t *testing.T) {
 	}
 	if n := strings.Count(te.Err.String(), "bogus"); n != 1 {
 		t.Errorf("flag named %d times in %q, want once", n, te.Err.String())
+	}
+}
+
+func TestStreamOptionsUseTheSharedBackoffSeam(t *testing.T) {
+	orig := streamBackoff
+	t.Cleanup(func() { streamBackoff = orig })
+	streamBackoff.Min, streamBackoff.Max = 3*time.Millisecond, 4*time.Millisecond
+	te := newTestEnv(t, nil)
+
+	opts := streamOptions(te.Env, func() string { return "id-1" }, false)
+	if opts.Backoff.Min != 3*time.Millisecond || opts.Backoff.Max != 4*time.Millisecond {
+		t.Errorf("backoff = %+v, want the streamBackoff seam", opts.Backoff)
+	}
+	if opts.LastEventID == nil || opts.LastEventID() != "id-1" {
+		t.Error("LastEventID was not passed through")
+	}
+	if opts.OnReconnect == nil {
+		t.Fatal("OnReconnect is nil")
+	}
+	opts.OnReconnect(2, errors.New("boom\x1b[2J"))
+	if got := te.Err.String(); !strings.Contains(got, "reconnecting (attempt 2)") || strings.Contains(got, "\x1b") {
+		t.Errorf("reconnect note = %q", got)
+	}
+
+	quiet := newTestEnv(t, nil)
+	streamOptions(quiet.Env, nil, true).OnReconnect(1, nil)
+	if quiet.Err.String() != "" {
+		t.Errorf("quiet (JSON) mode printed %q", quiet.Err.String())
 	}
 }

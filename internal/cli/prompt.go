@@ -20,6 +20,9 @@ var readPassword = term.ReadPassword
 type secretSource struct {
 	Stdin bool
 	File  string
+	// AllowFile says the command also has a --password-file flag, so the
+	// non-terminal error may suggest it.
+	AllowFile bool
 }
 
 func stdinFd(env *Env) uintptr {
@@ -137,7 +140,11 @@ func readSecret(ctx context.Context, env *Env, src secretSource, prompt string, 
 			}
 		}
 	default:
-		return "", exitf(ExitUsage, "stdin is not a terminal: use --password-stdin or --password-file")
+		hint := "--password-stdin"
+		if src.AllowFile {
+			hint = "--password-stdin or --password-file"
+		}
+		return "", exitf(ExitUsage, "stdin is not a terminal: use %s", hint)
 	}
 	if secret == "" {
 		return "", exitf(ExitValidation, "the password is empty")

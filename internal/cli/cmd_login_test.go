@@ -681,3 +681,34 @@ func TestSingleLineMessagesCannotForgeLines(t *testing.T) {
 		t.Errorf("err = %q, want a single line", err)
 	}
 }
+
+func TestLoginRefusesContextOverwriteBeforePromptingOrContactingServer(t *testing.T) {
+	var hits int
+	srv := t6API(t, map[string]http.HandlerFunc{"POST /api/login": func(w http.ResponseWriter, r *http.Request) { hits++; w.WriteHeader(204) }})
+	te := newTestEnv(t, nil)
+	if err := newContextStore(te.Env).Save(Contexts{Version: 1, Current: "home", Contexts: map[string]Context{
+		"home": {URL: "https://home.example", Session: "S"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	te.IsTerminal = func(uintptr) bool { return true }
+	prompts := 0
+	orig := readPassword
+	readPassword = func(int) ([]byte, error) { prompts++; return []byte("pw"), nil }
+	t.Cleanup(func() { readPassword = orig })
+	err := t6Run(te, "login", srv.URL, "--context", "home")
+	if t6Code(err) != ExitConflict {
+		t.Fatalf("code %d (%v), want 5", t6Code(err), err)
+	}
+	if prompts != 0 || hits != 0 {
+		t.Errorf("password prompted %d times, server hit %d times; the conflict must be reported first", prompts, hits)
+	}
+}
+
+func TestLoginNonTTYErrorDoesNotMentionPasswordFile(t *testing.T) {
+	te := newTestEnv(t, nil)
+	err := t6Run(te, "login", "http://127.0.0.1:1")
+	if t6Code(err) != ExitUsage || err == nil || !strings.Contains(err.Error(), "--password-stdin") || strings.Contains(err.Error(), "password-file") {
+		t.Errorf("err = %v", err)
+	}
+}

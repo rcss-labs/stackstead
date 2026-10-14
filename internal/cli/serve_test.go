@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rcss-labs/stackstead/internal/config"
+	"github.com/rcss-labs/stackstead/internal/lockfile"
 	"github.com/rcss-labs/stackstead/internal/version"
 )
 
@@ -127,4 +130,72 @@ func TestServeLogsVersion(t *testing.T) {
 	if want := "version=" + version.Get().Version; !strings.Contains(te.Err.String(), want) {
 		t.Errorf("startup log lacks %s:\n%s", want, te.Err.String())
 	}
+}
+
+func serveTestEnv(t *testing.T) (*testEnv, string) {
+	t.Helper()
+	dir := t.TempDir()
+	orig := defaultConfigPath
+	defaultConfigPath = dir + "/no-such-config.yaml"
+	t.Cleanup(func() { defaultConfigPath = orig })
+	te := newTestEnv(t, map[string]string{
+		"STACKSTEAD_LISTEN":        "127.0.0.1:0",
+		"STACKSTEAD_DATA_DIR":      dir + "/data",
+		"STACKSTEAD_STACKS_DIR":    dir + "/stacks",
+		"STACKSTEAD_DOCKER_SOCKET": dir + "/nonexistent.sock",
+	})
+	return te, dir + "/data"
+}
+
+func TestServeRefusesWhileAnotherServerHoldsTheLock(t *testing.T) {
+	te, data := serveTestEnv(t)
+	if err := os.MkdirAll(data, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	held, err := lockfile.Acquire(filepath.Join(data, "stackstead.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Release()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = serve(ctx, te.Env, nil)
+	if codeFor(err) != ExitConflict {
+		t.Fatalf("serve returned %v (code %d), want exit 5", err, codeFor(err))
+	}
+	if !strings.Contains(err.Error(), "another stackstead server is running (pid ") {
+		t.Errorf("message = %q", err)
+	}
+}
+
+func TestServeReleasesTheLockWhenItReturns(t *testing.T) {
+	te, data := serveTestEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- serve(ctx, te.Env, nil) }()
+	lockPath := filepath.Join(data, "stackstead.lock")
+	deadline := time.After(15 * time.Second)
+	for !strings.Contains(te.Err.String(), "stackstead listening") {
+		select {
+		case err := <-done:
+			t.Fatalf("serve exited early: %v", err)
+		case <-deadline:
+			t.Fatal("serve did not start")
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	if l, err := lockfile.Acquire(lockPath); err == nil {
+		l.Release()
+		t.Fatal("the lock was free while serve was running")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	l, err := lockfile.Acquire(lockPath)
+	if err != nil {
+		t.Fatalf("the lock was not released: %v", err)
+	}
+	l.Release()
 }

@@ -196,6 +196,14 @@ func loginCommand() *Command {
 				fmt.Fprintf(env.Stderr, "warning: TLS verification is disabled for context %s\n", name)
 			}
 
+			// Refuse before asking for a password or contacting the server; the
+			// check inside Update below still covers a concurrent writer.
+			if existing, err := newContextStore(env).Load(); err == nil {
+				if err := contextConflict(existing, name, baseURL); err != nil {
+					return err
+				}
+			}
+
 			password, err := readSecret(ctx, env, secretSource{Stdin: passwordStdin}, "Password: ", false)
 			if err != nil {
 				return err
@@ -218,8 +226,8 @@ func loginCommand() *Command {
 				if all.Contexts == nil {
 					all.Contexts = map[string]Context{}
 				}
-				if old, ok := all.Contexts[name]; ok && old.URL != baseURL {
-					return exitf(ExitConflict, "context %s already points at %s; use --context <new-name> or stackstead context rm %s first", name, old.URL, name)
+				if err := contextConflict(*all, name, baseURL); err != nil {
+					return err
 				}
 				all.Version = contextsVersion
 				all.Contexts[name] = Context{URL: baseURL, Username: username, Session: session, ExpiresAt: expires, CAFile: caFile, Insecure: insecure}
@@ -240,6 +248,14 @@ func loginCommand() *Command {
 			return nil
 		},
 	}
+}
+
+// contextConflict refuses to repoint an existing context at another server.
+func contextConflict(all Contexts, name, baseURL string) error {
+	if old, ok := all.Contexts[name]; ok && old.URL != baseURL {
+		return exitf(ExitConflict, "context %s already points at %s; use --context <new-name> or stackstead context rm %s first", name, old.URL, name)
+	}
+	return nil
 }
 
 func expiryText(expires, now time.Time) string {

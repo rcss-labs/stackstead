@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"database/sql"
 	"errors"
 	"flag"
@@ -11,7 +10,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 
 	"github.com/rcss-labs/stackstead/internal/config"
@@ -157,18 +155,6 @@ func stdinIsTerminal(env *Env) bool {
 		fd = f.Fd()
 	}
 	return env.IsTerminal(fd)
-}
-
-// askYesNo prints prompt and reads one line from stdin. Used only until the
-// shared prompt helpers land; anything but y/yes declines.
-func askYesNo(env *Env, prompt string) bool {
-	fmt.Fprint(env.Stdout, prompt+" [y/N] ")
-	line, _ := bufio.NewReader(env.Stdin).ReadString('\n')
-	switch strings.ToLower(strings.TrimSpace(line)) {
-	case "y", "yes":
-		return true
-	}
-	return false
 }
 
 // syncDir fsyncs a directory so renames inside it are durable.
