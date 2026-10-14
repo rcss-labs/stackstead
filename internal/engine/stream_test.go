@@ -130,7 +130,7 @@ func TestStreamHeaderTimeoutBoundsConnect(t *testing.T) {
 	start := time.Now()
 	evs, errs := New(sock, 200*time.Millisecond).Events(ctx(t), time.Time{})
 	_, es := drainEvents(t, evs, errs)
-	if len(es) != 1 || !errors.Is(es[0], ErrUnavailable) || time.Since(start) > 2*time.Second {
+	if len(es) != 1 || !errors.Is(es[0], ErrUnavailable) || !errors.Is(es[0], context.DeadlineExceeded) || time.Since(start) > 2*time.Second {
 		t.Fatalf("errs %v after %v", es, time.Since(start))
 	}
 }
@@ -414,5 +414,105 @@ func TestStatsStoppedContainerError(t *testing.T) {
 	_, err := New(sock, 2*time.Second).Stats(ctx(t), "abc")
 	if err == nil || errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "not running") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// cutMidStream sends some bytes then closes the connection without finishing
+// the chunked body, as a crashing daemon would.
+func cutMidStream(prefix []byte) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/logs") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write(prefix)
+		w.(http.Flusher).Flush()
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			conn.Close()
+		}
+	})
+}
+
+func TestLogsDaemonCrashMidStreamIsUnavailable(t *testing.T) {
+	for name, tc := range map[string]struct {
+		tty  bool
+		body []byte
+	}{
+		"multiplexed at frame boundary": {false, frame(1, "2026-10-14T10:00:00Z hi\n")},
+		"multiplexed mid frame":         {false, frame(1, "2026-10-14T10:00:00Z hi\n")[:15]},
+		"tty":                           {true, []byte("2026-10-14T10:00:00Z hi\n")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			sock := serve(t, cutMidStream(tc.body))
+			lines, errs := New(sock, 2*time.Second).Logs(ctx(t), "abc", LogOptions{Follow: true, TTY: tc.tty})
+			_, es := collectLogs(t, lines, errs)
+			if len(es) != 1 || !errors.Is(es[0], ErrUnavailable) {
+				t.Fatalf("errs = %v", es)
+			}
+		})
+	}
+}
+
+func TestLogsTruncatedFinalFrameSurfacesError(t *testing.T) {
+	body := frame(1, "2026-10-14T10:00:00Z hi\n")
+	sock := serve(t, logHandler(t, body[:len(body)-4], nil)) // clean HTTP end, short frame
+	lines, errs := New(sock, 2*time.Second).Logs(ctx(t), "abc", LogOptions{})
+	_, es := collectLogs(t, lines, errs)
+	if len(es) != 1 || !errors.Is(es[0], io.ErrUnexpectedEOF) {
+		t.Fatalf("errs = %v", es)
+	}
+}
+
+func waitGoroutines(t *testing.T, baseline int) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for runtime.NumGoroutine() > baseline && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if n := runtime.NumGoroutine(); n > baseline {
+		buf := make([]byte, 1<<16)
+		t.Fatalf("goroutines %d > %d\n%s", n, baseline, buf[:runtime.Stack(buf, true)])
+	}
+}
+
+func TestAbandonedConsumerDoesNotLeak(t *testing.T) {
+	sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for i := 0; r.Context().Err() == nil && i < 100000; i++ {
+			if strings.HasSuffix(r.URL.Path, "/logs") {
+				w.Write(frame(1, "2026-10-14T10:00:00Z line\n"))
+			} else {
+				io.WriteString(w, evJSON("container", "start", "aaa"))
+			}
+			if i%50 == 0 {
+				w.(http.Flusher).Flush()
+			}
+		}
+	}))
+	cl := New(sock, 2*time.Second)
+	if err := cl.Ping(ctx(t)); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	before := runtime.NumGoroutine()
+	for i := 0; i < 3; i++ {
+		c, cancel := ctxCancel(t)
+		lines, lerrs := cl.Logs(c, "abc", LogOptions{Follow: true})
+		evs, eerrs := cl.Events(c, time.Time{})
+		<-lines
+		<-evs
+		time.Sleep(100 * time.Millisecond) // producers are now blocked sending
+		cancel()
+		_ = lerrs
+		_ = eerrs
+	}
+	waitGoroutines(t, before)
+}
+
+func TestParseLogLineWalkBackCappedAtThreeBytes(t *testing.T) {
+	raw := strings.Repeat("\x80", 3*maxLogLine) // only continuation bytes
+	got := parseLogLine("stdout", []byte(raw))
+	if len(got.Text) != maxLogLine-3 {
+		t.Fatalf("len = %d, want %d", len(got.Text), maxLogLine-3)
 	}
 }
