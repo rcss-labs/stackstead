@@ -1,0 +1,40 @@
+[Unit]
+Description=Stackstead Docker stack manager
+Documentation=https://github.com/rcss-labs/stackstead
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=stackstead
+Group=stackstead
+# Docker group membership is root-equivalent on the host; the hardening below
+# limits accidents in Stackstead's own process, it is not a security boundary.
+SupplementaryGroups=docker
+Environment=DOCKER_CONFIG=/var/lib/stackstead/.docker
+# A config typo fails here with the key name in the journal.
+ExecStartPre=/usr/bin/stackstead config validate --config /etc/stackstead/config.yaml
+ExecStart=/usr/bin/stackstead serve --config /etc/stackstead/config.yaml
+Restart=on-failure
+RestartSec=5
+StateDirectory=stackstead
+StateDirectoryMode=0700
+UMask=0027
+
+# Hardening. Deliberately not ProtectSystem=strict and no ProtectHome: stacks
+# are compose files the user registers anywhere on the filesystem.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

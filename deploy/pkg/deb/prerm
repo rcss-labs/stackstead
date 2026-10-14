@@ -1,0 +1,32 @@
+#!/bin/sh
+# Debian prerm: stop and disable on removal only; an upgrade keeps the service running.
+set -e
+
+R="${STACKSTEAD_PKG_ROOT:-}"
+UNIT=stackstead.service
+
+# systemctl is only usable on a host booted with systemd (not in chroots or
+# container image builds); every call is best-effort so a package operation
+# never fails because of the service manager.
+have_systemd() {
+    command -v systemctl >/dev/null 2>&1 && [ -d "$R/run/systemd/system" ]
+}
+
+sysctl() {
+    if have_systemd; then
+        systemctl "$@" || true
+    fi
+}
+
+case "$1" in
+    remove)
+        sysctl stop "$UNIT"
+        sysctl disable "$UNIT"
+        ;;
+    upgrade | deconfigure | failed-upgrade) ;;
+    *)
+        echo "prerm called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+exit 0

@@ -1,0 +1,6 @@
+# Go binaries are statically linked by design (CGO_ENABLED=0 release builds).
+stackstead: statically-linked-binary [usr/bin/stackstead]
+# Manual page deferred; `stackstead --help` and the README cover usage for now.
+stackstead: no-manual-page [usr/bin/stackstead]
+# nfpm does not generate a changelog; release notes live on the GitHub release page.
+stackstead: no-changelog [usr/share/doc/stackstead/changelog.Debian.gz]

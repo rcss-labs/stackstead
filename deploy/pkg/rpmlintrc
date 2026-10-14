@@ -1,0 +1,6 @@
+# Manual page deferred; `stackstead --help` and the README cover usage for now.
+addFilter("no-manual-page-for-binary")
+# nfpm does not emit a changelog; release notes live on the GitHub release page.
+addFilter("no-changelogname-tag")
+# /opt/stacks is setgid (2775 stackstead:docker) on purpose so compose projects share a group.
+addFilter("non-standard-dir-perm")

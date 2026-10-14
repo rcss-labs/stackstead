@@ -1,0 +1,16 @@
+#!/bin/sh
+# rpm %pre: $1 is the number of installed instances after this operation (1 install, 2 upgrade).
+set -e
+
+ensure_identity() {
+    getent group docker >/dev/null 2>&1 || groupadd --system docker
+    getent group stackstead >/dev/null 2>&1 || groupadd --system stackstead
+    getent passwd stackstead >/dev/null 2>&1 ||
+        useradd --system --gid stackstead --home-dir /var/lib/stackstead \
+            --no-create-home --shell /sbin/nologin stackstead
+}
+
+case "${1:-1}" in
+    1 | 2) ensure_identity ;;
+esac
+exit 0
