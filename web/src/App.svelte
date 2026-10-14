@@ -1,4 +1,244 @@
-<script lang="ts"></script>
-<main class="container">
-  <h1>Stackstead</h1>
-</main>
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { api, onUnauthorized } from '$lib/api/client';
+  import { bootstrapSession, expireSession, logout, session } from '$lib/api/session';
+  import Banner from '$lib/components/Banner.svelte';
+  import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+  import EmptyState from '$lib/components/EmptyState.svelte';
+  import Nav from '$lib/components/Nav.svelte';
+  import Spinner from '$lib/components/Spinner.svelte';
+  import Toasts from '$lib/components/Toasts.svelte';
+  import { link, matchRoute, navigate, route, startRouter } from '$lib/router';
+  import { changes, live, startLive, stopLive } from '$lib/stores/live';
+  import { unsavedChanges, setUnsavedChanges } from '$lib/stores/guard';
+  import { operationsRefresh, startStacks } from '$lib/stores/stacks';
+  import { toasts } from '$lib/stores/toasts';
+  import Login, { safeNext } from './routes/Login.svelte';
+  import Settings from './routes/Settings.svelte';
+  import Setup from './routes/Setup.svelte';
+  import StackCreate from './routes/StackCreate.svelte';
+  import StackDetail from './routes/StackDetail.svelte';
+  import StackImport from './routes/StackImport.svelte';
+  import StackList from './routes/StackList.svelte';
+
+  let runningOps = $state(0);
+  // The session store may hold a previous state; nothing is decided until this page load has asked the server.
+  let booted = $state(false);
+  let loggingOut = false;
+  let navHost: HTMLElement | undefined = $state();
+  let pendingHref = $state<string | undefined>();
+  let pendingLogout = $state(false);
+
+  const path = $derived($route.path);
+  const stackParams = $derived(matchRoute('/stacks/:name', path));
+  const view = $derived.by(() => {
+    if (path === '/') return 'list' as const;
+    if (path === '/stacks/new') return 'create' as const;
+    if (path === '/stacks/import') return 'import' as const;
+    if (stackParams) return 'detail' as const;
+    if (path === '/settings') return 'settings' as const;
+    return 'notfound' as const;
+  });
+
+  function sessionLost() {
+    // Already handled (e.g. the events stream got there first): a late 401 must not clobber ?next=.
+    if ($session.state !== 'authenticated') return;
+    stopLive();
+    const here = window.location.pathname + window.location.search;
+    expireSession();
+    navigate(here.startsWith('/login') || here === '/' ? '/login' : `/login?next=${encodeURIComponent(here)}`, {
+      replace: true,
+    });
+  }
+
+  onMount(() => {
+    const stopRouter = startRouter();
+    onUnauthorized(sessionLost);
+    bootstrapSession()
+      .catch(() => {
+        toasts.push({ kind: 'danger', message: 'Could not reach the Stackstead server' });
+      })
+      .finally(() => (booted = true));
+    return stopRouter;
+  });
+
+  // Session guards. Login and Setup redirect themselves after success.
+  $effect(() => {
+    const s = $session.state;
+    const p = $route.path;
+    if (!booted) return;
+    if (s === 'needs-setup' && p !== '/setup') {
+      navigate('/setup', { replace: true });
+    } else if (s === 'anonymous' && p !== '/login') {
+      if (loggingOut) navigate('/login', { replace: true });
+      else navigate(`/login?next=${encodeURIComponent(p + window.location.search)}`, { replace: true });
+    }
+    if (s === 'authenticated') {
+      loggingOut = false;
+      if (p === '/login') navigate(safeNext($route.query.get('next')), { replace: true });
+      else if (p === '/setup') navigate('/', { replace: true });
+    }
+  });
+
+  // The events stream answering 401 means the session is gone even if no API call has noticed yet.
+  $effect(() => {
+    if ($live.connection === 'unauthorized' && $session.state === 'authenticated') sessionLost();
+  });
+
+  // Live updates and the stack list live exactly as long as the session.
+  $effect(() => {
+    if ($session.state !== 'authenticated') return;
+    startLive({ fetchStatus: api.status });
+    const stopStacks = startStacks({ list: api.stacks, changes });
+    return () => {
+      stopStacks();
+      stopLive();
+    };
+  });
+
+  let opsSeq = 0;
+  $effect(() => {
+    void $changes;
+    void $operationsRefresh;
+    if ($session.state !== 'authenticated') {
+      runningOps = 0;
+      return;
+    }
+    const mine = ++opsSeq;
+    api
+      .runningOperations()
+      .then((ops) => {
+        if (mine === opsSeq) runningOps = ops.length;
+      })
+      .catch(() => {});
+  });
+
+  // Nav is a shared component with plain anchors; give them client-side navigation.
+  $effect(() => {
+    if (!navHost) return;
+    const actions = [...navHost.querySelectorAll<HTMLAnchorElement>('a[href]')].map((a) => link(a));
+    return () => actions.forEach((a) => a.destroy());
+  });
+
+  const dockerDown = $derived($live.events === 'disconnected' || $live.docker === 'unavailable');
+
+  $effect(() => {
+    const titles: Record<string, string> = {
+      list: 'Stacks',
+      settings: 'Settings',
+      notfound: 'Page not found',
+    };
+    if ($session.state === 'authenticated' && titles[view]) document.title = `${titles[view]} · Stackstead`;
+  });
+
+  function requestLogout() {
+    if ($unsavedChanges) pendingLogout = true;
+    else void handleLogout();
+  }
+  async function handleLogout() {
+    loggingOut = true;
+    setUnsavedChanges(false);
+    const { ok } = await logout();
+    if (!ok) toasts.push({ kind: 'warning', message: 'Logout may not have completed on the server' });
+    navigate('/login', { replace: true });
+  }
+
+  // A link click that would leave a page with unsaved editor changes asks first.
+  function guardLinks(ev: MouseEvent) {
+    if (!$unsavedChanges || ev.defaultPrevented || ev.button !== 0) return;
+    if (ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) return;
+    const a = (ev.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
+    if (!a || (a.target && a.target !== '_self') || a.hasAttribute('download')) return;
+    const url = new URL(a.href, window.location.href);
+    if (url.origin !== window.location.origin) return;
+    if (url.pathname === window.location.pathname && url.search === window.location.search) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    pendingHref = url.pathname + url.search + url.hash;
+  }
+  function leave() {
+    const href = pendingHref;
+    const logoutToo = pendingLogout;
+    pendingHref = undefined;
+    pendingLogout = false;
+    setUnsavedChanges(false);
+    if (logoutToo) void handleLogout();
+    else if (href) navigate(href);
+  }
+</script>
+
+{#if !booted || $session.state === 'unknown'}
+  <main class="container"><Spinner label="Loading Stackstead" /></main>
+{:else if $session.state === 'needs-setup'}
+  <main class="container"><Setup /></main>
+{:else if $session.state === 'anonymous'}
+  <main class="container"><Login /></main>
+{:else}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="layout" onclickcapture={guardLinks}>
+    <div bind:this={navHost}>
+      <Nav username={$session.username} onlogout={requestLogout} {runningOps} current={path} />
+    </div>
+    <div class="banners container">
+      {#if dockerDown}
+        <Banner kind="danger" title="Docker is unreachable">
+          {#snippet children()}Status may be stale; lifecycle actions are disabled.{/snippet}
+        </Banner>
+      {/if}
+      {#if $live.compose === 'unavailable'}
+        <Banner kind="warning" title="docker compose plugin not found">
+          {#snippet children()}Read-only mode: stacks can be viewed but not started or stopped.{/snippet}
+        </Banner>
+      {/if}
+      {#if $live.metricsDegraded}
+        <Banner kind="warning" title="Metrics are degraded">
+          {#snippet children()}Charts may have gaps until collection recovers.{/snippet}
+        </Banner>
+      {/if}
+      {#if $live.connection === 'reconnecting'}
+        <Banner kind="info" title="Live updates reconnecting">
+          {#snippet children()}Showing the last known state.{/snippet}
+        </Banner>
+      {/if}
+    </div>
+    <main class="container">
+      {#if view === 'list'}
+        <StackList />
+      {:else if view === 'create'}
+        <StackCreate />
+      {:else if view === 'import'}
+        <StackImport />
+      {:else if view === 'detail' && stackParams}
+        {#key stackParams.name}
+          <StackDetail name={stackParams.name} />
+        {/key}
+      {:else if view === 'settings'}
+        <Settings />
+      {:else}
+        <EmptyState title="Page not found" description="That page does not exist.">
+          <a href="/" use:link>Back to stacks</a>
+        </EmptyState>
+      {/if}
+    </main>
+  </div>
+  <ConfirmDialog
+    open={pendingHref !== undefined || pendingLogout}
+    title="Discard unsaved changes?"
+    message="You have unsaved changes in the editor. Leaving now discards them."
+    confirmLabel="Discard changes"
+    danger
+    onconfirm={leave}
+    oncancel={() => {
+      pendingHref = undefined;
+      pendingLogout = false;
+    }}
+  />
+{/if}
+<Toasts />
+
+<style>
+  .layout { display: flex; flex-direction: column; gap: var(--space-3); min-height: 100vh; }
+  .banners { display: flex; flex-direction: column; gap: var(--space-2); }
+  .banners:empty { display: none; }
+  main { padding-block: var(--space-4); }
+</style>
