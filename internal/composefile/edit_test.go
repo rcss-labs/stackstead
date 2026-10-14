@@ -290,6 +290,24 @@ networks:
 			edits: []edit{{path("services.web.image"), scalar("httpd")}},
 			want:  "services:\n  web:\n    image: httpd\t# pinned\n",
 		},
+		{
+			name:  "insert after flow sequence closing shallower than its key",
+			in:    "web:\n  a:\n    b: [\n  ]\n",
+			edits: []edit{{path("web.a.c"), scalar("1")}},
+			want:  "web:\n  a:\n    b: [\n  ]\n    c: 1\n",
+		},
+		{
+			name:  "replace flow sequence closing shallower than its key",
+			in:    "web:\n  a:\n    b: [\n  1]\n  c: 2\n",
+			edits: []edit{{path("web.a.b"), scalar("x")}},
+			want:  "web:\n  a:\n    b: x\n  c: 2\n",
+		},
+		{
+			name:  "tab-separated comment is kept when value becomes a block",
+			in:    "services:\n  web:\n    b: nginx\t# pinned\n",
+			edits: []edit{{path("services.web.b"), &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{scalar("k"), scalar("v")}}}},
+			want:  "services:\n  web:\n    b: # pinned\n      k: v\n",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

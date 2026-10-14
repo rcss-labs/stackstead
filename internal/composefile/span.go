@@ -1,8 +1,12 @@
 package composefile
 
 import (
+	"fmt"
+	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"go.yaml.in/yaml/v3"
 )
 
 // lines indexes a source document by line so yaml.v3 node positions
@@ -64,7 +68,7 @@ func (l lines) entryEnd(keyLine, keyIndent int, compactSeq bool) int {
 		}
 		ind := indentOf(t)
 		rest := t[ind:]
-		if ind > keyIndent || (ind == keyIndent && (strings.HasPrefix(rest, "]") || strings.HasPrefix(rest, "}"))) || (compactSeq && ind == keyIndent && (rest == "-" || strings.HasPrefix(rest, "- "))) {
+		if ind > keyIndent || (compactSeq && ind == keyIndent && (rest == "-" || strings.HasPrefix(rest, "- "))) {
 			end = n
 			continue
 		}
@@ -161,9 +165,67 @@ func trailingComment(line string, i int) string {
 	if i < 0 || i > len(line) {
 		return ""
 	}
-	rest := strings.TrimLeft(line[i:], " ")
+	rest := strings.TrimLeft(line[i:], " \t")
 	if strings.HasPrefix(rest, "#") {
 		return rest
 	}
 	return ""
+}
+
+// flowEndLine returns the line holding the bracket that closes the flow
+// collection starting at the 1-based line and character column, scanning the
+// source text so indentation does not matter.
+func (l lines) flowEndLine(line, col int) (int, error) {
+	pos := l.start[line-1] + l.column(line, col)
+	src := l.src
+	if pos >= len(src) || (src[pos] != '[' && src[pos] != '{') {
+		return 0, errUnsupportedLayout
+	}
+	depth := 0
+	var quote byte
+	for j := pos; j < len(src); j++ {
+		c := src[j]
+		switch {
+		case quote == '"' && c == '\\':
+			j++
+		case quote == '\'' && c == '\'' && j+1 < len(src) && src[j+1] == '\'':
+			j++
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+		case c == '#' && j > 0 && (src[j-1] == ' ' || src[j-1] == '\t' || src[j-1] == '\n'):
+			for j < len(src) && src[j] != '\n' {
+				j++
+			}
+		case c == '[' || c == '{':
+			depth++
+		case c == ']' || c == '}':
+			depth--
+			if depth == 0 {
+				// the line index is the last start offset at or before j
+				n := sort.Search(len(l.start), func(k int) bool { return l.start[k] > j })
+				return n, nil
+			}
+		}
+	}
+	return 0, errUnsupportedLayout
+}
+
+// entryEndFor is entryEnd extended so a multi-line flow collection value is
+// kept whole whatever indentation its closing bracket has.
+func (l lines) entryEndFor(keyLine, keyIndent int, compactSeq bool, val *yaml.Node) (int, error) {
+	end := l.entryEnd(keyLine, keyIndent, compactSeq)
+	if (val.Kind == yaml.MappingNode || val.Kind == yaml.SequenceNode) && val.Style&yaml.FlowStyle != 0 {
+		fe, err := l.flowEndLine(val.Line, val.Column)
+		if err != nil {
+			return 0, fmt.Errorf("%w: cannot find end of flow collection", err)
+		}
+		if fe > end {
+			end = fe
+		}
+	}
+	return end, nil
 }

@@ -63,7 +63,7 @@ func applyEdit(src []byte, e edit) ([]byte, error) {
 				return nil, errSharedNode
 			}
 			updated := blockCopy(m)
-			if err := setInTree(updated, e.path[i:], e.value); err != nil {
+			if err := setInTree(updated, e.path[i:], e.value, e.path[:i]); err != nil {
 				return nil, err
 			}
 			return replaceValue(l, mKey, m, updated, lay)
@@ -73,7 +73,7 @@ func applyEdit(src []byte, e edit) ([]byte, error) {
 			if e.value == nil {
 				return src, nil
 			}
-			return insertEntry(l, m, nested(e.path[i:], e.value), lay), nil
+			return insertEntry(l, m, nested(e.path[i:], e.value), lay)
 		}
 		if val.Kind == yaml.AliasNode || val.Anchor != "" {
 			return nil, errSharedNode
@@ -89,7 +89,7 @@ func applyEdit(src []byte, e edit) ([]byte, error) {
 				// Deleting the only key would leave a null; keep an empty mapping.
 				return replaceValue(l, mKey, m, &yaml.Node{Kind: yaml.MappingNode, Style: yaml.FlowStyle}, lay)
 			}
-			return deleteEntry(l, key, val), nil
+			return deleteEntry(l, key, val)
 		}
 		if val.Kind == yaml.ScalarNode && val.ShortTag() == "!!null" {
 			if e.value == nil {
@@ -128,7 +128,7 @@ func hasAnchorOrAlias(n *yaml.Node) bool {
 }
 
 // setInTree applies an edit to an in-memory node tree (used for flow mappings).
-func setInTree(m *yaml.Node, path []string, value *yaml.Node) error {
+func setInTree(m *yaml.Node, path []string, value *yaml.Node, done []string) error {
 	for i := 0; i+1 < len(m.Content); i += 2 {
 		if m.Content[i].Value != path[0] {
 			continue
@@ -136,7 +136,7 @@ func setInTree(m *yaml.Node, path []string, value *yaml.Node) error {
 		child := m.Content[i+1]
 		switch {
 		case len(path) > 1 && child.Kind == yaml.MappingNode:
-			return setInTree(child, path[1:], value)
+			return setInTree(child, path[1:], value, append(done[:len(done):len(done)], path[0]))
 		case len(path) > 1:
 			if child.Kind == yaml.ScalarNode && child.ShortTag() == "!!null" {
 				if value != nil {
@@ -144,7 +144,7 @@ func setInTree(m *yaml.Node, path []string, value *yaml.Node) error {
 				}
 				return nil
 			}
-			return fmt.Errorf("%w: %s", errPathNotMapping, path[0])
+			return fmt.Errorf("%w: %s", errPathNotMapping, strings.Join(append(done[:len(done):len(done)], path[0]), "."))
 		case value == nil:
 			m.Content = append(m.Content[:i], m.Content[i+2:]...)
 		default:
@@ -174,7 +174,10 @@ func replaceValue(l lines, key, old, value *yaml.Node, lay layout) ([]byte, erro
 		return nil, fmt.Errorf("%w: cannot find ':' after key %q", errUnsupportedLayout, key.Value)
 	}
 	compact := old.Kind == yaml.SequenceNode && old.Style&yaml.FlowStyle == 0 && old.Column-1 == keyIndent
-	end := l.entryEnd(keyLine, keyIndent, compact)
+	end, err := l.entryEndFor(keyLine, keyIndent, compact, old)
+	if err != nil {
+		return nil, err
+	}
 	blockScalar := old.Style&(yaml.LiteralStyle|yaml.FoldedStyle) != 0
 	// "key:" with nothing after it is a null with no text of its own.
 	implicitNull := old.Kind == yaml.ScalarNode && old.Value == "" && old.Style == 0 && old.ShortTag() == "!!null"
@@ -225,23 +228,29 @@ func replaceValue(l lines, key, old, value *yaml.Node, lay layout) ([]byte, erro
 }
 
 // insertEntry adds entry (a single-key mapping node) after m's last entry.
-func insertEntry(l lines, m, entry *yaml.Node, lay layout) []byte {
+func insertEntry(l lines, m, entry *yaml.Node, lay layout) ([]byte, error) {
 	lastKey, lastVal := m.Content[len(m.Content)-2], m.Content[len(m.Content)-1]
 	keyIndent := m.Content[0].Column - 1
 	compact := lastVal.Kind == yaml.SequenceNode && lastVal.Style&yaml.FlowStyle == 0 && lastVal.Column == lastKey.Column
-	end := l.entryEnd(lastKey.Line, lastKey.Column-1, compact)
+	end, err := l.entryEndFor(lastKey.Line, lastKey.Column-1, compact, lastVal)
+	if err != nil {
+		return nil, err
+	}
 	text := "\n" + indentLines(encode(entry, lay.unit), keyIndent)
 	at := l.lineEnd(end)
-	return splice(l.src, at, at, text)
+	return splice(l.src, at, at, text), nil
 }
 
 // deleteEntry removes the lines of the entry whose key node is key.
-func deleteEntry(l lines, key, val *yaml.Node) []byte {
+func deleteEntry(l lines, key, val *yaml.Node) ([]byte, error) {
 	compact := val.Kind == yaml.SequenceNode && val.Style&yaml.FlowStyle == 0 && val.Column == key.Column
-	end := l.entryEnd(key.Line, key.Column-1, compact)
+	end, err := l.entryEndFor(key.Line, key.Column-1, compact, val)
+	if err != nil {
+		return nil, err
+	}
 	stop := len(l.src)
 	if end < l.count() {
 		stop = l.start[end]
 	}
-	return splice(l.src, l.start[key.Line-1], stop, "")
+	return splice(l.src, l.start[key.Line-1], stop, ""), nil
 }
