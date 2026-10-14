@@ -148,10 +148,10 @@ func TestDarwin(t *testing.T) {
 			}
 		}
 		contains(t, "stdout", out,
-			"would run: chown", "alice",
 			"launchctl bootout gui/501/"+darwinLabel,
 			"launchctl bootstrap gui/501 /Users/alice/Library/LaunchAgents/"+darwinLabel+".plist",
 			"-u alice")
+		notContains(t, "stdout", out, "chown")
 	})
 
 	t.Run("RefusesPlainRoot", func(t *testing.T) {
@@ -654,4 +654,169 @@ func assertWellFormedXML(t *testing.T, s string) {
 			t.Fatalf("plist is not well-formed XML: %v\n%s", err, s)
 		}
 	}
+}
+
+// rootSim runs install.sh for real (no --root) with `id -u` reporting 0, so
+// the script behaves as under sudo: per-user work must go through
+// `sudo -H -u <user>`. The sudo stub logs and then runs the command as the
+// test's own user in a throwaway home and prefix.
+func rootSim(t *testing.T) (f *fixture, home, prefix string, env map[string]string) {
+	t.Helper()
+	requireNonRoot(t)
+	r := newRun(t)
+	dist := publishRelease(t, r, "1.0.0", "darwin", nil, nil)
+	stubs := darwinStubs(true)
+	stubs["id"] = `case "$*" in -u) echo 0 ;; -un) echo root ;; "-u "*) exec /usr/bin/id -u ;; "-gn "*) exec /usr/bin/id -gn ;; *) exit 1 ;; esac`
+	stubs["sudo"] = `while [ $# -gt 0 ]; do case "$1" in -H) shift ;; -u) shift 2 ;; *) break ;; esac; done
+exec "$@"`
+	f = fixtureFromDist(t, r, dist, "1.0.0", stubs)
+	f.stubD = stubPath(t, f.stubs)
+	home = filepath.Join(r.Dir, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prefix = filepath.Join(r.Dir, "prefix")
+	env = map[string]string{"SUDO_USER": "alice", "FAKE_HOME": home, "FAKE_STACKSTEAD_LOG": filepath.Join(r.Dir, "stackstead.log"), "STUBS_DIR": f.stubD, "TMPDIR": f.tmpDir}
+	return f, home, prefix, env
+}
+
+func runRootSim(t *testing.T, f *fixture, env map[string]string, prefix string, args ...string) (string, string, int) {
+	t.Helper()
+	return runScript(t, append([]string{"--base-url", f.base, "--prefix", prefix, "--no-start"}, args...), env, nil)
+}
+
+// Root must never write into a user's home with its own privileges: every
+// per-user file operation runs as that user, through unpredictable temp names.
+func TestDarwinRootNeverActsInTheUsersHome(t *testing.T) {
+	t.Run("PlantedTempSymlinksAreNotFollowed", func(t *testing.T) {
+		f, home, prefix, env := rootSim(t)
+		victim := filepath.Join(home, "victim")
+		writeFile(t, victim, []byte("secret"), 0o600)
+		agents := filepath.Join(home, "Library", "LaunchAgents")
+		support := filepath.Join(home, "Library", "Application Support", "Stackstead")
+		for _, p := range []string{filepath.Join(agents, darwinLabel+".plist.new"), filepath.Join(support, "config.yaml.new")} {
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(victim, p); err != nil {
+				t.Fatal(err)
+			}
+		}
+		out, errOut, code := runRootSim(t, f, env, prefix)
+		mustExit(t, code, 0, out, errOut)
+		if string(readFile(t, victim)) != "secret" {
+			t.Error("a planted .new symlink was followed: the victim file was overwritten")
+		}
+		assertMode(t, victim, 0o600)
+		if fi, err := os.Lstat(filepath.Join(agents, darwinLabel+".plist")); err != nil || !fi.Mode().IsRegular() {
+			t.Errorf("plist is not a regular file: %v", err)
+		}
+	})
+
+	t.Run("EveryPerUserWriteGoesThroughTheUser", func(t *testing.T) {
+		f, home, prefix, env := rootSim(t)
+		out, errOut, code := runRootSim(t, f, env, prefix)
+		mustExit(t, code, 0, out, errOut)
+		log := stubLog(f.stubD, "sudo")
+		var sawMkdir, sawMv bool
+		for _, l := range strings.Split(strings.TrimSpace(log), "\n") {
+			if !strings.HasPrefix(l, "-H -u alice ") {
+				t.Errorf("sudo line is not a plain 'sudo -H -u alice ...': %q", l)
+			}
+			if strings.HasPrefix(l, "-H -u alice mkdir -p "+filepath.Join(home, "Library", "Logs", "Stackstead")) {
+				sawMkdir = true
+			}
+			if strings.HasPrefix(l, "-H -u alice mv -f ") && strings.HasSuffix(l, " "+filepath.Join(home, "Library", "LaunchAgents", darwinLabel+".plist")) {
+				sawMv = true
+			}
+		}
+		if !sawMkdir || !sawMv {
+			t.Errorf("missing user-run mkdir/mv for the plist (mkdir=%v mv=%v):\n%s", sawMkdir, sawMv, log)
+		}
+		if l := stubLog(f.stubD, "chown"); l != "" {
+			t.Errorf("chown must not be used: %q", l)
+		}
+		notContains(t, "stdout", out, "chown")
+		// writes under the prefix stay with root, not the user
+		assertMode(t, filepath.Join(prefix, "bin", "stackstead"), 0o755)
+	})
+
+	t.Run("DockerRunsAsTheUserWithAnExtendedPATH", func(t *testing.T) {
+		f, _, prefix, env := rootSim(t)
+		out, errOut, code := runRootSim(t, f, env, prefix)
+		mustExit(t, code, 0, out, errOut)
+		found := false
+		for _, l := range strings.Split(stubLog(f.stubD, "sudo"), "\n") {
+			if strings.HasPrefix(l, "-H -u alice env PATH=") && strings.Contains(l, "/opt/homebrew/bin") && strings.HasSuffix(l, " docker context inspect --format {{(index .Endpoints \"docker\").Host}}") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("docker context inspect did not run via sudo -H -u alice env PATH=...:\n%s", stubLog(f.stubD, "sudo"))
+		}
+	})
+
+	t.Run("PlantedToolsInTheHomeNeverRunAsRoot", func(t *testing.T) {
+		f, home, prefix, env := rootSim(t)
+		marker := filepath.Join(home, "marker")
+		for _, tool := range []string{"timeout", "sha256sum", "awk", "tar", "sed"} {
+			writeFile(t, filepath.Join(home, ".docker", "bin", tool), []byte("#!/bin/sh\necho "+tool+" >> "+marker+"\nexit 1\n"), 0o755)
+		}
+		out, errOut, code := runRootSim(t, f, env, prefix)
+		mustExit(t, code, 0, out, errOut)
+		if fileExists(marker) {
+			t.Errorf("a tool planted in the user's home ran as root: %s", readFile(t, marker))
+		}
+	})
+}
+
+func TestDarwinRefusesUIDZeroTarget(t *testing.T) {
+	f := newDarwinFixture(t, true, "1.0.0")
+	f.stubs["id"] = `case "$*" in -u) echo 0 ;; -un) echo root ;; "-u "*) echo 0 ;; "-gn "*) echo wheel ;; *) exit 1 ;; esac`
+	out, errOut, code := f.run("--user", "alice")
+	mustExit(t, code, 8, out, errOut)
+	if reqs := requestsTo(f.base); len(reqs) != 0 {
+		t.Errorf("refusal must precede downloads: %v", reqs)
+	}
+}
+
+func TestDarwinVerification(t *testing.T) {
+	t.Run("ChecksumMismatchIsRefused", func(t *testing.T) {
+		f := newDarwinFixture(t, false, "1.0.0")
+		fh, err := os.OpenFile(filepath.Join(f.dist, "v1.0.0", "stackstead_1.0.0_darwin_arm64.tar.gz"), os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = fh.WriteString("tampered")
+		_ = fh.Close()
+		out, errOut, code := f.run("--version", "v1.0.0")
+		mustExit(t, code, 6, out, errOut)
+		assertNothingStaged(t, f)
+	})
+	t.Run("AssetMissingFromSumsIsRefused", func(t *testing.T) {
+		f := newDarwinFixture(t, false, "1.0.0")
+		writeFile(t, filepath.Join(f.dist, "v1.0.0", "SHA256SUMS"), []byte(strings.Repeat("0", 64)+"  something_else.tar.gz\n"), 0o644)
+		out, errOut, code := f.run("--version", "v1.0.0")
+		mustExit(t, code, 6, out, errOut)
+		assertNothingStaged(t, f)
+	})
+}
+
+func TestDarwinPlistSubstitutesOnce(t *testing.T) {
+	f := newDarwinFixture(t, true, "1.0.0")
+	out, errOut, code := f.runEnv(map[string]string{"SUDO_USER": "alice", "FAKE_HOME": "/Users/a@LOG@b"})
+	mustExit(t, code, 0, out, errOut)
+	plist := string(readFile(t, f.p("Users/a@LOG@b/Library/LaunchAgents/"+darwinLabel+".plist")))
+	contains(t, "plist", plist, "<string>/Users/a@LOG@b/Library/Application Support/Stackstead/config.yaml</string>", "<string>/Users/a@LOG@b</string>")
+}
+
+func TestStacksDirOwnedByDockerGroupDoesNotWarn(t *testing.T) {
+	f := newFixture(t, "1.0.0")
+	if err := os.MkdirAll(f.p("opt/stacks"), 0o775); err != nil {
+		t.Fatal(err)
+	}
+	f.stubs["ls"] = `echo "drwxrwsr-x 2 root docker 64 Jan  1 00:00 /x"`
+	out, errOut, code := f.run()
+	mustExit(t, code, 0, out, errOut)
+	notContains(t, "stderr", errOut, "cannot write")
 }

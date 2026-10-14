@@ -919,7 +919,6 @@ do_install() {
 
 AS_ROOT=
 TARGET_USER=
-TARGET_GROUP=
 TARGET_UID=
 TARGET_HOME=
 SUPPORT_DIR=
@@ -929,6 +928,7 @@ AGENT_DIR=
 PLIST=
 DOCKER_SOCKET=
 PLIST_CHANGED=
+USER_PATH=
 
 # resolve_target_user: the account the LaunchAgent belongs to. Under sudo that
 # is $SUDO_USER, never root; a plain root login must say who with --user.
@@ -954,7 +954,7 @@ resolve_target_user() {
 	-* | *[!A-Za-z0-9._-]*) die 8 "not a valid account name: $TARGET_USER" ;;
 	esac
 	TARGET_UID=$(id -u "$TARGET_USER" 2>/dev/null) || die 8 "no such user: $TARGET_USER"
-	TARGET_GROUP=$(id -gn "$TARGET_USER" 2>/dev/null) || TARGET_GROUP=staff
+	[ "$TARGET_UID" != 0 ] || die 8 "refusing to install a LaunchAgent for uid 0 ($TARGET_USER); use a regular account"
 	TARGET_HOME=$(dscl . -read "/Users/$TARGET_USER" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory:[[:space:]]*//p' | head -n 1) || TARGET_HOME=
 	if [ -z "$TARGET_HOME" ]; then
 		TARGET_HOME=$(eval "echo ~$TARGET_USER" 2>/dev/null) || TARGET_HOME=
@@ -976,8 +976,27 @@ darwin_paths() {
 	LOG=$LOG_DIR/stackstead.log
 	AGENT_DIR=$TARGET_HOME/Library/LaunchAgents
 	PLIST=$AGENT_DIR/$LABEL.plist
-	# Docker's CLI lives in different places depending on the distribution
-	PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$TARGET_HOME/.docker/bin
+	# Root's own PATH must never gain user-writable directories: only the
+	# commands run as the user get Docker's usual locations.
+	if [ -n "$AS_ROOT" ]; then
+		safe_path
+	fi
+	USER_PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$TARGET_HOME/.docker/bin
+}
+
+# safe_path: drop empty, relative and home-directory entries from PATH.
+safe_path() {
+	sp_out=
+	sp_rest=$PATH:
+	while [ -n "$sp_rest" ]; do
+		sp_e=${sp_rest%%:*}
+		sp_rest=${sp_rest#*:}
+		case $sp_e in
+		"$TARGET_HOME" | "$TARGET_HOME"/*) continue ;;
+		/*) sp_out=${sp_out:+$sp_out:}$sp_e ;;
+		esac
+	done
+	PATH=$sp_out
 }
 
 platform_setup() {
@@ -1020,18 +1039,23 @@ priv_put_file() {
 	priv mv -f "$2.new" "$2"
 }
 
-# chown_user PATH...: hand freshly created per-user files to the target user
-# when running as root.
-chown_user() {
-	[ -n "$AS_ROOT" ] || return 0
-	svc chown -R "$TARGET_USER:$TARGET_GROUP" "$@"
-}
-
 # as_user CMD...: run as the target user (a sudo run is root); a shell function
 # so it is only for commands that need no time limit.
 as_user() {
 	if [ -n "$AS_ROOT" ] && [ -z "$ROOT" ]; then
-		sudo -H -u "$TARGET_USER" env "PATH=$PATH" "$@"
+		sudo -H -u "$TARGET_USER" env "PATH=$USER_PATH" "$@"
+	else
+		env "PATH=$USER_PATH" "$@"
+	fi
+}
+
+# as_fs CMD...: a file operation inside the user's home. Root never touches
+# those files itself (the user may have planted symlinks there): it runs the
+# operation as the user, so everything created is theirs and nothing can be
+# redirected with root's privileges.
+as_fs() {
+	if [ -n "$AS_ROOT" ] && [ -z "$ROOT" ]; then
+		sudo -H -u "$TARGET_USER" "$@"
 	else
 		"$@"
 	fi
@@ -1052,25 +1076,31 @@ limited_as_user() {
 	lau_out=$2
 	shift 2
 	if [ "$OS" = darwin ] && [ -n "$AS_ROOT" ]; then
-		limited "$lau_secs" "$lau_out" sudo -H -u "$TARGET_USER" "$@"
+		limited "$lau_secs" "$lau_out" sudo -H -u "$TARGET_USER" env "PATH=$USER_PATH" "$@"
 	else
 		limited "$lau_secs" "$lau_out" "$@"
 	fi
 }
 
-# user_make_dir PATH MODE: create with mode and ownership only when missing.
+# user_make_dir PATH MODE: create (as the user) with mode only when missing.
 user_make_dir() {
 	d=$(rp "$1")
 	[ ! -d "$d" ] || return 0
-	mkdir -p "$d"
-	chmod "$2" "$d"
-	chown_user "$d"
+	as_fs mkdir -p "$d" || die 7 "cannot create $d"
+	as_fs chmod "$2" "$d" || die 7 "cannot set the mode of $d"
 }
 
-# user_put_file SRC DEST MODE: put_file, then ownership.
+# user_put_file SRC DEST MODE: write DEST as the user through an unpredictable
+# temp name in its directory, then rename over it. SRC is read by us and
+# handed over on stdin (the staging dir is not readable by the user).
 user_put_file() {
-	put_file "$1" "$2" "$3"
-	chown_user "$2"
+	up_dir=$(dirname "$2")
+	as_fs mkdir -p "$up_dir" || die 7 "cannot create $up_dir"
+	up_tmp=$(as_fs mktemp "$up_dir/.stackstead.XXXXXX") || die 7 "cannot create a temporary file in $up_dir"
+	if ! as_fs sh -c "cat >\"\$1\"" sh "$up_tmp" <"$1" || ! as_fs chmod "$3" "$up_tmp" || ! as_fs mv -f "$up_tmp" "$2"; then
+		as_fs rm -f "$up_tmp" || true
+		die 7 "cannot write $2"
+	fi
 }
 
 # yaml_scalar VALUE: plain when that is safe, otherwise single-quoted.
@@ -1111,20 +1141,26 @@ generate_config() { # DEST
 render_plist() {
 	PL_LABEL=$(xml_escape "$LABEL") PL_BIN=$(xml_escape "$BIN") PL_CONFIG=$(xml_escape "$CONFIG") \
 		PL_LOG=$(xml_escape "$LOG") PL_HOME=$(xml_escape "$TARGET_HOME") awk '
-		function rep(s, tok, val,    out, i) {
+		function subst(s,    out, i, j, tok) {
 			out = ""
-			while ((i = index(s, tok)) > 0) { out = out substr(s, 1, i - 1) val; s = substr(s, i + length(tok)) }
+			while ((i = index(s, "@")) > 0) {
+				out = out substr(s, 1, i - 1)
+				s = substr(s, i)
+				j = index(substr(s, 2), "@")
+				if (j > 0) {
+					tok = substr(s, 1, j + 1)
+					if (tok in V) { out = out V[tok]; s = substr(s, j + 2); continue }
+				}
+				out = out "@"
+				s = substr(s, 2)
+			}
 			return out s
 		}
-		{
-			line = $0
-			line = rep(line, "@LABEL@", ENVIRON["PL_LABEL"])
-			line = rep(line, "@BIN@", ENVIRON["PL_BIN"])
-			line = rep(line, "@CONFIG@", ENVIRON["PL_CONFIG"])
-			line = rep(line, "@LOG@", ENVIRON["PL_LOG"])
-			line = rep(line, "@HOME@", ENVIRON["PL_HOME"])
-			print line
-		}' "$STAGE/launchagent.plist.in" >"$1"
+		BEGIN {
+			V["@LABEL@"] = ENVIRON["PL_LABEL"]; V["@BIN@"] = ENVIRON["PL_BIN"]; V["@CONFIG@"] = ENVIRON["PL_CONFIG"]
+			V["@LOG@"] = ENVIRON["PL_LOG"]; V["@HOME@"] = ENVIRON["PL_HOME"]
+		}
+		{ print subst($0) }' "$STAGE/launchagent.plist.in" >"$1"
 }
 
 install_files_darwin() {
@@ -1195,7 +1231,7 @@ configure_service_darwin() {
 }
 
 docker_check_darwin() {
-	if ! have docker; then
+	if ! as_user docker --version >/dev/null 2>&1; then
 		warn "Docker is not installed; Docker Desktop, OrbStack or Colima must be installed and running for stacks to work"
 		return 0
 	fi
@@ -1265,7 +1301,7 @@ confirm_purge() {
 do_uninstall_darwin() {
 	PHASE=install
 	agent_cmd launchctl bootout "gui/$TARGET_UID/$LABEL" || true
-	rm -f "$(rp "$PLIST")"
+	as_fs rm -f "$(rp "$PLIST")"
 	priv rm -f "$(rp "$BIN")" "$(rp "$BIN").new"
 	priv rm -rf "$(rp "$HELPER_DIR")"
 	if have pkgutil && pkgutil --pkg-info "$LABEL" >/dev/null 2>&1; then
@@ -1273,7 +1309,7 @@ do_uninstall_darwin() {
 	fi
 	say "Removed $(rp "$BIN"), $(rp "$PLIST") and $(rp "$HELPER_DIR")"
 	if [ -n "$PURGE" ]; then
-		rm -rf "$(rp "$SUPPORT_DIR")" "$(rp "$LOG_DIR")"
+		as_fs rm -rf "$(rp "$SUPPORT_DIR")" "$(rp "$LOG_DIR")"
 		say "Purged $(rp "$SUPPORT_DIR") and $(rp "$LOG_DIR")"
 	else
 		note "kept $(rp "$SUPPORT_DIR") and $(rp "$LOG_DIR") (use --purge --yes to remove them, stacks included)"
