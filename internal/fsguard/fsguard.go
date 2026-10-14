@@ -10,8 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"syscall"
 	"strings"
+	"syscall"
 )
 
 // ErrOutsideRoots means the path is not inside any allowed directory.
