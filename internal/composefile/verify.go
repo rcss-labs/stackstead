@@ -3,6 +3,7 @@ package composefile
 import (
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 
 	"go.yaml.in/yaml/v3"
@@ -31,7 +32,7 @@ func verifyEdits(orig, edited []byte, edits []edit) error {
 		}
 		want = applyToValue(want, e.path, e.value != nil, v)
 	}
-	if !reflect.DeepEqual(want, got) {
+	if !sameValue(want, got) {
 		return errVerification
 	}
 	return nil
@@ -61,4 +62,50 @@ func applyToValue(node any, path []string, set bool, v any) any {
 	}
 	m[path[0]] = applyToValue(child, path[1:], set, v)
 	return m
+}
+
+// sameValue is reflect.DeepEqual for decoded YAML, except that NaN equals NaN
+// so a ".nan" anywhere in the file does not make every edit look wrong.
+func sameValue(a, b any) bool {
+	switch a := a.(type) {
+	case float64:
+		b, ok := b.(float64)
+		return ok && (a == b || math.IsNaN(a) && math.IsNaN(b))
+	case []any:
+		b, ok := b.([]any)
+		if !ok || len(a) != len(b) {
+			return false
+		}
+		for i := range a {
+			if !sameValue(a[i], b[i]) {
+				return false
+			}
+		}
+		return true
+	case map[string]any:
+		b, ok := b.(map[string]any)
+		if !ok || len(a) != len(b) {
+			return false
+		}
+		for k, v := range a {
+			bv, found := b[k]
+			if !found || !sameValue(v, bv) {
+				return false
+			}
+		}
+		return true
+	case map[any]any:
+		b, ok := b.(map[any]any)
+		if !ok || len(a) != len(b) {
+			return false
+		}
+		for k, v := range a {
+			bv, found := b[k]
+			if !found || !sameValue(v, bv) {
+				return false
+			}
+		}
+		return true
+	}
+	return reflect.DeepEqual(a, b)
 }

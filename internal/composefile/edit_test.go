@@ -357,6 +357,30 @@ networks:
 			want:  "web:\n  b: 1\n",
 		},
 		{
+			name:  "apostrophe in flow sequence keeps trailing comment",
+			in:    "web:\n  a: [it's] # keep\n  b: 1\n",
+			edits: []edit{{path("web.a"), scalar("R")}},
+			want:  "web:\n  a: R # keep\n  b: 1\n",
+		},
+		{
+			name:  "colon then quote in flow sequence keeps trailing comment",
+			in:    "web:\n  a: [echo:'hi] # keep\n  b: 1\n",
+			edits: []edit{{path("web.a"), scalar("R")}},
+			want:  "web:\n  a: R # keep\n  b: 1\n",
+		},
+		{
+			name:  "apostrophe in flow sequence keeps comment holding quote and bracket",
+			in:    "web:\n  a: [it's] # c']\n  b: 1\n",
+			edits: []edit{{path("web.a"), scalar("R")}},
+			want:  "web:\n  a: R # c']\n  b: 1\n",
+		},
+		{
+			name:  "NaN elsewhere in the file does not fail verification",
+			in:    "x-cfg:\n  ratio: .nan\nservices:\n  web:\n    image: a\n",
+			edits: []edit{{path("services.web.image"), scalar("b")}},
+			want:  "x-cfg:\n  ratio: .nan\nservices:\n  web:\n    image: b\n",
+		},
+		{
 			name:  "comment directly after comma in flow sequence: delete",
 			in:    "web:\n  a: [x,#c]\n y]\n  b: 1\n",
 			edits: []edit{{path("web.a"), nil}},
@@ -404,6 +428,30 @@ func TestApplyEditsRefuses(t *testing.T) {
 		{
 			name: "CRLF line endings",
 			in:   "services:\r\n  web:\r\n    image: nginx\r\n",
+			e:    edit{path("services.web.image"), scalar("x")},
+			want: errUnsupportedLayout,
+		},
+		{
+			name: "lone CR line break",
+			in:   "services:\n  web:\n    a: [x, #\ry]\n    image: nginx\n",
+			e:    edit{path("services.web.image"), scalar("x")},
+			want: errUnsupportedLayout,
+		},
+		{
+			name: "NEL line break",
+			in:   "services:\n  web:\n    a: [x, #\u0085y]\n    image: nginx\n",
+			e:    edit{path("services.web.image"), scalar("x")},
+			want: errUnsupportedLayout,
+		},
+		{
+			name: "line separator",
+			in:   "services:\n  web:\n    a: [x, #\u2028y]\n    image: nginx\n",
+			e:    edit{path("services.web.image"), scalar("x")},
+			want: errUnsupportedLayout,
+		},
+		{
+			name: "paragraph separator",
+			in:   "services:\n  web:\n    a: [x, #\u2029y]\n    image: nginx\n",
 			e:    edit{path("services.web.image"), scalar("x")},
 			want: errUnsupportedLayout,
 		},

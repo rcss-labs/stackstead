@@ -78,68 +78,26 @@ func (l lines) entryEnd(keyLine, keyIndent int, compactSeq bool) int {
 }
 
 // inlineEnd returns the index just past the single-line scalar or flow
-// collection that starts at index i of line, or -1 if it continues past the line.
+// collection (optionally tagged) that starts at index i of line, or -1 if it
+// continues past the line.
 func inlineEnd(line string, i int) int {
 	if i >= len(line) {
 		return i
 	}
-	switch line[i] {
-	case '"':
-		for j := i + 1; j < len(line); j++ {
-			if line[j] == '\\' {
-				j++
-				continue
-			}
-			if line[j] == '"' {
-				return j + 1
-			}
-		}
-		return -1
-	case '\'':
-		for j := i + 1; j < len(line); j++ {
-			if line[j] == '\'' {
-				if j+1 < len(line) && line[j+1] == '\'' {
-					j++
-					continue
-				}
-				return j + 1
-			}
-		}
-		return -1
-	case '[', '{':
-		depth := 0
-		var quote byte
-		for j := i; j < len(line); j++ {
-			c := line[j]
-			switch {
-			case quote == '"' && c == '\\':
-				j++
-			case quote != 0:
-				if c == quote {
-					quote = 0
-				}
-			case c == '"' || c == '\'':
-				quote = c
-			case c == '[' || c == '{':
-				depth++
-			case c == ']' || c == '}':
-				depth--
-				if depth == 0 {
-					return j + 1
-				}
-			}
-		}
-		return -1
-	default:
-		end := len(line)
-		for j := i + 1; j < len(line); j++ {
-			if line[j] == '#' && (line[j-1] == ' ' || line[j-1] == '\t') {
-				end = j
-				break
-			}
-		}
-		return i + len(strings.TrimRight(line[i:end], " \t"))
+	switch k := skipTag(line, i); {
+	case k < len(line) && (line[k] == '"' || line[k] == '\''):
+		return quotedEnd([]byte(line), k)
+	case k < len(line) && (line[k] == '[' || line[k] == '{'):
+		return flowEnd([]byte(line), i)
 	}
+	end := len(line)
+	for j := i + 1; j < len(line); j++ {
+		if line[j] == '#' && (line[j-1] == ' ' || line[j-1] == '\t') {
+			end = j
+			break
+		}
+	}
+	return i + len(strings.TrimRight(line[i:end], " \t"))
 }
 
 // colonAfterKey returns the index of the ':' that ends the mapping key starting
@@ -174,17 +132,42 @@ func trailingComment(line string, i int) string {
 
 // flowEndLine returns the line holding the bracket that closes the flow
 // collection starting at the 1-based line and character column, scanning the
-// source text so indentation does not matter. It tokenizes the way yaml.v3
-// does in flow context, so brackets and quotes inside scalars and comments are
-// not mistaken for structure. Only "\n" is treated as a line break; applyEdits
-// verifies its result, so any input this scan misreads is refused, not saved.
+// source text so indentation does not matter.
 func (l lines) flowEndLine(line, col int) (int, error) {
-	src := l.src
+	j := flowEnd(l.src, l.start[line-1]+l.column(line, col))
+	if j < 0 {
+		return 0, errUnsupportedLayout
+	}
+	// the line number is the count of line starts before j (just past the bracket)
+	return sort.Search(len(l.start), func(k int) bool { return l.start[k] >= j }), nil
+}
+
+// skipTag returns the index of the first non-blank character after a tag
+// (such as "!!seq ") starting at index i of s, or i if there is no tag.
+func skipTag(s string, i int) int {
+	if i >= len(s) || s[i] != '!' {
+		return i
+	}
+	for i < len(s) && !isFlowSpace(s[i]) {
+		i++
+	}
+	for i < len(s) && isFlowSpace(s[i]) {
+		i++
+	}
+	return i
+}
+
+// flowEnd returns the index just past the bracket that closes the flow
+// collection (optionally preceded by a tag) starting at index i of src, or -1.
+// It tokenizes the way yaml.v3 does in flow context, so brackets and quotes
+// inside scalars and comments are not mistaken for structure. Only "\n" is a
+// line break; applyEdits refuses other line breaks and verifies its result.
+func flowEnd(src []byte, i int) int {
 	depth := 0
-	for j := l.start[line-1] + l.column(line, col); j < len(src); {
+	for j := i; j < len(src); {
 		c := src[j]
 		if depth == 0 && c != '[' && c != '{' && c != '!' && !isFlowSpace(c) {
-			return 0, errUnsupportedLayout // only a tag may precede the opening bracket
+			return -1 // only a tag may precede the opening bracket
 		}
 		switch {
 		case isFlowSpace(c):
@@ -196,15 +179,14 @@ func (l lines) flowEndLine(line, col int) (int, error) {
 			j++
 		case c == ']' || c == '}':
 			if depth--; depth == 0 {
-				// the line number is the count of line starts at or before j
-				return sort.Search(len(l.start), func(k int) bool { return l.start[k] > j }), nil
+				return j + 1
 			}
 			j++
 		case c == ',' || c == '?' || c == ':': // indicators at a token start in flow
 			j++
 		case c == '\'' || c == '"':
 			if j = quotedEnd(src, j); j < 0 {
-				return 0, errUnsupportedLayout
+				return -1
 			}
 		case c == '!': // a tag runs to the next whitespace
 			j = skipUntil(src, j, isFlowSpace)
@@ -214,7 +196,7 @@ func (l lines) flowEndLine(line, col int) (int, error) {
 			j = plainEnd(src, j)
 		}
 	}
-	return 0, errUnsupportedLayout
+	return -1
 }
 
 func isFlowSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' }

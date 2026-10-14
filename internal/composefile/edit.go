@@ -27,8 +27,10 @@ var (
 // byte-for-byte. Edits are applied in order. The result is verified to mean
 // exactly src with the edits applied; otherwise an errVerification is returned.
 func applyEdits(src []byte, edits []edit) ([]byte, error) {
-	if bytes.Contains(src, []byte("\r\n")) {
-		return nil, fmt.Errorf("%w: CRLF line endings", errUnsupportedLayout)
+	// Lines are indexed by "\n" alone, so any other YAML line break would put
+	// yaml.v3's line numbers out of step with the text.
+	if bytes.ContainsAny(src, "\r\u0085\u2028\u2029") {
+		return nil, fmt.Errorf("%w: line breaks other than \\n (CR, NEL, LS or PS)", errUnsupportedLayout)
 	}
 	out := src
 	for _, e := range edits {

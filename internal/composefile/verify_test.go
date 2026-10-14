@@ -44,13 +44,12 @@ func TestApplyEditsRefusesDeleteOfInheritedKey(t *testing.T) {
 	}
 }
 
-func TestApplyEditsRefusesMisplacedFlowEnd(t *testing.T) {
-	// yaml.v3 ends the comment at U+2028 (a YAML line break), so "y]" closes
-	// web.a on line 2 and "b: 1]" is a plain scalar. The text scanner only
-	// knows "\n" line breaks, so it reads "1]" as the closing bracket and
-	// would delete b too. The result must be refused, not returned.
-	orig := []byte("web:\n  a: [x, # n\u2028y]\n  b: 1]\n  c: 1\n")
-	edits := []edit{{path("web.a"), nil}}
+func TestApplyEditsRefusesResultWithChangedMeaning(t *testing.T) {
+	// The fast path splices R in front of "#a", which yaml.v3 read as a
+	// comment only because it directly followed "]"; after "R" it is part of
+	// the scalar "R#a". The result must be refused, not returned.
+	orig := []byte("web:\n  a: []#a\n  b: 2\n")
+	edits := []edit{{path("web.a"), scalar("R")}}
 	if out, err := applyEdits(orig, edits); !errors.Is(err, errVerification) {
 		t.Errorf("err = %v, want errVerification; output:\n%s", err, out)
 	}
