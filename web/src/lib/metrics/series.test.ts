@@ -214,6 +214,31 @@ describe('createLiveAggregator', () => {
     const [p] = run(agg, [sample({ container: 'a', netRx: 9000 }, 1)]);
     expect(p.netRx).toBeUndefined();
   });
+
+  it('no rate for a container not seen for more than 3 ticks', () => {
+    const agg = createLiveAggregator();
+    const out = run(
+      agg,
+      [sample({ container: 'a', netRx: 1000 }, 0)],
+      [sample({ container: 'z' }, 1)],
+      [sample({ container: 'z' }, 2)],
+      [sample({ container: 'z' }, 3)],
+      [sample({ container: 'a', netRx: 2000 }, 4)],
+    );
+    expect(out[out.length - 1].netRx).toBeUndefined();
+  });
+
+  it('rate for a container not seen for 2-3 ticks', () => {
+    const agg = createLiveAggregator();
+    const out = run(
+      agg,
+      [sample({ container: 'a', netRx: 0 }, 0)],
+      [sample({ container: 'z' }, 1)],
+      [sample({ container: 'z' }, 2)],
+      [sample({ container: 'a', netRx: 3000 }, 3)],
+    );
+    expect(out[out.length - 1].netRx).toBe(1000);
+  });
 });
 
 describe('appendLive', () => {
