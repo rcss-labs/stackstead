@@ -57,7 +57,7 @@ describe('Settings metrics token', () => {
   it('create shows the token once, with a snippet, and hides it for good when saved', async () => {
     fake = installFakeFetch({
       [`GET ${STATUS}`]: { body: { configured: false } },
-      [`POST ${STATUS}`]: { status: 201, body: { token: TOKEN } },
+      [`POST ${STATUS}`]: { status: 200, body: { token: TOKEN } },
     });
     const user = userEvent.setup();
     const { container } = render(Settings);
@@ -69,11 +69,13 @@ describe('Settings metrics token', () => {
     expect(snippet).toContain('scrape_configs');
     expect(snippet).toContain(`credentials: ${TOKEN}`);
     expect(snippet).toContain(window.location.host);
+    expect(snippet).toContain(`scheme: ${window.location.protocol.slice(0, -1)}`);
+    expect(document.activeElement).toBe(input);
     expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy();
 
     await user.click(screen.getByRole('button', { name: 'I have saved it' }));
     expect(container.ownerDocument.body.innerHTML).not.toContain(TOKEN);
-    expect(screen.getByRole('button', { name: 'Rotate token' })).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Rotate token' }));
     expect(JSON.stringify({ ...localStorage })).not.toContain(TOKEN);
     expect(JSON.stringify({ ...sessionStorage })).not.toContain(TOKEN);
   });
@@ -81,7 +83,7 @@ describe('Settings metrics token', () => {
   it('leaving the page clears the token from the DOM', async () => {
     fake = installFakeFetch({
       [`GET ${STATUS}`]: { body: { configured: false } },
-      [`POST ${STATUS}`]: { status: 201, body: { token: TOKEN } },
+      [`POST ${STATUS}`]: { status: 200, body: { token: TOKEN } },
     });
     const user = userEvent.setup();
     const { unmount } = render(Settings);
@@ -94,7 +96,7 @@ describe('Settings metrics token', () => {
   it('rotate requires confirmation and warns the old token stops working', async () => {
     fake = installFakeFetch({
       [`GET ${STATUS}`]: { body: { configured: true } },
-      [`POST ${STATUS}`]: { status: 201, body: { token: TOKEN } },
+      [`POST ${STATUS}`]: { status: 200, body: { token: TOKEN } },
     });
     const user = userEvent.setup();
     render(Settings);

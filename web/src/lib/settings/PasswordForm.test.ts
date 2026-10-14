@@ -80,6 +80,7 @@ describe('PasswordForm', () => {
     expect(current().value).toBe('');
     expect(next().value).toBe('');
     expect(confirm().value).toBe('');
+    expect(document.activeElement).toBe(current());
     expect(get(toasts)).toHaveLength(0);
   });
 
@@ -92,6 +93,8 @@ describe('PasswordForm', () => {
     await waitFor(() => expect(screen.getByText('password too weak')).toBeTruthy());
     expect(next().getAttribute('aria-invalid')).toBe('true');
     expect(next().value).toBe('');
+    expect(confirm().value).toBe('');
+    expect(current().value).toBe('old-password'); // kept so the user only retypes the new one
   });
 
   it('429 shows a banner and disables the form', async () => {
@@ -106,5 +109,22 @@ describe('PasswordForm', () => {
     expect(current().disabled).toBe(true);
     expect(next().disabled).toBe(true);
     expect(current().value).toBe('');
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(current().disabled).toBe(false);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('counts characters, not UTF-16 units: 6 emoji are too short', async () => {
+    fake = installFakeFetch({});
+    const user = userEvent.setup();
+    render(PasswordForm);
+    await user.type(current(), 'old-password');
+    await user.click(next());
+    await user.paste('😀'.repeat(6));
+    await user.click(confirm());
+    await user.paste('😀'.repeat(6));
+    await user.click(submit());
+    expect(fake.calls).toHaveLength(0);
+    expect(screen.getByText(/at least 12 characters/i, { selector: '.error' })).toBeTruthy();
   });
 });

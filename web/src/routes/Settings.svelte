@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { api, ApiError } from '../lib/api/client';
   import { logout, session } from '../lib/api/session';
   import Banner from '../lib/components/Banner.svelte';
@@ -21,9 +22,20 @@
 
   const snippet = $derived(
     token
-      ? `scrape_configs:\n  - job_name: stackstead\n    metrics_path: /metrics\n    authorization:\n      credentials: ${token}\n    static_configs:\n      - targets: ['${window.location.host}']`
+      ? `scrape_configs:\n  - job_name: stackstead\n    metrics_path: /metrics\n    scheme: ${window.location.protocol.slice(0, -1)}\n    authorization:\n      credentials: ${token}\n    static_configs:\n      - targets: ['${window.location.host}']`
       : '',
   );
+
+  let tokenInput = $state<HTMLInputElement>();
+  $effect(() => {
+    tokenInput?.focus();
+  });
+
+  async function dismissToken() {
+    token = null;
+    await tick();
+    document.getElementById('rotate-token')?.focus();
+  }
 
   const messageOf = (err: unknown) => (err instanceof ApiError ? err.message : 'Request failed.');
 
@@ -99,17 +111,17 @@
           <Banner kind="warning" title="Copy this token now">It is shown only once and cannot be retrieved later.</Banner>
           <label for="metrics-token">Metrics token</label>
           <div class="cluster">
-            <input id="metrics-token" type="text" readonly value={token} autocomplete="off" />
+            <input id="metrics-token" bind:this={tokenInput} type="text" readonly value={token} autocomplete="off" />
             <CopyButton text={token} />
           </div>
           <pre data-testid="scrape-snippet">{snippet}</pre>
           <CopyButton text={snippet} label="Copy snippet" />
-          <div><Button variant="primary" onclick={() => (token = null)}>I have saved it</Button></div>
+          <div><Button variant="primary" onclick={dismissToken}>I have saved it</Button></div>
         </div>
       {:else if status.configured}
         <p>A token is configured.</p>
         <div class="cluster">
-          <Button variant="secondary" loading={busy} onclick={() => (confirming = 'rotate')}>Rotate token</Button>
+          <Button variant="secondary" id="rotate-token" loading={busy} onclick={() => (confirming = 'rotate')}>Rotate token</Button>
           <Button variant="danger" loading={busy} onclick={() => (confirming = 'disable')}>Disable</Button>
         </div>
       {:else}
