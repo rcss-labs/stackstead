@@ -1,16 +1,19 @@
 #!/bin/sh
-# Stackstead installer (Linux; macOS arrives in a later task).
+# Stackstead installer (Linux with systemd, macOS with launchd).
 #
-#   curl -fsSL https://github.com/rcss-labs/stackstead/releases/latest/download/install.sh | sudo sh
+#   Linux: curl -fsSL https://github.com/rcss-labs/stackstead/releases/latest/download/install.sh | sudo sh
+#   macOS: curl -fsSL https://github.com/rcss-labs/stackstead/releases/latest/download/install.sh | sh
 #
 # Downloads a release tarball, verifies it against SHA256SUMS (always), installs
-# the binary, service user, directories and systemd unit, and starts the service.
+# the binary and starts the service: on Linux a systemd unit run by a dedicated
+# user, on macOS a per-user LaunchAgent (sudo is only used for /usr/local).
 # Re-running upgrades in place; config, data and stacks are never touched.
 set -eu
 
 DEFAULT_BASE_URL=https://github.com/rcss-labs/stackstead
 SERVICE_USER=stackstead
 SERVICE_NAME=stackstead
+DEFAULT_LABEL=io.github.rcss-labs.stackstead
 DOCKER_URL=https://docs.docker.com/engine/install/
 
 usage() {
@@ -23,6 +26,8 @@ Options:
   --version vX.Y.Z    pin a release (default: latest); env STACKSTEAD_VERSION
   --prefix DIR        install under DIR (default /usr/local): DIR/bin, DIR/share/stackstead
   --no-start          install and enable the service but do not start or restart it
+  --user NAME         macOS: the account to install the LaunchAgent for (default: $SUDO_USER,
+                      or the user running the script)
   --signers FILE      also verify SHA256SUMS.sig with ssh-keygen -Y against FILE
                       (off by default; no key is shipped yet); env STACKSTEAD_INSTALL_SIGNERS_FILE
   --force             reinstall the same version or an older one
@@ -30,10 +35,14 @@ Options:
                       env STACKSTEAD_BASE_URL
   --root DIR          stage into DIR (DESTDIR style); no root needed; service and account
                       commands are printed, not run
+  --yes               macOS: confirm --purge without asking (it removes your stacks)
   --dry-run           download and verify, print the plan, change nothing
-  --uninstall         remove the binary, unit and helper (keeps config, data, stacks, user)
+  --uninstall         remove the binary, unit (macOS: LaunchAgent) and helper (keeps config,
+                      data, stacks, user)
   --purge             with --uninstall: also remove /etc/stackstead, /var/lib/stackstead and
-                      the stackstead user (never /opt/stacks or anything in Docker)
+                      the stackstead user (never /opt/stacks or anything in Docker); on macOS
+                      ~/Library/Application Support/Stackstead (stacks included, needs --yes)
+                      and ~/Library/Logs/Stackstead
   --print-paths       print the resolved paths as KEY=VALUE and exit
   -h, --help          show this help
 
@@ -51,7 +60,8 @@ Exit codes:
   5  download failure
   6  verification failure (checksum or signature)
   7  an install step failed (user, directories, unit, service)
-  8  refused (not root, or a package-managed install is present)
+  8  refused (not root, a package-managed install is present, or on macOS root without
+     SUDO_USER or --user)
   130  interrupted (INT, TERM or HUP)
 EOF
 }
@@ -114,6 +124,9 @@ DRY_RUN=
 UNINSTALL=
 PURGE=
 PRINT_PATHS=
+USER_ARG=
+YES=
+LABEL=$DEFAULT_LABEL
 
 need_value() { # option remaining-arg-count
 	[ "$2" -ge 2 ] || usage_error "$1 needs a value"
@@ -141,6 +154,11 @@ parse_args() {
 		--uninstall) UNINSTALL=1; shift ;;
 		--purge) PURGE=1; shift ;;
 		--print-paths) PRINT_PATHS=1; shift ;;
+		--user) need_value "$1" $#; USER_ARG=$2; shift 2 ;;
+		--user=*) USER_ARG=${1#*=}; shift ;;
+		--label) need_value "$1" $#; LABEL=$2; shift 2 ;;
+		--label=*) LABEL=${1#*=}; shift ;;
+		--yes | -y) YES=1; shift ;;
 		-h | --help) usage; exit 0 ;;
 		*) usage_error "unknown option: $1" ;;
 		esac
@@ -173,6 +191,9 @@ setup_paths() {
 	*[!A-Za-z0-9/._+-]*) usage_error "--prefix may only contain letters, digits and / . _ + -: $PREFIX" ;;
 	esac
 	PREFIX=${PREFIX%/}
+	case $LABEL in
+	"" | *[!A-Za-z0-9._-]*) usage_error "--label may only contain letters, digits and . _ -: $LABEL" ;;
+	esac
 	case $ROOT in
 	"" | /*) ;;
 	*) usage_error "--root must be an absolute path: $ROOT" ;;
@@ -191,6 +212,12 @@ setup_paths() {
 }
 
 print_paths() {
+	if [ "$OS" = darwin ]; then
+		printf 'PREFIX=%s\nBIN=%s\nHELPER=%s\nPLIST=%s\nCONFIG=%s\nDATA_DIR=%s\nSTACKS_DIR=%s\nLOG=%s\nUSER=%s\nROOT=%s\n' \
+			"$(rp "$PREFIX")" "$(rp "$BIN")" "$(rp "$HELPER")" "$(rp "$PLIST")" "$(rp "$CONFIG")" \
+			"$(rp "$DATA_DIR")" "$(rp "$STACKS_DIR")" "$(rp "$LOG")" "$TARGET_USER" "$ROOT"
+		return 0
+	fi
 	printf 'PREFIX=%s\nBIN=%s\nHELPER=%s\nUNIT=%s\nCONFIG=%s\nDATA_DIR=%s\nSTACKS_DIR=%s\nSERVICE_USER=%s\nROOT=%s\n' \
 		"$(rp "$PREFIX")" "$(rp "$BIN")" "$(rp "$HELPER")" "$(rp "$UNIT")" "$(rp "$CONFIG")" \
 		"$(rp "$DATA_DIR")" "$(rp "$STACKS_DIR")" "$SERVICE_USER" "$ROOT"
@@ -295,11 +322,14 @@ sha256_of() {
 # check_base_url: warn about a non-default source; plain http only for loopback.
 check_base_url() {
 	case $BASE_URL in
+	*@*) usage_error "--base-url must not contain @ (a userinfo part can disguise the real host): $BASE_URL" ;;
+	esac
+	case $BASE_URL in
 	https://*) ;;
 	http://127.0.0.1 | http://127.0.0.1[:/]* | http://localhost | http://localhost[:/]* | http://\[::1\] | http://\[::1\][:/]*) ;;
 	*) usage_error "--base-url must be https (plain http is only accepted for 127.0.0.1, localhost and [::1]): $BASE_URL" ;;
 	esac
-	if [ -z "$UNINSTALL" ] && [ "$BASE_URL" != "$DEFAULT_BASE_URL" ]; then
+	if [ "$BASE_URL" != "$DEFAULT_BASE_URL" ]; then
 		warn "using a non-default release source: $BASE_URL"
 	fi
 }
@@ -329,7 +359,7 @@ ARCH=
 detect_platform() {
 	case $(uname -s) in
 	Linux) OS=linux ;;
-	Darwin) die 3 "macOS support arrives in a later task" ;;
+	Darwin) OS=darwin ;;
 	*) die 3 "unsupported operating system: $(uname -s)" ;;
 	esac
 	case $(uname -m) in
@@ -340,6 +370,7 @@ detect_platform() {
 }
 
 require_root() {
+	[ "$OS" = linux ] || return 0
 	[ -n "$ROOT" ] && return 0
 	[ -n "$DRY_RUN" ] && return 0
 	if [ "$(id -u)" -ne 0 ]; then
@@ -558,20 +589,27 @@ download_and_verify() {
 		die 6 "$ASSET contains unsafe paths; nothing was installed"
 	fi
 	members=
-	for f in stackstead stackstead.service config.example.yaml install.sh; do
-		if grep -qx "$f" "$TMP/tar.names"; then
+	for f in stackstead stackstead.service launchagent.plist.in config.example.yaml install.sh LICENSE; do
+		if grep -Fxq "$f" "$TMP/tar.names"; then
 			members="$members $f"
-		elif grep -qx "./$f" "$TMP/tar.names"; then
+		elif grep -Fxq "./$f" "$TMP/tar.names"; then
 			members="$members ./$f"
 		fi
 	done
 	noown=
-	if tar --help 2>&1 | grep -q -- --no-same-owner; then
+	# bsdtar accepts --no-same-owner without listing it in --help
+	if tar --help 2>&1 | grep -q -- --no-same-owner || tar --no-same-owner --version >/dev/null 2>&1; then
 		noown=--no-same-owner
 	fi
 	# shellcheck disable=SC2086
 	tar -xzf "$TMP/$ASSET" -C "$STAGE" $noown $members || die 6 "cannot unpack $ASSET"
-	for f in stackstead stackstead.service config.example.yaml; do
+	required="stackstead config.example.yaml"
+	if [ "$OS" = darwin ]; then
+		required="$required launchagent.plist.in"
+	else
+		required="$required stackstead.service"
+	fi
+	for f in $required; do
 		{ [ -f "$STAGE/$f" ] && [ ! -L "$STAGE/$f" ]; } || die 6 "$ASSET does not contain $f"
 	done
 }
@@ -579,9 +617,15 @@ download_and_verify() {
 # ---------------------------------------------------------------- plan
 
 print_plan() {
+	if [ "$OS" = darwin ]; then
+		print_plan_darwin
+		return 0
+	fi
 	say "Plan (nothing is changed in dry-run mode)"
 	note "create/replace $(rp "$BIN")"
-	note "create/replace $(rp "$UNIT")"
+	if have systemctl; then
+		note "create/replace $(rp "$UNIT")"
+	fi
 	note "create/replace $(rp "$HELPER")"
 	note "create if missing $(rp "$CONFIG") (0640 root:$SERVICE_USER)"
 	note "create if missing $(rp "$CONFIG_DIR") (0755), $(rp "$DATA_DIR") (0700 $SERVICE_USER), $(rp "$STACKS_DIR") (2775 $SERVICE_USER:docker)"
@@ -596,6 +640,10 @@ print_plan() {
 }
 
 print_uninstall_plan() {
+	if [ "$OS" = darwin ]; then
+		print_uninstall_plan_darwin
+		return 0
+	fi
 	say "Plan (nothing is changed in dry-run mode)"
 	note "would run: systemctl disable --now $SERVICE_NAME"
 	note "remove $(rp "$UNIT"), $(rp "$BIN"), $(rp "$HELPER_DIR")"
@@ -619,7 +667,7 @@ ensure_account() {
 	fi
 	if user_exists; then
 		# the unit also grants the group, but the packages put the user in /etc/group
-		if ! id -nG "$SERVICE_USER" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+		if ! id -nG "$SERVICE_USER" 2>/dev/null | tr ' ' '\n' | grep -Fxq docker; then
 			if have usermod; then
 				acct usermod -aG docker "$SERVICE_USER"
 			elif have addgroup; then
@@ -678,7 +726,11 @@ check_stacks_dir() {
 	??w*) [ "$sd_owner" != "$SERVICE_USER" ] || sd_ok=1 ;;
 	esac
 	case $sd_mode in
-	?????w*) [ "$sd_group" != docker ] || sd_ok=1 ;;
+	?????w*)
+		if [ "$sd_group" = docker ] || id -nG "$SERVICE_USER" 2>/dev/null | tr ' ' '\n' | grep -Fxq "$sd_group"; then
+			sd_ok=1
+		fi
+		;;
 	esac
 	if [ -z "$sd_ok" ]; then
 		warn "$STACKS_DIR exists but $SERVICE_USER cannot write to it; to let the service create stacks run: chgrp docker $STACKS_DIR && chmod 2775 $STACKS_DIR"
@@ -703,9 +755,12 @@ install_files() {
 		note "keeping existing $(rp "$CONFIG")"
 	fi
 
-	sed "s|^ExecStart=.*|ExecStart=$BIN serve --config $CONFIG|; s|^ExecStartPre=.*stackstead.* config validate.*|ExecStartPre=$BIN config validate --config $CONFIG|" \
-		"$STAGE/stackstead.service" >"$STAGE/unit.rewritten"
-	put_file "$STAGE/unit.rewritten" "$(rp "$UNIT")" 0644
+	# a unit is only useful where systemd exists (not on Alpine, say)
+	if have systemctl; then
+		sed "s|^ExecStart=.*|ExecStart=$BIN serve --config $CONFIG|; s|^ExecStartPre=.*stackstead.* config validate.*|ExecStartPre=$BIN config validate --config $CONFIG|" \
+			"$STAGE/stackstead.service" >"$STAGE/unit.rewritten"
+		put_file "$STAGE/unit.rewritten" "$(rp "$UNIT")" 0644
+	fi
 
 	if [ -f "$STAGE/install.sh" ]; then
 		put_file "$STAGE/install.sh" "$(rp "$HELPER")" 0755
@@ -718,7 +773,7 @@ install_files() {
 
 validate_config() {
 	[ -n "${CONFIG_WRITTEN:-}" ] && [ -z "$ROOT" ] || return 0
-	if ! bounded "$BIN" config validate --config "$CONFIG" >/dev/null 2>&1; then
+	if ! limited_as_user 10 "$TMP/validate.out" "$BIN" config validate --config "$CONFIG"; then
 		warn "config validate did not pass for $CONFIG; the service may refuse to start (older binaries lack this command)"
 	fi
 	return 0
@@ -767,6 +822,24 @@ config_value() {
 	printf '%s' "${v:-$2}"
 }
 
+# runuser_limited SECONDS OUTFILE CMD...: limited(), as the service user.
+runuser_limited() {
+	rl_secs=$1
+	rl_out=$2
+	shift 2
+	limited "$rl_secs" "$rl_out" runuser -u "$SERVICE_USER" -- "$@"
+}
+
+# health_summary RUNNER: print `stackstead health` for humans; never fatal.
+health_summary() {
+	[ -x "$BIN" ] || return 0
+	note "stackstead health (summary only):"
+	hrc=0
+	"$1" 10 "$TMP/health.out" "$BIN" health --config "$CONFIG" || hrc=$?
+	sed 's/^/      /' "$TMP/health.out"
+	note "stackstead health exit code: $hrc (informational)"
+}
+
 wait_ready() {
 	[ -n "$STARTED" ] && [ -z "$ROOT" ] || return 0
 	listen=$(config_value listen "$DEFAULT_LISTEN")
@@ -777,30 +850,43 @@ wait_ready() {
 	i=0
 	while [ "$i" -lt 15 ]; do
 		if http_ok "http://$listen/api/health" || http_ok "http://$listen/api/setup/status"; then
-			if have runuser && [ -x "$BIN" ]; then
-				note "stackstead health (summary only):"
-				hrc=0
-				limited 10 "$TMP/health.out" runuser -u "$SERVICE_USER" -- "$BIN" health --config "$CONFIG" || hrc=$?
-				sed 's/^/      /' "$TMP/health.out"
-				note "stackstead health exit code: $hrc (informational)"
+			if [ "$OS" = darwin ]; then
+				health_summary limited_as_user
+				say "Stackstead is running"
+				note "Open http://$listen/ from this Mac to create the admin account"
+				note "Logs: $LOG"
+				note "Setup token (only needed when not on this Mac): grep setup_token $LOG"
+			else
+				if have runuser; then
+					health_summary runuser_limited
+				fi
+				say "Stackstead is running"
+				note "Open http://$listen/ from this machine to create the admin account"
+				note "Remote? use the setup token: journalctl -u $SERVICE_NAME | grep setup_token"
 			fi
-			say "Stackstead is running"
-			note "Open http://$listen/ from this machine to create the admin account"
-			note "Remote? use the setup token: journalctl -u $SERVICE_NAME | grep setup_token"
 			return 0
 		fi
 		i=$((i + 1))
 		sleep 1
 	done
 	err "the service did not answer on http://$listen within 15 s"
-	note "systemctl status $SERVICE_NAME"
-	note "journalctl -u $SERVICE_NAME -n 50"
+	if [ "$OS" = darwin ]; then
+		note "launchctl print gui/$TARGET_UID/$LABEL"
+		note "tail -n 50 $LOG"
+	else
+		note "systemctl status $SERVICE_NAME"
+		note "journalctl -u $SERVICE_NAME -n 50"
+	fi
 	DIED=1
 	exit 7
 }
 
 docker_check() {
 	[ -z "$ROOT" ] || return 0
+	if [ "$OS" = darwin ]; then
+		docker_check_darwin
+		return 0
+	fi
 	if ! have docker; then
 		warn "Docker is not installed (see $DOCKER_URL); Stackstead starts degraded until it is"
 		return 0
@@ -811,6 +897,10 @@ docker_check() {
 }
 
 do_install() {
+	if [ "$OS" = darwin ]; then
+		do_install_darwin
+		return 0
+	fi
 	PHASE=install
 	say "Installing"
 	if [ -z "$ROOT" ] || [ -z "$UPGRADE" ]; then
@@ -825,9 +915,380 @@ do_install() {
 	docker_check
 }
 
+# ---------------------------------------------------------------- macOS
+
+AS_ROOT=
+TARGET_USER=
+TARGET_GROUP=
+TARGET_UID=
+TARGET_HOME=
+SUPPORT_DIR=
+LOG_DIR=
+LOG=
+AGENT_DIR=
+PLIST=
+DOCKER_SOCKET=
+PLIST_CHANGED=
+
+# resolve_target_user: the account the LaunchAgent belongs to. Under sudo that
+# is $SUDO_USER, never root; a plain root login must say who with --user.
+resolve_target_user() {
+	cur_uid=$(id -u) || die 1 "cannot determine the current user"
+	if [ -n "$USER_ARG" ]; then
+		case $USER_ARG in
+		-* | *[!A-Za-z0-9._-]*) usage_error "--user: not a valid account name: $USER_ARG" ;;
+		esac
+	fi
+	if [ "$cur_uid" = 0 ]; then
+		AS_ROOT=1
+		TARGET_USER=${USER_ARG:-${SUDO_USER:-}}
+		case $TARGET_USER in
+		"" | root) die 8 "running as root: run this as your own user (sudo is requested only for $PREFIX), or use 'sudo sh install.sh' from your account so SUDO_USER is set, or pass --user NAME" ;;
+		esac
+	else
+		cur_user=$(id -un) || die 1 "cannot determine the current user"
+		TARGET_USER=${USER_ARG:-$cur_user}
+		[ "$TARGET_USER" = "$cur_user" ] || die 8 "only root can install for another user ($TARGET_USER); run as that user or with sudo"
+	fi
+	case $TARGET_USER in
+	-* | *[!A-Za-z0-9._-]*) die 8 "not a valid account name: $TARGET_USER" ;;
+	esac
+	TARGET_UID=$(id -u "$TARGET_USER" 2>/dev/null) || die 8 "no such user: $TARGET_USER"
+	TARGET_GROUP=$(id -gn "$TARGET_USER" 2>/dev/null) || TARGET_GROUP=staff
+	TARGET_HOME=$(dscl . -read "/Users/$TARGET_USER" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory:[[:space:]]*//p' | head -n 1) || TARGET_HOME=
+	if [ -z "$TARGET_HOME" ]; then
+		TARGET_HOME=$(eval "echo ~$TARGET_USER" 2>/dev/null) || TARGET_HOME=
+	fi
+	case $TARGET_HOME in
+	/?*) ;;
+	*) die 7 "cannot determine the home directory of $TARGET_USER" ;;
+	esac
+	TARGET_HOME=${TARGET_HOME%/}
+}
+
+darwin_paths() {
+	SUPPORT_DIR="$TARGET_HOME/Library/Application Support/Stackstead"
+	CONFIG_DIR=$SUPPORT_DIR
+	CONFIG=$SUPPORT_DIR/config.yaml
+	DATA_DIR=$SUPPORT_DIR/data
+	STACKS_DIR=$SUPPORT_DIR/stacks
+	LOG_DIR=$TARGET_HOME/Library/Logs/Stackstead
+	LOG=$LOG_DIR/stackstead.log
+	AGENT_DIR=$TARGET_HOME/Library/LaunchAgents
+	PLIST=$AGENT_DIR/$LABEL.plist
+	# Docker's CLI lives in different places depending on the distribution
+	PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$TARGET_HOME/.docker/bin
+}
+
+platform_setup() {
+	[ "$OS" = darwin ] || return 0
+	resolve_target_user
+	darwin_paths
+}
+
+# priv CMD...: a write under the prefix. Root and staged runs write directly;
+# otherwise sudo is used, and only for these commands.
+priv() {
+	if [ -n "$ROOT" ]; then
+		[ -n "$AS_ROOT" ] || note "would use sudo: $*"
+		"$@"
+	elif [ -n "$AS_ROOT" ]; then
+		"$@"
+	else
+		sudo "$@"
+	fi
+}
+
+# priv_svc CMD...: like svc, but privileged (printed under --root).
+priv_svc() {
+	if [ -n "$ROOT" ]; then
+		if [ -n "$AS_ROOT" ]; then
+			say "would run: $*"
+		else
+			say "would run: sudo $*"
+		fi
+	else
+		priv "$@"
+	fi
+}
+
+# priv_put_file SRC DEST MODE: put_file under priv.
+priv_put_file() {
+	priv mkdir -p "$(dirname "$2")"
+	priv cp "$1" "$2.new"
+	priv chmod "$3" "$2.new"
+	priv mv -f "$2.new" "$2"
+}
+
+# chown_user PATH...: hand freshly created per-user files to the target user
+# when running as root.
+chown_user() {
+	[ -n "$AS_ROOT" ] || return 0
+	svc chown -R "$TARGET_USER:$TARGET_GROUP" "$@"
+}
+
+# as_user CMD...: run as the target user (a sudo run is root); a shell function
+# so it is only for commands that need no time limit.
+as_user() {
+	if [ -n "$AS_ROOT" ] && [ -z "$ROOT" ]; then
+		sudo -H -u "$TARGET_USER" env "PATH=$PATH" "$@"
+	else
+		"$@"
+	fi
+}
+
+# agent_cmd CMD...: a launchctl call in the user's session (printed under --root).
+agent_cmd() {
+	if [ -n "$AS_ROOT" ]; then
+		svc sudo -H -u "$TARGET_USER" "$@"
+	else
+		svc "$@"
+	fi
+}
+
+# limited_as_user SECONDS OUTFILE CMD...: limited(), as the target user.
+limited_as_user() {
+	lau_secs=$1
+	lau_out=$2
+	shift 2
+	if [ "$OS" = darwin ] && [ -n "$AS_ROOT" ]; then
+		limited "$lau_secs" "$lau_out" sudo -H -u "$TARGET_USER" "$@"
+	else
+		limited "$lau_secs" "$lau_out" "$@"
+	fi
+}
+
+# user_make_dir PATH MODE: create with mode and ownership only when missing.
+user_make_dir() {
+	d=$(rp "$1")
+	[ ! -d "$d" ] || return 0
+	mkdir -p "$d"
+	chmod "$2" "$d"
+	chown_user "$d"
+}
+
+# user_put_file SRC DEST MODE: put_file, then ownership.
+user_put_file() {
+	put_file "$1" "$2" "$3"
+	chown_user "$2"
+}
+
+# yaml_scalar VALUE: plain when that is safe, otherwise single-quoted.
+yaml_scalar() {
+	case $1 in
+	*[!\ A-Za-z0-9/._+@~=,-]*) printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")" ;;
+	*) printf '%s' "$1" ;;
+	esac
+}
+
+xml_escape() { printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'; }
+
+# detect_docker_socket: ask the target user's Docker CLI which socket it uses.
+detect_docker_socket() {
+	ds_ep=$(as_user docker context inspect --format '{{(index .Endpoints "docker").Host}}' 2>/dev/null | head -n 1) || ds_ep=
+	DOCKER_SOCKET=
+	case $ds_ep in
+	unix://?*) DOCKER_SOCKET=${ds_ep#unix://} ;;
+	esac
+	if [ -z "$DOCKER_SOCKET" ]; then
+		DOCKER_SOCKET=/var/run/docker.sock
+		warn "could not detect a local Docker socket (docker missing, or its context is not a unix socket); using $DOCKER_SOCKET: set docker_socket in $CONFIG if Docker listens elsewhere"
+	fi
+}
+
+generate_config() { # DEST
+	detect_docker_socket
+	SS_STACKS=$(yaml_scalar "$STACKS_DIR") SS_DATA=$(yaml_scalar "$DATA_DIR") SS_SOCK=$(yaml_scalar "$DOCKER_SOCKET") awk '
+		/^stacks_dir:/ { print "stacks_dir: " ENVIRON["SS_STACKS"]; next }
+		/^data_dir:/ { print "data_dir: " ENVIRON["SS_DATA"]; next }
+		/^# docker_socket:/ { print "docker_socket: " ENVIRON["SS_SOCK"]; seen = 1; next }
+		{ print }
+		END { if (!seen) print "docker_socket: " ENVIRON["SS_SOCK"] }' "$STAGE/config.example.yaml" >"$1"
+}
+
+# render_plist DEST: the template with absolute paths (launchd expands neither
+# a tilde nor variables). Values are XML-escaped and substituted literally.
+render_plist() {
+	PL_LABEL=$(xml_escape "$LABEL") PL_BIN=$(xml_escape "$BIN") PL_CONFIG=$(xml_escape "$CONFIG") \
+		PL_LOG=$(xml_escape "$LOG") PL_HOME=$(xml_escape "$TARGET_HOME") awk '
+		function rep(s, tok, val,    out, i) {
+			out = ""
+			while ((i = index(s, tok)) > 0) { out = out substr(s, 1, i - 1) val; s = substr(s, i + length(tok)) }
+			return out s
+		}
+		{
+			line = $0
+			line = rep(line, "@LABEL@", ENVIRON["PL_LABEL"])
+			line = rep(line, "@BIN@", ENVIRON["PL_BIN"])
+			line = rep(line, "@CONFIG@", ENVIRON["PL_CONFIG"])
+			line = rep(line, "@LOG@", ENVIRON["PL_LOG"])
+			line = rep(line, "@HOME@", ENVIRON["PL_HOME"])
+			print line
+		}' "$STAGE/launchagent.plist.in" >"$1"
+}
+
+install_files_darwin() {
+	user_make_dir "$SUPPORT_DIR" 0755
+	user_make_dir "$DATA_DIR" 0700
+	user_make_dir "$STACKS_DIR" 0755
+	user_make_dir "$LOG_DIR" 0755
+	user_make_dir "$AGENT_DIR" 0755
+
+	if [ ! -e "$(rp "$CONFIG")" ]; then
+		generate_config "$STAGE/config.generated"
+		user_put_file "$STAGE/config.generated" "$(rp "$CONFIG")" 0600
+		say "Wrote $(rp "$CONFIG")"
+		CONFIG_WRITTEN=1
+	else
+		note "keeping existing $(rp "$CONFIG")"
+	fi
+
+	render_plist "$STAGE/plist.rendered"
+	PLIST_CHANGED=1
+	if [ -f "$(rp "$PLIST")" ] && have cmp && cmp -s "$STAGE/plist.rendered" "$(rp "$PLIST")"; then
+		PLIST_CHANGED=
+	fi
+	user_put_file "$STAGE/plist.rendered" "$(rp "$PLIST")" 0644
+
+	priv_put_file "$STAGE/launchagent.plist.in" "$(rp "$HELPER_DIR")/launchagent.plist.in" 0644
+	if [ -f "$STAGE/install.sh" ]; then
+		priv_put_file "$STAGE/install.sh" "$(rp "$HELPER")" 0755
+	else
+		warn "the release has no install.sh; --uninstall will need a download"
+	fi
+	if [ -f "$STAGE/LICENSE" ]; then
+		priv_put_file "$STAGE/LICENSE" "$(rp "$HELPER_DIR")/LICENSE" 0644
+	fi
+	priv_put_file "$STAGE/stackstead" "$(rp "$BIN")" 0755
+	say "Installed $(rp "$BIN")"
+}
+
+agent_loaded() {
+	[ -z "$ROOT" ] || return 0
+	agent_cmd launchctl print "gui/$TARGET_UID/$LABEL" >/dev/null 2>&1
+}
+
+configure_service_darwin() {
+	gui=gui/$TARGET_UID
+	[ -z "$NO_START" ] || return 0
+	if [ -n "${UPGRADE:-}" ]; then
+		# never start an agent that is not loaded: the user may have removed it
+		if ! agent_loaded; then
+			note "the agent is not loaded; not starting it (launchctl bootstrap $gui $PLIST)"
+			return 0
+		fi
+		if [ -n "$PLIST_CHANGED" ]; then
+			agent_cmd launchctl bootout "$gui/$LABEL" || true
+			agent_cmd launchctl bootstrap "$gui" "$PLIST" || die 7 "launchctl bootstrap failed"
+		else
+			agent_cmd launchctl kickstart -k "$gui/$LABEL" || die 7 "launchctl kickstart failed"
+		fi
+		STARTED=1
+		return 0
+	fi
+	agent_cmd launchctl bootout "$gui/$LABEL" || true
+	if agent_cmd launchctl bootstrap "$gui" "$PLIST"; then
+		STARTED=1
+	else
+		warn "launchctl could not load the agent (no GUI session for $TARGET_USER, for example over ssh); it starts at next login, or run: launchctl bootstrap $gui $PLIST"
+	fi
+}
+
+docker_check_darwin() {
+	if ! have docker; then
+		warn "Docker is not installed; Docker Desktop, OrbStack or Colima must be installed and running for stacks to work"
+		return 0
+	fi
+	as_user docker compose version >/dev/null 2>&1 || warn "the docker compose plugin is missing"
+	ds=$(config_value docker_socket /var/run/docker.sock)
+	[ -S "$ds" ] || warn "Docker socket $ds not found; start Docker Desktop, OrbStack or Colima"
+}
+
+do_install_darwin() {
+	PHASE=install
+	say "Installing for $TARGET_USER"
+	if [ -z "$ROOT" ] && [ -z "$AS_ROOT" ]; then
+		have sudo || die 4 "need sudo to write to $PREFIX (or run as root)"
+		note "sudo is used only for $PREFIX; you may be asked for your password"
+	fi
+	install_files_darwin
+	validate_config
+	configure_service_darwin
+	PHASE=
+	wait_ready
+	docker_check
+}
+
+print_plan_darwin() {
+	say "Plan (nothing is changed in dry-run mode)"
+	note "install for user $TARGET_USER (home $TARGET_HOME)"
+	note "create/replace $(rp "$BIN") and $(rp "$HELPER") (sudo only for $PREFIX, unless root)"
+	note "create if missing $(rp "$CONFIG") (0600), $(rp "$DATA_DIR"), $(rp "$STACKS_DIR"), $(rp "$LOG_DIR")"
+	note "create/replace $(rp "$PLIST")"
+	if [ -n "$NO_START" ]; then
+		note "the agent is not started (--no-start)"
+	elif [ -n "${UPGRADE:-}" ]; then
+		note "would run: launchctl kickstart -k gui/$TARGET_UID/$LABEL (bootout + bootstrap when the plist changed)"
+	else
+		note "would run: launchctl bootout gui/$TARGET_UID/$LABEL; launchctl bootstrap gui/$TARGET_UID $PLIST"
+	fi
+}
+
+print_uninstall_plan_darwin() {
+	say "Plan (nothing is changed in dry-run mode)"
+	note "would run: launchctl bootout gui/$TARGET_UID/$LABEL"
+	note "remove $(rp "$PLIST"), $(rp "$BIN"), $(rp "$HELPER_DIR")"
+	note "would run: pkgutil --forget $LABEL (when that receipt exists)"
+	if [ -n "$PURGE" ]; then
+		note "remove $(rp "$SUPPORT_DIR") (including the stacks) and $(rp "$LOG_DIR")"
+	fi
+	note "keep everything in Docker"
+}
+
+# confirm_purge: --purge removes the stacks, so it needs --yes or an answer.
+confirm_purge() {
+	[ -n "$PURGE" ] || return 0
+	[ -z "$YES" ] || return 0
+	cp_msg="--purge removes $SUPPORT_DIR, including your stacks in $STACKS_DIR, and $LOG_DIR"
+	if [ -t 0 ]; then
+		printf '%s. Continue? [y/N] ' "$cp_msg" >&2
+		cp_ans=
+		read -r cp_ans || cp_ans=
+		case $cp_ans in
+		y | Y | yes | YES) return 0 ;;
+		esac
+		die 2 "not confirmed; nothing was removed"
+	fi
+	die 2 "$cp_msg; re-run with --yes to confirm"
+}
+
+do_uninstall_darwin() {
+	PHASE=install
+	agent_cmd launchctl bootout "gui/$TARGET_UID/$LABEL" || true
+	rm -f "$(rp "$PLIST")"
+	priv rm -f "$(rp "$BIN")" "$(rp "$BIN").new"
+	priv rm -rf "$(rp "$HELPER_DIR")"
+	if have pkgutil && pkgutil --pkg-info "$LABEL" >/dev/null 2>&1; then
+		priv_svc pkgutil --forget "$LABEL" || warn "could not forget the $LABEL package receipt"
+	fi
+	say "Removed $(rp "$BIN"), $(rp "$PLIST") and $(rp "$HELPER_DIR")"
+	if [ -n "$PURGE" ]; then
+		rm -rf "$(rp "$SUPPORT_DIR")" "$(rp "$LOG_DIR")"
+		say "Purged $(rp "$SUPPORT_DIR") and $(rp "$LOG_DIR")"
+	else
+		note "kept $(rp "$SUPPORT_DIR") and $(rp "$LOG_DIR") (use --purge --yes to remove them, stacks included)"
+	fi
+	note "kept everything in Docker"
+	PHASE=
+}
+
 # ---------------------------------------------------------------- uninstall
 
 do_uninstall() {
+	if [ "$OS" = darwin ]; then
+		do_uninstall_darwin
+		return 0
+	fi
 	PHASE=install
 	if [ -e "$(rp "$UNIT")" ] && have systemctl; then
 		if systemd_booted; then
@@ -871,12 +1332,13 @@ CONFIG_WRITTEN=
 main() {
 	parse_args "$@"
 	setup_paths
+	detect_platform
+	platform_setup
 	if [ -n "$PRINT_PATHS" ]; then
 		print_paths
 		exit 0
 	fi
-	check_base_url
-	detect_platform
+	[ -n "$UNINSTALL" ] || check_base_url
 	require_root
 	refuse_package_install
 
@@ -885,6 +1347,7 @@ main() {
 			print_uninstall_plan
 			exit 0
 		fi
+		[ "$OS" != darwin ] || confirm_purge
 		do_uninstall
 		exit 0
 	fi

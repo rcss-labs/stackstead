@@ -210,11 +210,6 @@ func TestScript(t *testing.T) {
 		mustExit(t, code, 3, out, errOut)
 		contains(t, "stderr", errOut, "FreeBSD")
 
-		f = newFixture(t, "1.0.0")
-		f.stubs["uname"] = `case "$1" in -m) echo ` + hostArch() + ` ;; *) echo Darwin ;; esac`
-		out, errOut, code = f.run()
-		mustExit(t, code, 3, out, errOut)
-		contains(t, "stderr", errOut, "macOS support arrives in a later task")
 	})
 
 	t.Run("MissingToolExits4", func(t *testing.T) {
@@ -516,6 +511,11 @@ func TestScript(t *testing.T) {
 		contains(t, "stderr", errOut, "no systemd", "serve --config")
 		notContains(t, "stdout", out, "systemctl")
 		assertMode(t, f.p("usr/local/bin/stackstead"), 0o755)
+		// no systemd (Alpine): no unit either
+		if fileExists(f.p("etc/systemd/system/stackstead.service")) {
+			t.Error("a unit was written on a host without systemd")
+		}
+		assertMode(t, f.p("etc/stackstead/config.yaml"), 0o640)
 	})
 
 	t.Run("SystemdNotBootedEnablesOnly", func(t *testing.T) {
