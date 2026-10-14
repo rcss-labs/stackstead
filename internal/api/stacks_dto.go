@@ -13,18 +13,18 @@ import (
 // domain packages stay free of transport concerns.
 
 type summaryDTO struct {
-	Name     string `json:"name"`
-	Path     string `json:"path"`
-	Project  string `json:"project"`
-	Origin   string `json:"origin"`
-	Status   string `json:"status"`
-	Services int    `json:"services"`
-	Running  int    `json:"running"`
+	Name         string `json:"name"`
+	Path         string `json:"path"`
+	Project      string `json:"project"`
+	Origin       string `json:"origin"`
+	Status       string `json:"status"`
+	ServiceCount int    `json:"serviceCount"`
+	Running      int    `json:"running"`
 }
 
 func toSummary(s stacks.Summary) summaryDTO {
 	return summaryDTO{Name: s.Name, Path: s.Path, Project: s.Project, Origin: string(s.Origin),
-		Status: string(s.Status), Services: s.Services, Running: s.Running}
+		Status: string(s.Status), ServiceCount: s.Services, Running: s.Running}
 }
 
 type containerDTO struct {
@@ -43,22 +43,23 @@ type serviceDetailDTO struct {
 }
 
 // detailDTO flattens the summary but carries the per-service list under
-// "services" (the summary's service count is just len of that list).
+// "services"; serviceCount mirrors the summary field.
 type detailDTO struct {
-	Name       string             `json:"name"`
-	Path       string             `json:"path"`
-	Project    string             `json:"project"`
-	Origin     string             `json:"origin"`
-	Status     string             `json:"status"`
-	Running    int                `json:"running"`
-	Hash       string             `json:"hash"`
-	Services   []serviceDetailDTO `json:"services"`
-	ParseError string             `json:"parseError,omitempty"`
+	Name         string             `json:"name"`
+	Path         string             `json:"path"`
+	Project      string             `json:"project"`
+	Origin       string             `json:"origin"`
+	Status       string             `json:"status"`
+	Running      int                `json:"running"`
+	ServiceCount int                `json:"serviceCount"`
+	Hash         string             `json:"hash"`
+	Services     []serviceDetailDTO `json:"services"`
+	ParseError   string             `json:"parseError,omitempty"`
 }
 
 func toDetail(d stacks.Detail) detailDTO {
 	out := detailDTO{Name: d.Name, Path: d.Path, Project: d.Project, Origin: string(d.Origin),
-		Status: string(d.Status), Running: d.Running, Hash: d.Hash, ParseError: d.ParseError,
+		Status: string(d.Status), Running: d.Running, ServiceCount: len(d.Services), Hash: d.Hash, ParseError: d.ParseError,
 		Services: make([]serviceDetailDTO, 0, len(d.Services))}
 	for _, sd := range d.Services {
 		dto := serviceDetailDTO{Name: sd.Name, Config: toServiceConfig(sd.Config),

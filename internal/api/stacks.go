@@ -12,9 +12,8 @@ import (
 	"github.com/rcss-labs/stackstead/internal/stacks"
 )
 
-// StacksAPI is what the HTTP layer needs from the stack backend. *stacks.Service
-// provides most of it; the operation and environment methods are filled in by
-// an adapter over stacks.Ops, the allowed roots and the engine/compose probes.
+// StacksAPI is the stack domain the HTTP layer needs; *stacks.Service
+// satisfies it directly.
 type StacksAPI interface {
 	List(ctx context.Context) ([]stacks.Summary, error)
 	Create(ctx context.Context, req stacks.CreateRequest) (stacks.Summary, error)
@@ -26,20 +25,27 @@ type StacksAPI interface {
 	Act(ctx context.Context, stack, action string) (stacks.Operation, error)
 	Remove(ctx context.Context, stack string, withVolumes bool) (stacks.Operation, error)
 	Networks(ctx context.Context) ([]engine.Network, error)
-
-	RecentOperations(stack string) []stacks.Operation
-	GetOperation(id string) (stacks.Operation, error)
-	OperationLines(id string) ([]string, error)
-	// SubscribeOperation has the contract documented on stacks.Ops.Subscribe.
-	SubscribeOperation(id string) (replay []string, live <-chan string, done <-chan stacks.Operation, cancel func(), err error)
-	CancelOperation(id string) error
-
-	// FSRoots lists the directories the file browser may enter.
-	FSRoots() []string
-	// Status reports "ok" or "unavailable" for docker, and the compose
-	// version or "unavailable".
-	Status(ctx context.Context) (docker, compose string)
 }
+
+// OperationsAPI is the operation registry; *stacks.Ops satisfies it directly.
+type OperationsAPI interface {
+	Recent(stack string) []stacks.Operation
+	Get(id string) (stacks.Operation, error)
+	Lines(id string) ([]string, error)
+	// Subscribe has the contract documented on stacks.Ops.Subscribe.
+	Subscribe(id string) (replay []string, live <-chan string, done <-chan stacks.Operation, cancel func(), err error)
+	Cancel(id string) error
+}
+
+// StatusFunc reports "ok" or "unavailable" for docker, and the compose
+// version or "unavailable".
+type StatusFunc func(ctx context.Context) (docker, compose string)
+
+// Compile-time proof that the production types fit.
+var (
+	_ StacksAPI     = (*stacks.Service)(nil)
+	_ OperationsAPI = (*stacks.Ops)(nil)
+)
 
 const checksHeader = "X-Stackstead-Checks"
 
@@ -190,17 +196,17 @@ func (s *server) handleRemoveStack(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleStackOperations(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, toOperations(s.opts.Stacks.RecentOperations(r.PathValue("name"))))
+	writeJSON(w, http.StatusOK, toOperations(s.opts.Operations.Recent(r.PathValue("name"))))
 }
 
 func (s *server) handleGetOperation(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	op, err := s.opts.Stacks.GetOperation(id)
+	op, err := s.opts.Operations.Get(id)
 	if err != nil {
 		s.writeStackError(w, r, err)
 		return
 	}
-	lines, err := s.opts.Stacks.OperationLines(id)
+	lines, err := s.opts.Operations.Lines(id)
 	if err != nil {
 		s.writeStackError(w, r, err)
 		return
@@ -217,11 +223,11 @@ func (s *server) handleCancelOperation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	if err := s.opts.Stacks.CancelOperation(id); err != nil {
+	if err := s.opts.Operations.Cancel(id); err != nil {
 		s.writeStackError(w, r, err)
 		return
 	}
-	op, err := s.opts.Stacks.GetOperation(id)
+	op, err := s.opts.Operations.Get(id)
 	if err != nil {
 		s.writeStackError(w, r, err)
 		return
@@ -232,7 +238,7 @@ func (s *server) handleCancelOperation(w http.ResponseWriter, r *http.Request) {
 // handleFS lists a directory inside the allowed roots; with no path it lists
 // the roots themselves so the browser has somewhere to start.
 func (s *server) handleFS(w http.ResponseWriter, r *http.Request) {
-	roots := s.opts.Stacks.FSRoots()
+	roots := s.opts.FSRoots
 	path := r.URL.Query().Get("path")
 	if path == "" {
 		out := make([]fsEntryDTO, 0, len(roots))
@@ -264,6 +270,9 @@ func (s *server) handleNetworks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	docker, compose := s.opts.Stacks.Status(r.Context())
+	docker, compose := "unavailable", "unavailable"
+	if s.opts.Status != nil {
+		docker, compose = s.opts.Status(r.Context())
+	}
 	writeJSON(w, http.StatusOK, statusDTO{Docker: docker, Compose: compose})
 }

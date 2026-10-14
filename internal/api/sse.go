@@ -28,7 +28,7 @@ const (
 // unsubscribes. It holds no locks while writing: the Ops manager never blocks
 // on subscribers, and a stuck client is cut by the per-write deadline.
 func (s *server) handleStreamOperation(w http.ResponseWriter, r *http.Request) {
-	replay, live, done, cancel, err := s.opts.Stacks.SubscribeOperation(r.PathValue("id"))
+	replay, live, done, cancel, err := s.opts.Operations.Subscribe(r.PathValue("id"))
 	if err != nil {
 		s.writeStackError(w, r, err)
 		return

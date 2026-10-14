@@ -18,9 +18,14 @@ type Options struct {
 	Static     fs.FS  // SPA build output; must contain index.html
 	Logger     *slog.Logger
 
-	// Stacks backs the /api/stacks, /api/operations, /api/fs, /api/networks
-	// and /api/status routes; they are not registered when it is nil.
-	Stacks StacksAPI
+	// Stacks and Operations back the /api/stacks, /api/operations, /api/fs,
+	// /api/networks and /api/status routes; they are not registered unless
+	// both are set. FSRoots are the directories the file browser may enter,
+	// Status feeds /api/status.
+	Stacks     StacksAPI
+	Operations OperationsAPI
+	FSRoots    []string
+	Status     StatusFunc
 	// SSEHeartbeat is the idle interval between ": ping" comments on
 	// operation streams (default 15s) and SSEWriteTimeout bounds each write
 	// to a stream (default 10s), since the HTTP server has no WriteTimeout.
@@ -43,7 +48,7 @@ func New(opts Options) http.Handler {
 	mux.Handle("POST /api/logout", s.requireSession(s.handleLogout))
 	mux.Handle("GET /api/me", s.requireSession(s.handleMe))
 
-	if opts.Stacks != nil {
+	if opts.Stacks != nil && opts.Operations != nil {
 		s.registerStackRoutes(mux)
 	}
 

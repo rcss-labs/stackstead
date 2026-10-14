@@ -108,25 +108,29 @@ func (f *fakeStacks) Networks(context.Context) ([]engine.Network, error) {
 	return []engine.Network{{ID: "n1", Name: "lan", Driver: "bridge",
 		Subnets: []engine.Subnet{{Prefix: mustPrefix("10.0.0.0/24")}}}}, f.err
 }
-func (f *fakeStacks) RecentOperations(string) []stacks.Operation    { return []stacks.Operation{f.op} }
-func (f *fakeStacks) GetOperation(string) (stacks.Operation, error) { return f.op, f.err }
-func (f *fakeStacks) OperationLines(string) ([]string, error)       { return []string{"a", "b"}, f.err }
-func (f *fakeStacks) CancelOperation(id string) error               { f.gotCancel = id; return f.err }
-func (f *fakeStacks) SubscribeOperation(string) ([]string, <-chan string, <-chan stacks.Operation, func(), error) {
-	if f.err != nil {
-		return nil, nil, nil, nil, f.err
+
+// fakeOps is the OperationsAPI view of fakeStacks (its Get would clash with
+// the stack Get).
+type fakeOps struct{ f *fakeStacks }
+
+func (o fakeOps) Recent(string) []stacks.Operation     { return []stacks.Operation{o.f.op} }
+func (o fakeOps) Get(string) (stacks.Operation, error) { return o.f.op, o.f.err }
+func (o fakeOps) Lines(string) ([]string, error)       { return []string{"a", "b"}, o.f.err }
+func (o fakeOps) Cancel(id string) error               { o.f.gotCancel = id; return o.f.err }
+func (o fakeOps) Subscribe(string) ([]string, <-chan string, <-chan stacks.Operation, func(), error) {
+	if o.f.err != nil {
+		return nil, nil, nil, nil, o.f.err
 	}
-	return f.replay, f.live, f.done, func() { f.cancelOnce.Do(func() { close(f.unsubscribed) }) }, nil
+	return o.f.replay, o.f.live, o.f.done, func() { o.f.cancelOnce.Do(func() { close(o.f.unsubscribed) }) }, nil
 }
-func (f *fakeStacks) FSRoots() []string { return f.roots }
-func (f *fakeStacks) Status(context.Context) (string, string) {
+func (f *fakeStacks) status(context.Context) (string, string) {
 	return "ok", "v2.30.0"
 }
 
 func newStacksEnv(t *testing.T, fake *fakeStacks) (*testEnv, *http.Cookie) {
 	t.Helper()
 	env := newEnvWith(t, "", func(o *api.Options) {
-		o.Stacks = fake
+		o.Stacks, o.Operations, o.FSRoots, o.Status = fake, fakeOps{fake}, fake.roots, fake.status
 		o.SSEHeartbeat = 20 * time.Millisecond
 	})
 	env.createAdmin(t)
@@ -257,12 +261,12 @@ func TestImportStack(t *testing.T) {
 func TestListAndGetStack(t *testing.T) {
 	env, cookie := newStacksEnv(t, newFakeStacks())
 	rec := env.do(t, "GET", "/api/stacks", "", withCookie(cookie))
-	if rec.Code != 200 || !strings.HasPrefix(rec.Body.String(), `[{"name":"web"`) {
+	if rec.Code != 200 || !strings.HasPrefix(rec.Body.String(), `[{"name":"web"`) || !strings.Contains(rec.Body.String(), `"serviceCount":2`) || strings.Contains(rec.Body.String(), `"services"`) {
 		t.Fatalf("list = %d %s", rec.Code, rec.Body)
 	}
 	rec = env.do(t, "GET", "/api/stacks/web", "", withCookie(cookie))
 	body := rec.Body.String()
-	for _, want := range []string{`"hash":"h1"`, `"image":"nginx:1"`, `"ipv4Address":"10.0.0.5"`, `"readOnly":["volumes"]`, `"containers":[{"id":"c1"`} {
+	for _, want := range []string{`"hash":"h1"`, `"serviceCount":1`, `"services":[{`, `"image":"nginx:1"`, `"ipv4Address":"10.0.0.5"`, `"readOnly":["volumes"]`, `"containers":[{"id":"c1"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("detail lacks %s: %s", want, body)
 		}
