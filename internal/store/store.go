@@ -2,8 +2,13 @@
 package store
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -136,4 +141,149 @@ func migrate(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// ErrNoDatabase is returned by OpenExisting when the database file is missing.
+var ErrNoDatabase = errors.New("database does not exist")
+
+// SchemaMismatchError reports a database whose schema version this binary
+// will not use without migrating it.
+type SchemaMismatchError struct{ Found, Supported int }
+
+func (e *SchemaMismatchError) Error() string {
+	if e.Found > e.Supported {
+		return fmt.Sprintf("database schema is version %d, newer than this binary supports (%d): upgrade stackstead", e.Found, e.Supported)
+	}
+	return fmt.Sprintf("database schema is version %d, this binary supports %d: start the server (or run stackstead db init) to migrate", e.Found, e.Supported)
+}
+
+// OpenOptions tunes OpenExisting.
+type OpenOptions struct {
+	// ReadOnly opens with mode=ro so the connection can never write or
+	// create -wal/-shm files.
+	ReadOnly bool
+	// AllowOlderSchema accepts a database older than this binary (it is
+	// never migrated); a newer one is always refused.
+	AllowOlderSchema bool
+}
+
+// SupportedSchema is the schema version this binary migrates to.
+func SupportedSchema() int { return len(migrations) }
+
+// OpenExisting opens a database that must already exist. It never creates the
+// file and never migrates: only the server and `db init` (Open) do that.
+func OpenExisting(path string, opts OpenOptions) (*sql.DB, error) {
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("%w: %s", ErrNoDatabase, path)
+		}
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	mode := "rw"
+	pragmas := "&_pragma=journal_mode(WAL)"
+	if opts.ReadOnly {
+		mode = "ro"
+		pragmas = "" // switching journal mode needs write access
+	}
+	escaped := strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(path)
+	dsn := "file:" + escaped + "?mode=" + mode + pragmas + "&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	version, err := SchemaVersion(context.Background(), db)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	supported := SupportedSchema()
+	if version > supported || (version != supported && !opts.AllowOlderSchema) {
+		db.Close()
+		return nil, &SchemaMismatchError{Found: version, Supported: supported}
+	}
+	return db, nil
+}
+
+// SchemaVersion returns PRAGMA user_version.
+func SchemaVersion(ctx context.Context, db *sql.DB) (int, error) {
+	var version int
+	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+		return 0, fmt.Errorf("read schema version: %w", err)
+	}
+	return version, nil
+}
+
+// QuickCheck runs PRAGMA quick_check and returns its problem lines, or nil
+// when the database is fine.
+func QuickCheck(ctx context.Context, db *sql.DB) ([]string, error) {
+	rows, err := db.QueryContext(ctx, "PRAGMA quick_check")
+	if err != nil {
+		return nil, fmt.Errorf("quick check: %w", err)
+	}
+	var lines []string
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("quick check: %w", err)
+		}
+		lines = append(lines, line)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, fmt.Errorf("quick check: %w", err)
+	}
+	if len(lines) == 1 && lines[0] == "ok" {
+		return nil, nil
+	}
+	return lines, nil
+}
+
+// Backup writes a consistent copy of the live database to dest with VACUUM
+// INTO (safe next to a running server: it reads inside one transaction). The
+// copy is built in a private temp file beside dest, synced, and linked into
+// place, so dest never exists half-written and is never overwritten.
+func Backup(ctx context.Context, db *sql.DB, dest string) (err error) {
+	if _, statErr := os.Lstat(dest); statErr == nil {
+		return fmt.Errorf("backup destination %s already exists", dest)
+	} else if !errors.Is(statErr, fs.ErrNotExist) {
+		return fmt.Errorf("backup destination: %w", statErr)
+	}
+	tmp := fmt.Sprintf("%s.tmp-%d", dest, os.Getpid())
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("create backup file: %w", err)
+	}
+	f.Close()
+	defer func() {
+		if err != nil {
+			os.Remove(tmp)
+		}
+	}()
+	if _, err = db.ExecContext(ctx, "VACUUM INTO ?", tmp); err != nil {
+		return fmt.Errorf("backup: %w", err)
+	}
+	if err = syncPath(tmp); err != nil {
+		return fmt.Errorf("sync backup: %w", err)
+	}
+	if err = os.Link(tmp, dest); err != nil {
+		return fmt.Errorf("publish backup: %w", err)
+	}
+	os.Remove(tmp)
+	if d, openErr := os.Open(filepath.Dir(dest)); openErr == nil {
+		d.Sync() //nolint:errcheck // best effort
+		d.Close()
+	}
+	return nil
+}
+
+func syncPath(path string) error {
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
 }
