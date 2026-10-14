@@ -1,4 +1,4 @@
-//go:build unix
+//go:build darwin || linux || freebsd
 
 // Package lockfile is the advisory lock that keeps a second server (or a
 // database restore) from running against the same data directory.

@@ -1,4 +1,4 @@
-//go:build unix
+//go:build darwin || linux || freebsd
 
 package lockfile_test
 
@@ -91,5 +91,22 @@ func TestHeldErrorPIDZeroWhenUnreadable(t *testing.T) {
 	var held *lockfile.HeldError
 	if !errors.As(err, &held) || held.PID != 0 {
 		t.Fatalf("err = %v, want HeldError with PID 0", err)
+	}
+}
+
+func TestAcquireTruncatesLongerStalePID(t *testing.T) {
+	path := lockPath(t)
+	stale := strings.Repeat("9", 20) + "\n"
+	if err := os.WriteFile(path, []byte(stale), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l, err := lockfile.Acquire(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Release()
+	data, _ := os.ReadFile(path)
+	if string(data) != strconv.Itoa(os.Getpid())+"\n" {
+		t.Errorf("file = %q, want exactly the current pid", data)
 	}
 }

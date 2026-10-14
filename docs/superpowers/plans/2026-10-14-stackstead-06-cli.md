@@ -306,7 +306,7 @@ var ErrNoDatabase = errors.New("database does not exist")
 type SchemaMismatchError struct { Found, Supported int }   // Error(): "database schema is version N, this binary supports M: start the server (or run stackstead db init) to migrate" / "…newer than this binary"
 type OpenOptions struct { ReadOnly bool; AllowOlderSchema bool }
 func OpenExisting(path string, opts OpenOptions) (*sql.DB, error)
-//   same pragmas/MaxOpenConns(1) as Open; DSN mode=rw (never creates), mode=ro when ReadOnly (never creates -wal/-shm as a foreign user);
+//   same pragmas/MaxOpenConns(1) as Open; DSN mode=rw (never creates), mode=ro when ReadOnly (blocks writes to the database; a WAL database may still get -wal/-shm files created, so callers running as root must refuse first, see T7 ownership check);
 //   ErrNoDatabase when the file is missing; SchemaMismatchError when user_version > SupportedSchema(), or != unless AllowOlderSchema
 func SupportedSchema() int                          // len(migrations)
 func SchemaVersion(ctx context.Context, db *sql.DB) (int, error)
