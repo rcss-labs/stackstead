@@ -30,19 +30,27 @@ const GROUPS: (keyof ServiceForm)[][] = [
   ['restart'],
   ['healthcheck'],
 ];
+const GROUP_LABELS = ['Image', 'Ports', 'Volumes', 'Environment', 'Networks', 'Network mode', 'Limits', 'Restart policy', 'Healthcheck'];
 const GROUP_NAMES: Field[][] = [['image', 'build'], ['ports'], ['volumes'], ['environment'], ['networks'], ['network_mode'], ['limits'], ['restart'], ['healthcheck']];
 
 const cloneForm = (f: ServiceForm): ServiceForm => ({ ...f, readOnly: new Set(f.readOnly) });
 
-/** New file's form with only the groups the user changed (vs. the form they started from) laid on top. */
-function rebaseForm(user: ServiceForm, seeded: ServiceForm, fresh: ServiceForm): ServiceForm {
+/**
+ * New file's form with only the groups the user changed (vs. the form they started from) laid on top.
+ * `discarded` names changed groups that cannot be edited now: the file's values win for those.
+ */
+function rebaseForm(user: ServiceForm, seeded: ServiceForm, fresh: ServiceForm): { form: ServiceForm; discarded: string[] } {
   const out = cloneForm(fresh);
+  const discarded: string[] = [];
   GROUPS.forEach((keys, i) => {
-    if (GROUP_NAMES[i].some((g) => fresh.readOnly.has(g))) return; // cannot be edited now: the file's values win
     const changed = keys.some((k) => JSON.stringify(user[k]) !== JSON.stringify(seeded[k]));
+    if (GROUP_NAMES[i].some((g) => fresh.readOnly.has(g))) {
+      if (changed) discarded.push(GROUP_LABELS[i]);
+      return;
+    }
     if (changed) for (const k of keys) (out as unknown as Record<string, unknown>)[k] = user[k];
   });
-  return out;
+  return { form: out, discarded };
 }
 
 // Stable text of a form for dirty checks (Sets do not survive JSON.stringify).
@@ -70,6 +78,8 @@ export function createServiceEdit(
   previewText: Readable<{ original: string; modified: string } | undefined>;
   /** The file changed under the editor and the user's changes were applied on top of the new version. */
   rebased: Readable<boolean>;
+  /** Groups whose edits a rebase dropped because the new file only allows editing them as raw YAML. */
+  discardedGroups: Readable<string[]>;
   /** Bumped whenever the machine replaces the form itself (rebase, discard); the view re-reads `form`. */
   formVersion: Readable<number>;
   preview(): Promise<void>;
@@ -94,6 +104,7 @@ export function createServiceEdit(
   const checksPartial = writable(false);
   const dirty = writable(false);
   const rebased = writable(false);
+  const discardedGroups = writable<string[]>([]);
   const formVersion = writable(0);
   const previewText = writable<{ original: string; modified: string } | undefined>(undefined);
 
@@ -117,7 +128,7 @@ export function createServiceEdit(
       return false;
     }
     const fresh = toForm(svc.config, svc.readOnly);
-    const merged = rebaseForm(get(form), seeded, fresh);
+    const { form: merged, discarded } = rebaseForm(get(form), seeded, fresh);
     original = svc.config;
     setHash(detail.hash);
     seeded = fresh;
@@ -125,6 +136,7 @@ export function createServiceEdit(
     form.set(merged);
     formVersion.update((n) => n + 1);
     rebased.set(true);
+    discardedGroups.set(discarded);
     return true;
   }
 
@@ -166,6 +178,7 @@ export function createServiceEdit(
     dirty: { subscribe: dirty.subscribe },
     previewText: { subscribe: previewText.subscribe },
     rebased: { subscribe: rebased.subscribe },
+    discardedGroups: { subscribe: discardedGroups.subscribe },
     formVersion: { subscribe: formVersion.subscribe },
 
     async preview() {
@@ -231,6 +244,7 @@ export function createServiceEdit(
         baseline = fingerprint(sent.form);
         dirty.set(fingerprint(get(form)) !== baseline);
         rebased.set(false);
+        discardedGroups.set([]);
         checksPartial.set(res.checksPartial === true);
         previewText.set(undefined);
         previewed = undefined;
@@ -264,6 +278,7 @@ export function createServiceEdit(
       form.set(cloneForm(seeded));
       formVersion.update((n) => n + 1);
       rebased.set(false);
+      discardedGroups.set([]);
       errors.set({});
       conflictMessage.set(undefined);
       notice.set(undefined);
