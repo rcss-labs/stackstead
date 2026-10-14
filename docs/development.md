@@ -6,6 +6,7 @@ Back to the [README](../README.md).
 
 ```bash
 make build     # build the UI (Node >= 22), then bin/stackstead
+make build-go  # the host binary without the UI step (no Node needed)
 make release   # the same for linux/amd64 and linux/arm64
 ```
 
@@ -22,7 +23,8 @@ not built, and logs a warning.
 | `make build` | Node >= 22, Go | UI, then the static binary in `bin/` |
 | `make test` | Go only | Go tests with the race detector; no Node |
 | `make check` | Node, Go | `go vet`, gofmt, UI type-check and unit tests, Go tests |
-| `make e2e` | Go, a built UI | smoke test against the real binary (see below) |
+| `make build-go` | Go only | the host binary without building the UI |
+| `make e2e` | Go (UI for the web part) | smoke tests against the real binary (see below) |
 
 ## Dev loop
 
@@ -30,7 +32,7 @@ Run the backend and the Vite dev server side by side. The dev server proxies
 `/api` to the backend.
 
 ```bash
-STACKSTEAD_DATA_DIR=$PWD/.dev/data STACKSTEAD_STACKS_DIR=$PWD/.dev/stacks go run ./cmd/stackstead
+STACKSTEAD_DATA_DIR=$PWD/.dev/data STACKSTEAD_STACKS_DIR=$PWD/.dev/stacks go run ./cmd/stackstead serve
 cd web && npm run dev
 ```
 
@@ -50,9 +52,19 @@ the login page in headless Chrome when a Chrome/Chromium is found (set
 `STACKSTEAD_E2E_CHROME` to choose one). Those two parts skip cleanly when
 Docker or Chrome is missing.
 
+The same target runs the CLI end to end (`cmd/stackstead/cli_e2e_test.go`):
+it builds the binary with a version stamp and drives it as separate processes
+against a real server: `version`, `config`, `db`, `admin`, `login`, `status`,
+`stacks`, `settings`, token rotation from both sides, backup and a refused
+then successful restore, `health` and the exit codes, then scans every
+captured output for the password, session and tokens. With Docker it also runs
+a throwaway `e2e-cli-*` stack through `stacks up|show|down|rm`, `logs` and
+`metrics`. It never touches other containers, and uses its own ports.
+
 **CI: deferred.** There is no CI configuration yet. `make test` needs no
 Node; `make build` does. `make e2e` does not run Node itself but needs the UI
-to be built already (`make ui`); without it the smoke test skips.
+to be built already (`make ui`); without it the web smoke test skips (the CLI
+tests do not need it).
 
 ## Design documents
 
