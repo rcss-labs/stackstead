@@ -103,7 +103,7 @@ func startServer(t *testing.T, socket string) *e2eServer {
 	if socket == "" {
 		socket = dir + "/nonexistent.sock"
 	}
-	cmd := exec.Command(bin)
+	cmd := exec.Command(bin, "serve")
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("STACKSTEAD_LISTEN=127.0.0.1:%d", port),
 		"STACKSTEAD_DATA_DIR="+dir+"/data",
