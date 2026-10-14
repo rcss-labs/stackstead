@@ -1382,6 +1382,58 @@ func TestFailedRevertIsLoggedAtErrorLevel(t *testing.T) {
 	}
 }
 
+func TestActAndRemoveWaitForConcurrentEditOfSameStack(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		act  func(h *harness) error
+	}{
+		{"act", func(h *harness) error {
+			_, err := h.svc.Act(context.Background(), "web", "up")
+			return err
+		}},
+		{"remove", func(h *harness) error {
+			_, err := h.svc.Remove(context.Background(), "web", false)
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.compose.projectFn = projectFromFile
+			h.create(t, "web", webCfg())
+			ctx := context.Background()
+			_, hash, _ := h.svc.Raw(ctx, "web")
+
+			// While the edit has claimed "renamed" but not yet saved the file,
+			// start Act/Remove. Unlocked, it would see the claimed project,
+			// derive the old one from the unsaved file and revert the claim
+			// once the edit finished, leaving registry and file disagreeing.
+			var actDone chan error
+			var once sync.Once
+			h.svc.SetAfterClaim(func() {
+				once.Do(func() {
+					actDone = make(chan error, 1)
+					go func() { actDone <- tc.act(h) }()
+					time.Sleep(200 * time.Millisecond)
+				})
+			})
+			if _, err := h.svc.SaveRaw(ctx, "web", rawWithName("renamed", "web"), hash); err != nil {
+				t.Fatal(err)
+			}
+			<-actDone
+			if tc.name == "remove" {
+				return // the stack is gone; nothing left to disagree
+			}
+			e, err := h.reg.Get(ctx, "web")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := projectFromFile(h.path("web")); e.Project != want {
+				t.Errorf("registry project = %q, file project = %q", e.Project, want)
+			}
+		})
+	}
+}
+
 func TestActRederivesProjectAfterOutOfBandRename(t *testing.T) {
 	h := newHarness(t)
 	h.compose.projectFn = projectFromFile

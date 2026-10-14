@@ -136,6 +136,9 @@ func (s *Service) commit(ctx context.Context, e Entry, old, edited *composefile.
 		if err := s.reg.SetProject(ctx, e.Name, project); err != nil {
 			return EditResult{}, s.mapProjectTaken(ctx, err, project, e.Name)
 		}
+		if s.afterClaim != nil {
+			s.afterClaim()
+		}
 		if err := composefile.Save(e.ComposePath, candidate, hash); err != nil {
 			return EditResult{}, s.revertProject(ctx, e, err)
 		}
