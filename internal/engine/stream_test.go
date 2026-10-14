@@ -230,9 +230,28 @@ func TestLogsTTYRaw(t *testing.T) {
 	if len(es) != 0 || len(got) != 2 || got[0].Text != "a" || got[1].Text != "b" || got[0].Stream != "stdout" {
 		t.Fatalf("got %+v %v", got, es)
 	}
-	for _, want := range []string{"timestamps=1", "follow=1", "tail=50", "since=100", "stdout=1", "stderr=1"} {
+	for _, want := range []string{"timestamps=1", "follow=1", "tail=50", "since=100.000000000", "stdout=1", "stderr=1"} {
 		if !strings.Contains(q, want) {
 			t.Errorf("query %q lacks %s", q, want)
+		}
+	}
+}
+
+func TestLogsSinceHasNanoseconds(t *testing.T) {
+	for _, tc := range []struct {
+		since time.Time
+		want  string
+	}{
+		{time.Unix(1700000000, 123456789), "since=1700000000.123456789"},
+		{time.Unix(100, 0), "since=100.000000000"},
+		{time.Unix(100, 5), "since=100.000000005"},
+	} {
+		var q string
+		sock := serve(t, logHandler(t, nil, &q))
+		lines, errs := New(sock, 2*time.Second).Logs(ctx(t), "abc", LogOptions{Since: tc.since, Tail: -1})
+		collectLogs(t, lines, errs)
+		if !strings.Contains(q, tc.want) {
+			t.Errorf("query %q lacks %s", q, tc.want)
 		}
 	}
 }
