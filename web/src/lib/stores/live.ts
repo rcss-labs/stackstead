@@ -1,0 +1,140 @@
+// Multiplexer for /api/events. One shared connection feeds status flags and a
+// change signal; screens refetch on every `resync` because events missed
+// while disconnected are not replayed.
+import { readable, writable, type Readable } from 'svelte/store';
+import type { Status } from '../api/types';
+import { openSSE, type SSEHandle, type SSEStatus } from '../sse/client';
+import type { SSEMessage } from '../sse/parse';
+
+export interface LiveState {
+  connection: SSEStatus;
+  events: 'connected' | 'disconnected' | 'unknown';
+  metricsDegraded: boolean;
+  docker: 'ok' | 'unavailable' | 'unknown';
+  compose: string | 'unavailable' | 'unknown';
+}
+
+export interface LiveChange {
+  project: string;
+  seq: number;
+  resync?: true;
+}
+
+const initial: LiveState = {
+  connection: 'closed',
+  events: 'unknown',
+  metricsDegraded: false,
+  docker: 'unknown',
+  compose: 'unknown',
+};
+
+const state = writable<LiveState>({ ...initial });
+const changeStore = writable<LiveChange | null>(null);
+
+export const live: Readable<LiveState> = { subscribe: state.subscribe };
+export const changes: Readable<LiveChange | null> = { subscribe: changeStore.subscribe };
+
+interface Deps {
+  fetchStatus: () => Promise<Status>;
+  open?: typeof openSSE;
+}
+
+let deps: Deps | null = null;
+let handle: SSEHandle | null = null;
+let generation = 0;
+
+export function startLive(d: Deps): void {
+  if (handle) return;
+  deps = d;
+  connect();
+}
+
+function connect(): void {
+  const gen = ++generation;
+  const open = deps?.open ?? openSSE;
+  const current = open({
+    url: '/api/events',
+    onMessage: (m) => {
+      if (gen === generation) handleMessage(m);
+    },
+    onStatus: (s) => {
+      if (gen === generation) handleStatus(s);
+    },
+  });
+  // Callbacks may already have fired synchronously and torn this connection down.
+  if (gen === generation) handle = current;
+  else current.close();
+}
+
+function handleStatus(s: SSEStatus): void {
+  state.update((v) => ({ ...v, connection: s }));
+  if (s === 'open') {
+    changeStore.set({ project: '', seq: 0, resync: true });
+    void refreshStatus();
+  } else if (s === 'unauthorized' || s === 'gone') {
+    // The client is already finished; drop it so a later startLive (after login) opens a fresh one.
+    teardown();
+  }
+}
+
+function handleMessage(m: SSEMessage): void {
+  switch (m.event) {
+    case 'status': {
+      const flags = parse<{ events?: string; metricsDegraded?: boolean }>(m.data);
+      if (!flags) return;
+      let flipped = false;
+      state.update((v) => {
+        const next = flags.events === 'connected' || flags.events === 'disconnected' ? flags.events : v.events;
+        flipped = v.events !== 'unknown' && next !== 'unknown' && next !== v.events;
+        return { ...v, events: next, metricsDegraded: flags.metricsDegraded ?? v.metricsDegraded };
+      });
+      if (flipped) void refreshStatus();
+      return;
+    }
+    case 'change': {
+      const c = parse<{ project?: string; seq?: number }>(m.data);
+      if (c && typeof c.project === 'string' && typeof c.seq === 'number') {
+        changeStore.set({ project: c.project, seq: c.seq });
+      }
+      return;
+    }
+    case 'dropped': {
+      // The server ended a slow client; reconnect now rather than after backoff.
+      teardown();
+      connect();
+      return;
+    }
+  }
+}
+
+function parse<T>(data: string): T | null {
+  try {
+    return JSON.parse(data) as T;
+  } catch {
+    return null;
+  }
+}
+
+function teardown(): void {
+  generation++;
+  handle?.close();
+  handle = null;
+}
+
+export function stopLive(): void {
+  teardown();
+  // Logout or teardown: forget flags so the next session never sees the last one's state.
+  state.set({ ...initial });
+  changeStore.set(null);
+}
+
+export async function refreshStatus(): Promise<void> {
+  const fetchStatus = deps?.fetchStatus;
+  if (!fetchStatus) return;
+  try {
+    const s = await fetchStatus();
+    state.update((v) => ({ ...v, docker: s.docker, compose: s.compose }));
+  } catch {
+    // Keep the last known flags; the next open or flip tries again.
+  }
+}
