@@ -34,16 +34,24 @@ func TestVerifyRejectsInvalidYAML(t *testing.T) {
 	}
 }
 
-func TestVerifyCatchesDeleteOfInheritedKey(t *testing.T) {
+func TestApplyEditsRefusesDeleteOfInheritedKey(t *testing.T) {
 	// Deleting a key that only exists through a merge key is a no-op for the
-	// text editor, so the decoded result still has it: verification must fail.
+	// text editor, so the decoded result still has it: applyEdits must refuse.
 	orig := []byte("x-base: &base\n  restart: always\nservices:\n  web:\n    <<: *base\n    image: nginx\n")
 	edits := []edit{{path("services.web.restart"), nil}}
-	edited, err := applyEdits(orig, edits)
-	if err != nil {
-		t.Fatalf("applyEdits: %v", err)
-	}
-	if err := verifyEdits(orig, edited, edits); !errors.Is(err, errVerification) {
+	if _, err := applyEdits(orig, edits); !errors.Is(err, errVerification) {
 		t.Errorf("err = %v, want errVerification", err)
+	}
+}
+
+func TestApplyEditsRefusesMisplacedFlowEnd(t *testing.T) {
+	// yaml.v3 ends the comment at U+2028 (a YAML line break), so "y]" closes
+	// web.a on line 2 and "b: 1]" is a plain scalar. The text scanner only
+	// knows "\n" line breaks, so it reads "1]" as the closing bracket and
+	// would delete b too. The result must be refused, not returned.
+	orig := []byte("web:\n  a: [x, # n\u2028y]\n  b: 1]\n  c: 1\n")
+	edits := []edit{{path("web.a"), nil}}
+	if out, err := applyEdits(orig, edits); !errors.Is(err, errVerification) {
+		t.Errorf("err = %v, want errVerification; output:\n%s", err, out)
 	}
 }

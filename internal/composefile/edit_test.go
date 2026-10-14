@@ -338,6 +338,30 @@ networks:
 			edits: []edit{{path("web.z"), scalar("1")}},
 			want:  "web:\n  a: !!seq [1]\n  z: 1\n",
 		},
+		{
+			name:  "colon then quote inside plain flow scalar: replace",
+			in:    "web:\n  a: [echo:'hi]\n  b: [c']\n  d: 1\n",
+			edits: []edit{{path("web.a"), scalar("R")}},
+			want:  "web:\n  a: R\n  b: [c']\n  d: 1\n",
+		},
+		{
+			name:  "colon then quote inside plain flow scalar: delete",
+			in:    "web:\n  a: [echo:'hi]\n  b: [c']\n  d: 1\n",
+			edits: []edit{{path("web.a"), nil}},
+			want:  "web:\n  b: [c']\n  d: 1\n",
+		},
+		{
+			name:  "quoted scalar after tag in flow sequence: delete",
+			in:    "web:\n  a: [!!str 'a]\n  b']\n  b: 1\n",
+			edits: []edit{{path("web.a"), nil}},
+			want:  "web:\n  b: 1\n",
+		},
+		{
+			name:  "comment directly after comma in flow sequence: delete",
+			in:    "web:\n  a: [x,#c]\n y]\n  b: 1\n",
+			edits: []edit{{path("web.a"), nil}},
+			want:  "web:\n  b: 1\n",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

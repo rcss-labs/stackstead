@@ -174,57 +174,97 @@ func trailingComment(line string, i int) string {
 
 // flowEndLine returns the line holding the bracket that closes the flow
 // collection starting at the 1-based line and character column, scanning the
-// source text so indentation does not matter.
+// source text so indentation does not matter. It tokenizes the way yaml.v3
+// does in flow context, so brackets and quotes inside scalars and comments are
+// not mistaken for structure. Only "\n" is treated as a line break; applyEdits
+// verifies its result, so any input this scan misreads is refused, not saved.
 func (l lines) flowEndLine(line, col int) (int, error) {
-	pos := l.start[line-1] + l.column(line, col)
 	src := l.src
-	if pos < len(src) && src[pos] == '!' { // skip a tag such as !!seq
-		for pos < len(src) && src[pos] != ' ' && src[pos] != '\t' && src[pos] != '\n' {
-			pos++
-		}
-		for pos < len(src) && (src[pos] == ' ' || src[pos] == '\t' || src[pos] == '\n') {
-			pos++
-		}
-	}
-	if pos >= len(src) || (src[pos] != '[' && src[pos] != '{') {
-		return 0, errUnsupportedLayout
-	}
 	depth := 0
-	var quote byte
-	var prev byte // previous significant character outside quotes
-	for j := pos; j < len(src); j++ {
+	for j := l.start[line-1] + l.column(line, col); j < len(src); {
 		c := src[j]
+		if depth == 0 && c != '[' && c != '{' && c != '!' && !isFlowSpace(c) {
+			return 0, errUnsupportedLayout // only a tag may precede the opening bracket
+		}
 		switch {
-		case quote == '"' && c == '\\':
+		case isFlowSpace(c):
 			j++
-		case quote == '\'' && c == '\'' && j+1 < len(src) && src[j+1] == '\'':
-			j++
-		case quote != 0:
-			if c == quote {
-				quote, prev = 0, c
-			}
-		case (c == '"' || c == '\'') && strings.IndexByte("[{,:?", prev) >= 0 && prev != 0:
-			quote = c // a quote opens a string only at the start of a flow token
-		case c == '#' && j > 0 && (src[j-1] == ' ' || src[j-1] == '\t' || src[j-1] == '\n'):
-			for j+1 < len(src) && src[j+1] != '\n' {
-				j++
-			}
-		case c == ' ' || c == '\t' || c == '\n':
+		case c == '#': // between tokens a '#' always starts a comment
+			j = skipUntil(src, j, func(b byte) bool { return b == '\n' })
 		case c == '[' || c == '{':
 			depth++
-			prev = c
+			j++
 		case c == ']' || c == '}':
-			depth--
-			if depth == 0 {
+			if depth--; depth == 0 {
 				// the line number is the count of line starts at or before j
 				return sort.Search(len(l.start), func(k int) bool { return l.start[k] > j }), nil
 			}
-			prev = c
+			j++
+		case c == ',' || c == '?' || c == ':': // indicators at a token start in flow
+			j++
+		case c == '\'' || c == '"':
+			if j = quotedEnd(src, j); j < 0 {
+				return 0, errUnsupportedLayout
+			}
+		case c == '!': // a tag runs to the next whitespace
+			j = skipUntil(src, j, isFlowSpace)
+		case c == '&' || c == '*': // anchor or alias name
+			j = skipUntil(src, j+1, func(b byte) bool { return !isAnchorChar(b) })
 		default:
-			prev = c
+			j = plainEnd(src, j)
 		}
 	}
 	return 0, errUnsupportedLayout
+}
+
+func isFlowSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' }
+
+func isAnchorChar(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c == '_' || c == '-'
+}
+
+// skipUntil returns the index of the first byte from i on that satisfies stop,
+// or len(src).
+func skipUntil(src []byte, i int, stop func(byte) bool) int {
+	for i < len(src) && !stop(src[i]) {
+		i++
+	}
+	return i
+}
+
+// quotedEnd returns the index just past the quoted scalar starting at i, or -1.
+func quotedEnd(src []byte, i int) int {
+	q := src[i]
+	for j := i + 1; j < len(src); j++ {
+		switch {
+		case q == '"' && src[j] == '\\':
+			j++
+		case src[j] != q:
+		case q == '\'' && j+1 < len(src) && src[j+1] == '\'':
+			j++ // '' is an escaped quote
+		default:
+			return j + 1
+		}
+	}
+	return -1
+}
+
+// plainEnd returns the index where the flow-context plain scalar starting at i
+// ends: at ",?[]{}", at ':' followed by whitespace, or at a comment. Quotes and
+// a ':' followed by anything else are ordinary characters inside it.
+func plainEnd(src []byte, i int) int {
+	for j := i; j < len(src); j++ {
+		c := src[j]
+		switch {
+		case strings.IndexByte(",?[]{}", c) >= 0:
+			return j
+		case c == ':' && (j+1 == len(src) || isFlowSpace(src[j+1])):
+			return j
+		case c == '#' && isFlowSpace(src[j-1]):
+			return j
+		}
+	}
+	return len(src)
 }
 
 // entryEndFor is entryEnd extended so a multi-line flow collection value is

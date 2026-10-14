@@ -24,7 +24,8 @@ var (
 
 // applyEdits rewrites src so that only the text belonging to each edited key
 // changes; comments, blank lines, ordering and formatting elsewhere are kept
-// byte-for-byte. Edits are applied in order.
+// byte-for-byte. Edits are applied in order. The result is verified to mean
+// exactly src with the edits applied; otherwise an errVerification is returned.
 func applyEdits(src []byte, edits []edit) ([]byte, error) {
 	if bytes.Contains(src, []byte("\r\n")) {
 		return nil, fmt.Errorf("%w: CRLF line endings", errUnsupportedLayout)
@@ -35,6 +36,11 @@ func applyEdits(src []byte, edits []edit) ([]byte, error) {
 		if out, err = applyEdit(out, e); err != nil {
 			return nil, fmt.Errorf("edit %s: %w", strings.Join(e.path, "."), err)
 		}
+	}
+	// The splicing works on text, so check the result means exactly src with
+	// the edits applied; any misread of the layout becomes a refusal.
+	if err := verifyEdits(src, out, edits); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
