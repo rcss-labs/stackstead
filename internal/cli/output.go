@@ -106,7 +106,7 @@ func (p *Printer) Status(s string) string {
 		return p.paint("32", s)
 	case "partial":
 		return p.paint("33", s)
-	case "failed", "stopped", "unavailable":
+	case "failed", "stopped", "unavailable", "disconnected", "degraded":
 		return p.paint("31", s)
 	case "unknown":
 		return p.paint("2", s)

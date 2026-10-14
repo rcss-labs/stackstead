@@ -5,6 +5,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
+	"strings"
+	"syscall"
+	"unicode"
+
+	"github.com/rcss-labs/stackstead/internal/client"
 )
 
 // Exit codes (design spec §4).
@@ -50,6 +56,12 @@ func codeFor(err error) int {
 		return ExitOK
 	case errors.As(err, &ee):
 		return ee.Code
+	case errors.Is(err, client.ErrNoSession):
+		return ExitAuth
+	case clientErrorCode(err) != 0:
+		return clientErrorCode(err)
+	case isUnreachable(err):
+		return ExitUnavailable
 	case errors.Is(err, context.Canceled):
 		return ExitInterrupted
 	case errors.Is(err, flag.ErrHelp):
@@ -59,4 +71,54 @@ func codeFor(err error) int {
 	}
 }
 
-func cleanText(s string) string { return s }
+// clientErrorCode maps an API error response to an exit code; 0 means err
+// holds no *client.Error.
+func clientErrorCode(err error) int {
+	var ce *client.Error
+	if !errors.As(err, &ce) {
+		return 0
+	}
+	switch s := ce.Status; {
+	case s == 401 || s == 403:
+		return ExitAuth
+	case s == 404:
+		return ExitNotFound
+	case s == 409:
+		return ExitConflict
+	case s == 422 || (s == 400 && len(ce.Fields) > 0):
+		return ExitValidation
+	case s == 429:
+		return ExitRateLimited
+	case s == 503:
+		return ExitUnavailable
+	}
+	return ExitGeneral
+}
+
+// isUnreachable reports a refused connection or a failed DNS lookup.
+func isUnreachable(err error) bool {
+	var dns *net.DNSError
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.As(err, &dns)
+}
+
+// cleanText drops control characters (ESC, CR, BEL, DEL, C1) from text that
+// came from a server so it cannot rewrite the user's terminal. Newlines and
+// tabs stay.
+func cleanText(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) && r != '\n' && r != '\t' {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// cleanError carries sanitised server text while keeping the original error
+// reachable for errors.Is/As (client.ErrNotFound and friends).
+type cleanError struct {
+	msg string
+	err error
+}
+
+func (e *cleanError) Error() string { return e.msg }
+func (e *cleanError) Unwrap() error { return e.err }
