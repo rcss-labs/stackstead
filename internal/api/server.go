@@ -81,5 +81,13 @@ func New(opts Options) http.Handler {
 		writeError(w, http.StatusNotFound, "not found")
 	}))
 	mux.Handle("/", spaHandler(opts.Static))
-	return mux
+	return nosniff(mux)
+}
+
+// nosniff stops browsers from second-guessing Content-Type on any response.
+func nosniff(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		next.ServeHTTP(w, r)
+	})
 }

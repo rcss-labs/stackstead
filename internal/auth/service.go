@@ -47,14 +47,30 @@ type Service struct {
 	// hashSlots bounds concurrent argon2 work: each hash allocates 64 MiB, so
 	// the worst case is maxConcurrentHashes x 64 MiB however many logins arrive.
 	hashSlots chan struct{}
+	params    argonParams
 }
 
-func NewService(db *sql.DB, now func() time.Time) (*Service, error) {
-	dummy, err := hashPassword(rand.Text())
+// Option customizes NewService.
+type Option func(*Service)
+
+// WithFastHashingForTests lowers the argon2 cost so tests that hash often run
+// quickly. Production code must not use it; hashes stay verifiable because
+// each one encodes its own parameters.
+func WithFastHashingForTests() Option {
+	return func(s *Service) { s.params = fastHashParams }
+}
+
+func NewService(db *sql.DB, now func() time.Time, opts ...Option) (*Service, error) {
+	s := &Service{db: db, now: now, hashSlots: make(chan struct{}, maxConcurrentHashes), params: hashParams}
+	for _, opt := range opts {
+		opt(s)
+	}
+	dummy, err := hashPasswordWith(s.params, rand.Text())
 	if err != nil {
 		return nil, fmt.Errorf("prepare dummy hash: %w", err)
 	}
-	return &Service{db: db, now: now, dummyHash: dummy, hashSlots: make(chan struct{}, maxConcurrentHashes)}, nil
+	s.dummyHash = dummy
+	return s, nil
 }
 
 // hash and verify run argon2 under the hashSlots limit, waiting for a slot
@@ -64,7 +80,7 @@ func (s *Service) hash(ctx context.Context, password string) (string, error) {
 		return "", err
 	}
 	defer s.releaseHashSlot()
-	return hashPassword(password)
+	return hashPasswordWith(s.params, password)
 }
 
 func (s *Service) verify(ctx context.Context, encoded, password string) (bool, error) {
@@ -228,8 +244,16 @@ func (s *Service) ChangePassword(ctx context.Context, userID int64, current, nex
 		return fmt.Errorf("begin password change: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op after Commit
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, newHash, userID); err != nil {
+	// Compare-and-swap on the hash we verified: if another change landed
+	// while we were hashing, this one must not silently overwrite it.
+	res, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?`, newHash, userID, hash)
+	if err != nil {
 		return fmt.Errorf("update password: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("update password: %w", err)
+	} else if n == 0 {
+		return ErrInvalidCredentials
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND token_hash != ?`, userID, hashToken(keepToken)); err != nil {
 		return fmt.Errorf("delete other sessions: %w", err)
