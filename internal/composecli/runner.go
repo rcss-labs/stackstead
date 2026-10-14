@@ -158,6 +158,13 @@ func (r *Runner) exec(ctx context.Context, dir string, args []string, stdout, st
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return fmt.Errorf("docker compose %s: %w", firstArg(args), ctxErr)
 	}
+	// With SysProcAttr set, os/exec skips its own Dir check and the child's
+	// chdir failure would look like a missing binary, so check it here.
+	if dir != "" {
+		if _, err := os.Stat(dir); err != nil {
+			return fmt.Errorf("compose file directory: %w", err)
+		}
+	}
 	cmd := exec.Command(r.binary(), args...)
 	cmd.Dir = dir
 	if len(r.Env) > 0 {
@@ -204,11 +211,9 @@ func (r *Runner) exec(ctx context.Context, dir string, args []string, stdout, st
 	wasSignalled := signalled
 	mu.Unlock()
 
+	// Always sweep stragglers that outlived the leader, whatever the outcome.
+	signalGroup(cmd, syscall.SIGKILL)
 	lingering := errors.Is(waitErr, exec.ErrWaitDelay)
-	if wasSignalled || lingering {
-		// Sweep stragglers that outlived the leader.
-		signalGroup(cmd, syscall.SIGKILL)
-	}
 	if wasSignalled {
 		// A cancelled operation is never a success, whatever the exit status.
 		return fmt.Errorf("docker compose %s: %w", firstArg(args), ctx.Err())
@@ -278,7 +283,9 @@ func splitLines(rd io.Reader, emit func(string)) {
 		for _, b := range buf[:n] {
 			switch b {
 			case '\r':
-				crEmitted = len(line) > 0 || justCapped
+				if !prevCR { // a run of \r before \n is one break
+					crEmitted = len(line) > 0 || justCapped
+				}
 				if len(line) > 0 {
 					emit(string(line))
 					line = line[:0]

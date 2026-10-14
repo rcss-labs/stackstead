@@ -3,6 +3,7 @@ package composecli
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -73,6 +74,14 @@ termexit0)
   ;;
 marker)
   touch "$FAKE_MARKER"
+  trap '' TERM
+  sleep 1
+  ;;
+lingerfail)
+  sleep 4 &
+  echo $! > "$FAKE_PIDFILE.child"
+  echo x
+  exit 3
   ;;
 linger)
   sleep 3 &
@@ -323,6 +332,29 @@ func TestRunDoesNotWaitForLingeringGrandchild(t *testing.T) {
 	waitDead(t, readPID(t, pidfile+".child"))
 }
 
+func TestRunMissingWorkingDirIsNotComposeUnavailable(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "started")
+	r, _ := newRunner(t, "marker", "FAKE_MARKER="+marker)
+	file := filepath.Join(t.TempDir(), "gone", "compose.yaml")
+	err := r.Run(ctxT(t), file, []string{"up"}, nil)
+	if !errors.Is(err, fs.ErrNotExist) || errors.Is(err, ErrComposeUnavailable) {
+		t.Fatalf("got %v", err)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Fatal("docker was invoked with a missing working directory")
+	}
+}
+
+func TestRunSweepsGrandchildAfterNonZeroExit(t *testing.T) {
+	pidfile := filepath.Join(t.TempDir(), "pid")
+	r, file := newRunner(t, "lingerfail", "FAKE_PIDFILE="+pidfile)
+	var ee *ExitError
+	if err := r.Run(ctxT(t), file, nil, nil); !errors.As(err, &ee) || ee.Code != 3 {
+		t.Fatalf("got %v", err)
+	}
+	waitDead(t, readPID(t, pidfile+".child"))
+}
+
 func TestRunMissingBinaryIsComposeUnavailable(t *testing.T) {
 	r := &Runner{Binary: filepath.Join(t.TempDir(), "nope")}
 	file := filepath.Join(t.TempDir(), "compose.yaml")
@@ -349,6 +381,8 @@ func TestSplitLines(t *testing.T) {
 		{"exact cap then crlf", cap64 + "\r\nz", []string{cap64, "z"}},
 		{"crlf keeps blank line", "a\r\n\r\nb", []string{"a", "", "b"}},
 		{"lf keeps blank line", "b\n\nc", []string{"b", "", "c"}},
+		{"cr run before lf is one break", "a\r\r\n", []string{"a"}},
+		{"cr run then blank line", "x\r\r\n\r\ny", []string{"x", "", "y"}},
 		{"bare cr is a break", "a\rb\r", []string{"a", "b"}},
 		{"cap does not split a rune", strings.Repeat("x", 64*1024-1) + "é" + "tail",
 			[]string{strings.Repeat("x", 64*1024-1), "étail"}},
