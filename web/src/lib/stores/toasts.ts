@@ -5,7 +5,7 @@ export type ToastKind = 'info' | 'success' | 'warning' | 'danger';
 export interface ToastInput {
   kind: ToastKind;
   message: string;
-  /** Milliseconds before auto-dismiss; 0 keeps the toast until dismissed. */
+  /** Milliseconds before auto-dismiss; 0 keeps the toast until dismissed. Default 5000, danger never expires. */
   timeoutMs?: number;
 }
 
@@ -32,7 +32,8 @@ function createToasts() {
   function push(input: ToastInput): number {
     const id = nextId++;
     update((list) => [...list, { id, kind: input.kind, message: input.message }]);
-    const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    // Errors stay until dismissed: they auto-vanish too fast to read or act on.
+    const timeout = input.timeoutMs ?? (input.kind === 'danger' ? 0 : DEFAULT_TIMEOUT_MS);
     if (timeout > 0) timers.set(id, setTimeout(() => dismiss(id), timeout));
     return id;
   }

@@ -1,7 +1,11 @@
 <script lang="ts">
+  import { tick } from 'svelte';
+
   let { text, label = 'Copy' }: { text: string; label?: string } = $props();
 
   let copied = $state(false);
+  let failed = $state(false);
+  let button = $state<HTMLButtonElement>();
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   function fallbackCopy(value: string): boolean {
@@ -16,6 +20,7 @@
       return document.execCommand('copy');
     } finally {
       area.remove();
+      button?.focus(); // select() moved focus to the textarea
     }
   }
 
@@ -30,7 +35,14 @@
       ok = false;
     }
     if (!ok) ok = fallbackCopy(text);
-    if (!ok) return;
+    // Clear first so a repeat copy changes the live region and is announced again.
+    copied = false;
+    failed = false;
+    await tick();
+    if (!ok) {
+      failed = true;
+      return;
+    }
     copied = true;
     clearTimeout(timer);
     timer = setTimeout(() => (copied = false), 2000);
@@ -39,8 +51,10 @@
   $effect(() => () => clearTimeout(timer));
 </script>
 
-<button type="button" class="copy" onclick={copy}>{label}</button>
-<span role="status" class="visually-hidden">{copied ? 'Copied' : ''}</span>
+<button type="button" class="copy" bind:this={button} onclick={copy}>{label}</button>
+<span role="status" class={failed ? 'bad' : 'visually-hidden'}
+  >{copied ? 'Copied' : failed ? 'Copy failed — select and copy manually' : ''}</span
+>
 {#if copied}<span class="ok" aria-hidden="true">Copied</span>{/if}
 
 <style>
@@ -51,5 +65,6 @@
     border-radius: var(--radius-md);
     cursor: pointer;
   }
+  .bad { color: var(--danger); margin-inline-start: var(--space-2); }
   .ok { color: var(--success); margin-inline-start: var(--space-2); }
 </style>

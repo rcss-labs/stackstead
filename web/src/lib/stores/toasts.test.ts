@@ -34,6 +34,12 @@ describe('toasts store', () => {
     expect(get(toasts).map((t) => t.id)).toEqual([b]);
   });
 
+  it('keeps danger toasts until dismissed by default', () => {
+    toasts.push({ kind: 'danger', message: 'Failed' });
+    vi.advanceTimersByTime(600_000);
+    expect(get(toasts)).toHaveLength(1);
+  });
+
   it('uses a default timeout and ignores dismissing an unknown id', () => {
     toasts.push({ kind: 'info', message: 'x' });
     toasts.dismiss(9999);

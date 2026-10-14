@@ -1,6 +1,19 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
 
+  /** What the caller spreads onto its control. */
+  export interface FieldControlProps {
+    id: string;
+    'aria-describedby'?: string;
+    'aria-invalid'?: 'true';
+    /**
+     * True when the field is read-only. Text inputs/textareas take `readonly={readonly}`;
+     * selects, checkboxes and radios ignore `readonly`, so render them `disabled={readonly}`
+     * (the visible readonlyReason explains why).
+     */
+    readonly: boolean;
+  }
+
   let {
     label,
     id,
@@ -16,43 +29,31 @@
     hint?: string;
     readonly?: boolean;
     readonlyReason?: string;
-    children?: Snippet;
+    children?: Snippet<[FieldControlProps]>;
   } = $props();
-
-  let wrapper = $state<HTMLElement>();
 
   const errorId = $derived(`${id}-error`);
   const hintId = $derived(`${id}-hint`);
   const reasonId = $derived(`${id}-readonly`);
 
-  // The control lives in the caller's snippet, so wire its ARIA state from here.
-  $effect(() => {
-    const control = wrapper?.querySelector<HTMLElement>(`[id="${CSS.escape(id)}"]`);
-    if (!control) return;
+  const control = $derived.by<FieldControlProps>(() => {
     const described = [
       error ? errorId : '',
       hint ? hintId : '',
       readonly && readonlyReason ? reasonId : '',
     ].filter(Boolean);
-    if (described.length) control.setAttribute('aria-describedby', described.join(' '));
-    else control.removeAttribute('aria-describedby');
-    if (error) control.setAttribute('aria-invalid', 'true');
-    else control.removeAttribute('aria-invalid');
-    if (readonly) {
-      control.setAttribute('aria-readonly', 'true');
-      if (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement) control.readOnly = true;
-      else control.setAttribute('aria-disabled', 'true');
-    } else {
-      control.removeAttribute('aria-readonly');
-      if (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement) control.readOnly = false;
-      else control.removeAttribute('aria-disabled');
-    }
+    return {
+      id,
+      'aria-describedby': described.length ? described.join(' ') : undefined,
+      'aria-invalid': error ? 'true' : undefined,
+      readonly,
+    };
   });
 </script>
 
-<div class="field" bind:this={wrapper}>
+<div class="field">
   <label for={id}>{label}</label>
-  {@render children?.()}
+  {@render children?.(control)}
   {#if hint}<p id={hintId} class="hint">{hint}</p>{/if}
   {#if readonly && readonlyReason}<p id={reasonId} class="hint">{readonlyReason}</p>{/if}
   {#if error}<p id={errorId} class="error"><span aria-hidden="true">✖ </span>{error}</p>{/if}
@@ -72,5 +73,5 @@
     border-radius: var(--radius-md);
   }
   .field :global([aria-invalid='true']) { border-color: var(--danger); }
-  .field :global([aria-readonly='true']) { background: var(--surface-raised); color: var(--muted); }
+  .field :global(:read-only:not(button)) { background: var(--surface-raised); color: var(--muted); }
 </style>

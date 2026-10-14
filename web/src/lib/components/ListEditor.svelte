@@ -20,6 +20,9 @@
     errors?: Record<number, string>;
   } = $props();
 
+  import { tick } from 'svelte';
+
+  const uid = $props.id();
   const FIELD = 'input, select, textarea, button:not([data-remove])';
   let list = $state<HTMLElement>();
   let addButton = $state<HTMLButtonElement>();
@@ -38,15 +41,25 @@
     list?.querySelectorAll<HTMLElement>(':scope > li')[target.row]?.querySelector<HTMLElement>(FIELD)?.focus();
   });
 
+  // If the parent ignored the change the length never moves; drop the request so it
+  // cannot steal focus from some later, unrelated update.
+  async function change(next: T[], focus: typeof pendingFocus) {
+    pendingFocus = focus;
+    onchange(next);
+    await tick();
+    pendingFocus = null;
+  }
+
   function add() {
-    pendingFocus = { row: items.length };
-    onchange([...items, newItem()]);
+    return change([...items, newItem()], { row: items.length });
   }
 
   function remove(index: number) {
     const remaining = items.length - 1;
-    pendingFocus = remaining === 0 ? 'add' : { row: Math.min(Math.max(index - 1, 0), remaining - 1) };
-    onchange(items.filter((_, i) => i !== index));
+    return change(
+      items.filter((_, i) => i !== index),
+      remaining === 0 ? 'add' : { row: Math.min(Math.max(index - 1, 0), remaining - 1) },
+    );
   }
 
   function update(index: number, value: T) {
@@ -58,13 +71,13 @@
   <ul bind:this={list} class="rows">
     {#each items as item, i (i)}
       <li>
-        <div class="row">
+        <div class="row" role="group" aria-describedby={errors[i] ? `${uid}-err-${i}` : undefined}>
           <div class="cell">{@render row(item, i, (value: T) => update(i, value))}</div>
           {#if !readonly}
             <button type="button" data-remove aria-label="Remove item {i + 1}" onclick={() => remove(i)}>×</button>
           {/if}
         </div>
-        {#if errors[i]}<p class="error"><span aria-hidden="true">✖ </span>{errors[i]}</p>{/if}
+        {#if errors[i]}<p id="{uid}-err-{i}" class="error"><span aria-hidden="true">✖ </span>{errors[i]}</p>{/if}
       </li>
     {/each}
   </ul>

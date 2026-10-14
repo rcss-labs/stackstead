@@ -6,19 +6,29 @@
     selected,
     onselect,
     children,
+    ariaLabel,
+    activation = 'manual',
   }: {
     tabs: { id: string; label: string }[];
     selected: string;
-    onselect: (id: string) => void;
+    /** Return false to refuse the change (focus then stays put in automatic mode). */
+    onselect: (id: string) => void | boolean;
     children?: Snippet<[string]>;
+    ariaLabel?: string;
+    /** manual (default): arrows move focus, Enter/Space select. auto: arrows select too. */
+    activation?: 'manual' | 'auto';
   } = $props();
 
   const uid = $props.id();
   let buttons = $state<Record<string, HTMLButtonElement | undefined>>({});
+  let focused = $state<string | undefined>();
+  // Roving tabindex: the focused tab, else the selected one.
+  const stop = $derived(tabs.some((t) => t.id === focused) ? focused : selected);
 
   function move(index: number) {
     const target = tabs[(index + tabs.length) % tabs.length];
-    onselect(target.id);
+    if (activation === 'auto' && onselect(target.id) === false) return;
+    focused = target.id;
     buttons[target.id]?.focus();
   }
 
@@ -35,7 +45,7 @@
   }
 </script>
 
-<div role="tablist" class="tablist">
+<div role="tablist" class="tablist" aria-label={ariaLabel}>
   {#each tabs as tab, i (tab.id)}
     <button
       bind:this={buttons[tab.id]}
@@ -44,7 +54,8 @@
       id="{uid}-tab-{tab.id}"
       aria-selected={tab.id === selected}
       aria-controls="{uid}-panel"
-      tabindex={tab.id === selected ? 0 : -1}
+      tabindex={tab.id === stop ? 0 : -1}
+      onfocus={() => (focused = tab.id)}
       onclick={() => onselect(tab.id)}
       onkeydown={(e) => onkeydown(e, i)}>{tab.label}</button
     >

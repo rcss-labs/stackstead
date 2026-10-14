@@ -9,6 +9,7 @@
     type = 'button',
     onclick,
     children,
+    ...rest
   }: {
     variant: 'primary' | 'secondary' | 'danger' | 'ghost';
     loading?: boolean;
@@ -17,9 +18,12 @@
     type?: 'button' | 'submit' | 'reset';
     onclick?: (event: MouseEvent) => void;
     children?: Snippet;
+    [attr: string]: unknown;
   } = $props();
 
   const uid = $props.id();
+  // A disabledReason (or loading) soft-disables: aria-disabled + click ignored, but still
+  // focusable so the reason can be found. Without a reason, `disabled` is a real disabled button.
   // aria-disabled keeps the button focusable so the reason can be discovered.
   const soft = $derived(Boolean(disabledReason) || loading);
 
@@ -33,6 +37,7 @@
 </script>
 
 <button
+  {...rest}
   class="btn {variant}"
   {type}
   disabled={disabled && !disabledReason}

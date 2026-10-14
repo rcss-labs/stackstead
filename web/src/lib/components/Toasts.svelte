@@ -1,12 +1,18 @@
 <script lang="ts">
   import { toasts } from '../stores/toasts';
 
+  // Render under <body>, not #app: a modal Dialog makes #app inert, and toasts must stay reachable.
+  function portal(node: HTMLElement) {
+    document.body.appendChild(node);
+    return { destroy: () => node.remove() };
+  }
+
   const icon = { info: 'ℹ', success: '✔', warning: '⚠', danger: '✖' } as const;
 </script>
 
-<section class="toasts" aria-label="Notifications" aria-live="polite">
+<section class="toasts" aria-label="Notifications" aria-live="polite" use:portal>
   {#each $toasts as toast (toast.id)}
-    <div class="toast {toast.kind}">
+    <div class="toast {toast.kind}" role={toast.kind === 'danger' ? 'alert' : undefined}>
       <span class="icon" aria-hidden="true">{icon[toast.kind]}</span>
       <span class="message">{toast.message}</span>
       <button type="button" aria-label="Dismiss notification" onclick={() => toasts.dismiss(toast.id)}>×</button>

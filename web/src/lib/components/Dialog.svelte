@@ -7,7 +7,17 @@
     onclose,
     children,
     labelledBy,
-  }: { open: boolean; title: string; onclose: () => void; children?: Snippet; labelledBy?: string } = $props();
+    describedBy,
+    role = 'dialog',
+  }: {
+    open: boolean;
+    title: string;
+    onclose: () => void;
+    children?: Snippet;
+    labelledBy?: string;
+    describedBy?: string;
+    role?: 'dialog' | 'alertdialog';
+  } = $props();
 
   const uid = $props.id();
   const titleId = $derived(labelledBy ?? `${uid}-title`);
@@ -23,7 +33,10 @@
   }
 
   function focusables(): HTMLElement[] {
-    return dialogEl ? Array.from(dialogEl.querySelectorAll<HTMLElement>(FOCUSABLE)) : [];
+    if (!dialogEl) return [];
+    return Array.from(dialogEl.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+      (el) => !el.closest('[hidden], [inert]') && getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden',
+    );
   }
 
   $effect(() => {
@@ -39,13 +52,19 @@
     };
   });
 
-  function onkeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape') {
+  // Escape is handled on the document so it works wherever focus happens to be.
+  $effect(() => {
+    if (!open) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
       event.preventDefault();
-      event.stopPropagation();
       onclose();
-      return;
-    }
+    };
+    document.addEventListener('keydown', onEscape);
+    return () => document.removeEventListener('keydown', onEscape);
+  });
+
+  function onkeydown(event: KeyboardEvent) {
     if (event.key !== 'Tab') return;
     const items = focusables();
     if (items.length === 0) {
@@ -74,9 +93,10 @@
     <div
       bind:this={dialogEl}
       class="dialog"
-      role="dialog"
+      {role}
       aria-modal="true"
       aria-labelledby={titleId}
+      aria-describedby={describedBy}
       tabindex="-1"
       {onkeydown}
     >
