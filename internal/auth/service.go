@@ -31,6 +31,7 @@ var (
 	ErrInvalidCredentials = errors.New("invalid username or password")
 	ErrInvalidSession     = errors.New("invalid or expired session")
 	ErrSamePassword       = errors.New("new password must differ from the current one")
+	ErrUsernameMismatch   = errors.New("an admin account already exists under a different username")
 )
 
 type User struct {
@@ -113,11 +114,8 @@ func (s *Service) HasAdmin(ctx context.Context) (bool, error) {
 // CreateAdmin creates the one admin account. The insert is conditional on the
 // users table being empty, so concurrent first-run requests create exactly one.
 func (s *Service) CreateAdmin(ctx context.Context, username, password string) error {
-	if username == "" || utf8.RuneCountInString(username) > maxUsernameLength || strings.ContainsFunc(username, unicode.IsSpace) {
-		return ErrInvalidUsername
-	}
-	if utf8.RuneCountInString(password) < MinPasswordLength {
-		return ErrWeakPassword
+	if err := validateNewCredentials(username, password); err != nil {
+		return err
 	}
 	if has, err := s.HasAdmin(ctx); err != nil {
 		return err
@@ -143,6 +141,92 @@ func (s *Service) CreateAdmin(ctx context.Context, username, password string) er
 		return ErrAdminExists
 	}
 	return nil
+}
+
+func validateNewCredentials(username, password string) error {
+	if username == "" || utf8.RuneCountInString(username) > maxUsernameLength || strings.ContainsFunc(username, unicode.IsSpace) {
+		return ErrInvalidUsername
+	}
+	if utf8.RuneCountInString(password) < MinPasswordLength {
+		return ErrWeakPassword
+	}
+	return nil
+}
+
+// AdminUsername returns the admin's username, or "" when none exists.
+func (s *Service) AdminUsername(ctx context.Context) (string, error) {
+	var name string
+	err := s.db.QueryRowContext(ctx, `SELECT username FROM users ORDER BY id LIMIT 1`).Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("look up admin: %w", err)
+	}
+	return name, nil
+}
+
+// ResetPassword is the host-side recovery path. It creates the admin when none
+// exists; otherwise username must match the existing admin, whose password
+// hash is replaced and every session deleted (a leaked cookie dies with the
+// old password). Policy checks run before the expensive hash.
+func (s *Service) ResetPassword(ctx context.Context, username, password string) (created bool, err error) {
+	if err := validateNewCredentials(username, password); err != nil {
+		return false, err
+	}
+	existing, err := s.AdminUsername(ctx)
+	if err != nil {
+		return false, err
+	}
+	if existing == "" {
+		switch err := s.CreateAdmin(ctx, username, password); {
+		case err == nil:
+			return true, nil
+		case errors.Is(err, ErrAdminExists):
+			// Lost a race with another creator: fall through to the reset path.
+			if existing, err = s.AdminUsername(ctx); err != nil {
+				return false, err
+			}
+		default:
+			return false, err
+		}
+	}
+	if existing != username {
+		return false, ErrUsernameMismatch
+	}
+	hash, err := s.hash(ctx, password)
+	if err != nil {
+		return false, fmt.Errorf("hash password: %w", err)
+	}
+	// Only the two statements run while the single-connection transaction is open.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin password reset: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE username = ?`, hash, username); err != nil {
+		return false, fmt.Errorf("update password: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions`); err != nil {
+		return false, fmt.Errorf("delete sessions: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit password reset: %w", err)
+	}
+	return false, nil
+}
+
+// RevokeAllSessions deletes every session and returns how many there were.
+func (s *Service) RevokeAllSessions(ctx context.Context) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM sessions`)
+	if err != nil {
+		return 0, fmt.Errorf("delete sessions: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("delete sessions: %w", err)
+	}
+	return n, nil
 }
 
 // Login verifies credentials and returns a new opaque session token. Only a

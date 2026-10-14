@@ -384,3 +384,145 @@ func TestChangePasswordLosesRaceAgainstConcurrentChange(t *testing.T) {
 		t.Errorf("stored hash was overwritten by the late change: %q", got)
 	}
 }
+
+func TestResetPasswordCreatesAdminWhenNone(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	ctx := context.Background()
+	created, err := svc.ResetPassword(ctx, "root", goodPassword)
+	if err != nil || !created {
+		t.Fatalf("ResetPassword = %v, %v; want created", created, err)
+	}
+	if _, err := svc.Login(ctx, "root", goodPassword); err != nil {
+		t.Errorf("Login after create: %v", err)
+	}
+	if name, err := svc.AdminUsername(ctx); err != nil || name != "root" {
+		t.Errorf("AdminUsername = %q, %v; want root", name, err)
+	}
+}
+
+func TestAdminUsernameEmptyWhenNone(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	if name, err := svc.AdminUsername(context.Background()); err != nil || name != "" {
+		t.Errorf("AdminUsername = %q, %v; want empty", name, err)
+	}
+}
+
+func TestResetPasswordReplacesHashAndRevokesSessions(t *testing.T) {
+	svc, db, _ := newTestService(t)
+	ctx := context.Background()
+	if err := svc.CreateAdmin(ctx, "admin", goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	tok1, err := svc.Login(ctx, "admin", goodPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok2, err := svc.Login(ctx, "admin", goodPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := svc.ResetPassword(ctx, "admin", "a brand new passphrase")
+	if err != nil || created {
+		t.Fatalf("ResetPassword = %v, %v; want created=false", created, err)
+	}
+	for _, tok := range []string{tok1, tok2} {
+		if _, err := svc.Authenticate(ctx, tok); !errors.Is(err, ErrInvalidSession) {
+			t.Errorf("old session err = %v, want ErrInvalidSession", err)
+		}
+	}
+	if n := countRows(t, db, "sessions"); n != 0 {
+		t.Errorf("sessions left = %d, want 0", n)
+	}
+	if _, err := svc.Login(ctx, "admin", goodPassword); !errors.Is(err, ErrInvalidCredentials) {
+		t.Errorf("old password err = %v, want ErrInvalidCredentials", err)
+	}
+	if _, err := svc.Login(ctx, "admin", "a brand new passphrase"); err != nil {
+		t.Errorf("new password: %v", err)
+	}
+}
+
+func TestResetPasswordUsernameMismatch(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	ctx := context.Background()
+	if err := svc.CreateAdmin(ctx, "admin", goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ResetPassword(ctx, "other", "a brand new passphrase"); !errors.Is(err, ErrUsernameMismatch) {
+		t.Fatalf("err = %v, want ErrUsernameMismatch", err)
+	}
+	if _, err := svc.Login(ctx, "admin", goodPassword); err != nil {
+		t.Errorf("original password must still work: %v", err)
+	}
+}
+
+func TestResetPasswordWeakIsCheckedBeforeHashing(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	ctx := context.Background()
+	if err := svc.CreateAdmin(ctx, "admin", goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	var hashes atomic.Int32
+	orig := deriveKey
+	t.Cleanup(func() { deriveKey = orig })
+	deriveKey = func(password, salt []byte, iterations, memory uint32, threads uint8, keyLen uint32) []byte {
+		hashes.Add(1)
+		return orig(password, salt, iterations, memory, threads, keyLen)
+	}
+	if _, err := svc.ResetPassword(ctx, "admin", "short"); !errors.Is(err, ErrWeakPassword) {
+		t.Errorf("weak err = %v, want ErrWeakPassword", err)
+	}
+	if _, err := svc.ResetPassword(ctx, "bad name", goodPassword); !errors.Is(err, ErrInvalidUsername) {
+		t.Errorf("username err = %v, want ErrInvalidUsername", err)
+	}
+	if n := hashes.Load(); n != 0 {
+		t.Errorf("hashed %d times before validation failed, want 0", n)
+	}
+}
+
+func TestRevokeAllSessionsCount(t *testing.T) {
+	svc, db, _ := newTestService(t)
+	ctx := context.Background()
+	if err := svc.CreateAdmin(ctx, "admin", goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if _, err := svc.Login(ctx, "admin", goodPassword); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := svc.RevokeAllSessions(ctx)
+	if err != nil || n != 3 {
+		t.Fatalf("RevokeAllSessions = %d, %v; want 3", n, err)
+	}
+	if c := countRows(t, db, "sessions"); c != 0 {
+		t.Errorf("sessions left = %d", c)
+	}
+}
+
+func TestResetPasswordIsAtomic(t *testing.T) {
+	svc, db, _ := newTestService(t)
+	ctx := context.Background()
+	if err := svc.CreateAdmin(ctx, "admin", goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	token, err := svc.Login(ctx, "admin", goodPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER block_session_delete BEFORE DELETE ON sessions
+		BEGIN SELECT RAISE(ABORT, 'sessions are protected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.ResetPassword(ctx, "admin", "a brand new passphrase"); err == nil {
+		t.Fatal("ResetPassword succeeded although deleting sessions failed")
+	}
+	if _, err := svc.Login(ctx, "admin", goodPassword); err != nil {
+		t.Errorf("old password must still work after a failed reset: %v", err)
+	}
+	if _, err := svc.Login(ctx, "admin", "a brand new passphrase"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Errorf("new password err = %v, want ErrInvalidCredentials (reset must roll back)", err)
+	}
+	if _, err := svc.Authenticate(ctx, token); err != nil {
+		t.Errorf("existing session lost: %v", err)
+	}
+}
