@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/rcss-labs/stackstead/internal/auth"
 )
@@ -16,6 +17,15 @@ type Options struct {
 	SetupToken string // empty once an admin exists
 	Static     fs.FS  // SPA build output; must contain index.html
 	Logger     *slog.Logger
+
+	// Stacks backs the /api/stacks, /api/operations, /api/fs, /api/networks
+	// and /api/status routes; they are not registered when it is nil.
+	Stacks StacksAPI
+	// SSEHeartbeat is the idle interval between ": ping" comments on
+	// operation streams (default 15s) and SSEWriteTimeout bounds each write
+	// to a stream (default 10s), since the HTTP server has no WriteTimeout.
+	SSEHeartbeat    time.Duration
+	SSEWriteTimeout time.Duration
 }
 
 type server struct {
@@ -32,6 +42,10 @@ func New(opts Options) http.Handler {
 
 	mux.Handle("POST /api/logout", s.requireSession(s.handleLogout))
 	mux.Handle("GET /api/me", s.requireSession(s.handleMe))
+
+	if opts.Stacks != nil {
+		s.registerStackRoutes(mux)
+	}
 
 	// Unknown API paths get a JSON 404 (after auth, so they don't reveal which
 	// routes exist) instead of falling through to the SPA's index.html.

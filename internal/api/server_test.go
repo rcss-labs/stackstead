@@ -34,6 +34,12 @@ type testEnv struct {
 
 func newTestEnv(t *testing.T, setupToken string) *testEnv {
 	t.Helper()
+	return newEnvWith(t, setupToken, nil)
+}
+
+// newEnvWith builds a test environment; tweak may adjust the Options.
+func newEnvWith(t *testing.T, setupToken string, tweak func(*api.Options)) *testEnv {
+	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "api.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -48,13 +54,17 @@ func newTestEnv(t *testing.T, setupToken string) *testEnv {
 		"index.html":    {Data: []byte("<html>spa</html>")},
 		"assets/app.js": {Data: []byte("console.log(1)")},
 	}
-	h := api.New(api.Options{
+	opts := api.Options{
 		Auth:       svc,
 		Limiter:    auth.NewLoginLimiter(5, 15*time.Minute, clock.Now),
 		SetupToken: setupToken,
 		Static:     static,
 		Logger:     slog.New(slog.DiscardHandler),
-	})
+	}
+	if tweak != nil {
+		tweak(&opts)
+	}
+	h := api.New(opts)
 	return &testEnv{handler: h, auth: svc, clock: clock}
 }
 
