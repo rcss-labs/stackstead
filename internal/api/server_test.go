@@ -54,6 +54,8 @@ func newEnvWith(t *testing.T, setupToken string, tweak func(*api.Options)) *test
 		"index.html":    {Data: []byte("<html>spa</html>")},
 		"assets/app.js": {Data: []byte("console.log(1)")},
 		"favicon.svg":   {Data: []byte("<svg/>")},
+		".gitignore":    {Data: []byte("secret-ignore-rules")},
+		"sub/.hidden":   {Data: []byte("hidden")},
 	}
 	opts := api.Options{
 		Auth:       svc,
@@ -390,10 +392,41 @@ func TestRootFilesServedNoCache(t *testing.T) {
 	}
 }
 
-func TestAssetTraversalIs404(t *testing.T) {
+// ServeMux cleans the path and redirects; the redirect target is the cleaned
+// path, never the traversed file, and nothing is served with asset caching.
+func TestAssetTraversalIsRedirectedToCleanPath(t *testing.T) {
 	env := newTestEnv(t, "")
 	rec := env.do(t, http.MethodGet, "/assets/../index.html", "")
+	if rec.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("status = %d, want 307", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/index.html" {
+		t.Errorf("Location = %q, want /index.html", loc)
+	}
 	if strings.Contains(rec.Header().Get("Cache-Control"), "immutable") {
-		t.Errorf("traversal served with immutable caching: %d %q", rec.Code, rec.Body)
+		t.Errorf("traversal served with immutable caching: %q", rec.Header().Get("Cache-Control"))
+	}
+}
+
+func TestDotfilesAreNotServed(t *testing.T) {
+	env := newTestEnv(t, "")
+	for _, target := range []string{"/.gitignore", "/sub/.hidden", "/.git/config", "/assets/.hidden"} {
+		rec := env.do(t, http.MethodGet, target, "")
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404", target, rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), "secret-ignore-rules") || strings.Contains(rec.Body.String(), "hidden") {
+			t.Errorf("GET %s leaked file content: %q", target, rec.Body)
+		}
+	}
+}
+
+func TestNosniffOnEveryResponse(t *testing.T) {
+	env := newTestEnv(t, "")
+	for _, target := range []string{"/", "/stacks/web", "/favicon.svg", "/assets/app.js", "/assets/nope.js", "/.gitignore", "/api/setup/status", "/api/me", "/api/nope", "/metrics"} {
+		rec := env.do(t, http.MethodGet, target, "")
+		if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("GET %s (%d) X-Content-Type-Options = %q, want nosniff", target, rec.Code, got)
+		}
 	}
 }

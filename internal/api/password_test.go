@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 const newAdminPassword = "another sturdy passphrase"
@@ -108,7 +109,7 @@ func TestChangePasswordIsRateLimited(t *testing.T) {
 	}
 
 	// A success resets the counter.
-	env.clock.Advance(16 * 60 * 1e9)
+	env.clock.Advance(16 * time.Minute)
 	if rec := env.do(t, http.MethodPost, "/api/password", passwordBody("not the password", newAdminPassword), withCookie(cookie)); rec.Code != http.StatusForbidden {
 		t.Fatalf("after window = %d, want 403", rec.Code)
 	}
