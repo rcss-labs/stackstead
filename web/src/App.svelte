@@ -41,6 +41,8 @@
   });
 
   function sessionLost() {
+    // Already handled (e.g. the events stream got there first): a late 401 must not clobber ?next=.
+    if ($session.state !== 'authenticated') return;
     stopLive();
     const here = window.location.pathname + window.location.search;
     expireSession();

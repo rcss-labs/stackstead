@@ -179,6 +179,20 @@ describe('App session edge cases', () => {
     expect(stream.requests).toHaveLength(1);
   });
 
+  it('a late API 401 after an events-stream 401 keeps next', async () => {
+    stream.restore();
+    stream = installFakeStream({ '/api/events': { responses: [{ status: 401, body: { error: 'unauthorized' } }] } });
+    at('/settings');
+    render(App);
+    expect(await screen.findByLabelText('Username')).toBeTruthy();
+    expect(get(route).query.get('next')).toBe('/settings');
+    stacksRes = { status: 401, body: {} };
+    const { request } = await import('$lib/api/client');
+    await request('GET', '/api/stacks').catch(() => {});
+    expect(get(route).path).toBe('/login');
+    expect(get(route).query.get('next')).toBe('/settings');
+  });
+
   it('logging in again after a 401 opens exactly one new events stream', async () => {
     at('/');
     render(App);
