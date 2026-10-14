@@ -1511,3 +1511,54 @@ func TestEditComposeErrorNamesTheRealFileNotTheCheckFile(t *testing.T) {
 		}
 	}
 }
+
+type fakeSource struct {
+	containers []engine.Container
+	err        error
+}
+
+func (f fakeSource) Containers(context.Context) ([]engine.Container, error) {
+	return f.containers, f.err
+}
+
+func newSourceHarness(t *testing.T, src stacks.ContainerSource) *harness {
+	t.Helper()
+	h := newHarness(t)
+	h.svc = stacks.NewService(stacks.Deps{
+		Registry: h.reg, Ops: h.ops, Compose: h.compose, Engine: h.eng,
+		Containers: src, StacksDir: h.dir, AllowedRoots: []string{filepath.Dir(h.dir)},
+		Now: func() time.Time { return fixedNow },
+	})
+	return h
+}
+
+func TestStatusComesFromContainerSource(t *testing.T) {
+	src := &fakeSource{}
+	h := newSourceHarness(t, src)
+	h.create(t, "web", webCfg("8080:80"))
+	c := publishing("web", 8080)
+	c.Labels["com.docker.compose.service"] = "web"
+	src.containers = []engine.Container{c}
+	h.eng.err = engine.ErrUnavailable // engine must not be consulted for status
+
+	d, err := h.svc.Get(context.Background(), "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Status != stacks.StatusRunning {
+		t.Errorf("status = %v, want running from the source", d.Status)
+	}
+}
+
+func TestStatusUnknownWhenSourceUnavailable(t *testing.T) {
+	src := &fakeSource{err: fmt.Errorf("%w: not synced", engine.ErrUnavailable)}
+	h := newSourceHarness(t, src)
+	h.create(t, "web", webCfg("8080:80"))
+	list, err := h.svc.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := summaryByName(t, list, "web"); s.Status != stacks.StatusUnknown {
+		t.Errorf("status = %v, want unknown", s.Status)
+	}
+}
