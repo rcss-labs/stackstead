@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"io"
 	"io/fs"
@@ -472,5 +473,62 @@ func TestRestoreRefusesWhenCheckpointIsBusy(t *testing.T) {
 	}
 	if readFile(t, h.dbPath) != dbBefore || len(bakFiles(h)) != 0 {
 		t.Error("a refused restore changed things")
+	}
+}
+
+func TestRestoreWarnsAndProceedsOverGarbageDatabaseAndWal(t *testing.T) {
+	h := newLocalHost(t, true)
+	snap := snapshot(t, h)
+	os.WriteFile(h.dbPath, []byte(strings.Repeat("not a database ", 500)), 0o600)
+	os.WriteFile(h.dbPath+"-wal", []byte("garbage wal"), 0o600)
+
+	env := newTestEnv(t, nil)
+	wantCode(t, runLocal(env, "db", "restore", snap, "--yes", "--config", h.cfgPath), ExitOK)
+	mustContain(t, "stderr", env.Err.String(), "warning", "any -wal is kept next to the backup")
+	if len(bakFiles(h)) != 1 {
+		t.Errorf("want the broken database kept as one .bak, got %v", bakFiles(h))
+	}
+	if n := countUsers(t, h.dbPath); n != 0 {
+		t.Errorf("restored db has %d users, want 0", n)
+	}
+}
+
+func TestIsBusyCheckpointError(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "x.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	_, syntaxErr := db.Exec("NOT SQL")
+	if isBusyError(syntaxErr) {
+		t.Error("a syntax error is not busy")
+	}
+	if isBusyError(errors.New("database is locked")) != true || isBusyError(errors.New("database table is locked")) != true {
+		t.Error("locked/busy messages must count as busy")
+	}
+	if isBusyError(nil) {
+		t.Error("nil is not busy")
+	}
+	// A real SQLITE_BUSY: a second connection cannot checkpoint while a reader pins the WAL.
+	path := filepath.Join(t.TempDir(), "b.db")
+	a, _ := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(0)&_pragma=journal_mode(WAL)")
+	a.SetMaxOpenConns(1)
+	defer a.Close()
+	a.Exec("CREATE TABLE t(x)")
+	b, _ := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(0)&_pragma=journal_mode(WAL)")
+	defer b.Close()
+	tx, err := b.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.Exec("INSERT INTO t VALUES (1)") // write lock held by b
+	_, busyErr := a.Exec("INSERT INTO t VALUES (2)")
+	tx.Rollback()
+	if busyErr == nil {
+		t.Skip("could not provoke SQLITE_BUSY")
+	}
+	if !isBusyError(busyErr) {
+		t.Errorf("real busy error not classified: %v", busyErr)
 	}
 }
