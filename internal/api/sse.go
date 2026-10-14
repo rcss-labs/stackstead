@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -12,70 +13,65 @@ const (
 	defaultSSEWriteTimeout = 10 * time.Second
 )
 
-// handleStreamOperation streams an operation's output as server-sent events.
-//
-// Contract:
-//   - "event: line" with a JSON string as data, once per output line: first the
-//     retained output, then live lines.
-//   - "event: done" with the final Operation JSON; the stream then ends.
-//   - "event: dropped" when the subscription ended without the operation
-//     finishing (the client was too slow and was dropped). The stream ends and
-//     the client should reconnect, which replays the retained output again
-//     (clients must discard what they already showed), or GET the operation.
-//   - ": ping" comments every SSEHeartbeat keep idle connections alive.
-//
-// The handler returns when the request context is done, and always
-// unsubscribes. It holds no locks while writing: the Ops manager never blocks
-// on subscribers, and a stuck client is cut by the per-write deadline.
-func (s *server) handleStreamOperation(w http.ResponseWriter, r *http.Request) {
-	replay, live, done, cancel, err := s.opts.Operations.Subscribe(r.PathValue("id"))
-	if err != nil {
-		s.writeStackError(w, r, err)
-		return
-	}
-	defer cancel()
+// sseWriter writes server-sent events with a fresh write deadline per write,
+// so a stalled client is cut instead of blocking its handler forever.
+type sseWriter struct {
+	w            http.ResponseWriter
+	rc           *http.ResponseController
+	writeTimeout time.Duration
+}
 
-	heartbeat, writeTimeout := s.opts.SSEHeartbeat, s.opts.SSEWriteTimeout
-	if heartbeat <= 0 {
-		heartbeat = defaultSSEHeartbeat
-	}
-	if writeTimeout <= 0 {
-		writeTimeout = defaultSSEWriteTimeout
-	}
-
-	rc := http.NewResponseController(w)
+// startSSE sets the event-stream headers, sends 200 and the ": stream open"
+// comment. The returned error is that first write's; callers should return on it.
+func startSSE(w http.ResponseWriter, writeTimeout time.Duration) (*sseWriter, error) {
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
 	h.Set("Cache-Control", "no-cache")
 	h.Set("X-Accel-Buffering", "no") // tell nginx-style proxies not to buffer
 	w.WriteHeader(http.StatusOK)
+	sw := &sseWriter{w: w, rc: http.NewResponseController(w), writeTimeout: writeTimeout}
+	return sw, sw.Comment("stream open")
+}
 
-	// send writes raw bytes under a fresh deadline and flushes. SetWriteDeadline
-	// may be unsupported (recorders in tests); that is not an error.
-	send := func(format string, args ...any) bool {
-		_ = rc.SetWriteDeadline(time.Now().Add(writeTimeout))
-		if _, err := fmt.Fprintf(w, format, args...); err != nil {
-			return false
-		}
-		return rc.Flush() == nil
+// raw writes bytes under a fresh deadline and flushes. SetWriteDeadline may be
+// unsupported (recorders in tests); that is not an error.
+func (s *sseWriter) raw(format string, args ...any) error {
+	_ = s.rc.SetWriteDeadline(time.Now().Add(s.writeTimeout))
+	if _, err := fmt.Fprintf(s.w, format, args...); err != nil {
+		return err
 	}
-	sendEvent := func(name string, payload any) bool {
-		data, err := json.Marshal(payload)
-		if err != nil {
-			return false
-		}
-		return send("event: %s\ndata: %s\n\n", name, data)
-	}
+	return s.rc.Flush()
+}
 
-	if !send(": stream open\n\n") {
-		return
+// Event writes one event with JSON-encoded data. id is omitted when empty.
+func (s *sseWriter) Event(name, id string, data any) error {
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return err
 	}
-	for _, line := range replay {
-		if !sendEvent("line", line) {
-			return
-		}
+	if id != "" {
+		return s.raw("id: %s\nevent: %s\ndata: %s\n\n", id, name, payload)
 	}
+	return s.raw("event: %s\ndata: %s\n\n", name, payload)
+}
 
+// Comment writes an SSE comment line (used for the open marker and pings).
+func (s *sseWriter) Comment(text string) error { return s.raw(": %s\n\n", text) }
+
+// runSSE is the one place that owns an SSE stream's loop: it sends heartbeat
+// pings every Options.SSEHeartbeat and returns when the request context is
+// done, Options.Closing closes, a write fails, or handle stops it.
+//
+// handle is called for every value received from in, and once with ok=false
+// when in is closed. It returns stop=true to end the stream, or an error
+// (which also ends it). It must not block for long; writes go through sw.
+// If handle returns (false, nil) for ok=false, in is not polled again and the
+// loop just keeps heartbeating until the context ends or Closing closes.
+func runSSE[T any](s *server, r *http.Request, sw *sseWriter, in <-chan T, handle func(v T, ok bool) (stop bool, err error)) {
+	heartbeat := s.opts.SSEHeartbeat
+	if heartbeat <= 0 {
+		heartbeat = defaultSSEHeartbeat
+	}
 	ticker := time.NewTicker(heartbeat)
 	defer ticker.Stop()
 	ctx := r.Context()
@@ -86,27 +82,114 @@ func (s *server) handleStreamOperation(w http.ResponseWriter, r *http.Request) {
 		case <-s.opts.Closing: // nil channel (never ready) when unset
 			return
 		case <-ticker.C:
-			if !send(": ping\n\n") {
+			if sw.Comment("ping") != nil {
 				return
 			}
-		case line, ok := <-live:
-			if ok {
-				if !sendEvent("line", line) {
-					return
-				}
-				continue
+		case v, ok := <-in:
+			stop, err := handle(v, ok)
+			if stop || err != nil {
+				return
 			}
-			// live closed: a value on done means the operation finished.
-			select {
-			case <-ctx.Done():
-			case op, ok := <-done:
-				if ok {
-					sendEvent("done", toOperation(op))
-				} else {
-					sendEvent("dropped", struct{}{})
-				}
+			if !ok {
+				in = nil // closed and handled once; a nil channel never fires
 			}
+		}
+	}
+}
+
+// parseLastEventID returns the index from a Last-Event-ID header, or -1 when
+// absent or malformed (which means: replay everything).
+func parseLastEventID(r *http.Request) int {
+	n, err := strconv.Atoi(r.Header.Get("Last-Event-ID"))
+	if err != nil || n < 0 {
+		return -1
+	}
+	return n
+}
+
+// handleStreamOperation streams an operation's output as server-sent events.
+//
+// Contract:
+//   - "event: line" with a JSON string as data and "id: <line index>", once per
+//     output line: first the retained output, then live lines. The index is
+//     absolute (0 is the operation's first line), so it is stable across
+//     subscriptions even when old lines were evicted. The "... N earlier lines
+//     dropped" note, shown first once lines were evicted, has no id.
+//   - A Last-Event-ID header resumes after that index: the replay is sliced
+//     from the subscription's own atomic replay, so no line is lost or
+//     repeated. A malformed value, or an index whose next line was already
+//     evicted, replays everything; an index at or past the end sends nothing.
+//   - "event: done" with the final Operation JSON; the stream then ends.
+//   - "event: dropped" when the subscription ended without the operation
+//     finishing (the client was too slow and was dropped). The stream ends and
+//     the client should reconnect (sending Last-Event-ID), or GET the operation.
+//   - ": ping" comments every SSEHeartbeat keep idle connections alive.
+//
+// The handler returns when the request context is done, and always
+// unsubscribes. It holds no locks while writing: the Ops manager never blocks
+// on subscribers, and a stuck client is cut by the per-write deadline.
+func (s *server) handleStreamOperation(w http.ResponseWriter, r *http.Request) {
+	replay, first, live, done, cancel, err := s.opts.Operations.Subscribe(r.PathValue("id"))
+	if err != nil {
+		s.writeStackError(w, r, err)
+		return
+	}
+	defer cancel()
+
+	writeTimeout := s.opts.SSEWriteTimeout
+	if writeTimeout <= 0 {
+		writeTimeout = defaultSSEWriteTimeout
+	}
+	sw, err := startSSE(w, writeTimeout)
+	if err != nil {
+		return
+	}
+
+	// Ids are absolute line indexes, stable across subscriptions. replay[0]
+	// has index first; when first > 0 it is the "earlier lines dropped" note,
+	// which stands in for a line that is gone and so carries no id.
+	nextID := first + len(replay) // id of the next live line
+	start := 0
+	if last := parseLastEventID(r); last >= 0 {
+		switch {
+		case first > 0 && last < first:
+			// The line after the client's position was evicted: replay all,
+			// so the client sees the dropped note.
+		case last >= nextID-1: // compare, never last+1: it may be MaxInt
+			start = len(replay)
+		default:
+			start = last + 1 - first
+		}
+	}
+	for i := start; i < len(replay); i++ {
+		id := strconv.Itoa(first + i)
+		if first > 0 && i == 0 {
+			id = ""
+		}
+		if sw.Event("line", id, replay[i]) != nil {
 			return
 		}
 	}
+	sendLive := func(line string) error {
+		err := sw.Event("line", strconv.Itoa(nextID), line)
+		nextID++
+		return err
+	}
+
+	runSSE(s, r, sw, live, func(line string, ok bool) (bool, error) {
+		if ok {
+			return false, sendLive(line)
+		}
+		// live closed: a value on done means the operation finished.
+		select {
+		case <-r.Context().Done():
+		case op, ok := <-done:
+			if ok {
+				_ = sw.Event("done", "", toOperation(op))
+			} else {
+				_ = sw.Event("dropped", "", struct{}{})
+			}
+		}
+		return true, nil
+	})
 }
