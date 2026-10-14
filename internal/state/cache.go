@@ -10,7 +10,9 @@ import (
 	"maps"
 	"math/rand/v2"
 	"reflect"
+	"regexp"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,6 +52,7 @@ type Cache struct {
 	log      *slog.Logger
 	backoff  Backoff
 	debounce time.Duration
+	onWait   func(time.Duration) // test hook: called with each reconnect wait
 
 	mu         sync.RWMutex
 	containers []engine.Container
@@ -83,16 +86,19 @@ func (c *Cache) Run(ctx context.Context) {
 	defer c.setConnected(false, false)
 	attempt := 0
 	for ctx.Err() == nil {
-		synced, err := c.session(ctx)
+		stable, err := c.session(ctx)
 		if ctx.Err() != nil {
 			return
 		}
 		c.setConnected(false, true)
-		if synced {
+		if stable {
 			attempt = 0
 		}
 		wait := c.delay(attempt)
 		attempt++
+		if c.onWait != nil {
+			c.onWait(wait)
+		}
 		c.log.Warn("container event stream lost; retrying", "error", err, "in", wait)
 		t := time.NewTimer(wait)
 		select {
@@ -118,17 +124,23 @@ func (c *Cache) delay(attempt int) time.Duration {
 	return d/2 + rand.N(d/2+1)
 }
 
-// session is one subscribe-resync-follow round. It returns whether the resync
-// succeeded and why the round ended. Its event stream is cancelled on return,
-// so rounds never overlap.
-func (c *Cache) session(ctx context.Context) (synced bool, err error) {
+// session is one subscribe-resync-follow round. It returns whether the round
+// proved the event stream works (it delivered an event or lasted at least
+// Backoff.Max) and why the round ended. A listing that works while the stream
+// keeps failing (say a proxy denying /events) is therefore not "stable", so
+// retries keep backing off instead of flapping. Its event stream is cancelled
+// on return, so rounds never overlap.
+func (c *Cache) session(ctx context.Context) (stable bool, err error) {
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	events, errs := c.src.Events(sctx, time.Now())
+	begun := time.Now()
+	// The no-gap guarantee relies on Docker replaying events from "since"
+	// (second granularity); the refetch makes replayed events harmless.
+	events, errs := c.src.Events(sctx, begun)
+	defer func() { stable = stable || time.Since(begun) >= c.backoff.Max }()
 	if err := c.resync(sctx); err != nil {
 		return false, err
 	}
-	synced = true
 
 	var timer *time.Timer
 	var fire <-chan time.Time
@@ -140,24 +152,28 @@ func (c *Cache) session(ctx context.Context) (synced bool, err error) {
 	for {
 		select {
 		case <-ctx.Done():
-			return synced, ctx.Err()
-		case _, ok := <-events:
+			return stable, ctx.Err()
+		case ev, ok := <-events:
 			if !ok {
-				return synced, streamEnd(errs)
+				return stable, streamEnd(errs)
 			}
+			if strings.HasPrefix(ev.Action, "exec_") {
+				continue // healthchecks emit these every interval; they change nothing
+			}
+			stable = true
 			if fire == nil {
 				timer = time.NewTimer(c.debounce)
 				fire = timer.C
 			}
 		case err, ok := <-errs:
 			if !ok {
-				return synced, streamEnd(nil)
+				return stable, streamEnd(nil)
 			}
-			return synced, err
+			return stable, err
 		case <-fire:
 			fire = nil
 			if err := c.resync(sctx); err != nil {
-				return synced, err
+				return stable, err
 			}
 		}
 	}
@@ -210,27 +226,50 @@ func (c *Cache) setConnected(v, publish bool) {
 	}
 }
 
-func byProject(cs []engine.Container) map[string][]engine.Container {
-	m := map[string][]engine.Container{}
+func byProject(cs []engine.Container) map[string][]view {
+	m := map[string][]view{}
 	for _, ct := range cs {
 		if p := ct.Project(); p != "" {
-			m[p] = append(m[p], ct)
+			m[p] = append(m[p], project(ct))
 		}
 	}
 	for _, list := range m {
-		slices.SortFunc(list, func(a, b engine.Container) int {
-			if a.ID < b.ID {
-				return -1
-			} else if a.ID > b.ID {
-				return 1
-			}
-			return 0
-		})
+		slices.SortFunc(list, func(a, b view) int { return strings.Compare(a.ID, b.ID) })
 	}
 	return m
 }
 
-func changedProjects(old, fresh map[string][]engine.Container) []string {
+// view is what a change in a container means to clients. Docker's human
+// Status text ("Up 5 minutes") is left out because it changes with time alone;
+// the health and exit code parsed from it are kept.
+type view struct {
+	ID, Name, Service, State, Image string
+	Health                          string // "", "healthy", "unhealthy" or "starting"
+	ExitCode                        string // from "Exited (N)", else ""
+	Ports                           []engine.Port
+	Networks                        map[string]string
+}
+
+var exitCode = regexp.MustCompile(`^Exited \((-?\d+)\)`)
+
+func project(c engine.Container) view {
+	v := view{ID: c.ID, Name: c.Name, Service: c.ComposeService(), State: c.State, Image: c.Image,
+		Ports: c.Ports, Networks: c.Networks}
+	switch {
+	case strings.Contains(c.Status, "(unhealthy)"):
+		v.Health = "unhealthy"
+	case strings.Contains(c.Status, "(healthy)"):
+		v.Health = "healthy"
+	case strings.Contains(c.Status, "(health: starting)"):
+		v.Health = "starting"
+	}
+	if m := exitCode.FindStringSubmatch(c.Status); m != nil {
+		v.ExitCode = m[1]
+	}
+	return v
+}
+
+func changedProjects(old, fresh map[string][]view) []string {
 	var out []string
 	for p, list := range fresh {
 		if prev, ok := old[p]; !ok || !reflect.DeepEqual(prev, list) {

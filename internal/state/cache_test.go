@@ -42,14 +42,20 @@ type fakeSource struct {
 	err        error
 	fetches    int
 	streams    []*fakeStream
-	active     int
-	maxActive  int
+	overlaps   int           // Events calls made while an earlier stream was still open
+	gate       chan struct{} // when set, Containers blocks until it is closed
+	eventsErr  error         // when set, every stream fails immediately
 }
 
 func (f *fakeSource) Containers(context.Context) ([]engine.Container, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.fetches++
+	if g := f.gate; g != nil {
+		f.mu.Unlock()
+		<-g
+		f.mu.Lock()
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -59,18 +65,16 @@ func (f *fakeSource) Containers(context.Context) ([]engine.Container, error) {
 func (f *fakeSource) Events(ctx context.Context, _ time.Time) (<-chan engine.Event, <-chan error) {
 	s := &fakeStream{ctx: ctx, events: make(chan engine.Event), errs: make(chan error, 1)}
 	f.mu.Lock()
+	for _, old := range f.streams {
+		if old.ctx.Err() == nil {
+			f.overlaps++
+		}
+	}
 	f.streams = append(f.streams, s)
-	f.active++
-	if f.active > f.maxActive {
-		f.maxActive = f.active
+	if f.eventsErr != nil {
+		s.fail(f.eventsErr)
 	}
 	f.mu.Unlock()
-	go func() {
-		<-ctx.Done()
-		f.mu.Lock()
-		f.active--
-		f.mu.Unlock()
-	}()
 	return s.events, s.errs
 }
 
@@ -313,13 +317,13 @@ func TestSlowSubscriberDroppedWithoutBlocking(t *testing.T) {
 	defer cancelFast()
 	s := src.stream(t, 1)
 	states := []string{"exited", "running"}
-	for i := range 200 {
+	for i := range subscriberBuffer + 6 {
 		src.set([]engine.Container{ctr("a", "a1", states[i%2])}, nil)
 		s.send(t, engine.Event{Type: "container", Action: "x", ContainerID: "a1"})
 		next(t, fast)
 	}
 	closed := false
-	for range 1000 {
+	for range 2 * subscriberBuffer {
 		if _, ok := <-slow; !ok {
 			closed = true
 			break
@@ -344,8 +348,8 @@ func TestNeverTwoConcurrentEventStreams(t *testing.T) {
 	src.stream(t, 4)
 	src.mu.Lock()
 	defer src.mu.Unlock()
-	if src.maxActive > 1 {
-		t.Errorf("max concurrent event streams = %d, want 1", src.maxActive)
+	if src.overlaps > 0 {
+		t.Errorf("%d event streams were opened while the previous one was still open", src.overlaps)
 	}
 }
 
@@ -372,4 +376,107 @@ func TestRunReturnsOnCancelWithoutLeaks(t *testing.T) {
 	src.stream(t, 1).fail(engine.ErrUnavailable) // leave it in backoff too
 	h.stop()
 	waitFor(t, func() bool { return runtime.NumGoroutine() <= before })
+}
+
+func TestExecEventsDoNotRefetch(t *testing.T) {
+	src := &fakeSource{containers: []engine.Container{ctr("a", "a1", "running")}}
+	h := start(t, src)
+	waitFor(t, h.c.Connected)
+	base := src.fetchCount()
+	s := src.stream(t, 1)
+	for _, a := range []string{"exec_create: sh", "exec_start: sh", "exec_die"} {
+		s.send(t, engine.Event{Type: "container", Action: a, ContainerID: "a1"})
+	}
+	time.Sleep(100 * time.Millisecond)
+	if n := src.fetchCount() - base; n != 0 {
+		t.Errorf("exec events caused %d refetches", n)
+	}
+	s.send(t, engine.Event{Type: "container", Action: "health_status: healthy", ContainerID: "a1"})
+	waitFor(t, func() bool { return src.fetchCount() > base })
+}
+
+func withStatus(c engine.Container, status string) engine.Container {
+	c.Status = status
+	return c
+}
+
+func TestChangeDependsOnStatusProjectionNotStatusText(t *testing.T) {
+	up := withStatus(ctr("a", "a1", "running"), "Up 5 minutes")
+	src := &fakeSource{containers: []engine.Container{up}}
+	h := start(t, src)
+	waitFor(t, h.c.Connected)
+	changes, cancel := h.c.Subscribe()
+	defer cancel()
+	s := src.stream(t, 1)
+	ev := engine.Event{Type: "container", Action: "start", ContainerID: "a1"}
+
+	src.set([]engine.Container{withStatus(up, "Up 6 minutes")}, nil)
+	s.send(t, ev)
+	noChange(t, changes, 120*time.Millisecond)
+
+	for _, status := range []string{"Up 6 minutes (healthy)", "Up 6 minutes (unhealthy)", "Up 6 minutes (health: starting)"} {
+		src.set([]engine.Container{withStatus(up, status)}, nil)
+		s.send(t, ev)
+		if ch := next(t, changes); ch.Project != "a" {
+			t.Fatalf("%s: change = %+v", status, ch)
+		}
+	}
+
+	dead := withStatus(up, "Exited (1) 2 seconds ago")
+	dead.State = "exited"
+	src.set([]engine.Container{dead}, nil)
+	s.send(t, ev)
+	next(t, changes)
+	src.set([]engine.Container{withStatus(dead, "Exited (137) 2 seconds ago")}, nil)
+	s.send(t, ev)
+	if ch := next(t, changes); ch.Project != "a" {
+		t.Fatalf("exit code change = %+v", ch)
+	}
+	src.set([]engine.Container{withStatus(dead, "Exited (137) 3 minutes ago")}, nil)
+	s.send(t, ev)
+	noChange(t, changes, 120*time.Millisecond)
+}
+
+func TestFailingEventStreamKeepsBackingOff(t *testing.T) {
+	src := &fakeSource{containers: []engine.Container{ctr("a", "a1", "running")}, eventsErr: engine.ErrUnavailable}
+	c := New(src, nil, Backoff{Min: 20 * time.Millisecond, Max: time.Second})
+	var mu sync.Mutex
+	var waits []time.Duration
+	c.onWait = func(d time.Duration) { mu.Lock(); waits = append(waits, d); mu.Unlock() }
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); c.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	waitFor(t, func() bool { mu.Lock(); defer mu.Unlock(); return len(waits) >= 3 })
+	mu.Lock()
+	defer mu.Unlock()
+	// Attempt 2 waits at least half of 4*Min; a reset after each successful
+	// resync would keep every wait at or below Min.
+	if waits[2] <= 20*time.Millisecond {
+		t.Errorf("waits = %v: backoff did not grow", waits)
+	}
+}
+
+func TestEventDuringRefetchTriggersAnotherRefetch(t *testing.T) {
+	src := &fakeSource{containers: []engine.Container{ctr("a", "a1", "running")}}
+	h := start(t, src)
+	waitFor(t, h.c.Connected)
+	base := src.fetchCount()
+	gate := make(chan struct{})
+	src.mu.Lock()
+	src.gate = gate
+	src.mu.Unlock()
+	s := src.stream(t, 1)
+	ev := engine.Event{Type: "container", Action: "die", ContainerID: "a1"}
+	s.send(t, ev)
+	waitFor(t, func() bool { return src.fetchCount() == base+1 }) // refetch in flight
+	go func() {
+		select {
+		case s.events <- ev:
+		case <-s.ctx.Done():
+		}
+	}()
+	time.Sleep(50 * time.Millisecond)
+	close(gate)
+	waitFor(t, func() bool { return src.fetchCount() >= base+2 })
 }
