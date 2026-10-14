@@ -19,9 +19,14 @@ Restart=on-failure
 RestartSec=5
 StateDirectory=stackstead
 StateDirectoryMode=0700
-UMask=0027
+# Group-writable new files and directories (0660/0770): admins in the docker group
+# can edit stacks the service created. The state dir itself stays 0700.
+UMask=0007
 
-# Hardening. Deliberately not ProtectSystem=strict and no ProtectHome: stacks
+# Hardening. ProtectSystem=full makes /usr, /boot and /etc read-only and
+# PrivateTmp hides the real /tmp: compose files under /etc, /usr or /tmp cannot be
+# edited unless a drop-in (`systemctl edit stackstead`) adds ReadWritePaths=/path.
+# Deliberately not ProtectSystem=strict and no ProtectHome: stacks
 # are compose files the user registers anywhere on the filesystem.
 NoNewPrivileges=true
 PrivateTmp=true

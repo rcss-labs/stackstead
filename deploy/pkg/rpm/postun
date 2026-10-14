@@ -11,11 +11,11 @@ have_systemd() {
     command -v systemctl >/dev/null 2>&1 && [ -d "$R/run/systemd/system" ]
 }
 
-sysctl() {
+svc() {
     if have_systemd; then
         systemctl "$@" || true
     fi
 }
 
-sysctl daemon-reload
+svc daemon-reload
 exit 0

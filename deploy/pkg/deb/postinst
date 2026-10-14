@@ -12,7 +12,7 @@ have_systemd() {
     command -v systemctl >/dev/null 2>&1 && [ -d "$R/run/systemd/system" ]
 }
 
-sysctl() {
+svc() {
     if have_systemd; then
         systemctl "$@" || true
     fi
@@ -50,12 +50,14 @@ warn_if_no_docker() {
 case "$1" in
     configure)
         ensure_dirs
-        sysctl daemon-reload
-        if [ -z "${2:-}" ]; then
-            sysctl enable --now "$UNIT"
+        svc daemon-reload
+        marker="$R/var/lib/stackstead/.disabled-by-remove"
+        if [ -z "${2:-}" ] || [ -e "$marker" ]; then
+            rm -f "$marker"
+            svc enable --now "$UNIT"
             print_fresh_install_hints
         else
-            sysctl try-restart "$UNIT"
+            svc try-restart "$UNIT"
         fi
         warn_if_no_docker
         ;;

@@ -16,6 +16,10 @@ license: AGPL-3.0-only
 section: admin
 priority: optional
 
+# /opt/stacks is deliberately not in the payload: lintian rejects files in /opt and
+# dpkg/rpm would delete the empty directory on remove. postinst/%post create it
+# (2775 stackstead:docker).
+
 # Docker is a weak dependency: Stackstead starts without it and reports that
 # Docker is missing, and Docker is often installed from Docker's own repository.
 recommends:
@@ -24,6 +28,7 @@ recommends:
 contents:
   - src: ${BIN}
     dst: /usr/bin/stackstead
+    expand: true
     file_info:
       mode: 0755
   - src: deploy/systemd/stackstead.service
@@ -43,12 +48,6 @@ contents:
       mode: 0700
       owner: stackstead
       group: stackstead
-  - dst: /opt/stacks
-    type: dir
-    file_info:
-      mode: 02775
-      owner: stackstead
-      group: docker
   - src: deploy/pkg/lintian-overrides
     dst: /usr/share/lintian/overrides/stackstead
     file_info:

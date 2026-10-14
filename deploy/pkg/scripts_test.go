@@ -21,12 +21,14 @@ import (
 const (
 	rootEnv  = "STACKSTEAD_PKG_ROOT"
 	unitPath = "../systemd/stackstead.service"
+	// markerName is left in the state dir by `prerm remove` so a later reinstall re-enables the service.
+	markerName = ".disabled-by-remove"
 )
 
 // realTools are the only real binaries the scripts may call; everything else is a logging stub.
 var realTools = []string{"mkdir", "chmod", "rm"}
 
-var stubbedTools = []string{"systemctl", "useradd", "groupadd", "userdel", "getent", "id", "docker", "chown", "chgrp"}
+var stubbedTools = []string{"systemctl", "useradd", "usermod", "usermod", "groupadd", "userdel", "getent", "id", "docker", "chown", "chgrp"}
 
 type env struct {
 	t       *testing.T
@@ -97,6 +99,9 @@ func (e *env) run(script string, existing string, args ...string) (cmds []string
 		e.t.Skip("sh not available")
 	}
 	_ = os.Remove(e.logFile)
+	if strings.Contains(existing, "marker") {
+		mustWrite(e.t, filepath.Join(e.root, "var/lib/stackstead/"+markerName), "")
+	}
 	cmd := exec.Command(sh, append([]string{script}, args...)...)
 	cmd.Env = []string{"PATH=" + e.bin, rootEnv + "=" + e.root, "STUB_LOG=" + e.logFile, "STUB_EXISTS=" + existing}
 	b, err := cmd.CombinedOutput()
@@ -146,13 +151,15 @@ func TestMaintainerScriptBranches(t *testing.T) {
 	}{
 		{"deb preinst install creates group and user", "deb/preinst", none, []string{"install"},
 			[]string{"groupadd --system docker", "groupadd --system stackstead",
-				"useradd --system --gid stackstead --home-dir /var/lib/stackstead --no-create-home --shell /usr/sbin/nologin stackstead"}, ""},
-		{"deb preinst upgrade is idempotent", "deb/preinst", owned, []string{"upgrade", "1.0.0"}, nil, ""},
+				"useradd --system --gid stackstead --groups docker --home-dir /var/lib/stackstead --no-create-home --shell /usr/sbin/nologin stackstead"}, ""},
+		{"deb preinst upgrade re-adds docker group membership", "deb/preinst", owned, []string{"upgrade", "1.0.0"}, []string{"usermod -aG docker stackstead"}, ""},
 		{"deb preinst abort-upgrade does nothing", "deb/preinst", none, []string{"abort-upgrade", "1.0.0"}, nil, ""},
 		{"deb postinst fresh enables and starts", "deb/postinst", owned, []string{"configure"},
 			[]string{"systemctl daemon-reload", "systemctl enable --now stackstead.service"}, "127.0.0.1:8420"},
 		{"deb postinst upgrade try-restarts", "deb/postinst", owned, []string{"configure", "1.0.0"},
 			[]string{"systemctl daemon-reload", "systemctl try-restart stackstead.service"}, ""},
+		{"deb postinst configure after remove re-enables", "deb/postinst", owned + " marker", []string{"configure", "1.0.0"},
+			[]string{"systemctl daemon-reload", "systemctl enable --now stackstead.service"}, "127.0.0.1:8420"},
 		{"deb postinst abort does nothing", "deb/postinst", owned, []string{"abort-upgrade", "1.0.0"}, nil, ""},
 		{"deb prerm remove stops and disables", "deb/prerm", owned, []string{"remove"},
 			[]string{"systemctl stop stackstead.service", "systemctl disable stackstead.service"}, ""},
@@ -164,11 +171,14 @@ func TestMaintainerScriptBranches(t *testing.T) {
 			[]string{"systemctl daemon-reload", "userdel stackstead"}, ""},
 		{"rpm pre 1 creates group and user", "rpm/pre", none, []string{"1"},
 			[]string{"groupadd --system docker", "groupadd --system stackstead",
-				"useradd --system --gid stackstead --home-dir /var/lib/stackstead --no-create-home --shell /sbin/nologin stackstead"}, ""},
-		{"rpm pre 2 is idempotent", "rpm/pre", owned, []string{"2"}, nil, ""},
+				"useradd --system --gid stackstead --groups docker --home-dir /var/lib/stackstead --no-create-home --shell /sbin/nologin stackstead"}, ""},
+		{"rpm pre 2 re-adds docker group membership", "rpm/pre", owned, []string{"2"}, []string{"usermod -aG docker stackstead"}, ""},
+		{"rpm pre 3 is treated as an upgrade", "rpm/pre", owned, []string{"3"}, []string{"usermod -aG docker stackstead"}, ""},
 		{"rpm post 1 enables and starts", "rpm/post", owned, []string{"1"},
 			[]string{"systemctl daemon-reload", "systemctl enable --now stackstead.service"}, "127.0.0.1:8420"},
 		{"rpm post 2 try-restarts", "rpm/post", owned, []string{"2"},
+			[]string{"systemctl daemon-reload", "systemctl try-restart stackstead.service"}, ""},
+		{"rpm post 3 is treated as an upgrade", "rpm/post", owned, []string{"3"},
 			[]string{"systemctl daemon-reload", "systemctl try-restart stackstead.service"}, ""},
 		{"rpm preun 1 (upgrade) does nothing", "rpm/preun", owned, []string{"1"}, nil, ""},
 		{"rpm preun 0 stops and disables", "rpm/preun", owned, []string{"0"},
@@ -180,7 +190,7 @@ func TestMaintainerScriptBranches(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t, true)
 			cmds, out := e.run(tc.script, tc.existing, tc.args...)
-			got := only(cmds, "systemctl", "useradd", "groupadd", "userdel")
+			got := only(cmds, "systemctl", "useradd", "usermod", "groupadd", "userdel")
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("commands = %q, want %q", got, tc.want)
 			}
@@ -191,6 +201,23 @@ func TestMaintainerScriptBranches(t *testing.T) {
 				t.Errorf("setup hint printed outside a fresh install:\n%s", out)
 			}
 		})
+	}
+}
+
+func TestRemoveLeavesMarkerAndReinstallConsumesIt(t *testing.T) {
+	e := newEnv(t, true)
+	e.run("deb/prerm", "passwd:stackstead", "remove")
+	marker := filepath.Join(e.root, "var/lib/stackstead", markerName)
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("prerm remove left no marker: %v", err)
+	}
+	e.run("deb/postinst", "passwd:stackstead", "configure", "1.0.0")
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Errorf("marker not consumed by postinst (err=%v)", err)
+	}
+	e.run("deb/prerm", "passwd:stackstead", "upgrade", "2.0.0")
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Errorf("prerm upgrade must not leave a marker")
 	}
 }
 
@@ -440,7 +467,7 @@ func TestUnitHasNoUnknownDirectives(t *testing.T) {
 	if got := get("CapabilityBoundingSet"); !reflect.DeepEqual(got, []string{""}) {
 		t.Errorf("CapabilityBoundingSet = %q, want empty", got)
 	}
-	for key, want := range map[string]string{"NoNewPrivileges": "true", "UMask": "0027", "StateDirectory": "stackstead", "StateDirectoryMode": "0700", "User": "stackstead"} {
+	for key, want := range map[string]string{"NoNewPrivileges": "true", "UMask": "0007", "StateDirectory": "stackstead", "StateDirectoryMode": "0700", "User": "stackstead"} {
 		if got := get(key); !reflect.DeepEqual(got, []string{want}) {
 			t.Errorf("%s = %q, want %q", key, got, want)
 		}
@@ -460,6 +487,7 @@ type nfpmFile struct {
 		Mode  any    `yaml:"mode"`
 	} `yaml:"file_info"`
 	Packager string `yaml:"packager"`
+	Expand   bool   `yaml:"expand"`
 }
 
 type nfpmDoc struct {
@@ -524,8 +552,9 @@ func TestNfpmYamlLists(t *testing.T) {
 	if f, ok := find("/var/lib/stackstead", ""); !ok || f.Type != "dir" || f.FI.Owner != "stackstead" {
 		t.Errorf("state dir entry wrong: %+v", f)
 	}
-	if f, ok := find("/opt/stacks", ""); !ok || f.Type != "dir" || f.FI.Owner != "stackstead" || f.FI.Group != "docker" {
-		t.Errorf("stacks dir entry wrong: %+v", f)
+	// /opt is not packageable (lintian) and dpkg/rpm would delete the dir when empty: scripts create it.
+	if _, ok := find("/opt/stacks", ""); ok {
+		t.Errorf("/opt/stacks must not be in the package payload")
 	}
 	if _, ok := find("/usr/lib/systemd/system/stackstead.service", ""); !ok {
 		t.Errorf("unit entry missing")
@@ -537,6 +566,9 @@ func TestNfpmYamlLists(t *testing.T) {
 		t.Errorf("rpm license entry missing: %+v", f)
 	}
 	for _, f := range d.Contents {
+		if strings.Contains(f.Src, "${") && !f.Expand {
+			t.Errorf("src %s uses a variable but lacks expand: true", f.Src)
+		}
 		if f.Src != "" && !strings.Contains(f.Src, "${") && f.Dst != "" {
 			if f.Src == "LICENSE" { // created by Plan 7 task 1; checked by the package build
 				continue
@@ -546,7 +578,7 @@ func TestNfpmYamlLists(t *testing.T) {
 			}
 		}
 		switch {
-		case strings.HasPrefix(f.Dst, "/usr/"), strings.HasPrefix(f.Dst, "/etc/stackstead"), f.Dst == "/var/lib/stackstead", f.Dst == "/opt/stacks":
+		case strings.HasPrefix(f.Dst, "/usr/"), strings.HasPrefix(f.Dst, "/etc/stackstead"), f.Dst == "/var/lib/stackstead":
 		default:
 			t.Errorf("package installs outside the allowed paths: %s", f.Dst)
 		}
@@ -585,6 +617,9 @@ func TestCopyrightIsDEP5(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(b)
+	if !strings.Contains(s, "\nCopyright: 2026 Stackstead contributors\n") {
+		t.Errorf("copyright line lacks the year")
+	}
 	if !strings.HasPrefix(s, "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/\n") {
 		t.Errorf("copyright does not start with the DEP-5 Format line")
 	}

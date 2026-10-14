@@ -12,7 +12,7 @@ have_systemd() {
     command -v systemctl >/dev/null 2>&1 && [ -d "$R/run/systemd/system" ]
 }
 
-sysctl() {
+svc() {
     if have_systemd; then
         systemctl "$@" || true
     fi
@@ -20,10 +20,10 @@ sysctl() {
 
 case "$1" in
     remove)
-        sysctl daemon-reload
+        svc daemon-reload
         ;;
     purge)
-        sysctl daemon-reload
+        svc daemon-reload
         rm -rf "$R/etc/stackstead" "$R/var/lib/stackstead"
         if getent passwd stackstead >/dev/null 2>&1; then
             userdel stackstead || true

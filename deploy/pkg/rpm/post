@@ -12,7 +12,7 @@ have_systemd() {
     command -v systemctl >/dev/null 2>&1 && [ -d "$R/run/systemd/system" ]
 }
 
-sysctl() {
+svc() {
     if have_systemd; then
         systemctl "$@" || true
     fi
@@ -47,15 +47,15 @@ warn_if_no_docker() {
     fi
 }
 
-sysctl daemon-reload
+svc daemon-reload
 ensure_dirs
 case "${1:-1}" in
     1)
-        sysctl enable --now "$UNIT"
+        svc enable --now "$UNIT"
         print_fresh_install_hints
         ;;
-    2)
-        sysctl try-restart "$UNIT"
+    *)
+        svc try-restart "$UNIT"
         ;;
 esac
 warn_if_no_docker

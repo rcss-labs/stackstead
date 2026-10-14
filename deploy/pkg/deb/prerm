@@ -12,7 +12,7 @@ have_systemd() {
     command -v systemctl >/dev/null 2>&1 && [ -d "$R/run/systemd/system" ]
 }
 
-sysctl() {
+svc() {
     if have_systemd; then
         systemctl "$@" || true
     fi
@@ -20,8 +20,14 @@ sysctl() {
 
 case "$1" in
     remove)
-        sysctl stop "$UNIT"
-        sysctl disable "$UNIT"
+        # Remember that the package disabled the service, so a reinstall after
+        # `apt remove` (when dpkg passes no old version) enables it again.
+        # The marker lives in the state dir: purge deletes it, remove keeps it.
+        if [ -d "$R/var/lib/stackstead" ]; then
+            : > "$R/var/lib/stackstead/.disabled-by-remove"
+        fi
+        svc stop "$UNIT"
+        svc disable "$UNIT"
         ;;
     upgrade | deconfigure | failed-upgrade) ;;
     *)

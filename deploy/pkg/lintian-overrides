@@ -1,6 +1,14 @@
 # Go binaries are statically linked by design (CGO_ENABLED=0 release builds).
-stackstead: statically-linked-binary [usr/bin/stackstead]
+stackstead: statically-linked-binary
 # Manual page deferred; `stackstead --help` and the README cover usage for now.
-stackstead: no-manual-page [usr/bin/stackstead]
+stackstead: no-manual-page
 # nfpm does not generate a changelog; release notes live on the GitHub release page.
-stackstead: no-changelog [usr/share/doc/stackstead/changelog.Debian.gz]
+stackstead: no-changelog
+# The maintainer scripts call systemctl directly (guarded, best-effort) instead of
+# debhelper's deb-systemd-helper, because nfpm does not run debhelper.
+stackstead: maintainer-script-calls-systemctl
+# The state directory is 0700 and the config is 0640 root:stackstead on purpose: both can hold secrets.
+stackstead: non-standard-dir-perm
+stackstead: non-standard-file-perm
+# nfpm emits a License field in the control file; it is informational only.
+stackstead: unknown-field License

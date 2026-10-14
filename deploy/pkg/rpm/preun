@@ -12,14 +12,14 @@ have_systemd() {
     command -v systemctl >/dev/null 2>&1 && [ -d "$R/run/systemd/system" ]
 }
 
-sysctl() {
+svc() {
     if have_systemd; then
         systemctl "$@" || true
     fi
 }
 
 if [ "${1:-1}" = 0 ]; then
-    sysctl stop "$UNIT"
-    sysctl disable "$UNIT"
+    svc stop "$UNIT"
+    svc disable "$UNIT"
 fi
 exit 0
