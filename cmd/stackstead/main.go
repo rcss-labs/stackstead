@@ -128,6 +128,7 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 		Engine:       dockerEngine,
 		StacksDir:    cfg.StacksDir,
 		AllowedRoots: cfg.AllowedRoots,
+		Logger:       logger,
 		Now:          time.Now,
 	})
 	// Sync returns joined per-folder warnings; none of them stop startup.

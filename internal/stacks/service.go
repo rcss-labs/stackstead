@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -45,6 +46,7 @@ type Deps struct {
 	StacksDir    string   // where Create puts new stacks, one folder each
 	AllowedRoots []string // confines build contexts of new stacks
 	Now          func() time.Time
+	Logger       *slog.Logger // nil means slog.Default()
 }
 
 // Status is the run state of a stack.
@@ -96,18 +98,25 @@ type Service struct {
 	engine    Engine
 	stacksDir string
 	roots     []string
+	log       *slog.Logger
 
 	// Lock order: a stack's lock (lockStack) first, then projectMu; never the
 	// reverse. projectMu makes "is this compose project free?" and the write
 	// that claims it (Add, SetProject, adoption) one step across all stacks;
 	// the unique index on stacks.project is the backstop.
-	locks     sync.Map // stack name -> *sync.Mutex, serializes saves of one stack
-	projectMu sync.Mutex
+	// afterClaim, when set by tests, runs between claiming a project and saving the file.
+	afterClaim func()
+	locks      sync.Map // stack name -> *sync.Mutex, serializes saves of one stack
+	projectMu  sync.Mutex
 }
 
 func NewService(d Deps) *Service {
+	logger := d.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Service{reg: d.Registry, ops: d.Ops, compose: d.Compose, engine: d.Engine,
-		stacksDir: d.StacksDir, roots: d.AllowedRoots}
+		stacksDir: d.StacksDir, roots: d.AllowedRoots, log: logger}
 }
 
 // lockStack serializes read-modify-write cycles of one stack's file.
@@ -413,10 +422,13 @@ func (s *Service) Act(ctx context.Context, stack, action string) (Operation, err
 	if !ok {
 		return Operation{}, &ValidationError{Fields: []FieldError{{Field: "action", Message: fmt.Sprintf("unknown action %q", action)}}}
 	}
-	e, err := s.reg.Get(ctx, stack)
+	// Held until the operation is started so a concurrent edit's project
+	// claim cannot be reverted by refreshProject; same order as commit.
+	e, unlock, err := s.lockedEntry(ctx, stack)
 	if err != nil {
 		return Operation{}, err
 	}
+	defer unlock()
 	if _, _, _, err := readFile(e); err != nil {
 		return Operation{}, err
 	}
@@ -471,10 +483,11 @@ func (s *Service) requireLifecycle(ctx context.Context) error {
 // compose to bring down, so the stale row is dropped, but only once the
 // engine confirms no containers of the project remain.
 func (s *Service) Remove(ctx context.Context, stack string, withVolumes bool) (Operation, error) {
-	e, err := s.reg.Get(ctx, stack)
+	e, unlock, err := s.lockedEntry(ctx, stack)
 	if err != nil {
 		return Operation{}, err
 	}
+	defer unlock()
 	_, statErr := os.Stat(e.ComposePath)
 	missing := errors.Is(statErr, fs.ErrNotExist)
 	if missing {
