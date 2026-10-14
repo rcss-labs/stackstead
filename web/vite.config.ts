@@ -27,7 +27,7 @@ export default defineConfig({
     // tests mount components in jsdom and need the browser build.
     ...(process.env.VITEST ? { conditions: ['browser'] } : {}),
   },
-  build: { outDir: 'dist', emptyOutDir: true, target: 'es2022' },
+  build: { outDir: 'dist', emptyOutDir: true, target: 'es2022', manifest: true },
   // Dev goes through this proxy so the SameSite=Strict session cookie stays
   // same-origin with the page. SSE passes through unchanged.
   server: {
