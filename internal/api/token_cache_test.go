@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -61,24 +62,74 @@ func TestMetricsTokenCacheRevalidates(t *testing.T) {
 	}
 }
 
-func TestMetricsCacheNotReReadOnSuccess(t *testing.T) {
+// At one instant the cache serves everything: at most one store read.
+func TestMetricsCacheReadsOncePerInterval(t *testing.T) {
 	fake := newFakeObserve()
-	env, offset, writeBehind := newTokenCacheEnv(t, fake)
+	env, _, writeBehind := newTokenCacheEnv(t, fake)
 	token := writeBehind()
-
-	scrape(t, env, "Bearer "+token) // loads the cache
-	fake.mu.Lock()
-	reads := fake.tokenReads
-	fake.mu.Unlock()
 	for i := range 100 {
-		*offset = time.Duration(i+1) * 10 * time.Second
 		if rec := scrape(t, env, "Bearer "+token); rec.Code != 200 {
 			t.Fatalf("request %d = %d", i, rec.Code)
 		}
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if fake.tokenReads != reads {
-		t.Errorf("token reads grew from %d to %d across successful requests", reads, fake.tokenReads)
+	if fake.tokenReads > 1 {
+		t.Errorf("token reads = %d across 100 requests at one instant, want <= 1", fake.tokenReads)
+	}
+}
+
+// A rotation done offline must stop the old token within the TTL even though
+// every request keeps matching.
+func TestMetricsOldTokenRejectedAfterOfflineRotate(t *testing.T) {
+	fake := newFakeObserve()
+	env, offset, writeBehind := newTokenCacheEnv(t, fake)
+	old := writeBehind()
+	if rec := scrape(t, env, "Bearer "+old); rec.Code != 200 {
+		t.Fatalf("initial = %d", rec.Code)
+	}
+	fresh := writeBehind()
+	*offset = 4 * time.Second
+	if rec := scrape(t, env, "Bearer "+old); rec.Code != 200 {
+		t.Fatalf("within TTL = %d, want 200 (bounded staleness)", rec.Code)
+	}
+	*offset = 5 * time.Second
+	if rec := scrape(t, env, "Bearer "+old); rec.Code != 401 {
+		t.Fatalf("old token after TTL = %d, want 401", rec.Code)
+	}
+	if rec := scrape(t, env, "Bearer "+fresh); rec.Code != 200 {
+		t.Fatalf("new token after TTL = %d, want 200", rec.Code)
+	}
+}
+
+func TestMetricsEndpointDisappearsAfterOfflineClear(t *testing.T) {
+	fake := newFakeObserve()
+	env, offset, writeBehind := newTokenCacheEnv(t, fake)
+	token := writeBehind()
+	if rec := scrape(t, env, "Bearer "+token); rec.Code != 200 {
+		t.Fatalf("initial = %d", rec.Code)
+	}
+	fake.mu.Lock()
+	fake.tokenHash = ""
+	fake.mu.Unlock()
+	*offset = 5 * time.Second
+	if rec := scrape(t, env, "Bearer "+token); rec.Code != 404 {
+		t.Fatalf("after offline clear = %d, want 404", rec.Code)
+	}
+}
+
+func TestMetricsKeepsCachedHashWhenRevalidationFails(t *testing.T) {
+	fake := newFakeObserve()
+	env, offset, writeBehind := newTokenCacheEnv(t, fake)
+	token := writeBehind()
+	if rec := scrape(t, env, "Bearer "+token); rec.Code != 200 {
+		t.Fatalf("initial = %d", rec.Code)
+	}
+	fake.mu.Lock()
+	fake.tokenErr = errors.New("db busy")
+	fake.mu.Unlock()
+	*offset = 6 * time.Second
+	if rec := scrape(t, env, "Bearer "+token); rec.Code != 200 {
+		t.Fatalf("with failing store = %d, want 200 from cache", rec.Code)
 	}
 }

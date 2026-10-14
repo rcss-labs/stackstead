@@ -607,49 +607,33 @@ func (s *server) handleListOperations(w http.ResponseWriter, r *http.Request) {
 
 // ---- /metrics and its token ----
 
-// tokenRevalidateAfter bounds how often failed /metrics requests may re-read
-// the token hash from the store.
-const tokenRevalidateAfter = 5 * time.Second
+// tokenTTL bounds how stale the cached token hash may be.
+const tokenTTL = 5 * time.Second
 
-// tokenHash returns the stored token hash, reading the store once and then
-// serving it from memory: /metrics is unauthenticated, so a flood of bad
-// requests must not turn into database reads. The token endpoints write
-// through the cache; the local `admin metrics-token` command writes the store
-// directly, which revalidateTokenHash picks up.
+// tokenHash returns the stored token hash from a cache with a 5 s TTL, checked
+// on every call: /metrics is unauthenticated, so request volume must not turn
+// into database reads (at most one read per TTL), yet a token rotated or
+// cleared offline by `stackstead admin metrics-token` stops working within the
+// TTL even while requests keep matching. The token endpoints write through the
+// cache. If a refresh fails, the last cached hash keeps being used (and the
+// failure is logged at most once per TTL); only a failed first load is an error.
 func (s *server) tokenHash(ctx context.Context) (string, error) {
 	s.tokenMu.Lock()
 	defer s.tokenMu.Unlock()
-	if !s.tokenLoaded {
-		if err := s.loadTokenLocked(ctx); err != nil {
-			return "", err
-		}
+	if s.tokenLoaded && s.opts.Now().Sub(s.tokenLoadAt) < tokenTTL {
+		return s.tokenCache, nil
 	}
-	return s.tokenCache, nil
-}
-
-// revalidateTokenHash re-reads the hash when the cached copy is at least
-// tokenRevalidateAfter old, and reports whether it did. It is called on the
-// /metrics failure paths only, so successful scrapes never touch the store
-// and a flood of bad requests costs at most one read per interval.
-func (s *server) revalidateTokenHash(ctx context.Context) (string, bool, error) {
-	s.tokenMu.Lock()
-	defer s.tokenMu.Unlock()
-	if s.tokenLoaded && s.opts.Now().Sub(s.tokenLoadAt) < tokenRevalidateAfter {
-		return s.tokenCache, false, nil
-	}
-	if err := s.loadTokenLocked(ctx); err != nil {
-		return "", false, err
-	}
-	return s.tokenCache, true, nil
-}
-
-func (s *server) loadTokenLocked(ctx context.Context) error {
 	h, err := s.opts.Observe.TokenHash(ctx)
 	if err != nil {
-		return err
+		if !s.tokenLoaded {
+			return "", err
+		}
+		s.tokenLoadAt = s.opts.Now() // back off: retry after the next TTL
+		s.opts.Logger.Warn("metrics token refresh failed, using cached hash", "err", err)
+		return s.tokenCache, nil
 	}
 	s.tokenCache, s.tokenLoaded, s.tokenLoadAt = h, true, s.opts.Now()
-	return nil
+	return s.tokenCache, nil
 }
 
 func (s *server) setTokenHash(ctx context.Context, hash string) error {
@@ -670,18 +654,6 @@ func (s *server) handlePrometheus(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.internalError(w, r, err)
 		return
-	}
-	if !bearerMatches(r, stored) {
-		// A failure may just mean the token was changed behind our back; look
-		// again (bounded) before answering.
-		fresh, reread, err := s.revalidateTokenHash(r.Context())
-		if err != nil {
-			s.internalError(w, r, err)
-			return
-		}
-		if reread {
-			stored = fresh
-		}
 	}
 	if stored == "" {
 		writeError(w, http.StatusNotFound, "not found")

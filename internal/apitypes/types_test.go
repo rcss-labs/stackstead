@@ -133,6 +133,8 @@ func TestOperationStatesAndActions(t *testing.T) {
 	}
 }
 
+const modulePrefix = "github.com/rcss-labs/stackstead/internal/"
+
 func TestNoServerImports(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("go not on PATH")
@@ -144,7 +146,7 @@ func TestNoServerImports(t *testing.T) {
 		t.Fatalf("go list: %v", err)
 	}
 	for _, pkg := range strings.Fields(string(out)) {
-		if strings.Contains(pkg, "/internal/") && !strings.HasSuffix(pkg, "/internal/apitypes") {
+		if strings.HasPrefix(pkg, modulePrefix) && pkg != modulePrefix+"apitypes" {
 			t.Errorf("apitypes depends on %s", pkg)
 		}
 	}
