@@ -30,6 +30,8 @@ export interface SSEHandle {
   readonly lastEventId?: string;
 }
 
+const MIN_RETRY_MS = 250;
+
 export function openSSE(o: SSEOptions): SSEHandle {
   const heartbeatMs = o.heartbeatTimeoutMs ?? 45_000;
   let minMs = o.backoff?.minMs ?? 1000;
@@ -99,8 +101,13 @@ export function openSSE(o: SSEOptions): SSEHandle {
       if (res.status === 401) return terminal('unauthorized');
       if (res.status === 403 || res.status === 404) return terminal('gone');
       if (res.status !== 200 || !res.body) {
-        void res.body?.cancel().catch(() => {});
+        ac.abort();
         return scheduleReconnect(`HTTP ${res.status}`);
+      }
+      if (!(res.headers.get('content-type') ?? '').toLowerCase().includes('text/event-stream')) {
+        // A proxy login page or error page: not our stream, so no `open` and no attempt reset.
+        ac.abort();
+        return scheduleReconnect(`unexpected content-type "${res.headers.get('content-type') ?? ''}"`);
       }
       attempt = 0;
       armHeartbeat();
@@ -113,8 +120,13 @@ export function openSSE(o: SSEOptions): SSEHandle {
         for (const m of messages) {
           if (closed) return;
           if (m.id !== undefined) trackedId = m.id;
-          if (m.retry !== undefined) minMs = m.retry;
-          o.onMessage(m);
+          if (m.retry !== undefined) minMs = Math.max(MIN_RETRY_MS, m.retry);
+          // A handler bug must not tear down a healthy stream (or leak it): report and keep reading.
+          try {
+            o.onMessage(m);
+          } catch (e) {
+            console.error('SSE onMessage handler threw', e);
+          }
         }
       };
       for (;;) {
@@ -126,8 +138,11 @@ export function openSSE(o: SSEOptions): SSEHandle {
         if (closed) return;
       }
       deliver(parser.flush());
+      ac.abort();
       scheduleReconnect('stream ended');
     } catch (err) {
+      // Every exit from the read phase releases the connection (HTTP/1.1 allows ~6 per origin).
+      ac.abort();
       if (closed || ac !== controller) return;
       scheduleReconnect(timedOut ? 'heartbeat timeout' : err instanceof Error ? err.message : String(err));
     }

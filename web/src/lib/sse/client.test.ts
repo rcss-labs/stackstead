@@ -227,4 +227,122 @@ describe('openSSE', () => {
     await tick(60_000);
     expect(fake.requests).toHaveLength(1);
   });
+
+  it('a throwing onMessage is reported, keeps the stream healthy and never opens a second connection', async () => {
+    fake = installFakeStream({ '/s': { responses: [{ chunks: ['data: a\n\n'] }, { chunks: [] }] } });
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const got: string[] = [];
+    const h = openSSE({
+      url: '/s',
+      onMessage: (m) => {
+        got.push(m.data);
+        if (m.data === 'a') throw new Error('handler bug');
+      },
+    });
+    await tick();
+    fake.push('/s', 'data: b\n\n');
+    await tick(60_000 * 0 + 1000);
+    expect(got).toEqual(['a', 'b']);
+    expect(err).toHaveBeenCalled();
+    expect(fake.requests).toHaveLength(1);
+    expect(fake.requests[0].signal?.aborted).toBe(false);
+    h.close();
+  });
+
+  it('aborts the connection on every exit from the read phase', async () => {
+    fake = installFakeStream({ '/s': { responses: [{ chunks: ['data: a\n\n'] }, { chunks: [] }] } });
+    const h = openSSE({ url: '/s', onMessage() {} });
+    await tick();
+    fake.close('/s');
+    await tick(2000);
+    expect(fake.requests[0].signal?.aborted).toBe(true);
+    expect(fake.requests).toHaveLength(2);
+    h.close();
+  });
+
+  it('clamps a tiny server retry: value', async () => {
+    fake = installFakeStream({ '/s': { responses: [{ chunks: ['retry: 1\ndata: a\n\n'] }, { chunks: [] }] } });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const h = openSSE({ url: '/s', onMessage() {} });
+    await tick();
+    fake.close('/s');
+    await tick(100);
+    expect(fake.requests).toHaveLength(1);
+    await tick(300);
+    expect(fake.requests).toHaveLength(2);
+    h.close();
+  });
+
+  it('treats a 200 that is not text/event-stream as an error: no open, backoff continues', async () => {
+    fake = installFakeStream({
+      '/s': { responses: [{ status: 500, body: {} }, { headers: {}, chunks: [] }] },
+    });
+    const orig = globalThis.fetch;
+    let n = 0;
+    globalThis.fetch = (async () => {
+      n++;
+      return new Response('<html></html>', { status: 200, headers: { 'content-type': 'text/html' } });
+    }) as typeof fetch;
+    const c = collect();
+    const h = openSSE({ url: '/s', ...c });
+    await tick(10_000);
+    expect(c.statuses).not.toContain('open');
+    expect(c.statuses).toContain('reconnecting');
+    expect(c.infos.at(-1)?.error).toContain('content-type');
+    expect(c.infos.at(-1)?.attempt).toBeGreaterThan(0);
+    expect(n).toBeGreaterThan(1);
+    globalThis.fetch = orig;
+    h.close();
+  });
+
+  it('decodes a multibyte character split across chunks', async () => {
+    fake = installFakeStream({ '/s': [] });
+    const c = collect();
+    const h = openSSE({ url: '/s', ...c });
+    await tick();
+    const bytes = new TextEncoder().encode('data: h\u00e9llo\u20ac\n\n');
+    const cut = bytes.indexOf(0xc3) + 1; // middle of "é"
+    const cut2 = bytes.indexOf(0xe2) + 1; // middle of "€"
+    const raw = (b: Uint8Array) => String.fromCharCode(...b);
+    void raw;
+    // push() takes text, so feed through a hand-built response instead.
+    h.close();
+    const orig = globalThis.fetch;
+    let ctrl!: ReadableStreamDefaultController<Uint8Array>;
+    globalThis.fetch = (async () =>
+      new Response(new ReadableStream<Uint8Array>({ start: (cc) => (ctrl = cc) }), {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      })) as typeof fetch;
+    const c2 = collect();
+    const h2 = openSSE({ url: '/x', ...c2 });
+    await tick();
+    ctrl.enqueue(bytes.slice(0, cut));
+    ctrl.enqueue(bytes.slice(cut, cut2));
+    ctrl.enqueue(bytes.slice(cut2));
+    await tick();
+    expect(c2.messages).toEqual([{ event: 'message', data: 'h\u00e9llo\u20ac' }]);
+    globalThis.fetch = orig;
+    h2.close();
+  });
+
+  it('an empty id: clears the Last-Event-ID header on reconnect', async () => {
+    fake = installFakeStream({ '/s': { responses: [{ chunks: ['id: 5\ndata: a\n\nid:\ndata: b\n\n'] }, { chunks: [] }] } });
+    const h = openSSE({ url: '/s', onMessage() {} });
+    await tick();
+    fake.close('/s');
+    await tick(2000);
+    expect(fake.requests[1].headers.has('Last-Event-ID')).toBe(false);
+    h.close();
+  });
+
+  it('ignores an id containing NUL', async () => {
+    fake = installFakeStream({ '/s': { responses: [{ chunks: ['id: 5\ndata: a\n\nid: 6\u0000x\ndata: b\n\n'] }, { chunks: [] }] } });
+    const h = openSSE({ url: '/s', onMessage() {} });
+    await tick();
+    fake.close('/s');
+    await tick(2000);
+    expect(fake.requests[1].headers.get('Last-Event-ID')).toBe('5');
+    h.close();
+  });
 });

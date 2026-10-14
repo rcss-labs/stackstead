@@ -42,6 +42,10 @@ interface Deps {
 let deps: Deps | null = null;
 let handle: SSEHandle | null = null;
 let generation = 0;
+let statusSeq = 0;
+let openedAt = 0;
+/** A dropped this soon after open means the server cannot keep up: back off instead of looping. */
+const DROPPED_LOOP_MS = 5000;
 
 export function startLive(d: Deps): void {
   if (handle) return;
@@ -67,8 +71,10 @@ function connect(): void {
 }
 
 function handleStatus(s: SSEStatus): void {
-  state.update((v) => ({ ...v, connection: s }));
+  if (s === 'unauthorized' || s === 'gone') state.set({ ...initial, connection: s });
+  else state.update((v) => ({ ...v, connection: s }));
   if (s === 'open') {
+    openedAt = Date.now();
     changeStore.set({ project: '', seq: 0, resync: true });
     void refreshStatus();
   } else if (s === 'unauthorized' || s === 'gone') {
@@ -99,7 +105,9 @@ function handleMessage(m: SSEMessage): void {
       return;
     }
     case 'dropped': {
-      // The server ended a slow client; reconnect now rather than after backoff.
+      // The server ended a slow client. Reconnect now, unless we only just opened:
+      // then let the client's own backoff handle the stream ending.
+      if (Date.now() - openedAt < DROPPED_LOOP_MS) return;
       teardown();
       connect();
       return;
@@ -126,13 +134,17 @@ export function stopLive(): void {
   // Logout or teardown: forget flags so the next session never sees the last one's state.
   state.set({ ...initial });
   changeStore.set(null);
+  statusSeq++;
+  deps = null;
 }
 
 export async function refreshStatus(): Promise<void> {
   const fetchStatus = deps?.fetchStatus;
   if (!fetchStatus) return;
+  const seq = ++statusSeq;
   try {
     const s = await fetchStatus();
+    if (seq !== statusSeq) return; // stopped, or a newer refresh is in flight
     state.update((v) => ({ ...v, docker: s.docker, compose: s.compose }));
   } catch {
     // Keep the last known flags; the next open or flip tries again.

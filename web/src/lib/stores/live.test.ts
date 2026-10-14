@@ -92,7 +92,7 @@ describe('live store', () => {
   it('TestDroppedReopensImmediately', async () => {
     fake = installFakeStream({ '/api/events': { responses: [{ chunks: [] }, { chunks: [] }] } });
     startLive({ fetchStatus });
-    await tick();
+    await tick(10_000);
     fake.push('/api/events', 'event: dropped\ndata: {}\n\n');
     await tick(0); // no backoff wait
     expect(fake.requests).toHaveLength(2);
@@ -142,5 +142,68 @@ describe('live store', () => {
     await tick();
     await refreshStatus();
     expect(fetchStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it('a dropped right after open reconnects via backoff, not immediately', async () => {
+    fake = installFakeStream({ '/api/events': { responses: [{ chunks: [] }, { chunks: [] }] } });
+    startLive({ fetchStatus });
+    await tick();
+    fake.push('/api/events', 'event: dropped\ndata: {}\n\n');
+    fake.close('/api/events'); // the server ends the stream after dropped
+    await tick(0);
+    expect(fake.requests).toHaveLength(1);
+    await tick(2000);
+    expect(fake.requests).toHaveLength(2);
+  });
+
+  it('a dropped long after open reopens immediately', async () => {
+    fake = installFakeStream({ '/api/events': { responses: [{ chunks: [] }, { chunks: [] }] } });
+    startLive({ fetchStatus });
+    await tick(10_000);
+    fake.push('/api/events', 'event: dropped\ndata: {}\n\n');
+    await tick(0);
+    expect(fake.requests).toHaveLength(2);
+  });
+
+  it('ignores a fetchStatus reply that lands after stopLive', async () => {
+    fake = installFakeStream({ '/api/events': [] });
+    let resolve!: (s: Status) => void;
+    fetchStatus.mockImplementation(() => new Promise<Status>((r) => (resolve = r)));
+    startLive({ fetchStatus });
+    await tick();
+    stopLive();
+    resolve({ ...status, docker: 'unavailable' });
+    await tick();
+    expect(get(live).docker).toBe('unknown');
+    await refreshStatus();
+    expect(fetchStatus).toHaveBeenCalledTimes(1); // deps cleared
+  });
+
+  it('ignores an older overlapping fetchStatus reply', async () => {
+    fake = installFakeStream({ '/api/events': [] });
+    const resolvers: Array<(s: Status) => void> = [];
+    fetchStatus.mockImplementation(() => new Promise<Status>((r) => resolvers.push(r)));
+    startLive({ fetchStatus });
+    await tick();
+    void refreshStatus();
+    resolvers[1]({ ...status, docker: 'ok' });
+    await tick();
+    resolvers[0]({ ...status, docker: 'unavailable' });
+    await tick();
+    expect(get(live).docker).toBe('ok');
+  });
+
+  it('401 clears the status flags but keeps connection unauthorized', async () => {
+    fake = installFakeStream({
+      '/api/events': { responses: [{ chunks: ['event: status\ndata: {"events":"connected","metricsDegraded":true}\n\n'] }, { status: 401, body: {} }] },
+    });
+    startLive({ fetchStatus });
+    await tick();
+    expect(get(live).metricsDegraded).toBe(true);
+    fake.close('/api/events');
+    await tick(5000);
+    const s = get(live);
+    expect(s.connection).toBe('unauthorized');
+    expect([s.events, s.docker, s.compose, s.metricsDegraded]).toEqual(['unknown', 'unknown', 'unknown', false]);
   });
 });
