@@ -832,9 +832,10 @@ configure_service() {
 	fi
 }
 
-# config_value KEY DEFAULT
+# config_value KEY DEFAULT. On macOS the config lives in the user's home, so
+# a root run reads it as the user (as_fs), never with its own privileges.
 config_value() {
-	v=$(sed -n "s/^$1:[[:space:]]*//p" "$(rp "$CONFIG")" 2>/dev/null | head -n 1 | sed "s/[[:space:]]*#.*\$//; s/^[\"']//; s/[\"']\$//") || v=
+	v=$(as_fs sed -n "s/^$1:[[:space:]]*//p" "$(rp "$CONFIG")" 2>/dev/null | head -n 1 | sed "s/[[:space:]]*#.*\$//; s/^[\"']//; s/[\"']\$//") || v=
 	printf '%s' "${v:-$2}"
 }
 
@@ -971,7 +972,18 @@ resolve_target_user() {
 	esac
 	TARGET_UID=$(id -u "$TARGET_USER" 2>/dev/null) || die 8 "no such user: $TARGET_USER"
 	[ "$TARGET_UID" != 0 ] || die 8 "refusing to install a LaunchAgent for uid 0 ($TARGET_USER); use a regular account"
-	TARGET_HOME=$(dscl . -read "/Users/$TARGET_USER" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory:[[:space:]]*//p' | head -n 1) || TARGET_HOME=
+	# parsed with the shell, not sed/head: this runs before safe_path can drop the
+	# user's directories from a root run's PATH
+	TARGET_HOME=
+	dscl_out=$(dscl . -read "/Users/$TARGET_USER" NFSHomeDirectory 2>/dev/null) || dscl_out=
+	while read -r dscl_key dscl_val; do
+		if [ "$dscl_key" = "NFSHomeDirectory:" ]; then
+			TARGET_HOME=$dscl_val
+			break
+		fi
+	done <<EOF
+$dscl_out
+EOF
 	if [ -z "$TARGET_HOME" ]; then
 		TARGET_HOME=$(eval "echo ~$TARGET_USER" 2>/dev/null) || TARGET_HOME=
 	fi
@@ -1000,7 +1012,12 @@ darwin_paths() {
 	USER_PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$TARGET_HOME/.docker/bin
 }
 
-# safe_path: drop empty, relative and home-directory entries from PATH.
+# safe_path: drop empty, relative and home-directory entries from PATH. Only a
+# root run needs it (sudo may pass the user's PATH on, and root must not run a
+# tool from a directory the user can write). It runs after the home lookup
+# because it needs TARGET_HOME, so that lookup avoids PATH tools beyond id and
+# dscl. When the invoker is the target user nothing runs as anyone else, so
+# their own PATH is theirs to control and is left alone.
 safe_path() {
 	sp_out=
 	sp_rest=$PATH:
@@ -1186,7 +1203,7 @@ install_files_darwin() {
 	user_make_dir "$LOG_DIR" 0755
 	user_make_dir "$AGENT_DIR" 0755
 
-	if [ ! -e "$(rp "$CONFIG")" ]; then
+	if ! as_fs test -e "$(rp "$CONFIG")"; then
 		generate_config "$STAGE/config.generated"
 		user_put_file "$STAGE/config.generated" "$(rp "$CONFIG")" 0600
 		say "Wrote $(rp "$CONFIG")"
@@ -1197,7 +1214,8 @@ install_files_darwin() {
 
 	render_plist "$STAGE/plist.rendered"
 	PLIST_CHANGED=1
-	if [ -f "$(rp "$PLIST")" ] && have cmp && cmp -s "$STAGE/plist.rendered" "$(rp "$PLIST")"; then
+	# the installed plist is read as the user; the rendered one arrives on stdin
+	if as_fs test -f "$(rp "$PLIST")" && have cmp && as_fs cmp -s - "$(rp "$PLIST")" <"$STAGE/plist.rendered"; then
 		PLIST_CHANGED=
 	fi
 	user_put_file "$STAGE/plist.rendered" "$(rp "$PLIST")" 0644

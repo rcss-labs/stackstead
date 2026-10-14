@@ -770,6 +770,111 @@ func TestDarwinRootNeverActsInTheUsersHome(t *testing.T) {
 	})
 }
 
+// sudoLines returns the sudo stub's log, one invocation per line.
+func sudoLines(f *fixture) []string {
+	return strings.Split(strings.TrimSpace(stubLog(f.stubD, "sudo")), "\n")
+}
+
+// hasSudoLine reports whether some `sudo` line starts with prefix and ends with suffix.
+func hasSudoLine(f *fixture, prefix, suffix string) bool {
+	for _, l := range sudoLines(f) {
+		if strings.HasPrefix(l, prefix) && strings.HasSuffix(l, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// Everything that touches the user's files or runs their tools goes through
+// `sudo -H -u <user>`: config validate, health, reading the config and the
+// plist, and uninstall/purge removals.
+func TestDarwinRootSimRunsUserWorkAsTheUser(t *testing.T) {
+	t.Run("ConfigValidateRunsAsTheUser", func(t *testing.T) {
+		f, home, prefix, env := rootSim(t)
+		out, errOut, code := runRootSim(t, f, env, prefix)
+		mustExit(t, code, 0, out, errOut)
+		cfg := filepath.Join(home, "Library", "Application Support", "Stackstead", "config.yaml")
+		if !hasSudoLine(f, "-H -u alice env PATH=", " "+filepath.Join(prefix, "bin", "stackstead")+" config validate --config "+cfg) {
+			t.Errorf("config validate did not run as 'sudo -H -u alice env PATH=... stackstead config validate --config ...':\n%s", stubLog(f.stubD, "sudo"))
+		}
+	})
+
+	t.Run("HealthRunsAsTheUser", func(t *testing.T) {
+		f, home, prefix, env := rootSim(t)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			_, _ = io.WriteString(w, `{"ok":true}`)
+		}))
+		t.Cleanup(srv.Close)
+		u, _ := url.Parse(srv.URL)
+		cfg := filepath.Join(home, "Library", "Application Support", "Stackstead", "config.yaml")
+		writeFile(t, cfg, []byte("listen: "+u.Host+"\n"), 0o600)
+		out, errOut, code := runScript(t, []string{"--base-url", f.base, "--prefix", prefix}, env, nil)
+		mustExit(t, code, 0, out, errOut)
+		contains(t, "stdout", out, "Open http://"+u.Host+"/")
+		if !hasSudoLine(f, "-H -u alice env PATH=", " "+filepath.Join(prefix, "bin", "stackstead")+" health --config "+cfg) {
+			t.Errorf("health did not run as 'sudo -H -u alice env PATH=... stackstead health --config ...':\n%s", stubLog(f.stubD, "sudo"))
+		}
+	})
+
+	t.Run("ConfigAndPlistAreReadAsTheUser", func(t *testing.T) {
+		f, home, prefix, env := rootSim(t)
+		cfg := filepath.Join(home, "Library", "Application Support", "Stackstead", "config.yaml")
+		plist := filepath.Join(home, "Library", "LaunchAgents", darwinLabel+".plist")
+		for i := 0; i < 2; i++ { // the second run compares the rendered plist with the installed one
+			out, errOut, code := runRootSim(t, f, env, prefix, "--force")
+			mustExit(t, code, 0, out, errOut)
+		}
+		if !hasSudoLine(f, "-H -u alice sed ", " "+cfg) {
+			t.Errorf("the config was not read as the user (sudo -H -u alice sed ... config.yaml):\n%s", stubLog(f.stubD, "sudo"))
+		}
+		if !hasSudoLine(f, "-H -u alice cmp ", " "+plist) {
+			t.Errorf("the installed plist was not compared as the user (sudo -H -u alice cmp ... plist):\n%s", stubLog(f.stubD, "sudo"))
+		}
+		if !hasSudoLine(f, "-H -u alice test -f ", " "+plist) {
+			t.Errorf("the plist existence check must run as the user:\n%s", stubLog(f.stubD, "sudo"))
+		}
+	})
+
+	t.Run("UninstallAndPurgeRemoveThroughTheUser", func(t *testing.T) {
+		f, home, prefix, env := rootSim(t)
+		out, errOut, code := runRootSim(t, f, env, prefix)
+		mustExit(t, code, 0, out, errOut)
+		support := filepath.Join(home, "Library", "Application Support", "Stackstead")
+		logs := filepath.Join(home, "Library", "Logs", "Stackstead")
+		plist := filepath.Join(home, "Library", "LaunchAgents", darwinLabel+".plist")
+		out, errOut, code = runScript(t, []string{"--uninstall", "--purge", "--yes", "--prefix", prefix}, env, nil)
+		mustExit(t, code, 0, out, errOut)
+		if !hasSudoLine(f, "-H -u alice rm -f ", " "+plist) {
+			t.Errorf("the plist was not removed as the user:\n%s", stubLog(f.stubD, "sudo"))
+		}
+		if !hasSudoLine(f, "-H -u alice rm -rf ", " "+support+" "+logs) {
+			t.Errorf("the purge did not remove the support and log directories as the user:\n%s", stubLog(f.stubD, "sudo"))
+		}
+		for _, p := range []string{plist, support, logs, filepath.Join(prefix, "bin", "stackstead")} {
+			if fileExists(p) {
+				t.Errorf("%s still exists after --uninstall --purge", p)
+			}
+		}
+	})
+}
+
+// A user-controlled PATH reaching a root run (sudo -E, a login shell) must not
+// let a tool in the user's home bin run as root.
+func TestDarwinRootIgnoresHomeBinInIncomingPATH(t *testing.T) {
+	f, home, prefix, env := rootSim(t)
+	marker := filepath.Join(home, "marker")
+	bin := filepath.Join(home, "bin")
+	for _, tool := range []string{"timeout", "sha256sum", "shasum", "awk", "tar", "sed", "cmp", "mktemp", "grep"} {
+		writeFile(t, filepath.Join(bin, tool), []byte("#!/bin/sh\necho "+tool+" >> "+marker+"\nexit 1\n"), 0o755)
+	}
+	env["PATH"] = bin + ":" + os.Getenv("PATH") // after the stub dir, ahead of the system directories
+	out, errOut, code := runRootSim(t, f, env, prefix)
+	mustExit(t, code, 0, out, errOut)
+	if fileExists(marker) {
+		t.Errorf("a tool from the home bin directory ran: %s", readFile(t, marker))
+	}
+}
+
 func TestDarwinRefusesUIDZeroTarget(t *testing.T) {
 	f := newDarwinFixture(t, true, "1.0.0")
 	f.stubs["id"] = `case "$*" in -u) echo 0 ;; -un) echo root ;; "-u "*) echo 0 ;; "-gn "*) echo wheel ;; *) exit 1 ;; esac`
