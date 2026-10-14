@@ -1384,3 +1384,24 @@ func TestActRederivesProjectAfterOutOfBandRename(t *testing.T) {
 		t.Errorf("project changed to %q", e.Project)
 	}
 }
+
+func TestCreateSummaryIsTruthfulAboutEngineState(t *testing.T) {
+	h := newHarness(t)
+	h.eng.err = engine.ErrUnavailable
+	sum, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "down", Config: webCfg()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Status != stacks.StatusUnknown || !sum.ChecksPartial || sum.Services != 1 {
+		t.Errorf("engine down: %+v", sum)
+	}
+
+	h.eng.err = nil
+	sum, err = h.svc.Create(context.Background(), stacks.CreateRequest{Name: "up", Config: webCfg()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Status != stacks.StatusStopped || sum.Services != 1 || sum.Running != 0 {
+		t.Errorf("engine up: %+v", sum)
+	}
+}

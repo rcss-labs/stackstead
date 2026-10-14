@@ -119,8 +119,10 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 		return Summary{}, s.mapProjectTaken(ctx, err, project, req.Name)
 	}
 	ok = true
-	return Summary{Name: req.Name, Path: path, Project: project, Origin: OriginManaged,
-		Status: StatusStopped, Services: 1, ChecksPartial: partial}, nil
+	containers, engErr := s.engine.Containers(ctx)
+	sum := s.describe(Entry{Name: req.Name, ComposePath: path, Origin: OriginManaged, Project: project}, containers, engErr).Summary
+	sum.ChecksPartial = partial
+	return sum, nil
 }
 
 // projectAvailable refuses a project that a registered stack already uses, or
