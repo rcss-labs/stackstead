@@ -2,10 +2,16 @@ package client
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
 	"fmt"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -602,14 +608,19 @@ func TestNonEventStreamResponseOnFirstConnectIsFatal(t *testing.T) {
 	}
 }
 
+// Every connection stays open after one comment, so streamOnce can only end
+// through the heartbeat timeout while the reader goroutine is still blocked in
+// Read; only readChunks' stop path (plus closing the body) lets it exit.
 func TestManyReconnectsDoNotLeakGoroutines(t *testing.T) {
+	const reconnectsWanted = 20
 	var n atomic.Int32
 	s := &sseServer{script: []http.HandlerFunc{func(w http.ResponseWriter, r *http.Request) {
-		if n.Add(1) > 20 {
+		if n.Add(1) > reconnectsWanted {
 			writeSSE(w, "event: done\ndata: {}\n\n")
 			return
 		}
 		writeSSE(w, ": hi\n\n")
+		<-r.Context().Done()
 	}}}
 	srv := httptest.NewServer(s.handler())
 	c := newClientFor(t, srv.URL, "s")
@@ -617,21 +628,92 @@ func TestManyReconnectsDoNotLeakGoroutines(t *testing.T) {
 	before := runtime.NumGoroutine()
 	reconnects := 0
 	opts := fastOpts()
+	opts.HeartbeatTimeout = 30 * time.Millisecond
 	opts.OnReconnect = func(int, error) { reconnects++ }
-	if err := c.Stream(tctx(t), "/x", opts, func(Event) error { return ErrStreamDone }); err != nil {
+	if err := c.Stream(tctx(t), "/x", opts, func(ev Event) error {
+		if ev.Name == "done" {
+			return ErrStreamDone
+		}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if reconnects != 20 {
+	if reconnects != reconnectsWanted {
 		t.Fatalf("reconnects = %d", reconnects)
 	}
 	srv.Close()
 	c.stream.CloseIdleConnections()
 	var now int
-	for i := 0; i < 50; i++ {
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
 		if now = runtime.NumGoroutine(); now <= before+2 {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Errorf("goroutines %d after 20 reconnects, baseline %d", now, before)
+	t.Errorf("goroutines %d after %d reconnects, baseline %d", now, reconnectsWanted, before)
+}
+
+// A certificate failure on a reconnect (after a successful first connect) must
+// end Stream at once; only streamOnce's isFatalConnectError call distinguishes
+// it from an ordinary network error that is retried.
+func TestStreamCertificateErrorOnReconnectIsFatal(t *testing.T) {
+	var swapped atomic.Bool
+	var untrusted tls.Certificate
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Connection", "close") // force a fresh handshake on reconnect
+		writeSSE(w, ": hi\n\n")
+		swapped.Store(true)
+	}))
+	// GetConfigForClient always runs (GetCertificate is skipped when a static
+	// certificate exists and the client sends no SNI, as for an IP address).
+	srv.TLS = &tls.Config{GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
+		if swapped.Load() {
+			return &tls.Config{Certificates: []tls.Certificate{untrusted}}, nil
+		}
+		return nil, nil // keep the server's built-in certificate
+	}}
+	srv.StartTLS()
+	defer srv.Close()
+	untrusted = selfSignedForLoopback(t)
+
+	c, err := tlsClient(t, srv, Config{CAFile: writeCert(t, srv), Session: "s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.sleep = func(ctx context.Context, d time.Duration) error { return ctx.Err() }
+	reconnects := 0
+	opts := fastOpts()
+	opts.OnReconnect = func(int, error) { reconnects++ }
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = c.Stream(ctx, "/x", opts, func(Event) error { return nil })
+	var certErr *tls.CertificateVerificationError
+	if !errors.As(err, &certErr) {
+		t.Fatalf("Stream error = %v, want a certificate verification error", err)
+	}
+	if reconnects != 1 {
+		t.Errorf("reconnects = %d, want exactly the one that hit the bad certificate", reconnects)
+	}
+}
+
+// selfSignedForLoopback returns a self-signed certificate for 127.0.0.1 that
+// the test client does not trust.
+func selfSignedForLoopback(t *testing.T) tls.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "untrusted"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
 }

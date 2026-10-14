@@ -106,11 +106,22 @@ func isUnreachable(err error) bool {
 // tabs stay.
 func cleanText(s string) string {
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) && r != '\n' && r != '\t' {
+		if (unicode.IsControl(r) && r != '\n' && r != '\t') || unicode.Is(unicode.Cf, r) {
 			return -1
 		}
 		return r
 	}, s)
+}
+
+// oneLine is cleanText for text that must stay on one line: newlines and
+// tabs become spaces, so server text cannot fake extra output lines.
+func oneLine(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return ' '
+		}
+		return r
+	}, cleanText(s))
 }
 
 // cleanError carries sanitised server text while keeping the original error
