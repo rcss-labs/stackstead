@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -468,4 +469,93 @@ func TestShutdownIsNotLoggedOrReportedAsFailure(t *testing.T) {
 	if out := buf.String(); out != "" {
 		t.Errorf("unexpected log on shutdown: %s", out)
 	}
+}
+
+// fakeSampleStore is a controllable sampler store.
+type fakeSampleStore struct {
+	insert func(ctx context.Context, n int) error
+}
+
+func (f *fakeSampleStore) InsertBatch(ctx context.Context, b []metrics.Sample) error {
+	return f.insert(ctx, len(b))
+}
+func (f *fakeSampleStore) Prune(context.Context, time.Time) (int64, error) { return 0, nil }
+
+func newFakeStoreSampler(t *testing.T, interval time.Duration, st *fakeSampleStore, stats metrics.StatsSource, buf io.Writer, clk *clock, ctx context.Context) (*metrics.Sampler, chan time.Time, chan struct{}) {
+	t.Helper()
+	real, _ := newStore(t)
+	lst := &fakeLister{list: []engine.Container{ctr("a", "p", "web", "running")}}
+	s := metrics.NewSampler(real, lst, stats, interval, time.Hour, slog.New(slog.NewTextHandler(buf, nil)), clk.now)
+	s.UseStore(st)
+	ticks := make(chan time.Time)
+	s.UseTicks(ticks)
+	fin := make(chan struct{}, 100)
+	s.OnTickDone(func() { fin <- struct{}{} })
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+	t.Cleanup(func() { <-done })
+	return s, ticks, fin
+}
+
+func TestWriteCancelledMidWriteIsNotLoggedOrDegraded(t *testing.T) {
+	var buf syncBuf
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := &fakeSampleStore{insert: func(ctx context.Context, n int) error {
+		cancel() // shutdown arrives while the batch is being written
+		return ctx.Err()
+	}}
+	s, ticks, _ := newFakeStoreSampler(t, 10*time.Second, st, &fakeStats{}, &buf, &clock{t: base}, ctx)
+	ticks <- base
+	<-ctx.Done()
+	time.Sleep(50 * time.Millisecond) // let the interrupted tick body finish
+	if s.Degraded() {
+		t.Error("write cut short by shutdown reported as degraded")
+	}
+	if out := buf.String(); out != "" {
+		t.Errorf("unexpected log on shutdown: %s", out)
+	}
+}
+
+func TestPerCallTimeoutEqualsIntervalWhenShorterThanFiveSeconds(t *testing.T) {
+	stats := &fakeStats{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := &fakeSampleStore{insert: func(context.Context, int) error { return nil }}
+	_, ticks, fin := newFakeStoreSampler(t, 2*time.Second, st, stats, io.Discard, &clock{t: base}, ctx)
+	ticks <- base
+	<-fin
+	stats.mu.Lock()
+	d := stats.deadline
+	stats.mu.Unlock()
+	if d <= 500*time.Millisecond || d > 2*time.Second {
+		t.Errorf("deadline = %v, want about 2s (the interval)", d)
+	}
+	cancel()
+}
+
+func TestWriteErrorLogIsRateLimitedToOncePerMinute(t *testing.T) {
+	var buf syncBuf
+	clk := &clock{t: base}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := &fakeSampleStore{insert: func(context.Context, int) error { return errors.New("disk full") }}
+	_, ticks, fin := newFakeStoreSampler(t, 10*time.Second, st, &fakeStats{}, &buf, clk, ctx)
+	tick := func() { ticks <- clk.now(); <-fin }
+	count := func() int { return strings.Count(buf.String(), "write failed") }
+
+	tick()
+	clk.add(10 * time.Second)
+	tick()
+	clk.add(10 * time.Second)
+	tick()
+	if n := count(); n != 1 {
+		t.Fatalf("logs within one minute = %d, want 1", n)
+	}
+	clk.add(time.Minute)
+	tick()
+	if n := count(); n != 2 {
+		t.Fatalf("logs after a minute = %d, want 2", n)
+	}
+	cancel()
 }
