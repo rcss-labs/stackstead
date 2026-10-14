@@ -732,12 +732,17 @@ make_dir() {
 	[ -z "$3" ] || own "$3" "$d"
 }
 
-# put_file SRC DEST MODE: copy via a temp name in the same directory, then rename.
+# put_file SRC DEST MODE: copy via an unpredictable temp name in the same
+# directory (mktemp creates it exclusively, so nothing planted there is
+# followed), then rename.
 put_file() {
-	mkdir -p "$(dirname "$2")"
-	cp "$1" "$2.new"
-	chmod "$3" "$2.new"
-	mv -f "$2.new" "$2"
+	pf_dir=$(dirname "$2")
+	mkdir -p "$pf_dir"
+	pf_tmp=$(mktemp "$pf_dir/.stackstead.XXXXXX") || die 7 "cannot create a temporary file in $pf_dir"
+	if ! cp "$1" "$pf_tmp" || ! chmod "$3" "$pf_tmp" || ! mv -f "$pf_tmp" "$2"; then
+		rm -f "$pf_tmp" || true
+		die 7 "cannot write $2"
+	fi
 }
 
 # check_stacks_dir: an existing stacks dir is never chown'ed or chmod'ed; warn
@@ -1086,10 +1091,11 @@ platform_setup() {
 }
 
 # priv CMD...: a write under the prefix. Root and staged runs write directly;
-# otherwise sudo is used, and only for these commands.
+# otherwise sudo is used, and only for these commands. A staged run's note
+# goes to stderr: priv's stdout may be captured (priv mktemp).
 priv() {
 	if [ -n "$ROOT" ]; then
-		[ -n "$AS_ROOT" ] || note "would use sudo: $*"
+		[ -n "$AS_ROOT" ] || note "would use sudo: $*" >&2
 		"$@"
 	elif [ -n "$AS_ROOT" ]; then
 		"$@"
@@ -1113,10 +1119,13 @@ priv_svc() {
 
 # priv_put_file SRC DEST MODE: put_file under priv.
 priv_put_file() {
-	priv mkdir -p "$(dirname "$2")"
-	priv cp "$1" "$2.new"
-	priv chmod "$3" "$2.new"
-	priv mv -f "$2.new" "$2"
+	ppf_dir=$(dirname "$2")
+	priv mkdir -p "$ppf_dir"
+	ppf_tmp=$(priv mktemp "$ppf_dir/.stackstead.XXXXXX") || die 7 "cannot create a temporary file in $ppf_dir"
+	if ! priv cp "$1" "$ppf_tmp" || ! priv chmod "$3" "$ppf_tmp" || ! priv mv -f "$ppf_tmp" "$2"; then
+		priv rm -f "$ppf_tmp" || true
+		die 7 "cannot write $2"
+	fi
 }
 
 # as_user CMD...: run as the target user (a sudo run is root); a shell function

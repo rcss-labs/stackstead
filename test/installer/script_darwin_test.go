@@ -727,7 +727,10 @@ func TestDarwinRootNeverActsInTheUsersHome(t *testing.T) {
 		writeFile(t, victim, []byte("secret"), 0o600)
 		agents := filepath.Join(home, "Library", "LaunchAgents")
 		support := filepath.Join(home, "Library", "Application Support", "Stackstead")
-		for _, p := range []string{filepath.Join(agents, darwinLabel+".plist.new"), filepath.Join(support, "config.yaml.new")} {
+		// the prefix too: root writes there itself, and /usr/local may be user-writable
+		planted := []string{filepath.Join(agents, darwinLabel+".plist.new"), filepath.Join(support, "config.yaml.new"),
+			filepath.Join(prefix, "bin", "stackstead.new"), filepath.Join(prefix, "share", "stackstead", "install.sh.new")}
+		for _, p := range planted {
 			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -741,8 +744,10 @@ func TestDarwinRootNeverActsInTheUsersHome(t *testing.T) {
 			t.Error("a planted .new symlink was followed: the victim file was overwritten")
 		}
 		assertMode(t, victim, 0o600)
-		if fi, err := os.Lstat(filepath.Join(agents, darwinLabel+".plist")); err != nil || !fi.Mode().IsRegular() {
-			t.Errorf("plist is not a regular file: %v", err)
+		for _, p := range []string{filepath.Join(agents, darwinLabel+".plist"), filepath.Join(prefix, "bin", "stackstead"), filepath.Join(prefix, "share", "stackstead", "install.sh")} {
+			if fi, err := os.Lstat(p); err != nil || !fi.Mode().IsRegular() {
+				t.Errorf("%s is not a regular file: %v", p, err)
+			}
 		}
 	})
 
