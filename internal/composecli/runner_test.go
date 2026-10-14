@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -302,6 +303,13 @@ func TestCancelNeverReportsSuccess(t *testing.T) {
 }
 
 func TestRunWithCancelledContextDoesNotStart(t *testing.T) {
+	// exec.CommandContext kills an already-cancelled command at Start, so
+	// without a guard the fake would normally die before writing its marker
+	// and this test could never fail. Ignoring SIGTERM is inherited by the
+	// child, which makes the fake write the marker if it is ever started.
+	// Not parallel-safe: the ignore is process-wide.
+	signal.Ignore(syscall.SIGTERM)
+	t.Cleanup(func() { signal.Reset(syscall.SIGTERM) })
 	marker := filepath.Join(t.TempDir(), "started")
 	r, file := newRunner(t, "marker", "FAKE_MARKER="+marker)
 	ctx, cancel := context.WithCancel(context.Background())
