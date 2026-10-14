@@ -2,8 +2,11 @@ package stacks
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
+
+	"github.com/rcss-labs/stackstead/internal/composecli"
 )
 
 // defaultProbeTimeout bounds one `docker compose version` subprocess.
@@ -74,6 +77,10 @@ func (v *versionCache) probe(f *versionFlight) {
 	ctx, cancel := context.WithTimeout(context.Background(), v.probeTimeout)
 	defer cancel()
 	version, err := v.Compose.Version(ctx)
+	if err != nil && ctx.Err() != nil {
+		// A hung plugin is "compose unavailable" (503), not an internal error.
+		err = fmt.Errorf("%w: version probe timed out: %v", composecli.ErrComposeUnavailable, err)
+	}
 
 	v.mu.Lock()
 	v.version, v.err, v.at, v.have = version, err, v.now(), true

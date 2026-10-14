@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rcss-labs/stackstead/internal/composecli"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 )
 
@@ -103,8 +104,12 @@ func TestVersionCacheCachesProbeTimeoutBriefly(t *testing.T) {
 	c := stacks.NewVersionCache(inner, 5*time.Second, nil)
 	stacks.SetProbeTimeout(c, 50*time.Millisecond)
 	for i := 0; i < 2; i++ {
-		if _, err := c.Version(context.Background()); err == nil {
+		_, err := c.Version(context.Background())
+		if err == nil {
 			t.Fatal("want error")
+		}
+		if !errors.Is(err, composecli.ErrComposeUnavailable) {
+			t.Errorf("err = %v, want it to wrap ErrComposeUnavailable (503, not 500)", err)
 		}
 	}
 	if n := inner.calls.Load(); n != 1 {
