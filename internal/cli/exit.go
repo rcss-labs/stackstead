@@ -58,3 +58,5 @@ func codeFor(err error) int {
 		return ExitGeneral
 	}
 }
+
+func cleanText(s string) string { return s }

@@ -39,6 +39,7 @@ func TestStatusColours(t *testing.T) {
 	off := &Printer{}
 	cases := []struct{ state, code string }{
 		{"running", "32"}, {"partial", "33"}, {"failed", "31"}, {"stopped", "31"}, {"unavailable", "31"}, {"unknown", "2"},
+		{"disconnected", "31"}, {"degraded", "31"},
 	}
 	for _, c := range cases {
 		if got, want := on.Status(c.state), "\x1b["+c.code+"m"+c.state+"\x1b[0m"; got != want {
