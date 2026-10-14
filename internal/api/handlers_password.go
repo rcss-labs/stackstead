@@ -31,6 +31,8 @@ func (s *server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		writeError(w, http.StatusForbidden, "current password is incorrect")
 	case errors.Is(err, auth.ErrWeakPassword), errors.Is(err, auth.ErrSamePassword):
+		// The current password was verified, so this is not a guessing attempt.
+		s.opts.Limiter.Reset(ip)
 		writeError(w, http.StatusBadRequest, err.Error())
 	case err != nil:
 		s.internalError(w, r, err)
