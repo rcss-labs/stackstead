@@ -7,8 +7,19 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/rcss-labs/stackstead/internal/apitypes"
 	"github.com/rcss-labs/stackstead/internal/auth"
 )
+
+type (
+	setupRequest = apitypes.SetupRequest
+	loginRequest = apitypes.LoginRequest
+)
+
+func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, apitypes.Health{OK: true})
+}
 
 func (s *server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 	has, err := s.opts.Auth.HasAdmin(r.Context())
@@ -17,12 +28,6 @@ func (s *server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"needsSetup": !has})
-}
-
-type setupRequest struct {
-	Username   string `json:"username"`
-	Password   string `json:"password"`
-	SetupToken string `json:"setupToken"`
 }
 
 func (s *server) handleSetup(w http.ResponseWriter, r *http.Request) {
@@ -94,11 +99,6 @@ func remoteHost(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return host
-}
-
-type loginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
 }
 
 func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {

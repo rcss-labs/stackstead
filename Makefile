@@ -1,8 +1,17 @@
 # Stackstead build entry point. Only `ui`, `build`, `release`, `ui-check`,
 # `ui-test` and `check` need Node; `test` and `e2e` do not build the UI.
-.PHONY: help ui ui-check ui-test build binaries release dist verify-release dist-clean packages pkg pkg-skip package-lint lint-image print-lint-image test check e2e clean
+.PHONY: help ui ui-check ui-test build build-go binaries release dist verify-release dist-clean packages pkg pkg-skip package-lint lint-image print-lint-image test check e2e clean
 
 BIN := bin
+
+# Build identity stamped into the binary (internal/version). Plan 7's release
+# targets reuse LDFLAGS; these names appear nowhere else.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT  ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
+# Commit time (UTC), not build time, so rebuilding a commit is reproducible.
+DATE    ?= $(shell TZ=UTC git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)
+VERSION_PKG := github.com/rcss-labs/stackstead/internal/version
+LDFLAGS := -s -w -X $(VERSION_PKG).Version=$(VERSION) -X $(VERSION_PKG).Commit=$(COMMIT) -X $(VERSION_PKG).Date=$(DATE)
 
 help: ## List targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-16s %s\n", $$1, $$2}'
@@ -22,7 +31,10 @@ ui-test: web/node_modules/.package-lock.json ## Run the web UI unit tests (vites
 	cd web && npm run test
 
 build: ui ## Build the UI, then the static binary
-	CGO_ENABLED=0 go build -o $(BIN)/stackstead ./cmd/stackstead
+	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $(BIN)/stackstead ./cmd/stackstead
+
+build-go: ## Build the host binary without the UI step (for CLI work, no Node needed)
+	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $(BIN)/stackstead ./cmd/stackstead
 
 # --- Release artifacts (Plan 7). VERSION/COMMIT/DATE/LDFLAGS belong to Plan 6;
 # RELEASE_VERSION is recursive (=) so it sees Plan 6's VERSION wherever it is defined.
@@ -160,7 +172,7 @@ check: ui-check ui-test ## Vet, gofmt, Go tests, UI checks and tests
 	$(MAKE) test
 
 e2e: ## Smoke test against the real binary (needs a built UI)
-	go test -tags e2e -count=1 -timeout 600s -run TestE2ESmoke -v ./cmd/stackstead/
+	go test -tags e2e -count=1 -timeout 600s -run TestE2E -v ./cmd/stackstead/
 
 clean: ## Remove build output
 	rm -rf $(BIN)

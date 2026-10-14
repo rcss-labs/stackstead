@@ -105,6 +105,8 @@ export interface Status {
   compose: string;
   events: 'connected' | 'disconnected';
   metricsDegraded: boolean;
+  /** Server build version; empty when unknown. */
+  version?: string;
 }
 
 export interface FieldError {

@@ -4,13 +4,11 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/rcss-labs/stackstead/internal/apitypes"
 	"github.com/rcss-labs/stackstead/internal/auth"
 )
 
-type changePasswordRequest struct {
-	Current string `json:"current"`
-	New     string `json:"new"`
-}
+type changePasswordRequest = apitypes.ChangePasswordRequest
 
 // handleChangePassword changes the signed-in user's password. Wrong current
 // passwords count against the same per-IP limiter as logins; it answers 403
