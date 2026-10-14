@@ -155,3 +155,154 @@ func TestUpdateAnchoredServiceIsRefused(t *testing.T) {
 		t.Errorf("err = %v, want ReadOnlyFieldError{image}", err)
 	}
 }
+
+func TestUpdateRefusalsAreErrEditRefused(t *testing.T) {
+	tests := []struct {
+		name   string
+		src    string
+		change func(*ServiceConfig)
+	}{
+		{
+			name:   "CRLF line breaks",
+			src:    "services:\r\n  a:\r\n    image: x\r\n",
+			change: func(c *ServiceConfig) { c.Image = "y" },
+		},
+		{
+			name:   "anchored flow value",
+			src:    "services:\n  a: {image: x, labels: &l {k: v}}\n",
+			change: func(c *ServiceConfig) { c.Image = "y" },
+		},
+		{
+			name:   "deleting the override of an inherited key",
+			src:    "x-base: &base\n  image: base\nservices:\n  a:\n    <<: *base\n    image: own\n",
+			change: func(c *ServiceConfig) { c.Image = "" },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := mustParse(t, tt.src)
+			svc, err := f.Service("a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg := svc.Config
+			tt.change(&cfg)
+			updated, err := f.UpdateService("a", cfg)
+			if err == nil {
+				t.Fatalf("want a refusal, got success:\n%s", updated.Bytes())
+			}
+			if !errors.Is(err, ErrEditRefused) {
+				t.Errorf("err = %v, want it to wrap ErrEditRefused", err)
+			}
+		})
+	}
+}
+
+func TestApplyEditsWrapsDecodeFailuresInErrEditRefused(t *testing.T) {
+	_, err := applyEdits([]byte("a: [\n"), []edit{{path("a"), scalar("b")}})
+	if !errors.Is(err, ErrEditRefused) {
+		t.Errorf("err = %v, want ErrEditRefused", err)
+	}
+	_, err = applyEdits([]byte("a: b\n"), []edit{{path("a.c"), scalar("d")}})
+	if !errors.Is(err, ErrEditRefused) {
+		t.Errorf("path through scalar err = %v, want ErrEditRefused", err)
+	}
+	err = verifyEdits([]byte("a: [\n"), []byte("a: b\n"), nil)
+	if !errors.Is(err, ErrEditRefused) {
+		t.Errorf("verifyEdits err = %v, want ErrEditRefused", err)
+	}
+}
+
+func TestUpdateEditsServiceWithNonStringSiblingKeys(t *testing.T) {
+	src := "services:\n  2048:\n    image: a\n  web:\n    image: nginx\n"
+	got := update(t, src, "web", func(c *ServiceConfig) { c.Image = "caddy" })
+	if want := "services:\n  2048:\n    image: a\n  web:\n    image: caddy\n"; got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+const dupEnvCompose = "services:\n  a:\n    image: x\n    environment: [A=1, A=2]\n"
+
+func TestUpdateIgnoresPreexistingEnvironmentDuplicatesWhenUnchanged(t *testing.T) {
+	got := update(t, dupEnvCompose, "a", func(c *ServiceConfig) { c.Image = "y" })
+	if want := strings.Replace(dupEnvCompose, "image: x", "image: y", 1); got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestUpdateValidatesChangedEnvironmentOnly(t *testing.T) {
+	f := mustParse(t, dupEnvCompose)
+	svc, _ := f.Service("a")
+	cfg := svc.Config
+	cfg.Environment = append(cfg.Environment, EnvVar{"B", "3"})
+	if _, err := f.UpdateService("a", cfg); !errors.Is(err, ErrInvalidConfig) {
+		t.Errorf("err = %v, want ErrInvalidConfig", err)
+	}
+}
+
+func TestUpdateValidatesChangedNetworksOnly(t *testing.T) {
+	f := mustParse(t, labCompose)
+	svc, _ := f.Service("web")
+	cfg := svc.Config
+	cfg.Networks = []NetworkAttachment{{Name: "lan"}, {Name: "lan"}}
+	if _, err := f.UpdateService("web", cfg); !errors.Is(err, ErrInvalidConfig) {
+		t.Errorf("err = %v, want ErrInvalidConfig", err)
+	}
+}
+
+func TestUpdateRejectsInvalidEnvironmentNames(t *testing.T) {
+	for _, name := range []string{"B=C", "A B", "A\tB", "A\nB", "A\x00B"} {
+		f := mustParse(t, labCompose)
+		svc, _ := f.Service("db")
+		cfg := svc.Config
+		cfg.Environment = []EnvVar{{name, "D"}}
+		if _, err := f.UpdateService("db", cfg); !errors.Is(err, ErrInvalidConfig) {
+			t.Errorf("name %q: err = %v, want ErrInvalidConfig", name, err)
+		}
+	}
+}
+
+func TestUpdateMapEnvironmentAddKeepsExistingLinesByteIdentical(t *testing.T) {
+	src := "services:\n  a:\n    image: x\n    environment:\n      # tuning\n      WORKERS: 4\n\n      TZ: Europe/Berlin   # zone\n      NAME: \"quoted\"\n    restart: always\n"
+	got := update(t, src, "a", func(c *ServiceConfig) {
+		c.Environment = append(c.Environment, EnvVar{"NEW", "1"})
+	})
+	want := strings.Replace(src, "    restart:", "      NEW: \"1\"\n    restart:", 1)
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestUpdateMapEnvironmentChangeOneValueChangesOnlyThatLine(t *testing.T) {
+	src := "services:\n  a:\n    image: x\n    environment:\n      # tuning\n      WORKERS: 4\n\n      TZ: Europe/Berlin   # zone\n      NAME: \"quoted\"\n"
+	got := update(t, src, "a", func(c *ServiceConfig) {
+		for i := range c.Environment {
+			if c.Environment[i].Name == "TZ" {
+				c.Environment[i].Value = "UTC"
+			}
+		}
+	})
+	if want := strings.Replace(src, "Europe/Berlin", "UTC", 1); got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestUpdateMapEnvironmentRemoveDeletesOnlyThatLine(t *testing.T) {
+	src := "services:\n  a:\n    image: x\n    environment:\n      WORKERS: 4\n      TZ: UTC\n      NAME: n\n"
+	got := update(t, src, "a", func(c *ServiceConfig) {
+		c.Environment = []EnvVar{c.Environment[0], c.Environment[2]}
+	})
+	if want := "services:\n  a:\n    image: x\n    environment:\n      WORKERS: 4\n      NAME: n\n"; got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestUpdateMapEnvironmentReorderFallsBackToRewrite(t *testing.T) {
+	src := "services:\n  a:\n    image: x\n    environment:\n      A: \"1\"\n      B: \"2\"\n"
+	got := update(t, src, "a", func(c *ServiceConfig) {
+		c.Environment = []EnvVar{c.Environment[1], c.Environment[0]}
+	})
+	if want := "services:\n  a:\n    image: x\n    environment:\n      B: \"2\"\n      A: \"1\"\n"; got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}

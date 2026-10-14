@@ -16,10 +16,15 @@ type edit struct {
 	value *yaml.Node
 }
 
+// ErrEditRefused means an edit could not be applied without risking damage to
+// the file (unsupported layout, shared YAML nodes, or a result that did not
+// verify). The change is still possible in the raw YAML editor.
+var ErrEditRefused = errors.New("edit cannot be applied safely; use the raw YAML editor")
+
 var (
-	errUnsupportedLayout = errors.New("unsupported YAML layout")
-	errSharedNode        = errors.New("value is shared through a YAML anchor or alias")
-	errPathNotMapping    = errors.New("path does not lead through mappings")
+	errUnsupportedLayout = fmt.Errorf("%w: unsupported YAML layout", ErrEditRefused)
+	errSharedNode        = fmt.Errorf("%w: value is shared through a YAML anchor or alias", ErrEditRefused)
+	errPathNotMapping    = fmt.Errorf("%w: path does not lead through mappings", ErrEditRefused)
 )
 
 // applyEdits rewrites src so that only the text belonging to each edited key
@@ -50,7 +55,7 @@ func applyEdits(src []byte, edits []edit) ([]byte, error) {
 func applyEdit(src []byte, e edit) ([]byte, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(src, &doc); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrEditRefused, err)
 	}
 	if len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode || doc.Content[0].Style&yaml.FlowStyle != 0 {
 		return nil, fmt.Errorf("%w: document root must be a block mapping", errUnsupportedLayout)

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
+	"unicode"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -13,27 +15,44 @@ var ErrInvalidServiceName = errors.New("service name must not be empty")
 var ErrInvalidConfig = errors.New("invalid service config")
 
 // ValidateConfig rejects configs that would render duplicate or empty mapping
-// keys, which Docker Compose refuses.
+// keys, which Docker Compose refuses, or environment names that would not
+// read back as written.
 func ValidateConfig(cfg ServiceConfig) error {
-	seenEnv := map[string]bool{}
-	for _, v := range cfg.Environment {
+	if err := validateEnvironment(cfg.Environment); err != nil {
+		return err
+	}
+	return validateNetworks(cfg.Networks)
+}
+
+func validateEnvironment(vars []EnvVar) error {
+	seen := map[string]bool{}
+	for _, v := range vars {
 		if v.Name == "" {
 			return fmt.Errorf("%w: environment variable name is empty", ErrInvalidConfig)
 		}
-		if seenEnv[v.Name] {
+		if strings.Contains(v.Name, "=") || strings.ContainsFunc(v.Name, func(r rune) bool {
+			return unicode.IsSpace(r) || unicode.IsControl(r)
+		}) {
+			return fmt.Errorf("%w: environment variable name %q must not contain '=', whitespace or control characters", ErrInvalidConfig, v.Name)
+		}
+		if seen[v.Name] {
 			return fmt.Errorf("%w: duplicate environment variable %q", ErrInvalidConfig, v.Name)
 		}
-		seenEnv[v.Name] = true
+		seen[v.Name] = true
 	}
-	seenNet := map[string]bool{}
-	for _, n := range cfg.Networks {
+	return nil
+}
+
+func validateNetworks(nets []NetworkAttachment) error {
+	seen := map[string]bool{}
+	for _, n := range nets {
 		if n.Name == "" {
 			return fmt.Errorf("%w: network name is empty", ErrInvalidConfig)
 		}
-		if seenNet[n.Name] {
+		if seen[n.Name] {
 			return fmt.Errorf("%w: duplicate network %q", ErrInvalidConfig, n.Name)
 		}
-		seenNet[n.Name] = true
+		seen[n.Name] = true
 	}
 	return nil
 }

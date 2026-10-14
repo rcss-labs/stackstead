@@ -93,6 +93,10 @@ func TestNewRejectsInvalidConfig(t *testing.T) {
 		{"duplicate env name", ServiceConfig{Image: "x", Environment: []EnvVar{{"A", "1"}, {"A", "2"}}}},
 		{"duplicate network name", ServiceConfig{Image: "x", Networks: []NetworkAttachment{{Name: "a"}, {Name: "a"}}}},
 		{"empty env name", ServiceConfig{Image: "x", Environment: []EnvVar{{"", "1"}}}},
+		{"env name with equals", ServiceConfig{Image: "x", Environment: []EnvVar{{"B=C", "D"}}}},
+		{"env name with space", ServiceConfig{Image: "x", Environment: []EnvVar{{"A B", "D"}}}},
+		{"env name with newline", ServiceConfig{Image: "x", Environment: []EnvVar{{"A\nB", "D"}}}},
+		{"env name with control char", ServiceConfig{Image: "x", Environment: []EnvVar{{"A\x00B", "D"}}}},
 		{"empty network name", ServiceConfig{Image: "x", Networks: []NetworkAttachment{{Name: ""}}}},
 	}
 	for _, tc := range tests {

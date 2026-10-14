@@ -1,7 +1,6 @@
 package composefile
 
 import (
-	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -9,7 +8,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-var errVerification = errors.New("edited file does not match the intended change")
+var errVerification = fmt.Errorf("%w: edited file does not match the intended change", ErrEditRefused)
 
 // verifyEdits checks that edited means exactly what orig means with edits
 // applied: both are decoded (resolving anchors and merge keys), the edits are
@@ -18,19 +17,26 @@ var errVerification = errors.New("edited file does not match the intended change
 func verifyEdits(orig, edited []byte, edits []edit) error {
 	var want, got any
 	if err := yaml.Unmarshal(orig, &want); err != nil {
-		return fmt.Errorf("decode original: %w", err)
+		return fmt.Errorf("%w: decode original: %v", ErrEditRefused, err)
 	}
 	if err := yaml.Unmarshal(edited, &got); err != nil {
 		return fmt.Errorf("%w: result is not valid YAML: %v", errVerification, err)
 	}
+	// Mappings with a non-string key (a service named 2048) decode as
+	// map[any]any; compare everything as string-keyed maps.
+	want, got = stringKeys(want), stringKeys(got)
 	for _, e := range edits {
 		var v any
 		if e.value != nil {
 			if err := e.value.Decode(&v); err != nil {
-				return fmt.Errorf("decode edit value: %w", err)
+				return fmt.Errorf("%w: decode edit value: %v", errVerification, err)
 			}
+			v = stringKeys(v)
 		}
-		want = applyToValue(want, e.path, e.value != nil, v)
+		var err error
+		if want, err = applyToValue(want, e.path, e.value != nil, v); err != nil {
+			return err
+		}
 	}
 	if !sameValue(want, got) {
 		return errVerification
@@ -38,13 +44,42 @@ func verifyEdits(orig, edited []byte, edits []edit) error {
 	return nil
 }
 
+// stringKeys converts every map[any]any in a decoded YAML value to a
+// map[string]any keyed by fmt.Sprint of the original key.
+func stringKeys(v any) any {
+	switch v := v.(type) {
+	case map[any]any:
+		m := make(map[string]any, len(v))
+		for k, val := range v {
+			m[fmt.Sprint(k)] = stringKeys(val)
+		}
+		return m
+	case map[string]any:
+		for k, val := range v {
+			v[k] = stringKeys(val)
+		}
+		return v
+	case []any:
+		for i := range v {
+			v[i] = stringKeys(v[i])
+		}
+		return v
+	}
+	return v
+}
+
 // applyToValue sets (or deletes) path in a decoded YAML value, creating
-// intermediate mappings as needed when setting.
-func applyToValue(node any, path []string, set bool, v any) any {
+// intermediate mappings as needed when setting. Setting through an existing
+// value that is neither a mapping nor null is an error rather than an
+// overwrite.
+func applyToValue(node any, path []string, set bool, v any) (any, error) {
 	m, ok := node.(map[string]any)
 	if !ok {
 		if !set {
-			return node
+			return node, nil
+		}
+		if node != nil {
+			return nil, fmt.Errorf("%w: cannot set %s through a non-mapping value", errVerification, path[0])
 		}
 		m = map[string]any{}
 	}
@@ -54,14 +89,18 @@ func applyToValue(node any, path []string, set bool, v any) any {
 		} else {
 			delete(m, path[0])
 		}
-		return m
+		return m, nil
 	}
 	child, exists := m[path[0]]
 	if !exists && !set {
-		return m
+		return m, nil
 	}
-	m[path[0]] = applyToValue(child, path[1:], set, v)
-	return m
+	updated, err := applyToValue(child, path[1:], set, v)
+	if err != nil {
+		return nil, err
+	}
+	m[path[0]] = updated
+	return m, nil
 }
 
 // sameValue is reflect.DeepEqual for decoded YAML, except that NaN equals NaN
