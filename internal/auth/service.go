@@ -244,8 +244,16 @@ func (s *Service) ChangePassword(ctx context.Context, userID int64, current, nex
 		return fmt.Errorf("begin password change: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op after Commit
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, newHash, userID); err != nil {
+	// Compare-and-swap on the hash we verified: if another change landed
+	// while we were hashing, this one must not silently overwrite it.
+	res, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?`, newHash, userID, hash)
+	if err != nil {
 		return fmt.Errorf("update password: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("update password: %w", err)
+	} else if n == 0 {
+		return ErrInvalidCredentials
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ? AND token_hash != ?`, userID, hashToken(keepToken)); err != nil {
 		return fmt.Errorf("delete other sessions: %w", err)

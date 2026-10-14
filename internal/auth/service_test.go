@@ -343,3 +343,44 @@ func TestChangePasswordRejectsWithoutSideEffects(t *testing.T) {
 		t.Errorf("sessions = %d, want 3", n)
 	}
 }
+
+// A concurrent change that lands between verifying the old password and
+// writing the new hash must win: the late write may not overwrite it.
+func TestChangePasswordLosesRaceAgainstConcurrentChange(t *testing.T) {
+	svc, db, _ := newTestService(t)
+	ctx := context.Background()
+	if err := svc.CreateAdmin(ctx, "admin", goodPassword); err != nil {
+		t.Fatal(err)
+	}
+	tokenA, err := svc.Login(ctx, "admin", goodPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := svc.Authenticate(ctx, tokenA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const rivalHash = "$argon2id$v=19$m=1024,t=1,p=1$c2FsdHNhbHRzYWx0c2FsdA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	orig := deriveKey
+	t.Cleanup(func() { deriveKey = orig })
+	deriveKey = func(password, salt []byte, iterations, memory uint32, threads uint8, keyLen uint32) []byte {
+		if string(password) == newPassword { // hashing the new password: the rival commits now
+			if _, err := db.Exec(`UPDATE users SET password_hash = ? WHERE id = ?`, rivalHash, user.ID); err != nil {
+				t.Error(err)
+			}
+		}
+		return orig(password, salt, iterations, memory, threads, keyLen)
+	}
+
+	err = svc.ChangePassword(ctx, user.ID, goodPassword, newPassword, tokenA)
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("err = %v, want ErrInvalidCredentials", err)
+	}
+	var got string
+	if err := db.QueryRow(`SELECT password_hash FROM users WHERE id = ?`, user.ID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != rivalHash {
+		t.Errorf("stored hash was overwritten by the late change: %q", got)
+	}
+}
