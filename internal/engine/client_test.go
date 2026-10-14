@@ -20,7 +20,18 @@ type fake struct {
 	sock    string
 	mu      sync.Mutex
 	paths   []string
-	version string // Api-Version header on /_ping; "" omits it
+	version string      // Api-Version header on /_ping; "" omits it
+	hang    atomic.Bool // /_ping blocks until the client gives up
+}
+
+func (f *fake) pings() int {
+	n := 0
+	for _, p := range f.seen() {
+		if p == "/_ping" {
+			n++
+		}
+	}
+	return n
 }
 
 func (f *fake) seen() []string {
@@ -48,6 +59,13 @@ func serveVer(t *testing.T, version string, h http.Handler) *fake {
 		f.paths = append(f.paths, r.URL.Path)
 		f.mu.Unlock()
 		if r.URL.Path == "/_ping" {
+			if f.hang.Load() {
+				select {
+				case <-r.Context().Done():
+				case <-time.After(3 * time.Second):
+				}
+				return
+			}
 			if f.version != "" {
 				w.Header().Set("Api-Version", f.version)
 			}
@@ -330,5 +348,90 @@ func TestDefaultTimeout(t *testing.T) {
 	sock := serve(t, fileHandler(t, map[string]string{"/v1.41/networks": "networks.json"}))
 	if _, err := New(sock, 0).Networks(ctx(t)); err != nil {
 		t.Errorf("zero timeout must default, got %v", err)
+	}
+}
+
+func TestConcurrentFirstCallsPingOnce(t *testing.T) {
+	f := serveVer(t, "1.45", fileHandler(t, map[string]string{"/v1.45/networks": "networks.json"}))
+	c := New(f.sock, 2*time.Second)
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := c.Networks(context.Background()); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if n := f.pings(); n != 1 {
+		t.Errorf("pings = %d, want 1", n)
+	}
+}
+
+func TestHungNegotiationDoesNotSerializeCallers(t *testing.T) {
+	const timeout = 300 * time.Millisecond
+	f := serveVer(t, "1.45", http.NotFoundHandler())
+	f.hang.Store(true)
+	c := New(f.sock, timeout)
+	var wg sync.WaitGroup
+	start := time.Now()
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := c.Containers(context.Background()); !errors.Is(err, ErrUnavailable) {
+				t.Errorf("err = %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if d := time.Since(start); d > timeout+250*time.Millisecond {
+		t.Errorf("5 concurrent calls took %v, want about %v", d, timeout)
+	}
+}
+
+func TestWaiterHonoursOwnContext(t *testing.T) {
+	f := serveVer(t, "1.45", http.NotFoundHandler())
+	f.hang.Store(true)
+	c := New(f.sock, 2*time.Second)
+	go c.Containers(context.Background()) // leader, hangs in negotiation
+	time.Sleep(50 * time.Millisecond)
+	short, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := c.Containers(short)
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrUnavailable) {
+		t.Errorf("err = %v", err)
+	}
+	if d := time.Since(start); d > 200*time.Millisecond {
+		t.Errorf("waiter took %v", d)
+	}
+}
+
+func TestFirstCallBoundedByOneTimeout(t *testing.T) {
+	const timeout = 300 * time.Millisecond
+	f := serveVer(t, "1.45", http.NotFoundHandler())
+	f.hang.Store(true)
+	start := time.Now()
+	_, err := New(f.sock, timeout).Containers(context.Background())
+	if !errors.Is(err, ErrUnavailable) {
+		t.Errorf("err = %v", err)
+	}
+	if d := time.Since(start); d > timeout+150*time.Millisecond {
+		t.Errorf("took %v, want about %v", d, timeout)
+	}
+}
+
+func TestMalformedApiVersion(t *testing.T) {
+	for _, h := range []string{"abc", "1.47.1", "v1.45", "1.45-rc"} {
+		t.Run(h, func(t *testing.T) {
+			f := serveVer(t, h, http.NotFoundHandler())
+			_, err := New(f.sock, time.Second).Containers(ctx(t))
+			if err == nil || !strings.Contains(err.Error(), "malformed Api-Version header") || errors.Is(err, ErrUnavailable) {
+				t.Errorf("err = %v", err)
+			}
+		})
 	}
 }

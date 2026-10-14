@@ -38,7 +38,8 @@ type Client struct {
 	maxBody int64
 
 	mu      sync.Mutex
-	version string // negotiated; empty until the first success
+	version string  // negotiated; empty until the first success
+	flight  *flight // in-progress negotiation, if any
 }
 
 // New returns a client for the Docker socket at socketPath.
@@ -128,60 +129,114 @@ func (c *Client) Networks(ctx context.Context) ([]Network, error) {
 }
 
 // get performs a versioned GET, negotiating the API version on first use.
-func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
-	v, err := c.apiVersion(ctx)
+// One client-timeout deadline bounds negotiation and request together.
+func (c *Client) get(caller context.Context, path string) ([]byte, error) {
+	if err := caller.Err(); err != nil {
+		return nil, fmt.Errorf("docker engine request: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(caller, c.timeout)
+	defer cancel()
+	v, err := c.apiVersion(caller, ctx)
 	if err != nil {
 		return nil, err
 	}
-	return c.do(ctx, "/v"+v+path)
+	r, err := c.request(caller, ctx, "/v"+v+path)
+	if err != nil {
+		return nil, err
+	}
+	return r.body, nil
 }
 
-// apiVersion returns the cached version, negotiating via GET /_ping if
-// needed. Failures are not cached.
-func (c *Client) apiVersion(ctx context.Context) (string, error) {
+// flight is one in-progress version negotiation shared by all waiting callers.
+type flight struct {
+	done    chan struct{}
+	version string
+	err     error
+}
+
+// apiVersion returns the cached version, or joins (or starts) a single
+// negotiation. No lock is held during I/O and each caller waits only as long
+// as its own ctx allows. The negotiation runs detached with its own timeout so
+// one caller's cancellation cannot fail the others. Failures are not cached.
+func (c *Client) apiVersion(caller, ctx context.Context) (string, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.version != "" {
-		return c.version, nil
+		v := c.version
+		c.mu.Unlock()
+		return v, nil
 	}
-	resp, err := c.request(ctx, "/_ping")
+	f := c.flight
+	if f == nil {
+		f = &flight{done: make(chan struct{})}
+		c.flight = f
+		go c.negotiate(f)
+	}
+	c.mu.Unlock()
+
+	select {
+	case <-f.done:
+		return f.version, f.err
+	case <-ctx.Done():
+		return "", c.classify(caller, ctx.Err())
+	}
+}
+
+func (c *Client) negotiate(f *flight) {
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+	defer cancel()
+	v, err := c.negotiateVersion(ctx)
+	c.mu.Lock()
+	if err == nil {
+		c.version = v
+	}
+	c.flight = nil
+	f.version, f.err = v, err
+	c.mu.Unlock()
+	close(f.done)
+}
+
+func (c *Client) negotiateVersion(ctx context.Context) (string, error) {
+	resp, err := c.request(context.Background(), ctx, "/_ping")
 	if err != nil {
 		return "", err
 	}
 	server := resp.header.Get("Api-Version")
 	if server == "" {
-		server = minAPIVersion
+		return minAPIVersion, nil
 	}
-	if compareVersions(server, minAPIVersion) < 0 {
+	sv, ok := parseVersion(server)
+	if !ok {
+		return "", fmt.Errorf("docker engine: malformed Api-Version header %q", server)
+	}
+	if min, _ := parseVersion(minAPIVersion); sv.less(min) {
 		return "", fmt.Errorf("docker engine API %s is older than the minimum %s", server, minAPIVersion)
 	}
-	if compareVersions(server, maxAPIVersion) > 0 {
-		server = maxAPIVersion
+	if max, _ := parseVersion(maxAPIVersion); max.less(sv) {
+		return maxAPIVersion, nil
 	}
-	c.version = server
 	return server, nil
 }
 
-// compareVersions compares "major.minor" strings; unparsable input sorts lowest.
-func compareVersions(a, b string) int {
-	pa, pb := parseVersion(a), parseVersion(b)
-	for i := range pa {
-		if pa[i] != pb[i] {
-			if pa[i] < pb[i] {
-				return -1
-			}
-			return 1
-		}
-	}
-	return 0
+type version [2]int
+
+func (a version) less(b version) bool {
+	return a[0] < b[0] || (a[0] == b[0] && a[1] < b[1])
 }
 
-func parseVersion(s string) [2]int {
-	var v [2]int
-	major, minor, _ := strings.Cut(s, ".")
-	v[0], _ = strconv.Atoi(major)
-	v[1], _ = strconv.Atoi(minor)
-	return v
+// parseVersion accepts strictly "major.minor" with decimal digits.
+func parseVersion(s string) (version, bool) {
+	major, minor, ok := strings.Cut(s, ".")
+	if !ok {
+		return version{}, false
+	}
+	var v version
+	var err1, err2 error
+	v[0], err1 = strconv.Atoi(major)
+	v[1], err2 = strconv.Atoi(minor)
+	if err1 != nil || err2 != nil || major[0] == '+' || major[0] == '-' || minor[0] == '+' || minor[0] == '-' {
+		return version{}, false
+	}
+	return v, true
 }
 
 type response struct {
@@ -189,32 +244,35 @@ type response struct {
 	body   []byte
 }
 
-func (c *Client) do(ctx context.Context, path string) ([]byte, error) {
-	r, err := c.request(ctx, path)
+// do performs an unversioned GET bounded by the client timeout.
+func (c *Client) do(caller context.Context, path string) ([]byte, error) {
+	if err := caller.Err(); err != nil {
+		return nil, fmt.Errorf("docker engine request: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(caller, c.timeout)
+	defer cancel()
+	r, err := c.request(caller, ctx, path)
 	if err != nil {
 		return nil, err
 	}
 	return r.body, nil
 }
 
-func (c *Client) request(parent context.Context, path string) (*response, error) {
-	if err := parent.Err(); err != nil {
-		return nil, fmt.Errorf("docker engine request: %w", err)
-	}
-	ctx, cancel := context.WithTimeout(parent, c.timeout)
-	defer cancel()
+// request issues one GET under ctx, which must already carry a deadline.
+// caller is the original caller context, used only to classify failures.
+func (c *Client) request(caller, ctx context.Context, path string) (*response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker"+path, nil)
 	if err != nil {
 		return nil, err
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, c.classify(parent, err)
+		return nil, c.classify(caller, err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, c.maxBody+1))
 	if err != nil {
-		return nil, c.classify(parent, err)
+		return nil, c.classify(caller, err)
 	}
 	if int64(len(body)) > c.maxBody {
 		return nil, fmt.Errorf("docker engine: response too large (over %d bytes)", c.maxBody)
