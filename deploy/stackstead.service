@@ -1,0 +1,21 @@
+[Unit]
+Description=Stackstead Docker stack manager
+Documentation=https://github.com/rcss-labs/stackstead
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+User=stackstead
+Group=stackstead
+SupplementaryGroups=docker
+ExecStart=/usr/local/bin/stackstead --config /etc/stackstead/config.yaml
+Restart=on-failure
+RestartSec=5
+StateDirectory=stackstead
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
