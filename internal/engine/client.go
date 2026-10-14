@@ -131,10 +131,15 @@ func (c *Client) Networks(ctx context.Context) ([]Network, error) {
 // get performs a versioned GET, negotiating the API version on first use.
 // One client-timeout deadline bounds negotiation and request together.
 func (c *Client) get(caller context.Context, path string) ([]byte, error) {
+	return c.getWithin(caller, path, c.timeout)
+}
+
+// getWithin is get with an explicit deadline in place of the client timeout.
+func (c *Client) getWithin(caller context.Context, path string, timeout time.Duration) ([]byte, error) {
 	if err := caller.Err(); err != nil {
 		return nil, fmt.Errorf("docker engine request: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(caller, c.timeout)
+	ctx, cancel := context.WithTimeout(caller, timeout)
 	defer cancel()
 	v, err := c.apiVersion(caller, ctx)
 	if err != nil {
