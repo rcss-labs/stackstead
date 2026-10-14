@@ -62,12 +62,19 @@ func (f *File) Services() ([]string, error) {
 	if services == nil {
 		return nil, nil
 	}
+	if services.Kind == yaml.ScalarNode && services.ShortTag() == "!!null" {
+		return nil, nil // "services:" with nothing under it
+	}
 	if services.Kind != yaml.MappingNode {
 		return nil, fmt.Errorf("%w: services must be a mapping", ErrNotMapping)
 	}
 	names := make([]string, 0, len(services.Content)/2)
 	for i := 0; i < len(services.Content); i += 2 {
-		names = append(names, services.Content[i].Value)
+		key := services.Content[i]
+		if key.Kind != yaml.ScalarNode || key.ShortTag() == "!!merge" {
+			continue
+		}
+		names = append(names, key.Value)
 	}
 	return names, nil
 }

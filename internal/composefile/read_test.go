@@ -233,3 +233,21 @@ func TestInheritedLegacyLimitsMakeLimitsReadOnly(t *testing.T) {
 		t.Errorf("Limits = %+v, want zero", svc.Config.Limits)
 	}
 }
+
+func TestServicesOfNullServicesIsEmpty(t *testing.T) {
+	names, err := mustParse(t, "services:\n# nothing yet\n").Services()
+	if err != nil || len(names) != 0 {
+		t.Errorf("Services() = %v, %v; want empty, nil", names, err)
+	}
+}
+
+func TestServicesSkipsMergeAndNonScalarKeys(t *testing.T) {
+	src := "base: &b\n  image: x\nservices:\n  <<: *b\n  ? [a, b]\n  : image: y\n  web:\n    image: z\n"
+	names, err := mustParse(t, src).Services()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(names, []string{"web"}) {
+		t.Errorf("Services() = %v, want [web]", names)
+	}
+}
