@@ -712,3 +712,20 @@ func TestLoginNonTTYErrorDoesNotMentionPasswordFile(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestLoginCAFileWithHTTPURLIsUsageError(t *testing.T) {
+	srv := t6API(t, map[string]http.HandlerFunc{"POST /api/login": t6LoginOK}) // plain http
+	tls := httptest.NewTLSServer(http.NotFoundHandler())
+	t.Cleanup(tls.Close)
+	ca := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: tls.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	te := newTestEnv(t, nil)
+	te.Stdin = strings.NewReader("hunter2-pw\n")
+	err := t6Run(te, "login", srv.URL, "--context", "lab", "--password-stdin", "--ca-file", ca)
+	if t6Code(err) != ExitUsage {
+		t.Fatalf("code = %d (%v), want 2", t6Code(err), err)
+	}
+	mustContain(t, "error", errMessage(err), "--ca-file only applies to https")
+}

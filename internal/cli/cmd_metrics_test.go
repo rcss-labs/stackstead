@@ -300,7 +300,7 @@ func TestEventsCtrlCExits130(t *testing.T) {
 
 func TestMetricsLiveHeaderAlignsWithColour(t *testing.T) {
 	srv := t9Serve(t, t9Conn{Frames: []string{
-		t9Ev("sample", "", apitypes.Sample{Time: "2026-10-14T11:00:00Z", Service: "web", Container: "aaaaaaaaaaaa", CPU: 1, Mem: 1 << 20, MemLimit: 2 << 30}),
+		t9Ev("sample", "", apitypes.Sample{Time: "2026-10-14T11:00:00Z", Service: "web", Container: "myproject-web-app-1", CPU: 1, Mem: 1 << 20, MemLimit: 2 << 30}),
 	}, Hold: true})
 	te := newTestEnv(t, nil)
 	t9Seed(t, te, srv.URL)
@@ -333,7 +333,7 @@ func TestMetricsLiveHeaderAlignsWithColour(t *testing.T) {
 	header, row := stripANSI(lines[0]), stripANSI(lines[1])
 	for _, col := range []string{"SERVICE", "CONTAINER", "CPU", "MEM", "LIMIT"} {
 		// Each column starts where the matching cell of the row starts.
-		cell := map[string]string{"SERVICE": "web", "CONTAINER": "aaaaaaaaaaaa", "CPU": "1.0%", "MEM": "1.0 MiB", "LIMIT": "2.0 GiB"}[col]
+		cell := map[string]string{"SERVICE": "web", "CONTAINER": "myproject-web-app-1", "CPU": "1.0%", "MEM": "1.0 MiB", "LIMIT": "2.0 GiB"}[col]
 		if strings.Index(header, col) != strings.Index(row, cell) {
 			t.Errorf("column %s at %d in header but %d in row:\n%s\n%s", col, strings.Index(header, col), strings.Index(row, cell), header, row)
 		}
@@ -389,4 +389,19 @@ func t9Stream(t *testing.T, te *testEnv, want string, args ...string) {
 	time.Sleep(50 * time.Millisecond)
 	cancel()
 	<-done
+}
+
+func TestMetricsLiveTruncatesVeryLongContainerNames(t *testing.T) {
+	long := "an-extremely-long-project-name-web-1"
+	var b strings.Builder
+	liveRow(&b, "t", "svc", long, "1.0%")
+	got := strings.Fields(b.String())[2]
+	if !strings.HasSuffix(got, "…") || len([]rune(got)) != 28 {
+		t.Errorf("container cell = %q, want 28 runes ending in an ellipsis", got)
+	}
+	b.Reset()
+	liveRow(&b, "t", "svc", "myproject-web-app-1", "1.0%")
+	if !strings.Contains(b.String(), "myproject-web-app-1  ") {
+		t.Errorf("a typical name was cut: %q", b.String())
+	}
 }

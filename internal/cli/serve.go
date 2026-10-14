@@ -87,11 +87,6 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	if err != nil {
 		return err
 	}
-	if path != "" {
-		logger.Info("loaded config file", "path", path)
-	} else {
-		logger.Info("no config file; using defaults and STACKSTEAD_* environment")
-	}
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
 	}
@@ -106,6 +101,11 @@ func serve(ctx context.Context, env *Env, args []string) error {
 		return err
 	}
 	defer lock.Release()
+	if path != "" {
+		logger.Info("loaded config file", "path", path)
+	} else {
+		logger.Info("no config file; using defaults and STACKSTEAD_* environment")
+	}
 	db, err := store.Open(filepath.Join(cfg.DataDir, "stackstead.db"))
 	if err != nil {
 		return err

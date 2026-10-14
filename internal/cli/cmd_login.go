@@ -62,7 +62,7 @@ func apiClient(env *Env, g *globalFlags) (c *client.Client, name string, cx Cont
 }
 
 // withAPI runs fn with the current context's client and routes its error
-// through onUnauthorized, so every authenticated command behaves the same.
+// through clearIfUnauthorized, so every authenticated command behaves the same.
 func withAPI(env *Env, g *globalFlags, fn func(c *client.Client, name string, cx Context) error) error {
 	c, name, cx, err := apiClient(env, g)
 	if err != nil {
@@ -71,17 +71,10 @@ func withAPI(env *Env, g *globalFlags, fn func(c *client.Client, name string, cx
 	return clearIfUnauthorized(env, newContextStore(env), name, cx, fn(c, name, cx))
 }
 
-// onUnauthorized turns a 401 into "log in again" (clearing the dead session
-// locally) and any other API error into an ExitError with a mapped code and
-// text safe to print. Other errors pass through unchanged. Prefer withAPI,
-// which also protects a session a concurrent login just saved.
-func onUnauthorized(env *Env, store *ContextStore, name string, err error) error {
-	return clearIfUnauthorized(env, store, name, Context{}, err)
-}
-
-// clearIfUnauthorized is onUnauthorized for a request made with used's
-// session: the stored session is cleared only if it is still that one (when
-// used has no session, unconditionally).
+// clearIfUnauthorized turns a 401 into "log in again" (clearing the dead
+// session locally, only if it is still used's: when used has no session,
+// unconditionally) and any other API error into an ExitError with a mapped
+// code and text safe to print.
 func clearIfUnauthorized(env *Env, store *ContextStore, name string, used Context, err error) error {
 	var ce *client.Error
 	if !errors.As(err, &ce) || ce.Status != http.StatusUnauthorized {
@@ -178,6 +171,9 @@ func loginCommand() *Command {
 			}
 			if insecure && u.Scheme == "http" {
 				return exitf(ExitUsage, "--insecure only applies to https URLs")
+			}
+			if caFile != "" && u.Scheme == "http" {
+				return exitf(ExitUsage, "--ca-file only applies to https URLs")
 			}
 			if caFile != "" {
 				abs, err := filepath.Abs(caFile)

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -256,4 +257,19 @@ func TestSetPasswordTTYMismatchExits6AndChangesNothing(t *testing.T) {
 	if countUsers(t, h.dbPath) != 0 {
 		t.Error("a mismatched confirmation still created the admin")
 	}
+}
+
+func TestSetPasswordMissingFileIsUsageError(t *testing.T) {
+	h := newLocalHost(t, true)
+	err := runLocal(newTestEnv(t, nil), "admin", "set-password", "--password-file", filepath.Join(t.TempDir(), "nope"), "--config", h.cfgPath)
+	wantCode(t, err, ExitUsage)
+}
+
+func TestSetPasswordRejectsHugeInput(t *testing.T) {
+	h := newLocalHost(t, true)
+	env := newTestEnv(t, nil)
+	env.Stdin = io.MultiReader(strings.NewReader(strings.Repeat("p", 200<<10)), strings.NewReader("\n"))
+	err := runLocal(env, "admin", "set-password", "--password-stdin", "--config", h.cfgPath)
+	wantCode(t, err, ExitValidation)
+	mustContain(t, "error", errMessage(err), "too long")
 }

@@ -72,10 +72,18 @@ func startAndFollow(ctx context.Context, env *Env, g *globalFlags, c *client.Cli
 	return streamOperation(ctx, env, p, c, op)
 }
 
+var lifecycleShort = map[string]string{
+	"up":      "Start a stack (compose up)",
+	"down":    "Stop and remove a stack's containers (compose down)",
+	"restart": "Restart a stack's containers (compose restart)",
+	"pull":    "Pull images for a stack (compose pull)",
+	"build":   "Build images for a stack (compose build)",
+}
+
 func lifecycleCommand(action string) *Command {
 	var detach bool
 	return &Command{
-		Name: action, Short: strings.ToUpper(action[:1]) + action[1:] + " a stack and follow the operation", MinArgs: 1, MaxArgs: 1,
+		Name: action, Short: lifecycleShort[action] + " and follow the operation", MinArgs: 1, MaxArgs: 1,
 		Usage: "stacks " + action + " <name> [--detach]",
 		Long:  "Streams the operation's output and exits 9 if it did not succeed; --detach prints the operation id and returns at once.",
 		Flags: func(fs *flag.FlagSet) {
@@ -221,8 +229,8 @@ func stacksShowCommand() *Command {
 
 func stacksImportCommand() *Command {
 	return &Command{
-		Name: "import", Short: "Import an existing compose directory as a stack", Usage: "stacks import <path>", MinArgs: 1, MaxArgs: 1,
-		Long: "The path is a directory on the server host, inside its allowed roots.",
+		Name: "import", Short: "Import an existing compose file as a stack", Usage: "stacks import <path>", MinArgs: 1, MaxArgs: 1,
+		Long: "The path is a compose file on the server host (e.g. /opt/stacks/web/compose.yaml), inside its allowed roots.",
 		Run: func(ctx context.Context, env *Env, g *globalFlags, args []string) error {
 			return withAPI(env, g, func(c *client.Client, _ string, _ Context) error {
 				res, err := c.Import(ctx, args[0])

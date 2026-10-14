@@ -157,14 +157,6 @@ func stdinIsTerminal(env *Env) bool {
 	return env.IsTerminal(fd)
 }
 
-// syncDir fsyncs a directory so renames inside it are durable.
-func syncDir(dir string) {
-	if d, err := os.Open(dir); err == nil {
-		d.Sync()
-		d.Close()
-	}
-}
-
 // syncDirChecked fsyncs a directory and reports the failure.
 func syncDirChecked(dir string) error {
 	d, err := os.Open(dir)

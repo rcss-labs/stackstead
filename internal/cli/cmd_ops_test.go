@@ -59,7 +59,7 @@ func TestOpsShowPrintsHeaderAndLines(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := te.Out.String()
-	for _, want := range []string{"op1", "web", "up", "failed", "exit status 1", "first\n", "sec[31mond\n"} {
+	for _, want := range []string{"op1", "web", "up", "failed", "exit status 1", "first\n", "second\n"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}

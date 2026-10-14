@@ -7,13 +7,11 @@ import (
 	"flag"
 	"fmt"
 	"hash/fnv"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"github.com/rcss-labs/stackstead/internal/apitypes"
 	"github.com/rcss-labs/stackstead/internal/client"
@@ -85,34 +83,17 @@ func (l *logCursors) String() string {
 	return strings.Join(ids, ",")
 }
 
-// Terminal safety of log text. Container output is untrusted: an escape
-// sequence in it could retitle the window, rewrite the screen, or (on some
-// terminals) inject input. So by default every escape sequence and control
-// character except TAB is dropped, which also drops colour codes; --raw
-// opts out for people who want the colours and trust their stacks. JSON
-// output is never touched (JSON escapes control characters itself).
-var escapeSequence = regexp.MustCompile(
-	`\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?` + // OSC
-		`|\x1b[PX^_][^\x1b]*(?:\x1b\\)?` + // DCS, SOS, PM, APC
-		`|\x1b\[[0-?]*[ -/]*[@-~]?` + // CSI
-		`|\x{9b}[0-?]*[ -/]*[@-~]?` + // 8-bit CSI
-		`|\x1b[ -/]*[0-~]?`) // other two- and three-byte escapes
-
-func sanitizeLogText(s string) string {
-	s = escapeSequence.ReplaceAllString(s, "")
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) && r != '\t' {
-			return -1
-		}
-		return r
-	}, s)
-}
+// sanitizeLogText drops escape sequences, control characters (except TAB)
+// and format characters from container output; --raw opts out for people who
+// want the colours and trust their stacks. JSON output is never touched (JSON
+// escapes control characters itself).
+func sanitizeLogText(s string) string { return sanitize(s, false) }
 
 // singleLine makes untrusted text safe inside one output line: line breaks
 // become spaces (so a name cannot forge extra lines) and escape sequences
 // and control characters are dropped.
 func singleLine(s string) string {
-	return sanitizeLogText(strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(s))
+	return sanitize(strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(s), false)
 }
 
 var servicePalette = []string{"36", "33", "35", "34", "32", "96", "93", "95"}
@@ -122,6 +103,10 @@ func serviceColour(service string) string {
 	h.Write([]byte(service))
 	return servicePalette[int(h.Sum32())%len(servicePalette)]
 }
+
+// logTimestampLayout is local time with nanoseconds and a numeric offset, so
+// every prefix has the same width (the offset is never "Z").
+const logTimestampLayout = "2006-01-02T15:04:05.000000000-07:00"
 
 func logsCommand() *Command {
 	var follow, timestamps, raw bool
@@ -139,7 +124,7 @@ func logsCommand() *Command {
 			fs.StringVar(&tail, "tail", "", "lines to show per container: a number or all (server default when unset)")
 			fs.StringVar(&since, "since", "", "only logs since an RFC3339 time, a Unix timestamp or a duration such as 10m")
 			fs.StringVar(&service, "service", "", "only this service")
-			fs.BoolVar(&timestamps, "timestamps", false, "prefix each line with its time")
+			fs.BoolVar(&timestamps, "timestamps", false, "prefix each line with its time (local, with UTC offset)")
 			fs.BoolVar(&raw, "raw", false, "do not strip escape sequences and control characters from the log text")
 		},
 		Run: func(ctx context.Context, env *Env, g *globalFlags, args []string) error {
@@ -182,7 +167,7 @@ func handleLogEvent(env *Env, p *Printer, cursors *logCursors, ev client.Event, 
 		}
 		prefix := p.paint(serviceColour(le.Service), "["+singleLine(le.Service)+"]")
 		if timestamps {
-			prefix = le.Time.UTC().Format("2006-01-02T15:04:05.000000000Z07:00") + " " + prefix
+			prefix = le.Time.Local().Format(logTimestampLayout) + " " + prefix
 		}
 		line := prefix + " " + text
 		if le.Stream == "stderr" {

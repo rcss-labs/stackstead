@@ -179,7 +179,15 @@ func TestLogsStderrLinesAreDimRedWithColour(t *testing.T) {
 	}
 }
 
+func useFixedLocalZone(t *testing.T) {
+	t.Helper()
+	old := time.Local
+	time.Local = time.FixedZone("T9", 5*3600+1800)
+	t.Cleanup(func() { time.Local = old })
+}
+
 func TestLogsTimestamps(t *testing.T) {
+	useFixedLocalZone(t)
 	srv := t9Serve(t, t9Conn{Frames: []string{
 		t9Ev("log", "", t9Log("web", "aaaaaaaaaaaa", "stdout", "hello")),
 		t9Ev("end", "", struct{}{}),
@@ -189,7 +197,7 @@ func TestLogsTimestamps(t *testing.T) {
 	if err := t9Run(context.Background(), te, "logs", "demo", "--timestamps"); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := te.Out.String(), "2026-10-14T11:59:30.000000000Z [web] hello\n"; got != want {
+	if got, want := te.Out.String(), "2026-10-14T17:29:30.000000000+05:30 [web] hello\n"; got != want {
 		t.Errorf("stdout = %q, want %q", got, want)
 	}
 }
@@ -409,6 +417,7 @@ func TestLogs401MidStreamExits3(t *testing.T) {
 }
 
 func TestLogsTimestampsAreFixedWidth(t *testing.T) {
+	useFixedLocalZone(t)
 	ev := t9Log("web", "aaaaaaaaaaaa", "stdout", "hello")
 	ev.Time = time.Date(2026, 10, 14, 11, 59, 30, 500_000_000, time.UTC)
 	srv := t9Serve(t, t9Conn{Frames: []string{t9Ev("log", "", ev), t9Ev("end", "", struct{}{})}})
@@ -417,7 +426,7 @@ func TestLogsTimestampsAreFixedWidth(t *testing.T) {
 	if err := t9Run(context.Background(), te, "logs", "demo", "--timestamps"); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := te.Out.String(), "2026-10-14T11:59:30.500000000Z [web] hello\n"; got != want {
+	if got, want := te.Out.String(), "2026-10-14T17:29:30.500000000+05:30 [web] hello\n"; got != want {
 		t.Errorf("stdout = %q, want %q", got, want)
 	}
 }

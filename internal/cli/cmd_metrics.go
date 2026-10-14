@@ -143,9 +143,13 @@ func metricsCommand() *Command {
 // liveRow prints one fixed-width row; a live feed has no final column
 // widths, so cells are padded to a preset width and never truncated.
 func liveRow(w io.Writer, cells ...string) {
-	widths := []int{19, 12, 12, 7, 10, 10, 14, 14, 14, 14} // visible widths
+	// Visible widths; the container column fits "<project>-<service>-N".
+	widths := []int{19, 12, 28, 7, 10, 10, 14, 14, 14, 14}
 	var b strings.Builder
 	for i, c := range cells {
+		if r := []rune(c); i == 2 && len(r) > widths[i] && !strings.Contains(c, "\x1b") {
+			c = string(r[:widths[i]-1]) + "…"
+		}
 		b.WriteString(c)
 		if i < len(cells)-1 {
 			b.WriteString(strings.Repeat(" ", max(widths[i]-utf8.RuneCountInString(stripANSI(c)), 0)+2))

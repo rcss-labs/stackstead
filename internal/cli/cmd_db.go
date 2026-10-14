@@ -199,7 +199,7 @@ func dbBackup(ctx context.Context, env *Env, cfg config.Config, dest string, for
 		if err := os.Rename(target, dest); err != nil {
 			return err
 		}
-		syncDir(filepath.Dir(dest))
+		_ = syncDirChecked(filepath.Dir(dest)) // best effort: the rename already happened
 	}
 	fmt.Fprintf(env.Stdout, "backup %s (%s, schema %d)\n", dest, formatBytes(uint64(size)), schema)
 	return nil
