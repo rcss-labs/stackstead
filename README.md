@@ -42,8 +42,8 @@ Notes on the stacks API:
 - **Operation stream.** `GET /api/operations/{id}/stream` is server-sent
   events: `line` (one output line, as a JSON string; earlier output is replayed
   first), `done` (the final operation as JSON, after which the stream ends) and
-  `dropped` (the subscription ended without the operation finishing; fetch
-  `GET /api/operations/{id}` instead).
+  `dropped` (the client was too slow and was cut off; reconnect, which replays
+  the retained output again, or fetch `GET /api/operations/{id}`).
 - **Override files are not supported yet.** Stackstead runs compose with
   `-f <file>`, which turns off the automatic merge of `compose.override.yaml`
   (and `.yml`, `docker-compose.override.*`). Importing a file with an override
