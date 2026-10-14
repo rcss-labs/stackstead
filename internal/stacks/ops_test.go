@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 type exitErr struct{ code int }
@@ -16,20 +18,35 @@ func (e exitErr) ExitCode() int { return e.code }
 
 var fixedNow = func() time.Time { return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC) }
 
-// waitDone blocks until the operation leaves the running state.
+// waitDone blocks until the operation leaves the running state. It drains
+// live output and resubscribes if it was dropped for being slow.
 func waitDone(t *testing.T, o *Ops, id string) Operation {
 	t.Helper()
-	_, _, done, cancel, err := o.Subscribe(id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cancel()
-	select {
-	case op := <-done:
-		return op
-	case <-time.After(5 * time.Second):
-		t.Fatal("operation did not finish")
-		return Operation{}
+	deadline := time.After(5 * time.Second)
+	for {
+		_, live, done, cancel, err := o.Subscribe(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		finished := make(chan Operation, 1)
+		go func() {
+			for range live {
+			}
+			op, ok := <-done
+			if !ok {
+				op, _ = o.Get(id)
+			}
+			finished <- op
+		}()
+		select {
+		case op := <-finished:
+			cancel()
+			if op.State != OpRunning {
+				return op
+			}
+		case <-deadline:
+			t.Fatal("operation did not finish")
+		}
 	}
 }
 
@@ -82,8 +99,8 @@ func TestStateMapping(t *testing.T) {
 		wantExit int
 	}{
 		{"success", nil, OpSucceeded, -1},
-		{"canceled", context.Canceled, OpCancelled, -1},
-		{"deadline", context.DeadlineExceeded, OpTimedOut, -1},
+		// Cancelled/timed_out are driven by the op context: see TestCancel,
+		// TestTimeout and TestStateFollowsOpContextNotErrorChain.
 		{"exit code", fmt.Errorf("wrapped: %w", exitErr{3}), OpFailed, 3},
 		{"plain failure", errors.New("boom"), OpFailed, -1},
 	}
@@ -260,22 +277,24 @@ func TestSubscribeToFinishedOp(t *testing.T) {
 func TestSlowSubscriberDroppedWithoutBlockingOp(t *testing.T) {
 	o := NewOps(time.Minute, fixedNow)
 	subscribed := make(chan struct{})
+	spammed := make(chan struct{})
+	release := make(chan struct{})
 	op, _ := o.Start("s", "up", func(ctx context.Context, out func(string)) error {
 		<-subscribed
 		for i := 0; i < subscriberBuffer*4; i++ {
 			out("spam") // nobody reads the subscriber channel
 		}
+		close(spammed)
+		<-release
 		return nil
 	})
-	_, live, _, cancel, err := o.Subscribe(op.ID)
+	_, live, done, cancel, err := o.Subscribe(op.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cancel()
 	close(subscribed)
-	if got := waitDone(t, o, op.ID); got.State != OpSucceeded {
-		t.Fatalf("op must complete, got %s", got.State)
-	}
+	<-spammed
 	n := 0
 	for range live { // must terminate: channel was closed
 		n++
@@ -283,8 +302,96 @@ func TestSlowSubscriberDroppedWithoutBlockingOp(t *testing.T) {
 	if n > subscriberBuffer {
 		t.Fatalf("slow subscriber received %d lines", n)
 	}
+	select {
+	case v, ok := <-done:
+		if ok {
+			t.Fatalf("done must close without a value on drop, got %+v", v)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("done not closed after drop")
+	}
+	if got, _ := o.Get(op.ID); got.State != OpRunning {
+		t.Fatalf("op must continue, got %s", got.State)
+	}
+	close(release)
+	if got := waitDone(t, o, op.ID); got.State != OpSucceeded {
+		t.Fatalf("op must complete, got %s", got.State)
+	}
 	if lines, _ := o.Lines(op.ID); len(lines) != subscriberBuffer*4 {
 		t.Fatalf("output must still be fully retained, got %d", len(lines))
+	}
+}
+
+func TestStateFollowsOpContextNotErrorChain(t *testing.T) {
+	t.Run("cancel with wrapped internal deadline is cancelled", func(t *testing.T) {
+		o := NewOps(time.Minute, fixedNow)
+		started := make(chan struct{})
+		op, _ := o.Start("s", "up", func(ctx context.Context, out func(string)) error {
+			close(started)
+			<-ctx.Done()
+			return fmt.Errorf("grace: %w", context.DeadlineExceeded)
+		})
+		<-started
+		_ = o.Cancel(op.ID)
+		if got := waitDone(t, o, op.ID); got.State != OpCancelled {
+			t.Fatalf("state %s", got.State)
+		}
+	})
+	t.Run("internal deadline with live ctx is failed", func(t *testing.T) {
+		o := NewOps(time.Minute, fixedNow)
+		op, _ := o.Start("s", "up", func(context.Context, func(string)) error {
+			return fmt.Errorf("inspect: %w", context.DeadlineExceeded)
+		})
+		got := waitDone(t, o, op.ID)
+		if got.State != OpFailed || got.Error != "inspect: context deadline exceeded" {
+			t.Fatalf("got %s %q", got.State, got.Error)
+		}
+	})
+	t.Run("op timeout with wrapped Canceled is timed_out", func(t *testing.T) {
+		o := NewOps(20*time.Millisecond, fixedNow)
+		op, _ := o.Start("s", "up", func(ctx context.Context, out func(string)) error {
+			<-ctx.Done()
+			return fmt.Errorf("x: %w", context.Canceled)
+		})
+		if got := waitDone(t, o, op.ID); got.State != OpTimedOut {
+			t.Fatalf("state %s", got.State)
+		}
+	})
+}
+
+func TestLongLinesTruncatedOnRuneBoundary(t *testing.T) {
+	o := NewOps(time.Minute, fixedNow)
+	// "é" is 2 bytes; an odd cap offset forces a cut inside a rune.
+	long := strings.Repeat("é", maxLineBytes)
+	op, _ := o.Start("s", "up", func(ctx context.Context, out func(string)) error {
+		out(long)
+		out("short")
+		return nil
+	})
+	waitDone(t, o, op.ID)
+	lines, _ := o.Lines(op.ID)
+	if len(lines) != 2 || lines[1] != "short" {
+		t.Fatalf("lines %d", len(lines))
+	}
+	if !strings.HasSuffix(lines[0], "…(truncated)") || !utf8.ValidString(lines[0]) {
+		t.Fatal("not truncated on a rune boundary")
+	}
+	if len(lines[0]) > maxLineBytes+len("…(truncated)") {
+		t.Fatalf("line too long: %d", len(lines[0]))
+	}
+}
+
+func TestPanicRetainsStackInOutput(t *testing.T) {
+	o := NewOps(time.Minute, fixedNow)
+	op, _ := o.Start("s", "up", func(context.Context, func(string)) error { panic("kaboom") })
+	got := waitDone(t, o, op.ID)
+	if got.State != OpFailed || strings.Contains(got.Error, "\n") {
+		t.Fatalf("error should be short: %q", got.Error)
+	}
+	lines, _ := o.Lines(op.ID)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "kaboom") || !strings.Contains(joined, "goroutine") {
+		t.Fatalf("stack not retained: %q", joined)
 	}
 }
 

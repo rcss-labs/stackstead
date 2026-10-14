@@ -6,8 +6,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // OpState is the lifecycle state of an operation.
@@ -24,6 +27,7 @@ const (
 const (
 	maxRetainedLines  = 20000
 	maxRecentPerStack = 20
+	maxLineBytes      = 8 << 10
 	// subscriberBuffer is how many live lines a subscriber may lag behind
 	// before it is dropped.
 	subscriberBuffer = 256
@@ -60,12 +64,11 @@ type op struct {
 	finished chan struct{}
 }
 
-// subscriber stays in op.subs until it cancels or the op finishes, even
-// after being dropped, so that it still receives the final Operation.
+// subscriber is registered in op.subs until it is dropped, cancels or the
+// op finishes; whoever removes it from op.subs closes both channels.
 type subscriber struct {
-	live    chan string // closed exactly once: on drop, cancel or finish
-	done    chan Operation
-	dropped bool // live already closed because the subscriber was too slow
+	live chan string
+	done chan Operation // buffered (1); receives the final Operation only on finish
 }
 
 // Ops runs at most one operation per stack, retains its output and
@@ -136,6 +139,7 @@ func (o *Ops) Start(stack, action string, fn OpFunc) (Operation, error) {
 	if len(hist) > maxRecentPerStack {
 		// Only the newest op can be running, so the evicted one is finished.
 		delete(o.byID, hist[0].info.ID)
+		hist[0] = nil // let the evicted op be garbage collected
 		hist = hist[1:]
 	}
 	o.byStack[stack] = hist
@@ -151,6 +155,10 @@ func (o *Ops) run(ctx context.Context, rec *op, fn OpFunc) {
 		defer func() {
 			if r := recover(); r != nil {
 				err = fmt.Errorf("operation panicked: %v", r)
+				o.emit(rec, fmt.Sprintf("panic: %v", r))
+				for _, l := range strings.Split(strings.TrimRight(string(debug.Stack()), "\n"), "\n") {
+					o.emit(rec, l)
+				}
 			}
 		}()
 		return fn(ctx, func(line string) { o.emit(rec, line) })
@@ -166,15 +174,17 @@ func (o *Ops) finish(rec *op, err, ctxErr error) {
 	defer o.mu.Unlock()
 	info := &rec.info
 	info.EndedAt = o.now()
+	// The op context decides cancelled/timed_out; errors inside err (for
+	// example an internal deadline) never do.
 	switch {
-	case err == nil:
-		info.State = OpSucceeded
-	case errors.Is(ctxErr, context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded):
+	case ctxErr != nil && errors.Is(ctxErr, context.DeadlineExceeded):
 		info.State = OpTimedOut
 		info.Error = "operation timed out"
-	case errors.Is(ctxErr, context.Canceled) || errors.Is(err, context.Canceled):
+	case ctxErr != nil:
 		info.State = OpCancelled
 		info.Error = "operation cancelled"
+	case err == nil:
+		info.State = OpSucceeded
 	default:
 		info.State = OpFailed
 		info.Error = err.Error()
@@ -184,9 +194,7 @@ func (o *Ops) finish(rec *op, err, ctxErr error) {
 		}
 	}
 	for s := range rec.subs {
-		if !s.dropped {
-			close(s.live)
-		}
+		close(s.live)
 		s.done <- *info // buffered, capacity 1, written once
 		close(s.done)
 	}
@@ -200,20 +208,18 @@ func (o *Ops) emit(rec *op, line string) {
 	if rec.info.State != OpRunning {
 		return
 	}
-	rec.lines = append(rec.lines, line)
+	rec.lines = append(rec.lines, truncateLine(line))
 	if len(rec.lines) > maxRetainedLines {
 		rec.lines = rec.lines[1:]
 		rec.dropped++
 	}
 	for s := range rec.subs {
-		if s.dropped {
-			continue
-		}
 		select {
 		case s.live <- line:
 		default: // too slow: drop it rather than block the operation
-			s.dropped = true
+			delete(rec.subs, s)
 			close(s.live)
+			close(s.done)
 		}
 	}
 }
@@ -263,10 +269,13 @@ func (o *Ops) Lines(id string) ([]string, error) {
 
 // Subscribe returns the output so far plus a channel of subsequent lines.
 // Replay and registration happen atomically, so no line is missed or
-// repeated. live is closed when the operation ends or the subscriber is
-// dropped for being too slow; done yields the final Operation either way
-// (so a closed live without a finished op means "dropped": resubscribe). cancel unsubscribes
-// and is safe to call repeatedly.
+// repeated.
+//
+// Contract: live is closed when the subscription ends. After live closes,
+// receive from done: a value means the operation finished and is its final
+// state; a closed channel with no value means only this subscription ended
+// (dropped for being too slow, or ended by cancel), so call Get or Subscribe
+// again to continue. cancel unsubscribes and is safe to call repeatedly.
 func (o *Ops) Subscribe(id string) (replay []string, live <-chan string, done <-chan Operation, cancel func(), err error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -288,9 +297,7 @@ func (o *Ops) Subscribe(id string) (replay []string, live <-chan string, done <-
 		defer o.mu.Unlock()
 		if _, ok := rec.subs[s]; ok {
 			delete(rec.subs, s)
-			if !s.dropped {
-				close(s.live)
-			}
+			close(s.live)
 			close(s.done)
 		}
 	}
@@ -343,4 +350,18 @@ func (o *Ops) Shutdown(ctx context.Context) {
 			return
 		}
 	}
+}
+
+const truncatedSuffix = "…(truncated)"
+
+// truncateLine caps a line at maxLineBytes, cutting on a rune boundary.
+func truncateLine(line string) string {
+	if len(line) <= maxLineBytes {
+		return line
+	}
+	cut := maxLineBytes
+	for cut > 0 && !utf8.RuneStart(line[cut]) {
+		cut--
+	}
+	return line[:cut] + truncatedSuffix
 }
