@@ -98,6 +98,10 @@ func (f *fakeStacks) UpdateService(_ context.Context, _, service string, cfg com
 	f.gotService, f.gotCfg, f.gotHash = service, cfg, hash
 	return stacks.EditResult{Hash: "h2", ChecksPartial: f.partial}, f.err
 }
+func (f *fakeStacks) PreviewService(_ context.Context, _, service string, cfg composefile.ServiceConfig, hash string) ([]byte, error) {
+	f.gotService, f.gotCfg, f.gotHash = service, cfg, hash
+	return []byte("services: {}\n# candidate\n"), f.err
+}
 func (f *fakeStacks) Act(_ context.Context, _, action string) (stacks.Operation, error) {
 	f.gotAction = action
 	return f.op, f.err
@@ -194,6 +198,7 @@ func TestStacksErrorMapping(t *testing.T) {
 				{"GET", "/api/stacks/web", ""},
 				{"POST", "/api/stacks/web/actions/up", "{}"},
 				{"PUT", "/api/stacks/web/compose", `{"content":"x","hash":"h"}`},
+				{"POST", "/api/stacks/web/services/app/preview", `{"config":{"image":"x"},"hash":"h"}`},
 			}
 			for _, rq := range reqs {
 				rec := env.do(t, rq.method, rq.path, rq.body, withCookie(cookie))
@@ -781,5 +786,29 @@ func TestStreamHugeOrBeyondEndLastEventIDSendsNoLines(t *testing.T) {
 		if got := streamLinesUntilDone(t, events); len(got) != 0 {
 			t.Errorf("Last-Event-ID %s: got %v, want no lines", id, got)
 		}
+	}
+}
+
+func TestPreviewServiceReturnsCandidateAndHash(t *testing.T) {
+	fake := newFakeStacks()
+	env, cookie := newStacksEnv(t, fake)
+	rec := env.do(t, "POST", "/api/stacks/web/services/app/preview",
+		`{"config":{"image":"nginx:2"},"hash":"h1"}`, withCookie(cookie))
+	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"content":"services: {}\n# candidate\n","hash":"h1"}` {
+		t.Fatalf("preview = %d %s", rec.Code, rec.Body)
+	}
+	if fake.gotService != "app" || fake.gotHash != "h1" || fake.gotCfg.Image != "nginx:2" {
+		t.Errorf("got %q %q %+v", fake.gotService, fake.gotHash, fake.gotCfg)
+	}
+	if rec = env.do(t, "POST", "/api/stacks/web/services/app/preview", `{not json`, withCookie(cookie)); rec.Code != 400 {
+		t.Errorf("bad JSON = %d", rec.Code)
+	}
+}
+
+func TestPreviewServiceRequiresSession(t *testing.T) {
+	env, _ := newStacksEnv(t, newFakeStacks())
+	rec := env.do(t, "POST", "/api/stacks/web/services/app/preview", `{"config":{"image":"x"},"hash":"h"}`)
+	if rec.Code != 401 {
+		t.Errorf("status = %d", rec.Code)
 	}
 }

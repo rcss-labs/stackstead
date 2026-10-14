@@ -64,6 +64,35 @@ func (s *Service) UpdateService(ctx context.Context, stack, service string, cfg 
 	return s.commit(ctx, e, old, edited, hash, false)
 }
 
+// PreviewService returns the bytes UpdateService would write for the same
+// edit, without validating with compose, checking ports, or touching the
+// file. It takes the same lock and hash check, so a preview computed against
+// a hash is what a save with that hash writes.
+func (s *Service) PreviewService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) ([]byte, error) {
+	e, unlock, err := s.lockedEntry(ctx, stack)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+
+	data, current, err := loadFile(e)
+	if err != nil {
+		return nil, err
+	}
+	if current != hash {
+		return nil, composefile.ErrConflict
+	}
+	old, err := parseFile(data)
+	if err != nil {
+		return nil, err
+	}
+	edited, err := old.UpdateService(service, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return edited.Bytes(), nil
+}
+
 // SaveRaw replaces the whole compose file with content.
 func (s *Service) SaveRaw(ctx context.Context, stack string, content []byte, hash string) (EditResult, error) {
 	e, unlock, err := s.lockedEntry(ctx, stack)

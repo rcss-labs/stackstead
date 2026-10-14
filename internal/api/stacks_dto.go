@@ -177,6 +177,13 @@ type hashResponse struct {
 	Hash string `json:"hash"`
 }
 
+// previewResponse carries the candidate file and the hash it was computed
+// against, which the save must send unchanged.
+type previewResponse struct {
+	Content string `json:"content"`
+	Hash    string `json:"hash"`
+}
+
 type operationDTO struct {
 	ID        string     `json:"id"`
 	Stack     string     `json:"stack"`
