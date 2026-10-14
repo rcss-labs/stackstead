@@ -35,6 +35,12 @@ contents:
     dst: /usr/lib/systemd/system/stackstead.service
     file_info:
       mode: 0644
+  - dst: /etc/stackstead
+    type: dir
+    file_info:
+      mode: 0755
+      owner: root
+      group: root
   - src: deploy/config.example.yaml
     dst: /etc/stackstead/config.yaml
     type: config|noreplace
