@@ -845,3 +845,15 @@ func TestServerNamesCannotForgeOutputLines(t *testing.T) {
 		}
 	}
 }
+
+func TestLifecycleShortsExplainTheComposeAction(t *testing.T) {
+	want := map[string]string{
+		"up": "Start a stack (compose up)", "down": "Stop and remove a stack's containers (compose down)",
+		"restart": "Restart a stack", "pull": "Pull images", "build": "Build images",
+	}
+	for action, prefix := range want {
+		if got := lifecycleCommand(action).Short; !strings.HasPrefix(got, prefix) || !strings.HasSuffix(got, "follow the operation") {
+			t.Errorf("%s Short = %q, want prefix %q", action, got, prefix)
+		}
+	}
+}

@@ -104,6 +104,10 @@ func serviceColour(service string) string {
 	return servicePalette[int(h.Sum32())%len(servicePalette)]
 }
 
+// logTimestampLayout is local time with nanoseconds and a numeric offset, so
+// every prefix has the same width (the offset is never "Z").
+const logTimestampLayout = "2006-01-02T15:04:05.000000000-07:00"
+
 func logsCommand() *Command {
 	var follow, timestamps, raw bool
 	var tail, since, service string
@@ -120,7 +124,7 @@ func logsCommand() *Command {
 			fs.StringVar(&tail, "tail", "", "lines to show per container: a number or all (server default when unset)")
 			fs.StringVar(&since, "since", "", "only logs since an RFC3339 time, a Unix timestamp or a duration such as 10m")
 			fs.StringVar(&service, "service", "", "only this service")
-			fs.BoolVar(&timestamps, "timestamps", false, "prefix each line with its time")
+			fs.BoolVar(&timestamps, "timestamps", false, "prefix each line with its time (local, with UTC offset)")
 			fs.BoolVar(&raw, "raw", false, "do not strip escape sequences and control characters from the log text")
 		},
 		Run: func(ctx context.Context, env *Env, g *globalFlags, args []string) error {
@@ -163,7 +167,7 @@ func handleLogEvent(env *Env, p *Printer, cursors *logCursors, ev client.Event, 
 		}
 		prefix := p.paint(serviceColour(le.Service), "["+singleLine(le.Service)+"]")
 		if timestamps {
-			prefix = le.Time.UTC().Format("2006-01-02T15:04:05.000000000Z07:00") + " " + prefix
+			prefix = le.Time.Local().Format(logTimestampLayout) + " " + prefix
 		}
 		line := prefix + " " + text
 		if le.Stream == "stderr" {

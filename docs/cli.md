@@ -56,8 +56,10 @@ Details worth knowing:
   stopped, with no gaps or repeats.
 - **`metrics`** shows history. CPU and memory are averages across a service's
   replicas, and the network and block I/O rates are totals across them. With
-  `--live` there is one row per container (a `CONTAINER` column), and the
+  `--live` there is one row per container (a `CONTAINER` column, 28 wide; longer names end in `…`), and the
   network and block I/O counters are cumulative totals, not rates.
+- **`logs --timestamps`** prefixes each line with its time in local time and a
+  numeric UTC offset (`2026-10-14T17:29:30.000000000+05:30`), a fixed width.
 - **`stacks compose edit`** splits `$VISUAL` (else `$EDITOR`) on whitespace and
   runs it without a shell: `code --wait` works, quoting and pipes do not.
 - **`-o json`** prints the API's JSON. Streaming commands print one JSON object
@@ -80,7 +82,7 @@ for one shell.
 ### TLS
 
 System roots are used by default. `--ca-file F` trusts only that CA (stored
-with the context), and `--insecure` skips verification (stored, and warned
+with the context; https URLs only, like `--insecure`), and `--insecure` skips verification (stored, and warned
 about on every use). Plain `http://` to a non-loopback host works but warns
 that the cookie travels in clear text. Redirects to another host are refused.
 

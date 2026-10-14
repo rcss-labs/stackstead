@@ -172,6 +172,9 @@ func loginCommand() *Command {
 			if insecure && u.Scheme == "http" {
 				return exitf(ExitUsage, "--insecure only applies to https URLs")
 			}
+			if caFile != "" && u.Scheme == "http" {
+				return exitf(ExitUsage, "--ca-file only applies to https URLs")
+			}
 			if caFile != "" {
 				abs, err := filepath.Abs(caFile)
 				if err != nil {

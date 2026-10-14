@@ -72,10 +72,18 @@ func startAndFollow(ctx context.Context, env *Env, g *globalFlags, c *client.Cli
 	return streamOperation(ctx, env, p, c, op)
 }
 
+var lifecycleShort = map[string]string{
+	"up":      "Start a stack (compose up)",
+	"down":    "Stop and remove a stack's containers (compose down)",
+	"restart": "Restart a stack's containers (compose restart)",
+	"pull":    "Pull images for a stack (compose pull)",
+	"build":   "Build images for a stack (compose build)",
+}
+
 func lifecycleCommand(action string) *Command {
 	var detach bool
 	return &Command{
-		Name: action, Short: strings.ToUpper(action[:1]) + action[1:] + " a stack and follow the operation", MinArgs: 1, MaxArgs: 1,
+		Name: action, Short: lifecycleShort[action] + " and follow the operation", MinArgs: 1, MaxArgs: 1,
 		Usage: "stacks " + action + " <name> [--detach]",
 		Long:  "Streams the operation's output and exits 9 if it did not succeed; --detach prints the operation id and returns at once.",
 		Flags: func(fs *flag.FlagSet) {
