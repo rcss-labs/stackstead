@@ -205,11 +205,11 @@ func dbBackup(ctx context.Context, env *Env, cfg config.Config, dest string, for
 	return nil
 }
 
-// Seams for tests: verification of a fresh copy and the rename used to publish.
+// Seams for tests: the checkpoint and verification of a fresh copy. The rename
+// used to publish is the shared renameFile seam in contexts.go.
 var (
 	checkpointDatabase = checkpointCurrent
 	verifyDatabase     = verifyDatabaseFile
-	renameFile         = os.Rename
 )
 
 // verifyDatabaseFile opens a copy read-only and runs quick_check on it.
