@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -124,7 +126,7 @@ func (r *Runner) Run(ctx context.Context, file string, args []string, out func(l
 	<-readerDone
 
 	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && ctx.Err() == nil {
+	if errors.As(err, &exitErr) {
 		return &ExitError{Code: exitErr.ExitCode(), Output: tail.String()}
 	}
 	return err
@@ -140,7 +142,7 @@ func (r *Runner) capture(ctx context.Context, dir string, args []string) (string
 	var stdout, stderr bytes.Buffer
 	err := r.exec(ctx, dir, args, &stdout, &stderr)
 	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && ctx.Err() == nil {
+	if errors.As(err, &exitErr) {
 		tail := &tailBuffer{}
 		splitLines(strings.NewReader(stderr.String()+stdout.String()), tail.add)
 		return "", "", &ExitError{Code: exitErr.ExitCode(), Output: tail.String()}
@@ -153,20 +155,30 @@ func (r *Runner) capture(ctx context.Context, dir string, args []string) (string
 // exited. Errors caused by ctx wrap ctx.Err().
 func (r *Runner) exec(ctx context.Context, dir string, args []string, stdout, stderr io.Writer) error {
 	grace := r.grace()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return fmt.Errorf("docker compose %s: %w", firstArg(args), ctxErr)
+	}
 	cmd := exec.Command(r.binary(), args...)
 	cmd.Dir = dir
 	if len(r.Env) > 0 {
 		cmd.Env = append(cmd.Environ(), r.Env...)
 	}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
+	// A leader that exits while a grandchild still holds the output pipe must
+	// not block us forever.
+	cmd.WaitDelay = grace
 	isolate(cmd)
 
 	if err := cmd.Start(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) || isMissingBinary(err, r.binary()) {
+			return fmt.Errorf("%w: %v", ErrComposeUnavailable, err)
+		}
 		return err
 	}
 
 	var killTimer *time.Timer
 	var mu sync.Mutex
+	var signalled bool
 	stop := make(chan struct{})
 	watcherDone := make(chan struct{})
 	go func() {
@@ -175,6 +187,7 @@ func (r *Runner) exec(ctx context.Context, dir string, args []string, stdout, st
 		case <-ctx.Done():
 			signalGroup(cmd, syscall.SIGTERM)
 			mu.Lock()
+			signalled = true
 			killTimer = time.AfterFunc(grace, func() { signalGroup(cmd, syscall.SIGKILL) })
 			mu.Unlock()
 		case <-stop:
@@ -188,15 +201,20 @@ func (r *Runner) exec(ctx context.Context, dir string, args []string, stdout, st
 	if killTimer != nil {
 		killTimer.Stop()
 	}
+	wasSignalled := signalled
 	mu.Unlock()
 
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		// Sweep stragglers that outlived the leader (e.g. ignored SIGTERM).
+	lingering := errors.Is(waitErr, exec.ErrWaitDelay)
+	if wasSignalled || lingering {
+		// Sweep stragglers that outlived the leader.
 		signalGroup(cmd, syscall.SIGKILL)
-		if waitErr != nil {
-			return fmt.Errorf("docker compose %s: %w", firstArg(args), ctxErr)
-		}
-		return nil
+	}
+	if wasSignalled {
+		// A cancelled operation is never a success, whatever the exit status.
+		return fmt.Errorf("docker compose %s: %w", firstArg(args), ctx.Err())
+	}
+	if lingering {
+		return nil // leader exited 0; only a grandchild held the pipe
 	}
 	return waitErr
 }
@@ -220,6 +238,13 @@ func isNotExist(err error) bool {
 	return errors.Is(err, syscall.ENOENT)
 }
 
+// isMissingBinary reports a failed start because the binary itself does not
+// exist (as opposed to a missing working directory).
+func isMissingBinary(err error, binary string) bool {
+	var pe *os.PathError
+	return errors.As(err, &pe) && pe.Path == binary && isNotExist(pe.Err)
+}
+
 // tailBuffer keeps the last tailLines lines.
 type tailBuffer struct {
 	lines []string
@@ -240,38 +265,47 @@ func (t *tailBuffer) String() string {
 	return strings.Join(l, "\n")
 }
 
-// splitLines emits lines split on \n, \r and \r\n. Lines longer than
-// maxLineBytes are emitted in chunks of that size. Empty lines from \r\n or
-// consecutive \r are dropped, but blank \n lines are kept.
+// splitLines emits lines split on \n, \r and \r\n (the pair is one break).
+// Lines longer than maxLineBytes are emitted in chunks of that size, never
+// cutting a UTF-8 rune. A bare \r only ends non-empty lines (progress bars
+// redraw in place); \n and \r\n keep blank lines.
 func splitLines(rd io.Reader, emit func(string)) {
 	buf := make([]byte, 32*1024)
 	line := make([]byte, 0, 4096)
-	prevCR := false
+	prevCR, crEmitted, justCapped := false, false, false
 	for {
 		n, err := rd.Read(buf)
 		for _, b := range buf[:n] {
 			switch b {
 			case '\r':
+				crEmitted = len(line) > 0 || justCapped
 				if len(line) > 0 {
 					emit(string(line))
 					line = line[:0]
 				}
-				prevCR = true
+				prevCR, justCapped = true, false
 				continue
 			case '\n':
-				if prevCR {
-					prevCR = false
-					continue
+				switch {
+				case prevCR:
+					if !crEmitted {
+						emit("")
+					}
+				case len(line) == 0 && justCapped:
+				default:
+					emit(string(line))
+					line = line[:0]
 				}
-				emit(string(line))
-				line = line[:0]
+				prevCR, justCapped = false, false
 				continue
 			}
-			prevCR = false
+			prevCR, justCapped = false, false
 			line = append(line, b)
 			if len(line) >= maxLineBytes {
-				emit(string(line))
-				line = line[:0]
+				cut := runeBoundary(line)
+				emit(string(line[:cut]))
+				line = append(line[:0], line[cut:]...)
+				justCapped = len(line) == 0
 			}
 		}
 		if err != nil {
@@ -281,4 +315,18 @@ func splitLines(rd io.Reader, emit func(string)) {
 			return
 		}
 	}
+}
+
+// runeBoundary returns where to cut b so a trailing incomplete rune moves to
+// the next chunk.
+func runeBoundary(b []byte) int {
+	for i := len(b) - 1; i >= 0 && i >= len(b)-utf8.UTFMax; i-- {
+		if utf8.RuneStart(b[i]) {
+			if !utf8.FullRune(b[i:]) {
+				return i
+			}
+			break
+		}
+	}
+	return len(b)
 }

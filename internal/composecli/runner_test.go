@@ -63,6 +63,23 @@ ignoreterm)
   echo ready
   wait
   ;;
+termexit0)
+  trap 'exit 0' TERM
+  sleep 60 &
+  echo $! > "$FAKE_PIDFILE.child"
+  echo $$ > "$FAKE_PIDFILE.parent"
+  echo ready
+  wait
+  ;;
+marker)
+  touch "$FAKE_MARKER"
+  ;;
+linger)
+  sleep 3 &
+  echo $! > "$FAKE_PIDFILE.child"
+  echo written
+  exit 0
+  ;;
 esac
 `
 
@@ -159,6 +176,18 @@ func TestRunNonZeroExitReturnsExitErrorWithOutput(t *testing.T) {
 	}
 }
 
+// killGroupOnCleanup kills the fake's process group (it leads its own group)
+// but only while that group still exists, so a reaped and reused pid is
+// never signalled.
+func killGroupOnCleanup(t *testing.T, pgid int) {
+	t.Helper()
+	t.Cleanup(func() {
+		if syscall.Kill(-pgid, 0) == nil {
+			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		}
+	})
+}
+
 func pidAlive(pid int) bool { return syscall.Kill(pid, 0) == nil }
 
 func readPID(t *testing.T, path string) int {
@@ -213,10 +242,7 @@ func TestCancelKillsProcessGroup(t *testing.T) {
 				t.Fatal("fake never became ready")
 			}
 			parent, child := readPID(t, pidfile+".parent"), readPID(t, pidfile+".child")
-			t.Cleanup(func() {
-				_ = syscall.Kill(parent, syscall.SIGKILL)
-				_ = syscall.Kill(child, syscall.SIGKILL)
-			})
+			killGroupOnCleanup(t, parent)
 			cancel()
 			select {
 			case err := <-done:
@@ -236,13 +262,111 @@ func TestCancelKillsProcessGroup(t *testing.T) {
 func TestTimeoutReturnsDeadlineExceeded(t *testing.T) {
 	pidfile := filepath.Join(t.TempDir(), "pid")
 	r, file := newRunner(t, "child", "FAKE_PIDFILE="+pidfile)
-	ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	err := r.Run(ctx, file, nil, nil)
+	ready := false
+	err := r.Run(ctx, file, nil, func(l string) { ready = ready || l == "ready" })
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("got %v", err)
 	}
+	if !ready {
+		t.Fatal("deadline fired before the fake was ready")
+	}
+	killGroupOnCleanup(t, readPID(t, pidfile+".parent"))
 	waitDead(t, readPID(t, pidfile+".child"))
+}
+
+func TestCancelNeverReportsSuccess(t *testing.T) {
+	pidfile := filepath.Join(t.TempDir(), "pid")
+	r, file := newRunner(t, "termexit0", "FAKE_PIDFILE="+pidfile)
+	ctx, cancel := context.WithCancel(ctxT(t))
+	defer cancel()
+	err := r.Run(ctx, file, nil, func(l string) {
+		if l == "ready" {
+			cancel()
+		}
+	})
+	killGroupOnCleanup(t, readPID(t, pidfile+".parent"))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("process exiting 0 after SIGTERM must still report cancel, got %v", err)
+	}
+}
+
+func TestRunWithCancelledContextDoesNotStart(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "started")
+	r, file := newRunner(t, "marker", "FAKE_MARKER="+marker)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := r.Run(ctx, file, nil, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v", err)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Fatal("docker was invoked despite cancelled context")
+	}
+}
+
+func TestRunDoesNotWaitForLingeringGrandchild(t *testing.T) {
+	pidfile := filepath.Join(t.TempDir(), "pid")
+	r, file := newRunner(t, "linger", "FAKE_PIDFILE="+pidfile)
+	out, got := collect()
+	start := time.Now()
+	if err := r.Run(ctxT(t), file, nil, out); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("Run blocked %v on a lingering grandchild", d)
+	}
+	if strings.Join(got(), "|") != "written" {
+		t.Fatalf("lines = %q", got())
+	}
+	waitDead(t, readPID(t, pidfile+".child"))
+}
+
+func TestRunMissingBinaryIsComposeUnavailable(t *testing.T) {
+	r := &Runner{Binary: filepath.Join(t.TempDir(), "nope")}
+	file := filepath.Join(t.TempDir(), "compose.yaml")
+	if err := r.Run(ctxT(t), file, []string{"up"}, nil); !errors.Is(err, ErrComposeUnavailable) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestMissingPluginRunIsExitError(t *testing.T) {
+	r, file := newRunner(t, "noplugin")
+	var ee *ExitError
+	if err := r.Run(ctxT(t), file, []string{"up"}, nil); !errors.As(err, &ee) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestSplitLines(t *testing.T) {
+	cap64 := strings.Repeat("x", 64*1024)
+	cases := []struct {
+		name, in string
+		want     []string
+	}{
+		{"exact cap then newline has no empty line", cap64 + "\n" + "z\n", []string{cap64, "z"}},
+		{"exact cap then crlf", cap64 + "\r\nz", []string{cap64, "z"}},
+		{"crlf keeps blank line", "a\r\n\r\nb", []string{"a", "", "b"}},
+		{"lf keeps blank line", "b\n\nc", []string{"b", "", "c"}},
+		{"bare cr is a break", "a\rb\r", []string{"a", "b"}},
+		{"cap does not split a rune", strings.Repeat("x", 64*1024-1) + "é" + "tail",
+			[]string{strings.Repeat("x", 64*1024-1), "étail"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var got []string
+			splitLines(strings.NewReader(c.in), func(l string) { got = append(got, l) })
+			if len(got) != len(c.want) {
+				t.Fatalf("got %d lines, want %d", len(got), len(c.want))
+			}
+			for i := range got {
+				if got[i] != c.want[i] {
+					t.Fatalf("line %d differs (len %d vs %d)", i, len(got[i]), len(c.want[i]))
+				}
+			}
+		})
+	}
 }
 
 func TestRunArgsAndWorkingDir(t *testing.T) {
