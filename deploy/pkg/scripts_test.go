@@ -266,19 +266,61 @@ func TestNonDestructiveBranchesKeepData(t *testing.T) {
 }
 
 func TestPostinstCreatesStacksDirAndFixesOwnership(t *testing.T) {
-	e := newEnv(t, true)
-	if err := os.RemoveAll(filepath.Join(e.root, "opt/stacks")); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		script string
+		args   []string
+	}{{"deb/postinst", []string{"configure", "1.0.0"}}, {"rpm/post", []string{"1"}}} {
+		t.Run(tc.script, func(t *testing.T) {
+			e := newEnv(t, true)
+			if err := os.RemoveAll(filepath.Join(e.root, "opt/stacks")); err != nil {
+				t.Fatal(err)
+			}
+			cmds, _ := e.run(tc.script, "passwd:stackstead", tc.args...)
+			st, err := os.Stat(filepath.Join(e.root, "opt/stacks"))
+			if err != nil || !st.IsDir() {
+				t.Fatalf("/opt/stacks not created: %v", err)
+			}
+			if got := st.Mode() & (os.ModePerm | os.ModeSetgid); got != 0o775|os.ModeSetgid {
+				t.Errorf("new /opt/stacks mode = %v, want 2775", got)
+			}
+			joined := strings.Join(cmds, "\n")
+			for _, want := range []string{"chown stackstead:docker " + e.root + "/opt/stacks", "chown stackstead:stackstead " + e.root + "/var/lib/stackstead", "chgrp stackstead " + e.root + "/etc/stackstead/config.yaml"} {
+				if !strings.Contains(joined, want) {
+					t.Errorf("missing %q in:\n%s", want, joined)
+				}
+			}
+		})
 	}
-	cmds, _ := e.run("deb/postinst", "passwd:stackstead", "configure", "1.0.0")
-	if st, err := os.Stat(filepath.Join(e.root, "opt/stacks")); err != nil || !st.IsDir() {
-		t.Fatalf("/opt/stacks not created: %v", err)
-	}
-	joined := strings.Join(cmds, "\n")
-	for _, want := range []string{"chown stackstead:docker " + e.root + "/opt/stacks", "chown stackstead:stackstead " + e.root + "/var/lib/stackstead", "chgrp stackstead " + e.root + "/etc/stackstead/config.yaml"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("missing %q in:\n%s", want, joined)
-		}
+}
+
+// Upgrades and reinstalls never touch an existing stacks dir: the admin may
+// have chosen another owner or mode for it.
+func TestExistingStacksDirIsNeverChanged(t *testing.T) {
+	for _, tc := range []struct {
+		name, script string
+		args         []string
+	}{
+		{"deb upgrade", "deb/postinst", []string{"configure", "1.0.0"}},
+		{"deb fresh with leftover dir", "deb/postinst", []string{"configure"}},
+		{"rpm upgrade", "rpm/post", []string{"2"}},
+		{"rpm fresh or reinstall", "rpm/post", []string{"1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t, true)
+			stacks := filepath.Join(e.root, "opt/stacks")
+			if err := os.Chmod(stacks, 0o750); err != nil {
+				t.Fatal(err)
+			}
+			cmds, _ := e.run(tc.script, "passwd:stackstead group:docker", tc.args...)
+			for _, c := range cmds {
+				if strings.HasSuffix(c, " "+stacks) {
+					t.Errorf("existing /opt/stacks touched: %q", c)
+				}
+			}
+			if st, err := os.Stat(stacks); err != nil || st.Mode()&(os.ModePerm|os.ModeSetgid) != 0o750 {
+				t.Errorf("existing /opt/stacks mode changed: %v %v", st.Mode(), err)
+			}
+		})
 	}
 }
 
@@ -304,10 +346,23 @@ func TestScriptsIdempotent(t *testing.T) {
 		args   []string
 	}{{"deb/postinst", []string{"configure"}}, {"rpm/post", []string{"1"}}} {
 		e := newEnv(t, true)
+		if err := os.RemoveAll(filepath.Join(e.root, "opt/stacks")); err != nil {
+			t.Fatal(err)
+		}
 		first, _ := e.run(tc.script, "passwd:stackstead", tc.args...)
 		second, _ := e.run(tc.script, "passwd:stackstead", tc.args...)
-		if !reflect.DeepEqual(first, second) {
-			t.Errorf("%s: second run differs:\n%q\n%q", tc.script, first, second)
+		// the stacks dir is set up once, when it is created; everything else repeats
+		var want []string
+		for _, c := range first {
+			if !strings.HasSuffix(c, " "+filepath.Join(e.root, "opt/stacks")) {
+				want = append(want, c)
+			}
+		}
+		if len(want) == len(first) {
+			t.Errorf("%s: the first run did not set up the new stacks dir: %q", tc.script, first)
+		}
+		if !reflect.DeepEqual(want, second) {
+			t.Errorf("%s: second run differs:\n%q\n%q", tc.script, want, second)
 		}
 		if b, err := os.ReadFile(filepath.Join(e.root, "var/lib/stackstead/stackstead.db")); err != nil || string(b) != "db" {
 			t.Errorf("%s touched the database: %v", tc.script, err)
