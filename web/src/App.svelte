@@ -15,6 +15,7 @@
   import { toasts } from '$lib/stores/toasts';
   import Rail from '$lib/shell/Rail.svelte';
   import TopBar from '$lib/shell/TopBar.svelte';
+  import ContainerDetail from './routes/ContainerDetail.svelte';
   import ContainerList from './routes/ContainerList.svelte';
   import Login, { safeNext } from './routes/Login.svelte';
   import Settings from './routes/Settings.svelte';
@@ -33,12 +34,14 @@
 
   const path = $derived($route.path);
   const stackParams = $derived(matchRoute('/stacks/:name', path));
+  const containerParams = $derived(matchRoute('/containers/:name', path));
   const view = $derived.by(() => {
     if (path === '/') return 'list' as const;
     if (path === '/containers') return 'containers' as const;
     if (path === '/stacks/new') return 'create' as const;
     if (path === '/stacks/import') return 'import' as const;
     if (stackParams) return 'detail' as const;
+    if (containerParams) return 'container' as const;
     if (path === '/settings') return 'settings' as const;
     return 'notfound' as const;
   });
@@ -235,6 +238,8 @@
         <StackList />
       {:else if view === 'containers'}
         <ContainerList />
+      {:else if view === 'container' && containerParams}
+        <ContainerDetail name={containerParams.name} />
       {:else if view === 'create'}
         <StackCreate />
       {:else if view === 'import'}

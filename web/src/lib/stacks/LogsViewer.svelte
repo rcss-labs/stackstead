@@ -159,7 +159,7 @@
             : status === 'unauthorized'
               ? 'session expired - sign in again'
               : status === 'gone'
-                ? 'stack or logs no longer available'
+                ? `${source.kind} or logs no longer available`
                 : 'closed',
   );
 </script>

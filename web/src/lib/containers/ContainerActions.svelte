@@ -64,7 +64,7 @@
   <span class="btns">
     {#each actions as action (action)}
       {@const label = `${labelOf(action)} ${row.name}`}
-      <Button variant="ghost" size={size === 'icon' ? 'sm' : 'md'} icon={size === 'icon'} aria-label={label} title={label} disabledReason={reason} onclick={() => request(action)}>
+      <Button variant="ghost" data-action={action} size={size === 'icon' ? 'sm' : 'md'} icon={size === 'icon'} aria-label={label} title={label} disabledReason={reason} onclick={() => request(action)}>
         {#snippet children()}
           <svg width={size === 'icon' ? 14 : 16} height={size === 'icon' ? 14 : 16} viewBox="0 0 24 24" fill={action === 'restart' ? 'none' : 'currentColor'} stroke={action === 'restart' ? 'currentColor' : 'none'} stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={ICONS[iconOf[action]]}></path></svg>
           {#if size === 'md'}{labelOf(action)}{/if}
@@ -74,21 +74,24 @@
   </span>
 {/if}
 
+{#if confirming}
 <ConfirmDialog
-  open={confirming !== undefined}
-  title={`${confirming ? labelOf(confirming) : ''} ${row.name}?`}
+  open
+  title={`${labelOf(confirming)} ${row.name}?`}
   message={confirming === 'stop'
     ? `Stop container ${row.name}? Anything it serves goes offline until it is started again.`
     : `Restart container ${row.name}? It is briefly unavailable while it restarts.`}
-  confirmLabel={confirming ? labelOf(confirming) : ''}
+  confirmLabel={labelOf(confirming)}
   danger
   onconfirm={() => confirming && void run(confirming)}
   oncancel={() => (confirming = undefined)}
 />
+{/if}
 
 <style>
   .btns { display: inline-flex; gap: var(--space-1); }
-  .btns :global(button:nth-of-type(1):hover) { color: var(--success); }
+  .btns :global(button[data-action='start']:hover) { color: var(--success); }
+  .btns :global(button[data-action='stop']:hover) { color: var(--danger); }
   .manage { font-size: 12px; color: var(--accent); text-decoration: none; white-space: nowrap; }
   .manage:hover { text-decoration: underline; }
 </style>

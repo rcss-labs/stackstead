@@ -82,6 +82,12 @@ describe('ContainerActions', () => {
     expect(screen.queryByRole('button', { name: 'Stop redis' })).toBeNull();
   });
 
+  it('tags each action button so hover colours follow the action, not the position', () => {
+    mount(row());
+    expect(screen.getByRole('button', { name: 'Stop redis' }).getAttribute('data-action')).toBe('stop');
+    expect(screen.getByRole('button', { name: 'Restart redis' }).getAttribute('data-action')).toBe('restart');
+  });
+
   it('shows text labels at the md size', () => {
     mount(row(), undefined, { size: 'md' });
     expect(screen.getByRole('button', { name: 'Stop redis' }).textContent).toContain('Stop');

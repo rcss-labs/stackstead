@@ -130,7 +130,7 @@
               <!-- svelte-ignore a11y_no_redundant_roles -->
               <td role="cell" data-label="State">
                 <span class="state">
-                  <StatusBadge status={c.state as 'running'} />
+                  <StatusBadge status={c.state} />
                   {#if c.health !== 'none'}<span class="health {c.health}"><i class="dot"></i>{c.health}</span>{/if}
                 </span>
               </td>

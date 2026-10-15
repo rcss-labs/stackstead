@@ -73,6 +73,16 @@ describe('LogsViewer', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
+  it.each([
+    [{ kind: 'stack', name: 'web' } as const, '/api/stacks/web/logs', 'stack or logs no longer available'],
+    [{ kind: 'container', id: 'abc123def456' } as const, '/api/containers/abc123def456/logs', 'container or logs no longer available'],
+  ])('words the gone status by source kind (%#)', async (source, path, text) => {
+    fake = installFakeStream({ [path]: { responses: [{ status: 404, body: { error: 'nope' } }] } });
+    render(LogsViewer, { source, services: [] });
+    await tick();
+    expect(screen.getByText(text)).toBeTruthy();
+  });
+
   it('shows end of log when the stream ends', async () => {
     fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'x'), 'event: end\ndata: {}\n\n'] });
     render(LogsViewer, { source: { kind: 'stack', name: 'web' }, services: ['api'] });
