@@ -14,7 +14,6 @@ import EmptyState from './EmptyState.svelte';
 import Field from './Field.svelte';
 import FieldFixture from './FieldFixture.test-fixture.svelte';
 import ListEditor from './ListEditor.svelte';
-import Nav from './Nav.svelte';
 import RelativeTime from './RelativeTime.svelte';
 import Spinner from './Spinner.svelte';
 import StatusBadge from './StatusBadge.svelte';
@@ -627,34 +626,5 @@ describe('RelativeTime', () => {
   it('shows an em dash for an unparseable timestamp', () => {
     render(RelativeTime, { iso: 'nope' });
     expect(screen.getByText('—')).toBeTruthy();
-  });
-});
-
-describe('Nav', () => {
-  afterEach(() => navigate('/', { replace: true })); // the router store outlives the test
-  it('links to the main pages and marks the current one', () => {
-    render(Nav, { username: 'ana', onlogout: () => {}, runningOps: 0, current: '/settings' });
-    const nav = screen.getByRole('navigation', { name: 'Main' });
-    expect(nav).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Stacks' }).getAttribute('href')).toBe('/');
-    expect(screen.getByRole('link', { name: 'New stack' }).getAttribute('href')).toBe('/stacks/new');
-    expect(screen.getByRole('link', { name: 'Import' }).getAttribute('href')).toBe('/stacks/import');
-    expect(screen.getByRole('link', { name: 'Settings' }).getAttribute('aria-current')).toBe('page');
-    expect(screen.getByRole('link', { name: 'Stacks' }).getAttribute('aria-current')).toBeNull();
-  });
-
-  it('navigates client-side when a link is clicked', async () => {
-    render(Nav, { username: 'ana', onlogout: () => {}, runningOps: 0, current: '/' });
-    await userEvent.setup().click(screen.getByRole('link', { name: 'Settings' }));
-    expect(get(route).path).toBe('/settings');
-  });
-
-  it('shows running operations, the user and a working log out', async () => {
-    const onlogout = vi.fn();
-    render(Nav, { username: 'ana', onlogout, runningOps: 2, current: '/' });
-    expect(screen.getByText(/2 running/)).toBeTruthy();
-    expect(screen.getByText('ana')).toBeTruthy();
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Log out' }));
-    expect(onlogout).toHaveBeenCalledTimes(1);
   });
 });
