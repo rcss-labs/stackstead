@@ -26,6 +26,7 @@ const stack = (name: string, over: Partial<StackSummary> = {}): StackSummary => 
 const op = (name: string): Operation => ({ id: 'op1', stack: name, action: 'up', state: 'running', startedAt: '2026-10-14T10:00:00Z' });
 
 const setLiveState = (v: Record<string, unknown>) => (liveModule as unknown as { __set: (v: unknown) => void }).__set(v);
+const setEvents = (v: unknown[]) => (liveModule as unknown as { __setEvents: (v: unknown) => void }).__setEvents(v);
 let fake: FakeFetch;
 let stop: (() => void) | undefined;
 
@@ -48,6 +49,7 @@ afterEach(() => {
   toasts.reset();
   vi.mocked(navigate).mockClear();
   setLiveState(liveState.value);
+  setEvents([]);
   stop?.();
   stop = undefined;
   fake?.restore();
@@ -57,7 +59,15 @@ const liveState = vi.hoisted(() => ({ value: { connection: 'open', events: 'conn
 vi.mock('$lib/stores/live', async (orig) => {
   const { writable } = await import('svelte/store');
   const store = writable(liveState.value);
-  return { ...(await orig<typeof import('$lib/stores/live')>()), live: { subscribe: store.subscribe }, refreshStatus: vi.fn(), __set: store.set };
+  const eventStore = writable<unknown[]>([]);
+  return {
+    ...(await orig<typeof import('$lib/stores/live')>()),
+    live: { subscribe: store.subscribe },
+    events: { subscribe: eventStore.subscribe },
+    refreshStatus: vi.fn(),
+    __set: store.set,
+    __setEvents: eventStore.set,
+  };
 });
 
 vi.mock('$lib/router', async (orig) => ({ ...(await orig<typeof import('$lib/router')>()), navigate: vi.fn() }));
@@ -433,5 +443,27 @@ describe('StackList', () => {
     await refreshStacks();
     await waitFor(() => expect(screen.getByRole('button', { name: /^All/ }).getAttribute('aria-pressed')).toBe('true'));
     expect(screen.getByRole('link', { name: 'a' })).toBeTruthy();
+  });
+
+  it('dashboard sections render below the table with alerts, top consumers and events', async () => {
+    const alerts = [{ kind: 'unhealthy', severity: 'danger', stack: 'alpha', message: 'db is unhealthy', since: '2026-10-15T10:00:00Z' }];
+    const summary = summaryFor('proj-alpha');
+    (summary as { top: unknown }).top = { cpu: [{ container: 'web-1', service: 'web', project: 'alpha', value: 42 }], mem: [] };
+    await mount([stack('alpha')], [], { ...dashboardFake(hostSnap(), summary), 'GET /api/alerts': { body: alerts } });
+    expect(await screen.findByRole('heading', { name: 'Alerts 1' })).toBeTruthy();
+    expect(screen.getByText('db is unhealthy')).toBeTruthy();
+    expect(await screen.findByText('web-1 · alpha')).toBeTruthy();
+    expect(screen.getByText('Waiting for events…')).toBeTruthy();
+    setEvents([{ action: 'die', container: 'web-1', project: 'alpha', service: 'web', image: 'i', time: '2026-10-15T10:00:00Z', exitCode: 1 }]);
+    expect(await screen.findByText('web-1 exit 1')).toBeTruthy();
+    expect(screen.getByText('live')).toBeTruthy();
+    setLiveState({ ...liveState.value, connection: 'reconnecting' });
+    expect(await screen.findByText('reconnecting')).toBeTruthy();
+  });
+
+  it('dashboard sections show even when there are no stacks', async () => {
+    await mount([], [], dashboardFake());
+    expect(await screen.findByText('No alerts.')).toBeTruthy();
+    expect(screen.getByText('No samples yet.')).toBeTruthy();
   });
 });

@@ -7,20 +7,23 @@
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import Button from '$lib/components/Button.svelte';
   import Sparkline from '$lib/components/Sparkline.svelte';
+  import AlertsCard from '$lib/dashboard/AlertsCard.svelte';
   import { createDashboard } from '$lib/dashboard/controller';
+  import EventsFeed from '$lib/dashboard/EventsFeed.svelte';
   import HostTile from '$lib/dashboard/HostTile.svelte';
   import { hostTiles } from '$lib/dashboard/tiles';
+  import TopConsumersCard from '$lib/dashboard/TopConsumersCard.svelte';
   import { formatBytes, formatPercent, formatRate } from '$lib/format';
   import { link, navigate } from '$lib/router';
   import { ICONS } from '$lib/shell/icons';
   import { lifecycleDisabledReason } from '$lib/stacks/lifecycle';
   import { chipCounts, filterStacks, healthCell, portChips, type ChipFilter } from '$lib/stacks/summary';
-  import { changes, live, refreshStatus } from '$lib/stores/live';
+  import { changes, events, live, refreshStatus } from '$lib/stores/live';
   import { operationsRefresh, refreshRunningOps, refreshStacks, stacks } from '$lib/stores/stacks';
   import { toasts } from '$lib/stores/toasts';
 
   const dashboard = createDashboard({ host: api.host, alerts: api.alerts, summary: api.metricsSummary, changes });
-  const { host: hostStore, summary } = dashboard;
+  const { host: hostStore, alerts: alertsStore, summary } = dashboard;
   $effect(() => {
     dashboard.start();
     return () => dashboard.stop();
@@ -298,6 +301,12 @@
       {#if visible.length === 0}<p class="none">No stacks match the current filter.</p>{/if}
     </div>
   {/if}
+
+  <div class="sections">
+    <AlertsCard alerts={$alertsStore ?? []} />
+    <TopConsumersCard top={$summary?.top ?? { cpu: [], mem: [] }} />
+    <EventsFeed events={$events} connection={$live.connection} />
+  </div>
 </section>
 
 <style>
@@ -305,6 +314,7 @@
   .hostname { color: var(--muted); font-size: 14px; font-family: var(--mono); }
   .spacer { flex: 1; }
   .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; margin-bottom: var(--space-4); }
+  .sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; align-items: start; margin-top: var(--space-4); }
   .spark { display: inline-flex; align-items: center; gap: var(--space-2); }
   .spark-value { text-align: right; font-size: 12px; }
   .spark-value.cpu { min-width: 38px; }
