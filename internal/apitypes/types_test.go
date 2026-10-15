@@ -88,7 +88,7 @@ func TestJSONTagsMatchContract(t *testing.T) {
 		{"OperationDetail", populated[apitypes.OperationDetail](), "action,endedAt,error,exitCode,id,lines,stack,startedAt,state"},
 		{"Network", populated[apitypes.Network](), "driver,name,subnets"},
 		{"FSEntry", populated[apitypes.FSEntry](), "isDir,name,size"},
-		{"Status", populated[apitypes.Status](), "compose,docker,events,metricsDegraded,version"},
+		{"Status", populated[apitypes.Status](), "compose,docker,dockerVersion,events,metricsDegraded,metricsIntervalSeconds,metricsRetentionSeconds,version"},
 		{"ErrorBody", populated[apitypes.ErrorBody](), "error,fields"},
 		{"FieldError", populated[apitypes.FieldError](), "field,message"},
 		{"RawCompose", populated[apitypes.RawCompose](), "content,hash"},

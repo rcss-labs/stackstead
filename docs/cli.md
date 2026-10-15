@@ -21,7 +21,7 @@ on a terminal, and never when `NO_COLOR` is set or `TERM=dumb`.
 
 ```bash
 stackstead login https://stacks.example.com      # prompts for the password
-stackstead status                                 # Docker, compose, event feed, metrics
+stackstead status                                 # Docker (and engine version), compose, event feed, metrics
 stackstead stacks ls
 stackstead stacks up web                          # streams the operation, exits 0 or 9
 stackstead stacks down web --detach               # start it and return at once
@@ -34,7 +34,7 @@ stackstead ops ls --running
 | Command | What it does |
 | --- | --- |
 | `login <url> [--context N] [--username U] [--password-stdin] [--ca-file F] [--insecure]` | log in and save the session as a context |
-| `logout`, `whoami`, `status` | sign out; show the account and server; show Docker, compose and feed status |
+| `logout`, `whoami`, `status` | sign out; show the account and server; show Docker (with its engine version), compose and feed status |
 | `context ls\|current\|use <name>\|rm <name>` | manage saved servers |
 | `stacks ls`, `stacks show <name>` | list stacks; services and containers of one |
 | `stacks up\|down\|restart\|pull\|build <name> [--detach]` | lifecycle actions; they wait for the operation unless `--detach` |

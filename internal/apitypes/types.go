@@ -134,8 +134,10 @@ type FSEntry struct {
 }
 
 type Status struct {
-	Docker  string `json:"docker"`
-	Compose string `json:"compose"`
+	Docker string `json:"docker"`
+	// DockerVersion is the engine version; empty when it could not be read.
+	DockerVersion string `json:"dockerVersion"`
+	Compose       string `json:"compose"`
 	// Events is "connected" while the container status cache follows Docker
 	// events, else "disconnected"; MetricsDegraded is true while the sampler
 	// cannot store samples.
@@ -143,6 +145,9 @@ type Status struct {
 	MetricsDegraded bool   `json:"metricsDegraded"`
 	// Version is the server's build version; empty when unknown.
 	Version string `json:"version"`
+	// Metrics sampling settings, in seconds; 0 when unset.
+	MetricsIntervalSeconds  int64 `json:"metricsIntervalSeconds"`
+	MetricsRetentionSeconds int64 `json:"metricsRetentionSeconds"`
 }
 
 type FieldError struct {

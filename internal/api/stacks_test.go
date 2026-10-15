@@ -131,8 +131,8 @@ func (o fakeOps) Subscribe(string) ([]string, int, <-chan string, <-chan stacks.
 	}
 	return o.f.replay, o.f.first, o.f.live, o.f.done, func() { o.f.cancelOnce.Do(func() { close(o.f.unsubscribed) }) }, nil
 }
-func (f *fakeStacks) status(context.Context) (string, string) {
-	return "ok", "v2.30.0"
+func (f *fakeStacks) status(context.Context) api.StatusReport {
+	return api.StatusReport{Docker: "ok", DockerVersion: "27.1.1", Compose: "v2.30.0"}
 }
 
 func newStacksEnv(t *testing.T, fake *fakeStacks) (*testEnv, *http.Cookie) {
@@ -373,7 +373,7 @@ func TestNetworksAndStatus(t *testing.T) {
 		t.Fatalf("networks = %d %s", rec.Code, rec.Body)
 	}
 	rec = env.do(t, "GET", "/api/status", "", withCookie(cookie))
-	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"docker":"ok","compose":"v2.30.0","events":"disconnected","metricsDegraded":false,"version":""}` {
+	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"docker":"ok","dockerVersion":"27.1.1","compose":"v2.30.0","events":"disconnected","metricsDegraded":false,"version":"","metricsIntervalSeconds":0,"metricsRetentionSeconds":0}` {
 		t.Fatalf("status = %d %s", rec.Code, rec.Body)
 	}
 }

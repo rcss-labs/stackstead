@@ -71,7 +71,7 @@ func TestClientAgainstRealRouter(t *testing.T) {
 	if me, err := c.Me(ctx); err != nil || me.Username != "admin" {
 		t.Fatalf("Me = %+v %v", me, err)
 	}
-	if status, err := c.Status(ctx); err != nil || status.Docker != "ok" || status.Events != "connected" {
+	if status, err := c.Status(ctx); err != nil || status.Docker != "ok" || status.DockerVersion != "27.1.1" || status.Events != "connected" {
 		t.Fatalf("Status = %+v %v", status, err)
 	}
 	list, err := c.Stacks(ctx)

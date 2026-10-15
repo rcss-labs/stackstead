@@ -116,12 +116,17 @@ export interface Network {
 
 export interface Status {
   docker: 'ok' | 'unavailable';
+  /** Engine version; empty when unknown. */
+  dockerVersion: string;
   /** Compose version, or 'unavailable'. */
   compose: string;
   events: 'connected' | 'disconnected';
   metricsDegraded: boolean;
   /** Server build version; empty when unknown. */
   version?: string;
+  /** Metrics sampling settings, in seconds; 0 when unset. */
+  metricsIntervalSeconds: number;
+  metricsRetentionSeconds: number;
 }
 
 export interface FieldError {

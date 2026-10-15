@@ -66,6 +66,22 @@ func (c *Client) Ping(ctx context.Context) error {
 	return err
 }
 
+// Version returns the engine's version string (e.g. "27.1.1"). It uses the
+// unversioned path, like Ping, so it works before API negotiation.
+func (c *Client) Version(ctx context.Context) (string, error) {
+	body, err := c.do(ctx, "/version")
+	if err != nil {
+		return "", err
+	}
+	var v struct {
+		Version string `json:"Version"`
+	}
+	if err := json.Unmarshal(body, &v); err != nil {
+		return "", fmt.Errorf("decode version: %w", err)
+	}
+	return v.Version, nil
+}
+
 // Containers lists all containers, running or not.
 func (c *Client) Containers(ctx context.Context) ([]Container, error) {
 	body, err := c.get(ctx, "/containers/json?all=1")

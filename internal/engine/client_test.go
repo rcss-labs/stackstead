@@ -435,3 +435,34 @@ func TestMalformedApiVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestVersionDecodes(t *testing.T) {
+	f := serveVer(t, "1.46", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/version" {
+			w.Write([]byte(`{"Version":"27.1.1","ApiVersion":"1.46"}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	got, err := New(f.sock, time.Second).Version(ctx(t))
+	if err != nil || got != "27.1.1" {
+		t.Fatalf("Version = %q, %v; want 27.1.1", got, err)
+	}
+	if seen := f.seen(); len(seen) == 0 || seen[len(seen)-1] != "/version" {
+		t.Errorf("Version must use the unversioned path: %v", seen)
+	}
+}
+
+func TestVersionErrorsOnServerError(t *testing.T) {
+	sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+		w.Write([]byte(`{"message":"boom"}`))
+	}))
+	if _, err := New(sock, time.Second).Version(ctx(t)); err == nil {
+		t.Fatal("want an error on a 500")
+	}
+	bad := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("not json")) }))
+	if _, err := New(bad, time.Second).Version(ctx(t)); err == nil {
+		t.Fatal("want an error on an undecodable body")
+	}
+}

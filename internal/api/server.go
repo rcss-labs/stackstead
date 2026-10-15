@@ -27,6 +27,8 @@ type Options struct {
 	Operations OperationsAPI
 	FSRoots    []string
 	Status     StatusFunc
+	// MetricsInterval and MetricsRetention are reported by /api/status.
+	MetricsInterval, MetricsRetention time.Duration
 	// Observe backs the logs, metrics, status-event and /metrics routes; nil
 	// disables them (and /api/status reports events as disconnected).
 	Observe ObserveAPI
