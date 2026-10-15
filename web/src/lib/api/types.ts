@@ -30,6 +30,66 @@ export interface StackSummary {
   ports: string[];
 }
 
+export type Managed = 'stack' | 'compose' | 'none';
+
+/** One row of GET /api/containers. */
+export interface ContainerRow {
+  /** First 12 hex of the container id. */
+  id: string;
+  name: string;
+  image: string;
+  state: string;
+  status: string;
+  health: ContainerHealth;
+  /** Null unless the container exited with a parsed code. */
+  exitCode: number | null;
+  /** RFC 3339; "0001-01-01T00:00:00Z" when unknown. */
+  createdAt: string;
+  project: string;
+  service: string;
+  stack: string;
+  managed: Managed;
+  /** Published ports only. */
+  ports: string[];
+  networks: Record<string, string>;
+  /** Null without a sampler reading. */
+  cpu: number | null;
+  mem: number | null;
+  memLimit: number | null;
+  restarts24h: number;
+}
+
+export interface ContainerMount {
+  type: string;
+  source: string;
+  destination: string;
+  readOnly: boolean;
+}
+
+/** GET /api/containers/{id}. Deliberately without env, command, entrypoint, user and host config. */
+export interface ContainerDetail {
+  /** Full container id. */
+  id: string;
+  name: string;
+  image: string;
+  state: string;
+  status: string;
+  health: ContainerHealth;
+  startedAt: string | null;
+  finishedAt: string | null;
+  exitCode: number | null;
+  restartPolicy: string;
+  restarts24h: number;
+  project: string;
+  service: string;
+  stack: string;
+  managed: Managed;
+  ports: string[];
+  networks: Record<string, string>;
+  mounts: ContainerMount[];
+  labels: Record<string, string>;
+}
+
 export interface ContainerInfo {
   id: string;
   name: string;

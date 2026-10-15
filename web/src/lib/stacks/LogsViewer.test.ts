@@ -24,7 +24,7 @@ describe('LogsViewer', () => {
   it('TestFloodRendersBoundedRows', async () => {
     const flood = Array.from({ length: 20000 }, (_, i) => logEvent(C_A, i + 1, 1, `line ${i}`)).join('');
     fake = installFakeStream({ [PATH]: [flood] });
-    const { container } = render(LogsViewer, { stackName: 'web', services: ['api'] });
+    const { container } = render(LogsViewer, { source: { kind: 'stack', name: 'web' }, services: ['api'] });
     await tick(200);
     expect(rows(container).length).toBeGreaterThan(0);
     expect(rows(container).length).toBeLessThanOrEqual(5000);
@@ -33,7 +33,7 @@ describe('LogsViewer', () => {
 
   it('renders text as text and filters by search', async () => {
     fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, '<script>alert(1)</script> boom'), logEvent(C_A, 2, 1, 'quiet')] });
-    const { container } = render(LogsViewer, { stackName: 'web', services: ['api'] });
+    const { container } = render(LogsViewer, { source: { kind: 'stack', name: 'web' }, services: ['api'] });
     await tick();
     expect(container.querySelector('span')!.textContent).toBe('<script>alert(1)</script> boom');
     expect(container.querySelector('script')).toBeNull();
@@ -45,7 +45,7 @@ describe('LogsViewer', () => {
 
   it('filters by stream', async () => {
     fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'out'), logEvent(C_A, 2, 1, 'err', 'api', 'stderr')] });
-    const { container } = render(LogsViewer, { stackName: 'web', services: ['api'] });
+    const { container } = render(LogsViewer, { source: { kind: 'stack', name: 'web' }, services: ['api'] });
     await tick();
     await fireEvent.change(screen.getByLabelText('Stream'), { target: { value: 'stderr' } });
     expect(rows(container)).toHaveLength(1);
@@ -53,7 +53,7 @@ describe('LogsViewer', () => {
 
   it('service change restarts the stream with the new query', async () => {
     fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'x')] });
-    const { container } = render(LogsViewer, { stackName: 'web', services: ['api', 'worker'] });
+    const { container } = render(LogsViewer, { source: { kind: 'stack', name: 'web' }, services: ['api', 'worker'] });
     await tick();
     await fireEvent.change(screen.getByLabelText('Service'), { target: { value: 'worker' } });
     await tick();
@@ -65,7 +65,7 @@ describe('LogsViewer', () => {
   it('shows per-container errors, dismissible', async () => {
     const err = JSON.stringify({ service: 'api', container: C_A, error: 'gone <b>x</b>' });
     fake = installFakeStream({ [PATH]: [`event: error\ndata: ${err}\n\n`] });
-    render(LogsViewer, { stackName: 'web', services: ['api'] });
+    render(LogsViewer, { source: { kind: 'stack', name: 'web' }, services: ['api'] });
     await tick();
     const alert = screen.getByRole('alert');
     expect(alert.textContent).toContain('gone <b>x</b>');
@@ -75,14 +75,14 @@ describe('LogsViewer', () => {
 
   it('shows end of log when the stream ends', async () => {
     fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'x'), 'event: end\ndata: {}\n\n'] });
-    render(LogsViewer, { stackName: 'web', services: ['api'] });
+    render(LogsViewer, { source: { kind: 'stack', name: 'web' }, services: ['api'] });
     await tick();
     expect(screen.getByText(/end of log/i)).toBeTruthy();
   });
 
   it('pause freezes the view and counts new lines', async () => {
     fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'first')] });
-    const { container } = render(LogsViewer, { stackName: 'web', services: ['api'] });
+    const { container } = render(LogsViewer, { source: { kind: 'stack', name: 'web' }, services: ['api'] });
     await tick();
     await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
     fake.push(PATH, logEvent(C_A, 2, 1, 'second') + logEvent(C_A, 3, 1, 'third'));
@@ -95,7 +95,7 @@ describe('LogsViewer', () => {
 
   it('warns when tail is all', async () => {
     fake = installFakeStream({ [PATH]: [] });
-    render(LogsViewer, { stackName: 'web', services: ['api'] });
+    render(LogsViewer, { source: { kind: 'stack', name: 'web' }, services: ['api'] });
     await tick();
     await fireEvent.change(screen.getByLabelText('Tail'), { target: { value: 'all' } });
     expect(screen.getByText(/entire log history/i)).toBeTruthy();
@@ -104,7 +104,7 @@ describe('LogsViewer', () => {
   it('labels dismiss buttons and keeps the log region quiet for screen readers', async () => {
     const err = JSON.stringify({ service: 'api', container: 'web-api-1', error: 'oops' });
     fake = installFakeStream({ [PATH]: [`event: error\ndata: ${err}\n\n`] });
-    const { container } = render(LogsViewer, { stackName: 'web', services: ['api'] });
+    const { container } = render(LogsViewer, { source: { kind: 'stack', name: 'web' }, services: ['api'] });
     await tick();
     expect(screen.getByRole('button', { name: 'Dismiss error for web-api-1' })).toBeTruthy();
     expect(container.querySelector('[role="log"]')!.getAttribute('aria-live')).toBe('off');
@@ -112,7 +112,7 @@ describe('LogsViewer', () => {
 
   it('offers Reconnect after the stream ends and Clear resets the new-lines count', async () => {
     fake = installFakeStream({ [PATH]: { responses: [{ chunks: [logEvent(C_A, 1, 1, 'a'), 'event: end\ndata: {}\n\n'] }, { chunks: [] }] } });
-    render(LogsViewer, { stackName: 'web', services: ['api'] });
+    render(LogsViewer, { source: { kind: 'stack', name: 'web' }, services: ['api'] });
     await tick();
     await fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
     await tick();
@@ -122,7 +122,7 @@ describe('LogsViewer', () => {
 
   it('restart while paused unpauses', async () => {
     fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'a')] });
-    render(LogsViewer, { stackName: 'web', services: ['api', 'worker'] });
+    render(LogsViewer, { source: { kind: 'stack', name: 'web' }, services: ['api', 'worker'] });
     await tick();
     await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
     await fireEvent.change(screen.getByLabelText('Service'), { target: { value: 'worker' } });
@@ -131,15 +131,25 @@ describe('LogsViewer', () => {
 
   it('service prop preselects the stream filter', async () => {
     fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'x')] });
-    render(LogsViewer, { stackName: 'web', services: ['api', 'worker'], service: 'worker' });
+    render(LogsViewer, { source: { kind: 'stack', name: 'web' }, services: ['api', 'worker'], service: 'worker' });
     await tick();
     expect(fake.requests[0]!.path).toContain('service=worker');
     expect((screen.getByLabelText('Service') as HTMLSelectElement).value).toBe('worker');
   });
 
+  it('container source hides the Service select and opens the container URL', async () => {
+    fake = installFakeStream({ '/api/containers/abc123def456/logs': [logEvent(C_A, 1, 1, 'x')] });
+    const { container } = render(LogsViewer, { source: { kind: 'container', id: 'abc123def456' }, services: [] });
+    await tick();
+    expect(screen.queryByLabelText('Service')).toBeNull();
+    expect(fake.requests[0]!.path).toContain('/api/containers/abc123def456/logs');
+    expect(fake.requests[0]!.path).not.toContain('service=');
+    expect(rows(container).length).toBe(1);
+  });
+
   it('unknown service prop falls back to all services', async () => {
     fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'x')] });
-    render(LogsViewer, { stackName: 'web', services: ['api', 'worker'], service: 'nope' });
+    render(LogsViewer, { source: { kind: 'stack', name: 'web' }, services: ['api', 'worker'], service: 'nope' });
     await tick();
     expect(fake.requests[0]!.path).not.toContain('service=');
     expect((screen.getByLabelText('Service') as HTMLSelectElement).value).toBe('');
@@ -147,7 +157,7 @@ describe('LogsViewer', () => {
 
   it('shows the live status text', async () => {
     fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'x')] });
-    render(LogsViewer, { stackName: 'web', services: ['api'] });
+    render(LogsViewer, { source: { kind: 'stack', name: 'web' }, services: ['api'] });
     await tick();
     expect(screen.getByRole('status').textContent).toContain('live · following');
     await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
@@ -156,7 +166,7 @@ describe('LogsViewer', () => {
 
   it('while paused, a session-expired stream still announces it', async () => {
     fake = installFakeStream({ [PATH]: { responses: [{ chunks: [logEvent(C_A, 1, 1, 'a')] }, { status: 401, body: {} }] } });
-    render(LogsViewer, { stackName: 'web', services: ['api'] });
+    render(LogsViewer, { source: { kind: 'stack', name: 'web' }, services: ['api'] });
     await tick();
     await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
     fake.close(PATH);
@@ -166,7 +176,7 @@ describe('LogsViewer', () => {
 
   it('while paused, a reconnecting stream reads reconnecting in the warning tone', async () => {
     fake = installFakeStream({ [PATH]: { responses: [{ chunks: [logEvent(C_A, 1, 1, 'a')] }, { chunks: [] }] } });
-    render(LogsViewer, { stackName: 'web', services: ['api'] });
+    render(LogsViewer, { source: { kind: 'stack', name: 'web' }, services: ['api'] });
     await tick();
     await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
     fake.close(PATH);

@@ -415,7 +415,7 @@
           {/key}
         {:else if tab === 'logs'}
           {#key d.name}
-            <LogsViewer stackName={d.name} services={d.services.map((s) => s.name)} service={$route.query.get('service') ?? undefined} />
+            <LogsViewer source={{ kind: 'stack', name: d.name }} services={d.services.map((s) => s.name)} service={$route.query.get('service') ?? undefined} />
           {/key}
         {:else if tab === 'metrics'}
           {#key d.name}

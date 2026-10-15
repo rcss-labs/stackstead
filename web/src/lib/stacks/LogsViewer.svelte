@@ -5,9 +5,9 @@
   import type { LogError } from '../api/types';
   import type { SSEStatus } from '../sse/client';
   import { effectiveTheme } from '../stores/appearance';
-  import { createLogStream, lineTone, type LogStreamOptions } from './logs';
+  import { createLogStream, lineTone, type LogSource, type LogStreamOptions } from './logs';
 
-  let { stackName, services, service: initialService }: { stackName: string; services: string[]; service?: string } = $props();
+  let { source, services, service: initialService }: { source: LogSource; services: string[]; service?: string } = $props();
   const TAILS = ['100', '200', '1000', 'all'] as const;
 
   // Unknown names fall back to all services.
@@ -33,9 +33,9 @@
     return { service: service || undefined, tail: tail === 'all' ? 'all' : Number(tail), follow };
   }
 
-  // The viewer is keyed by stack in the page; a different stack remounts it.
+  // The viewer is keyed by source in the page; a different source remounts it.
   // svelte-ignore state_referenced_locally
-  const stream = createLogStream(stackName, currentOptions());
+  const stream = createLogStream(source, currentOptions());
   const unsubs = [
     stream.buffer.subscribe((l) => (latest = l)),
     stream.status.subscribe((s) => (status = s)),
@@ -166,10 +166,12 @@
 
 <section class="logs" aria-label="Logs">
   <div class="toolbar">
-    <select aria-label="Service" bind:value={service} onchange={restart}>
-      <option value="">All services</option>
-      {#each services as s (s)}<option value={s}>{s}</option>{/each}
-    </select>
+    {#if services.length > 0}
+      <select aria-label="Service" bind:value={service} onchange={restart}>
+        <option value="">All services</option>
+        {#each services as s (s)}<option value={s}>{s}</option>{/each}
+      </select>
+    {/if}
     <select aria-label="Stream" bind:value={streamFilter}>
       <option value="">stdout + stderr</option>
       <option value="stdout">stdout</option>

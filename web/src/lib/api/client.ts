@@ -1,6 +1,8 @@
 import type {
   Action,
   ChangePasswordRequest,
+  ContainerDetail,
+  ContainerRow,
   CreateStackRequest,
   FSEntry,
   FieldError,
@@ -156,6 +158,11 @@ export const api = {
   login: (username: string, password: string) => post<void>('/api/login', { username, password } satisfies LoginRequest),
   logout: () => post<void>('/api/logout'),
   me: () => get<Me>('/api/me'),
+
+  containers: () => get<ContainerRow[]>('/api/containers'),
+  container: (id: string) => get<ContainerDetail>(`/api/containers/${seg(id)}`),
+  containerAction: (id: string, action: 'start' | 'stop' | 'restart') =>
+    post<ContainerRow>(`/api/containers/${seg(id)}/${seg(action)}`),
 
   stacks: () => get<StackSummary[]>('/api/stacks'),
   stack: (name: string) => get<StackDetail>(`/api/stacks/${seg(name)}`),

@@ -3,6 +3,9 @@ import { createCoalescer, createLogBuffer, type LogBuffer } from '../logs/buffer
 import type { LogError, LogEvent } from '../api/types';
 import { openSSE, type SSEHandle, type SSEMessage, type SSEStatus } from '../sse/client';
 
+/** What to stream: every service of a stack, or a single container. */
+export type LogSource = { kind: 'stack'; name: string } | { kind: 'container'; id: string };
+
 export interface LogStreamOptions {
   service?: string;
   tail: number | 'all';
@@ -45,13 +48,15 @@ export function mergeCursor(cursors: Map<string, string>, id: string): void {
   if (m) cursors.set(m[1], id);
 }
 
-function buildUrl(stackName: string, o: LogStreamOptions): string {
+function buildUrl(source: LogSource, o: LogStreamOptions): string {
   const q = new URLSearchParams();
-  if (o.service) q.set('service', o.service);
+  // A container has one service; only the stack route takes the filter.
+  if (source.kind === 'stack' && o.service) q.set('service', o.service);
   q.set('tail', String(o.tail));
   if (o.since) q.set('since', o.since);
   if (o.follow) q.set('follow', '1');
-  return `/api/stacks/${encodeURIComponent(stackName)}/logs?${q.toString()}`;
+  const base = source.kind === 'stack' ? `/api/stacks/${encodeURIComponent(source.name)}` : `/api/containers/${encodeURIComponent(source.id)}`;
+  return `${base}/logs?${q.toString()}`;
 }
 
 function parse<T>(m: SSEMessage): T | undefined {
@@ -62,7 +67,7 @@ function parse<T>(m: SSEMessage): T | undefined {
   }
 }
 
-export function createLogStream(stackName: string, initial: LogStreamOptions, deps: LogStreamDeps = {}): LogStream {
+export function createLogStream(source: LogSource, initial: LogStreamOptions, deps: LogStreamDeps = {}): LogStream {
   const open = deps.open ?? openSSE;
   const buffer = deps.buffer ?? createLogBuffer(deps.capacity);
   const status = writable<SSEStatus>('connecting');
@@ -91,7 +96,7 @@ export function createLogStream(stackName: string, initial: LogStreamOptions, de
     const gen = ++generation;
     let h: SSEHandle | undefined;
     h = open({
-      url: buildUrl(stackName, opts),
+      url: buildUrl(source, opts),
       // Asked on every connect: a reconnect resumes every container exactly, with no `since`.
       lastEventId: () => {
         const c = [...cursorMap.values()].join(',');
