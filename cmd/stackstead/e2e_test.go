@@ -9,6 +9,8 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"image/color"
+	"image/png"
 	"io"
 	"net"
 	"net/http"
@@ -16,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -226,7 +229,7 @@ func TestE2ESmoke(t *testing.T) {
 			}
 			r.Body.Close()
 			ct := r.Header.Get("Content-Type")
-			if r.StatusCode != 200 || !(strings.Contains(ct, "javascript") || strings.Contains(ct, "css")) {
+			if r.StatusCode != 200 || !(strings.Contains(ct, "javascript") || strings.Contains(ct, "css") || ct == "font/woff2") {
 				t.Errorf("%s = %d %s", m[1], r.StatusCode, ct)
 			}
 			if !strings.Contains(r.Header.Get("Cache-Control"), "immutable") {
@@ -320,25 +323,97 @@ func TestE2ESmoke(t *testing.T) {
 		t.Log("docker unavailable: skipped the stack lifecycle part")
 	}
 
+	t.Run("static assets", func(t *testing.T) {
+		resp, err := anon.http.Get(srv.base + "/theme.js")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != 200 || !strings.Contains(resp.Header.Get("Content-Type"), "javascript") ||
+			!strings.Contains(resp.Header.Get("Cache-Control"), "no-cache") {
+			t.Errorf("/theme.js = %d %q cache %q, want 200, a JS type and no-cache",
+				resp.StatusCode, resp.Header.Get("Content-Type"), resp.Header.Get("Cache-Control"))
+		}
+
+		_, index := anon.do("GET", "/", nil)
+		m := regexp.MustCompile(`href="(/assets/[^"]+\.woff2)"`).FindSubmatch(index)
+		if m == nil {
+			t.Fatalf("no woff2 preload in index.html:\n%.800s", index)
+		}
+		resp, err = anon.http.Get(srv.base + string(m[1]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "font/woff2" {
+			t.Errorf("%s = %d %q, want 200 font/woff2", m[1], resp.StatusCode, resp.Header.Get("Content-Type"))
+		}
+	})
+
 	t.Run("chrome render", func(t *testing.T) {
 		chrome := findChrome()
 		if chrome == "" {
 			t.Skip("no Chrome/Chromium found")
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-		out, err := exec.CommandContext(ctx, chrome, "--headless=new", "--disable-gpu", "--no-sandbox",
-			"--user-data-dir="+t.TempDir(), "--window-size=375,812", "--virtual-time-budget=10000",
-			"--dump-dom", srv.base+"/login").Output()
-		if err != nil {
-			t.Fatalf("chrome: %v", err)
-		}
-		dom := string(out)
-		if !strings.Contains(dom, `autocomplete="username"`) {
-			t.Errorf("login form not rendered; DOM:\n%.800s", dom)
-		}
-		if strings.Contains(dom, "not been built") {
-			t.Error("placeholder page served")
+		// --bg of each theme (spec 4.1); the pixel at (4,4) is page background on /login.
+		for _, tc := range []struct {
+			theme string
+			want  color.RGBA
+			w, h  int
+		}{
+			{"dark", color.RGBA{0x0f, 0x12, 0x16, 0xff}, 375, 812},
+			{"dark", color.RGBA{0x0f, 0x12, 0x16, 0xff}, 1280, 800},
+			{"light", color.RGBA{0xf3, 0xf5, 0xf7, 0xff}, 375, 812},
+			{"light", color.RGBA{0xf3, 0xf5, 0xf7, 0xff}, 1280, 800},
+		} {
+			name := fmt.Sprintf("%s-%dx%d", tc.theme, tc.w, tc.h)
+			t.Run(name, func(t *testing.T) {
+				shot := filepath.Join(t.TempDir(), name+".png")
+				size := fmt.Sprintf("--window-size=%d,%d", tc.w, tc.h)
+				url := srv.base + "/login?theme=" + tc.theme
+				run := func(extra ...string) []byte {
+					ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+					defer cancel()
+					args := append([]string{"--headless=new", "--disable-gpu", "--no-sandbox",
+						"--user-data-dir=" + t.TempDir(), size, "--virtual-time-budget=10000"}, extra...)
+					out, err := exec.CommandContext(ctx, chrome, append(args, url)...).Output()
+					if err != nil {
+						t.Fatalf("chrome: %v", err)
+					}
+					return out
+				}
+				dom := string(run("--dump-dom"))
+				run("--screenshot=" + shot)
+
+				if !strings.Contains(dom, `data-theme="`+tc.theme+`"`) {
+					t.Errorf("<html> lacks data-theme=%q; DOM:\n%.400s", tc.theme, dom)
+				}
+				if !strings.Contains(dom, `autocomplete="username"`) {
+					t.Errorf("login form not rendered; DOM:\n%.800s", dom)
+				}
+				if strings.Contains(dom, "not been built") {
+					t.Error("placeholder page served")
+				}
+
+				f, err := os.Open(shot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer f.Close()
+				img, err := png.Decode(f)
+				if err != nil {
+					t.Fatalf("decode screenshot: %v", err)
+				}
+				r, g, b, _ := img.At(4, 4).RGBA()
+				got := [3]int{int(r >> 8), int(g >> 8), int(b >> 8)}
+				want := [3]int{int(tc.want.R), int(tc.want.G), int(tc.want.B)}
+				for i := range got {
+					if d := got[i] - want[i]; d < -1 || d > 1 {
+						t.Errorf("pixel (4,4) = %v, want %v +-1 per channel", got, want)
+						break
+					}
+				}
+			})
 		}
 	})
 
