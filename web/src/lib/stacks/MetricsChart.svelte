@@ -57,6 +57,11 @@
   }
 
   const rows = $derived(services.map((s) => ({ service: s, value: latest(s, metric), limit: latest(s, 'memLimit') })));
+  /** Stack total: the sum of each service's latest value. */
+  const total = $derived.by(() => {
+    const values = rows.map((r) => r.value).filter((v): v is number => v !== undefined);
+    return values.length === 0 ? undefined : values.reduce((a, b) => a + b, 0);
+  });
   const summary = $derived(
     `${title}: ` + rows.map((r) => `${r.service} ${r.value === undefined ? 'no data' : fmt(r.value)}`).join(', '),
   );
@@ -120,7 +125,7 @@
     }));
     return {
       width,
-      height: 180,
+      height: 140,
       ms: 1,
       legend: { show: true, live: true },
       cursor: { points: { size: 8 } },
@@ -174,7 +179,7 @@
       },
     );
     if (typeof ResizeObserver !== 'undefined') {
-      ro = new ResizeObserver(() => mine?.setSize({ width: el.clientWidth || 600, height: 180 }));
+      ro = new ResizeObserver(() => mine?.setSize({ width: el.clientWidth || 600, height: 140 }));
       ro.observe(el);
     }
     return () => {
@@ -193,7 +198,10 @@
 </script>
 
 <figure class="chart">
-  <figcaption>{title}</figcaption>
+  <figcaption>
+    <span>{title}</span>
+    {#if total !== undefined}<span class="total" data-testid="chart-total">{fmt(total)}</span>{/if}
+  </figcaption>
   <div bind:this={host} class="plot" role="img" aria-label={summary}></div>
   {#if failed}<p class="unavailable" role="status">Chart unavailable</p>{/if}
   <details>
@@ -212,47 +220,27 @@
 
 <style>
   .chart {
-    --series-1: #2a78d6;
-    --series-2: #eb6834;
-    --series-3: #1baf7a;
-    --series-4: #eda100;
-    --series-5: #e87ba4;
-    --series-6: #008300;
-    --series-7: #4a3aa7;
-    --series-8: #e34948;
     margin: 0;
-    padding: var(--space-3);
+    padding: 12px 14px;
     background: var(--raised);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
   }
-  @media (prefers-color-scheme: dark) {
-    :global(:root:not([data-theme='light'])) .chart {
-      --series-1: #3987e5;
-      --series-2: #d95926;
-      --series-3: #199e70;
-      --series-4: #c98500;
-      --series-5: #d55181;
-      --series-7: #9085e9;
-      --series-8: #e66767;
-    }
-  }
-  :global(:root[data-theme='dark']) .chart {
-    --series-1: #3987e5;
-    --series-2: #d95926;
-    --series-3: #199e70;
-    --series-4: #c98500;
-    --series-5: #d55181;
-    --series-7: #9085e9;
-    --series-8: #e66767;
-  }
   figcaption {
-    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-3);
+    font-size: 12.5px;
+    font-weight: 500;
     margin-bottom: var(--space-2);
+  }
+  .total {
+    font-family: var(--mono);
+    color: var(--muted);
   }
   .plot {
     width: 100%;
-    min-height: 180px;
+    min-height: 140px;
   }
   .unavailable {
     color: var(--danger);
@@ -260,7 +248,7 @@
   }
   .plot :global(.u-legend) {
     color: var(--muted);
-    font-size: 0.85rem;
+    font-size: 11px;
   }
   details {
     margin-top: var(--space-2);

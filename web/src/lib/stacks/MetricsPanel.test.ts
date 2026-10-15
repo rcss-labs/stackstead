@@ -34,8 +34,40 @@ describe('MetricsPanel', () => {
     expect(await screen.findByText('CPU (avg %)')).toBeTruthy();
     expect(screen.getByText('Network RX (total)')).toBeTruthy();
     expect(screen.getByText('Block write (total)')).toBeTruthy();
-    await userEvent.setup().selectOptions(screen.getByLabelText('Range'), '24h');
+    await userEvent.setup().click(screen.getByRole('button', { name: '24h' }));
     await waitFor(() => expect(fake.calls.some((c) => c.path.includes('step=2m'))).toBe(true));
+  });
+
+  it('range buttons switch range with aria-pressed', async () => {
+    history([]);
+    render(MetricsPanel, { stackName: 'web', metricsDegraded: false, createPlot: fakePlot, open: () => ({ close() {}, status: 'open' }) });
+    const [h1, h6] = ['1h', '6h'].map((n) => screen.getByRole('button', { name: n }));
+    expect(h1.getAttribute('aria-pressed')).toBe('true');
+    expect(h6.getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getAllByRole('button').map((b) => b.textContent?.trim())).toEqual(['1h', '6h', '24h', '72h']);
+    await userEvent.setup().click(h6);
+    expect(h6.getAttribute('aria-pressed')).toBe('true');
+    expect(h1.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('shows sampling settings when known', async () => {
+    history([]);
+    render(MetricsPanel, {
+      stackName: 'web',
+      metricsDegraded: false,
+      createPlot: fakePlot,
+      open: () => ({ close() {}, status: 'open' }),
+      metricsIntervalSeconds: 10,
+      metricsRetentionSeconds: 259200,
+    });
+    expect(screen.getByText('sampled every 10 s · retention 72 h')).toBeTruthy();
+    expect(screen.getAllByRole('status').some((el) => el.textContent?.includes('Live:'))).toBe(true);
+  });
+
+  it('omits the sampling line when the settings are unknown', async () => {
+    history([]);
+    render(MetricsPanel, { stackName: 'web', metricsDegraded: false, createPlot: fakePlot, open: () => ({ close() {}, status: 'open' }) });
+    expect(screen.queryByText(/sampled every/)).toBeNull();
   });
 
   it('closes the live stream on unmount', async () => {
@@ -59,7 +91,7 @@ describe('MetricsPanel', () => {
     });
     render(MetricsPanel, { stackName: 'web', metricsDegraded: false, createPlot: fakePlot, open: () => ({ close() {}, status: 'open' }) });
     await screen.findByText('CPU (avg %)');
-    await userEvent.setup().selectOptions(screen.getByLabelText('Range'), '24h');
+    await userEvent.setup().click(screen.getByRole('button', { name: '24h' }));
     await waitFor(() => expect(release).toBeDefined());
     expect(screen.getByText('CPU (avg %)')).toBeTruthy();
     expect(screen.queryByText('Loading metrics')).toBeNull();

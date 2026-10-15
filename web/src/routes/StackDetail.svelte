@@ -407,7 +407,10 @@
             {#await loadMetricsPanel()}
               <Spinner />
             {:then m}
-              <m.default stackName={d.name} metricsDegraded={$live.metricsDegraded} />
+              <m.default stackName={d.name} metricsDegraded={$live.metricsDegraded}
+                metricsIntervalSeconds={$live.metricsIntervalSeconds}
+                metricsRetentionSeconds={$live.metricsRetentionSeconds}
+              />
             {/await}
           {/key}
         {:else if tab === 'operations'}

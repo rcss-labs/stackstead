@@ -7,6 +7,7 @@
   import type { Range } from '../metrics/series';
   import type { openSSE } from '../sse/client';
   import MetricsChart, { type CreatePlot } from './MetricsChart.svelte';
+  import type { StackLiveMetrics } from './liveMetrics';
   import { createMetricsController } from './metrics';
 
   let {
@@ -14,13 +15,26 @@
     metricsDegraded,
     createPlot,
     open,
-  }: { stackName: string; metricsDegraded: boolean; createPlot?: CreatePlot; open?: typeof openSSE } = $props();
+    live,
+    metricsIntervalSeconds,
+    metricsRetentionSeconds,
+  }: {
+    stackName: string;
+    metricsDegraded: boolean;
+    createPlot?: CreatePlot;
+    open?: typeof openSSE;
+    /** The page's shared live source; without it the panel opens its own stream. */
+    live?: StackLiveMetrics;
+    metricsIntervalSeconds?: number;
+    metricsRetentionSeconds?: number;
+  } = $props();
 
   // The panel is keyed by stack in the page; props are read once on purpose.
   /* svelte-ignore state_referenced_locally */
   const ctl = createMetricsController(stackName, {
     history: (q, signal) => api.metricsHistory(stackName, q, signal),
     open,
+    live,
   });
   const { series, range, services, status, degraded, loaded } = ctl;
 
@@ -67,12 +81,16 @@
   {/if}
 
   <div class="toolbar">
-    <label>Range
-      <select bind:value={$range}>
-        {#each ranges as r (r)}<option value={r}>{r}</option>{/each}
-      </select>
-    </label>
-    <span class="status">Live: {$status}</span>
+    <div class="ranges" role="group" aria-label="Range">
+      {#each ranges as r (r)}
+        <button type="button" aria-pressed={$range === r} onclick={() => ($range = r)}>{r}</button>
+      {/each}
+    </div>
+    <span class="spacer"></span>
+    {#if metricsIntervalSeconds !== undefined && metricsRetentionSeconds !== undefined}
+      <span class="settings">sampled every {metricsIntervalSeconds} s · retention {metricsRetentionSeconds / 3600} h</span>
+    {/if}
+    <span class="status" role="status">Live: {$status}</span>
   </div>
 
   {#if !everLoaded}
@@ -105,14 +123,48 @@
     display: flex;
     gap: var(--space-4);
     align-items: center;
+    flex-wrap: wrap;
   }
+  .spacer {
+    flex: 1;
+  }
+  .ranges {
+    display: inline-flex;
+  }
+  .ranges button {
+    height: 26px;
+    padding: 0 var(--space-3);
+    font: 500 12px var(--mono);
+    color: var(--muted);
+    background: var(--raised);
+    border: 1px solid var(--border-input);
+    margin-left: -1px;
+    cursor: pointer;
+  }
+  .ranges button:first-child {
+    margin-left: 0;
+    border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  }
+  .ranges button:last-child {
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  }
+  .ranges button:hover {
+    background: var(--hover);
+  }
+  .ranges button[aria-pressed='true'] {
+    position: relative;
+    color: var(--text);
+    background: var(--accent-soft);
+    border-color: var(--accent);
+  }
+  .settings,
   .status {
     color: var(--muted);
     font-size: 0.85rem;
   }
   .grid {
     display: grid;
-    gap: var(--space-3);
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr));
+    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
   }
 </style>
