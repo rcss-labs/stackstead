@@ -85,21 +85,24 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: var(--space-2) var(--space-4);
+    height: 34px;
+    padding: 0 12px;
+    margin-bottom: -1px;
     background: none;
     border: 0;
     border-bottom: 2px solid transparent;
     color: var(--muted);
     font: inherit;
     font-size: 13px;
+    font-weight: 500;
     cursor: pointer;
     white-space: nowrap;
   }
   [role='tab']:hover { color: var(--text); }
-  [role='tab'][aria-selected='true'] { border-bottom-color: var(--accent); color: var(--text); font-weight: 600; }
+  [role='tab'][aria-selected='true'] { border-bottom-color: var(--accent); color: var(--text); }
   .badge {
     padding: 0 6px;
-    border-radius: var(--radius-pill);
+    border-radius: var(--radius-sm);
     background: var(--raised);
     color: var(--muted);
     font-family: var(--mono);
