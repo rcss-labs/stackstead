@@ -82,6 +82,92 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 	return v.Version, nil
 }
 
+// Info is the part of /info the host collector reads.
+type Info struct {
+	NCPU     int
+	MemTotal uint64
+}
+
+// Info returns the engine's CPU count and total memory.
+func (c *Client) Info(ctx context.Context) (Info, error) {
+	body, err := c.get(ctx, "/info")
+	if err != nil {
+		return Info{}, err
+	}
+	var raw Info
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return Info{}, fmt.Errorf("decode info: %w", err)
+	}
+	return raw, nil
+}
+
+// VolumeUsage summarises named volumes from /system/df.
+type VolumeUsage struct {
+	Count    int
+	Size     uint64 // bytes, skipping volumes whose size was not computed
+	Dangling int    // volumes no container references
+}
+
+// VolumesDiskUsage reads volume usage. The type=volume filter exists from API
+// 1.45; on older engines, or when the typed call is rejected with HTTP 400,
+// it falls back to the full /system/df.
+func (c *Client) VolumesDiskUsage(ctx context.Context) (VolumeUsage, error) {
+	body, err := c.dfBody(ctx)
+	if err != nil {
+		return VolumeUsage{}, err
+	}
+	var raw struct {
+		Volumes []struct {
+			UsageData *struct {
+				RefCount int64
+				Size     int64
+			}
+		}
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return VolumeUsage{}, fmt.Errorf("decode system df: %w", err)
+	}
+	u := VolumeUsage{Count: len(raw.Volumes)}
+	for _, v := range raw.Volumes {
+		if v.UsageData == nil {
+			continue
+		}
+		if v.UsageData.Size >= 0 {
+			u.Size += uint64(v.UsageData.Size)
+		}
+		if v.UsageData.RefCount == 0 {
+			u.Dangling++
+		}
+	}
+	return u, nil
+}
+
+func (c *Client) dfBody(ctx context.Context) ([]byte, error) {
+	v, err := c.negotiatedVersion(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if typedDF, _ := parseVersion("1.45"); !v.less(typedDF) {
+		body, err := c.get(ctx, "/system/df?type=volume")
+		if err == nil || !strings.Contains(err.Error(), "HTTP 400") {
+			return body, err
+		}
+	}
+	return c.get(ctx, "/system/df")
+}
+
+// negotiatedVersion returns the parsed API version, negotiating if needed.
+func (c *Client) negotiatedVersion(caller context.Context) (version, error) {
+	ctx, cancel := context.WithTimeout(caller, c.timeout)
+	defer cancel()
+	s, err := c.apiVersion(caller, ctx)
+	if err != nil {
+		return version{}, err
+	}
+	v, _ := parseVersion(s)
+	return v, nil
+}
+
 // Containers lists all containers, running or not.
 func (c *Client) Containers(ctx context.Context) ([]Container, error) {
 	body, err := c.get(ctx, "/containers/json?all=1")

@@ -20,9 +20,12 @@ const maxLogLine = 16 << 10
 
 // Event is one Docker container event.
 type Event struct {
-	Type, Action, ContainerID string // Type is always "container"
-	Labels                    map[string]string
+	Type, Action, ContainerID string            // Type is always "container"
+	Labels                    map[string]string // every actor attribute
 	Time                      time.Time
+	Name, Image               string
+	ExitCode                  *int   // only on "die"
+	Health                    string // "healthy" or "unhealthy"; only on "health_status"
 }
 
 // statsWindow is the extra time a stats call gets for Docker to compute the CPU delta.
@@ -113,6 +116,77 @@ type apiEvent struct {
 	TimeNano int64 `json:"timeNano"`
 }
 
+// event converts the wire form, reading name, image, exit code and health
+// from the actor attributes. "health_status: unhealthy" becomes the action
+// "health_status" with Health "unhealthy".
+func (raw apiEvent) event() Event {
+	attrs := raw.Actor.Attributes
+	ev := Event{Type: raw.Type, Action: raw.Action, ContainerID: raw.Actor.ID, Labels: attrs, Name: attrs["name"], Image: attrs["image"]}
+	if raw.TimeNano > 0 {
+		ev.Time = time.Unix(0, raw.TimeNano)
+	} else if raw.Time > 0 {
+		ev.Time = time.Unix(raw.Time, 0)
+	}
+	if status, ok := strings.CutPrefix(raw.Action, "health_status: "); ok {
+		ev.Action = "health_status"
+		if status == "healthy" || status == "unhealthy" {
+			ev.Health = status
+		}
+	}
+	if ev.Action == "die" {
+		if code, err := strconv.Atoi(attrs["exitCode"]); err == nil {
+			ev.ExitCode = &code
+		}
+	}
+	return ev
+}
+
+// EventsWindow returns every container event with since <= time < until whose
+// action is in actions (nil = all). Docker ends the stream because until is
+// set; the whole call is bounded by the client timeout.
+func (c *Client) EventsWindow(ctx context.Context, since, until time.Time, actions []string) ([]Event, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	filters := map[string][]string{"type": {"container"}}
+	if len(actions) > 0 {
+		filters["event"] = actions
+	}
+	encoded, err := json.Marshal(filters)
+	if err != nil {
+		return nil, err
+	}
+	q := url.Values{
+		"filters": {string(encoded)},
+		"since":   {strconv.FormatInt(since.Unix(), 10)},
+		"until":   {strconv.FormatInt(until.Unix(), 10)},
+	}
+	resp, cancelStream, err := c.openStream(ctx, "/events?"+q.Encode())
+	if err != nil {
+		return nil, err
+	}
+	defer cancelStream()
+	defer resp.Body.Close()
+	var out []Event
+	dec := json.NewDecoder(resp.Body)
+	for {
+		var raw apiEvent
+		if err := dec.Decode(&raw); err != nil {
+			if errors.Is(err, io.EOF) {
+				return out, nil
+			}
+			return nil, c.classify(ctx, err)
+		}
+		if raw.Type != "container" {
+			continue
+		}
+		ev := raw.event()
+		if ev.Time.Before(since) || !ev.Time.Before(until) {
+			continue
+		}
+		out = append(out, ev)
+	}
+}
+
 // Events streams container events from since (zero = now). Both channels
 // close when the stream ends. Cancelling ctx ends it with no error; any other
 // ending delivers exactly one error first, and a daemon that closes the stream
@@ -153,12 +227,7 @@ func (c *Client) streamEvents(ctx context.Context, since time.Time, out chan<- E
 		if raw.Type != "container" {
 			continue
 		}
-		ev := Event{Type: raw.Type, Action: raw.Action, ContainerID: raw.Actor.ID, Labels: raw.Actor.Attributes}
-		if raw.TimeNano > 0 {
-			ev.Time = time.Unix(0, raw.TimeNano)
-		} else if raw.Time > 0 {
-			ev.Time = time.Unix(raw.Time, 0)
-		}
+		ev := raw.event()
 		select {
 		case out <- ev:
 		case <-ctx.Done():
