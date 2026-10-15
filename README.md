@@ -1,6 +1,25 @@
-# Stackstead
+<div align="center">
+  <img src="docs/Stackstead%20DevOps%20UI%20redesign/assets/full-logo-cropped.png" alt="Stackstead logo" width="360">
 
-**Run your Docker Compose stacks from a browser, without giving up your compose files.**
+  <h1>Your Docker host, finally in view.</h1>
+  <p>Build, run, and troubleshoot Docker Compose stacks from one browser tab.</p>
+
+  <p>
+    <img src="https://img.shields.io/badge/Docker%20Compose-native-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker Compose native">
+    <img src="https://img.shields.io/badge/deploy-self--hosted-10B981?style=for-the-badge" alt="Self-hosted">
+    <img src="https://img.shields.io/badge/install-single%20binary-6366F1?style=for-the-badge" alt="Single binary">
+    <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-F59E0B?style=for-the-badge" alt="Linux and macOS">
+  </p>
+
+  <p>
+    <a href="#install"><strong>Get started</strong></a> ·
+    <a href="#what-you-get">Explore features</a> ·
+    <a href="docs/install.md">Installation guide</a> ·
+    <a href="docs/cli.md">CLI reference</a>
+  </p>
+</div>
+
+---
 
 Stackstead is a small, self-hosted control panel for the Docker host in your
 home lab or on your team's server. Create a service from an image or a
@@ -9,9 +28,13 @@ follow its logs and watch its CPU, memory and network, all from one page.
 It ships as a single binary, with no database server to run and nothing else
 to install besides Docker.
 
-Your compose files stay the source of truth. Stackstead edits them the way
+**Your compose files stay the source of truth.** Stackstead edits them the way
 you would: it keeps your comments, your key order and anything it does not
 understand, and every stack keeps working with plain `docker compose`.
+
+| 🧱 Build with confidence | 📡 See what's happening | 🗂️ Keep your files |
+| --- | --- | --- |
+| Configure images, Dockerfiles, ports, volumes, networks and limits with forms or YAML. | Follow live status, logs and resource history from one place. | Preview diffs, keep backups and continue using plain `docker compose`. |
 
 ## Why Stackstead
 
