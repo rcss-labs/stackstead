@@ -46,6 +46,12 @@ type Options struct {
 
 	SSEHeartbeat    time.Duration
 	SSEWriteTimeout time.Duration
+
+	// Host, Alerts and Summary back /api/host, /api/alerts and
+	// /api/metrics/summary; each route exists only when its source is set.
+	Host    HostAPI
+	Alerts  AlertsAPI
+	Summary SummaryAPI
 }
 
 type server struct {
@@ -56,13 +62,17 @@ type server struct {
 	tokenCache  string
 	tokenLoaded bool
 	tokenLoadAt time.Time
+
+	// summaryCache holds one entry per summary window (see summaryEntry).
+	summaryMu    sync.Mutex
+	summaryCache map[time.Duration]*summaryEntry
 }
 
 func New(opts Options) http.Handler {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	s := &server{opts: opts}
+	s := &server{opts: opts, summaryCache: map[time.Duration]*summaryEntry{}}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/setup/status", s.handleSetupStatus)
@@ -88,6 +98,8 @@ func New(opts Options) http.Handler {
 			writeError(w, http.StatusNotFound, "not found")
 		})
 	}
+
+	s.registerDashboardRoutes(mux)
 
 	// Unknown API paths get a JSON 404 (after auth, so they don't reveal which
 	// routes exist) instead of falling through to the SPA's index.html.

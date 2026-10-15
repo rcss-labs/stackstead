@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -595,4 +596,69 @@ func TestStatsOutlivesShortClientTimeout(t *testing.T) {
 	if _, err := New(sock, time.Second).Stats(ctx(t), "abc"); err != nil {
 		t.Fatalf("Stats with a 1s client timeout and a 1.5s response: %v", err)
 	}
+}
+
+func checkWindowEvents(t *testing.T, got []Event) {
+	t.Helper()
+	if len(got) != 4 {
+		t.Fatalf("events = %+v", got)
+	}
+	die, health, exec, start := got[0], got[1], got[2], got[3]
+	if die.Action != "die" || die.Name != "web-1" || die.Image != "nginx:1.27" || die.ExitCode == nil || *die.ExitCode != 1 {
+		t.Errorf("die = %+v", die)
+	}
+	if health.Action != "health_status" || health.Health != "unhealthy" || health.ExitCode != nil {
+		t.Errorf("health = %+v", health)
+	}
+	if exec.Action != "exec_start: sh" || exec.Health != "" {
+		t.Errorf("exec = %+v", exec)
+	}
+	if start.Name != "solo" || start.Image != "redis:7" || start.ExitCode != nil || start.Labels["name"] != "solo" {
+		t.Errorf("start = %+v", start)
+	}
+}
+
+func TestEventsWindowDecodesAttributes(t *testing.T) {
+	var query url.Values
+	sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.Query()
+		io.WriteString(w, readTestdata(t, "events_window.json"))
+	}))
+	since, until := time.Unix(1760435000, 0), time.Unix(1760437000, 0)
+	got, err := New(sock, 2*time.Second).EventsWindow(ctx(t), since, until, []string{"die", "health_status"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkWindowEvents(t, got)
+	if query.Get("since") != "1760435000" || query.Get("until") != "1760437000" {
+		t.Errorf("query = %v", query)
+	}
+	f := query.Get("filters")
+	if !strings.Contains(f, `"container"`) || !strings.Contains(f, `"die"`) || !strings.Contains(f, `"health_status"`) {
+		t.Errorf("filters = %q", f)
+	}
+}
+
+func TestEventsAttributesOnLiveStream(t *testing.T) {
+	sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, readTestdata(t, "events_window.json"))
+	}))
+	evs, errs := New(sock, 2*time.Second).Events(ctx(t), time.Time{})
+	got, _ := drainEvents(t, evs, errs)
+	checkWindowEvents(t, got)
+}
+
+func TestEventsWindowHonoursCallerDeadlineBeyondClientTimeout(t *testing.T) {
+	sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(400 * time.Millisecond) // slower than the client timeout
+		io.WriteString(w, readTestdata(t, "events_window.json"))
+	}))
+	c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	since, until := time.Unix(1760435000, 0), time.Unix(1760437000, 0)
+	got, err := New(sock, 150*time.Millisecond).EventsWindow(c, since, until, nil)
+	if err != nil {
+		t.Fatalf("events with a 5s deadline failed: %v", err)
+	}
+	checkWindowEvents(t, got)
 }

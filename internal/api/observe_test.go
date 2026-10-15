@@ -42,6 +42,10 @@ type fakeObserve struct {
 	changesCancelled chan struct{}
 	changesOnce      sync.Once
 
+	events          chan engine.Event
+	eventsCancelled chan struct{}
+	eventsOnce      sync.Once
+
 	logs    map[string]fakeLogSpec // by container ID
 	logCtxs map[string]context.Context
 	logOpts map[string]engine.LogOptions
@@ -70,6 +74,8 @@ func newFakeObserve() *fakeObserve {
 		connected:        true,
 		changes:          make(chan state.Change, 16),
 		changesCancelled: make(chan struct{}),
+		events:           make(chan engine.Event, 16),
+		eventsCancelled:  make(chan struct{}),
 		samples:          make(chan metrics.Sample, 16),
 		samplesCancelled: make(chan struct{}),
 		logs:             map[string]fakeLogSpec{},
@@ -97,6 +103,9 @@ func (f *fakeObserve) Degraded() bool {
 }
 func (f *fakeObserve) SubscribeChanges() (<-chan state.Change, func()) {
 	return f.changes, func() { f.changesOnce.Do(func() { close(f.changesCancelled) }) }
+}
+func (f *fakeObserve) SubscribeEvents() (<-chan engine.Event, func()) {
+	return f.events, func() { f.eventsOnce.Do(func() { close(f.eventsCancelled) }) }
 }
 func (f *fakeObserve) SubscribeSamples(project string) (<-chan metrics.Sample, func()) {
 	f.mu.Lock()
@@ -857,6 +866,88 @@ func TestEventsDroppedSubscriberEndsStream(t *testing.T) {
 	_, ch := openSSE(t, env, cookie, context.Background(), "/api/events")
 	nextEvent(t, ch, true) // initial status
 	close(fake.changes)
+	evs := drain(t, ch)
+	if names := eventNames(evs); len(names) == 0 || names[len(names)-1] != "dropped" {
+		t.Fatalf("events = %v, want a final dropped", names)
+	}
+}
+
+func TestEventsStreamCarriesEventMessages(t *testing.T) {
+	fake := newFakeObserve()
+	env, cookie := newObserveEnv(t, fake)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, ch := openSSE(t, env, cookie, ctx, "/api/events")
+	if ev := nextEvent(t, ch, true); ev.name != "status" {
+		t.Fatalf("first event = %+v, want status", ev)
+	}
+
+	exit := 1
+	at := time.Date(2026, 10, 15, 15, 5, 41, 0, time.FixedZone("x", 3*3600))
+	// Sources are independent channels, so interleaving is only ordered per
+	// source; read each message before sending the next to keep this deterministic.
+	steps := []struct {
+		send func()
+		want sseEvent
+	}{
+		{func() {
+			fake.events <- engine.Event{Action: "die", Name: "monitoring-loki-1", Image: "grafana/loki:3.1.1", Time: at, ExitCode: &exit,
+				Labels: map[string]string{"com.docker.compose.project": "monitoring", "com.docker.compose.service": "loki"}}
+		}, sseEvent{name: "event", data: `{"action":"die","container":"monitoring-loki-1","project":"monitoring","service":"loki","image":"grafana/loki:3.1.1","time":"2026-10-15T12:05:41Z","exitCode":1}`}},
+		{func() { fake.changes <- state.Change{Project: "monitoring", Seq: 3} },
+			sseEvent{name: "change", data: `{"project":"monitoring","seq":3}`}},
+		{func() {
+			fake.events <- engine.Event{Action: "health_status", Name: "standalone", Image: "redis:7", Time: at, Health: "unhealthy"}
+		}, sseEvent{name: "event", data: `{"action":"health_status","container":"standalone","project":"","service":"","image":"redis:7","time":"2026-10-15T12:05:41Z","health":"unhealthy"}`}},
+	}
+	for i, st := range steps {
+		st.send()
+		got := nextEvent(t, ch, true)
+		if got.name != st.want.name || got.data != st.want.data || got.id != "" {
+			t.Fatalf("event %d = %+v, want %+v", i, got, st.want)
+		}
+	}
+	cancel()
+	select {
+	case <-fake.eventsCancelled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("event subscription was not cancelled on disconnect")
+	}
+}
+
+func TestEventMessageOmitsExitCodeExceptDie(t *testing.T) {
+	fake := newFakeObserve()
+	env, cookie := newObserveEnv(t, fake)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, ch := openSSE(t, env, cookie, ctx, "/api/events")
+	nextEvent(t, ch, true) // initial status
+
+	zero := 0
+	fake.events <- engine.Event{Action: "die", Name: "a", ExitCode: &zero}
+	fake.events <- engine.Event{Action: "stop", Name: "a", ExitCode: &zero} // defensive: only die carries it
+	fake.events <- engine.Event{Action: "start", Name: "a", Health: "healthy"}
+	for i, wantExit := range []bool{true, false, false} {
+		ev := nextEvent(t, ch, true)
+		var m map[string]any
+		if err := json.Unmarshal([]byte(ev.data), &m); err != nil {
+			t.Fatal(err)
+		}
+		if _, has := m["exitCode"]; has != wantExit {
+			t.Errorf("event %d exitCode present = %v, want %v: %s", i, has, wantExit, ev.data)
+		}
+		if _, has := m["health"]; has {
+			t.Errorf("event %d has health but is not health_status: %s", i, ev.data)
+		}
+	}
+}
+
+func TestEventsDroppedOnEventChannelClose(t *testing.T) {
+	fake := newFakeObserve()
+	env, cookie := newObserveEnv(t, fake)
+	_, ch := openSSE(t, env, cookie, context.Background(), "/api/events")
+	nextEvent(t, ch, true) // initial status
+	close(fake.events)
 	evs := drain(t, ch)
 	if names := eventNames(evs); len(names) == 0 || names[len(names)-1] != "dropped" {
 		t.Fatalf("events = %v, want a final dropped", names)

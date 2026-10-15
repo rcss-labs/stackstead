@@ -16,6 +16,10 @@ access is equivalent to root. Treat the Stackstead login like a root password.
   (`/theme.js`, which sets the theme before first paint) is a same-origin
   classic script, so no inline script and no third-party origin is needed.
   The browser's `localStorage` holds only the theme and density preferences.
+- `GET /api/host`, for signed-in users only, discloses the hostname, CPU core
+  count and memory totals, free and total space of the stacks directory's
+  filesystem and the name of one network interface. Nothing else from Docker's
+  `/info` is exposed: no IP addresses, kernel version, mounts or environment.
 - The optional Prometheus endpoint has its own bearer token. It is shown once,
   and only its SHA-256 is stored.
 

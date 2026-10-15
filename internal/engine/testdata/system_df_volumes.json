@@ -1,0 +1,5 @@
+{"Volumes":[
+{"Name":"a","UsageData":{"RefCount":1,"Size":1000}},
+{"Name":"b","UsageData":{"RefCount":0,"Size":500}},
+{"Name":"c","UsageData":{"RefCount":0,"Size":-1}}
+]}

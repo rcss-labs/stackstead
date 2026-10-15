@@ -516,3 +516,96 @@ func TestEventDuringRefetchTriggersAnotherRefetch(t *testing.T) {
 	close(gate)
 	waitFor(t, func() bool { return src.fetchCount() >= base+2 })
 }
+
+func nextEvent(t *testing.T, ch <-chan engine.Event) engine.Event {
+	t.Helper()
+	select {
+	case ev, ok := <-ch:
+		if !ok {
+			t.Fatal("event subscription closed")
+		}
+		return ev
+	case <-time.After(2 * time.Second):
+		t.Fatal("no event delivered")
+	}
+	return engine.Event{}
+}
+
+func TestSubscribeEventsForwardsContainerEvents(t *testing.T) {
+	src := &fakeSource{containers: []engine.Container{ctr("a", "a1", "running")}}
+	h := start(t, src)
+	waitFor(t, h.c.Connected)
+	events, cancel := h.c.SubscribeEvents()
+	defer cancel()
+	s := src.stream(t, 1)
+	code := 137
+	s.send(t, engine.Event{Type: "container", Action: "start", ContainerID: "a1", Name: "web", Image: "nginx:1"})
+	s.send(t, engine.Event{Type: "container", Action: "exec_start", ContainerID: "a1"})
+	s.send(t, engine.Event{Type: "container", Action: "die", ContainerID: "a1", ExitCode: &code})
+	s.send(t, engine.Event{Type: "container", Action: "health_status", ContainerID: "a1", Health: "unhealthy"})
+
+	if ev := nextEvent(t, events); ev.Action != "start" || ev.Name != "web" || ev.Image != "nginx:1" {
+		t.Errorf("first = %+v, want start of web", ev)
+	}
+	if ev := nextEvent(t, events); ev.Action != "die" || ev.ExitCode == nil || *ev.ExitCode != 137 {
+		t.Errorf("second = %+v, want die with exit code 137", ev)
+	}
+	if ev := nextEvent(t, events); ev.Action != "health_status" || ev.Health != "unhealthy" {
+		t.Errorf("third = %+v, want health_status unhealthy", ev)
+	}
+	select {
+	case ev := <-events:
+		t.Errorf("unexpected extra event %+v", ev)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestSubscribeEventsDropsSlowSubscriber(t *testing.T) {
+	src := &fakeSource{containers: []engine.Container{ctr("a", "a1", "running")}}
+	h := start(t, src)
+	waitFor(t, h.c.Connected)
+	slow, cancelSlow := h.c.SubscribeEvents() // never read
+	fast, cancelFast := h.c.SubscribeEvents()
+	defer cancelFast()
+	s := src.stream(t, 1)
+	for range subscriberBuffer + 6 {
+		s.send(t, engine.Event{Type: "container", Action: "start", ContainerID: "a1"})
+		nextEvent(t, fast)
+	}
+	closed := false
+	for range 2 * subscriberBuffer {
+		if _, ok := <-slow; !ok {
+			closed = true
+			break
+		}
+	}
+	if !closed {
+		t.Error("slow event subscriber was not dropped")
+	}
+	cancelSlow()
+}
+
+func TestSubscribeEventsSurvivesReconnect(t *testing.T) {
+	src := &fakeSource{containers: []engine.Container{ctr("a", "a1", "running")}}
+	h := start(t, src)
+	waitFor(t, h.c.Connected)
+	events, cancel := h.c.SubscribeEvents()
+	defer cancel()
+	src.stream(t, 1).fail(errors.Join(engine.ErrUnavailable, io.EOF))
+	s := src.stream(t, 2)
+	waitFor(t, h.c.Connected)
+	s.send(t, engine.Event{Type: "container", Action: "restart", ContainerID: "a1"})
+	if ev := nextEvent(t, events); ev.Action != "restart" {
+		t.Errorf("after reconnect got %+v, want restart", ev)
+	}
+}
+
+func TestSubscribeEventsCancelIdempotent(t *testing.T) {
+	h := start(t, &fakeSource{})
+	events, cancel := h.c.SubscribeEvents()
+	cancel()
+	cancel()
+	if _, ok := <-events; ok {
+		t.Error("channel not closed after cancel")
+	}
+}

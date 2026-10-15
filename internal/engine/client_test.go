@@ -466,3 +466,126 @@ func TestVersionErrorsOnServerError(t *testing.T) {
 		t.Fatal("want an error on an undecodable body")
 	}
 }
+
+func infoHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/info" && r.URL.Path != "/v1.41/info" {
+			http.NotFound(w, r)
+			return
+		}
+		b, _ := os.ReadFile("testdata/info.json")
+		w.Write(b)
+	})
+}
+
+func TestInfoDecodes(t *testing.T) {
+	f := serveVer(t, "1.41", infoHandler())
+	got, err := New(f.sock, time.Second).Info(ctx(t))
+	if err != nil || got.NCPU != 8 || got.MemTotal != 16777216000 {
+		t.Fatalf("Info = %+v, %v", got, err)
+	}
+}
+
+func TestInfoHTTPError(t *testing.T) {
+	f := serveVer(t, "1.41", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"boom"}`, 500)
+	}))
+	if _, err := New(f.sock, time.Second).Info(ctx(t)); err == nil {
+		t.Fatal("want error")
+	}
+}
+
+func TestVolumesDiskUsageTyped(t *testing.T) {
+	var query string
+	f := serveVer(t, "1.45", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.RawQuery
+		fileHandler(t, map[string]string{"/v1.45/system/df": "system_df_volumes.json"}).ServeHTTP(w, r)
+	}))
+	got, err := New(f.sock, time.Second).VolumesDiskUsage(ctx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (VolumeUsage{Count: 3, Size: 1500, Dangling: 2}) {
+		t.Errorf("usage = %+v", got)
+	}
+	if query != "type=volume" {
+		t.Errorf("query = %q, want type=volume", query)
+	}
+}
+
+func TestVolumesDiskUsageOldAPIUsesUntyped(t *testing.T) {
+	var query string
+	f := serveVer(t, "1.44", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.RawQuery
+		fileHandler(t, map[string]string{"/v1.44/system/df": "system_df_legacy.json"}).ServeHTTP(w, r)
+	}))
+	got, err := New(f.sock, time.Second).VolumesDiskUsage(ctx(t))
+	if err != nil || got.Count != 3 || query != "" {
+		t.Errorf("usage = %+v, %v, query %q", got, err, query)
+	}
+}
+
+func TestVolumesDiskUsageLegacyFallback(t *testing.T) {
+	var queries []string
+	f := serveVer(t, "1.45", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries = append(queries, r.URL.RawQuery)
+		if r.URL.RawQuery != "" {
+			http.Error(w, `{"message":"bad param"}`, 400)
+			return
+		}
+		fileHandler(t, map[string]string{"/v1.45/system/df": "system_df_legacy.json"}).ServeHTTP(w, r)
+	}))
+	got, err := New(f.sock, time.Second).VolumesDiskUsage(ctx(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (VolumeUsage{Count: 3, Size: 1500, Dangling: 2}) {
+		t.Errorf("usage = %+v", got)
+	}
+	if len(queries) != 2 || queries[0] != "type=volume" || queries[1] != "" {
+		t.Errorf("queries = %q", queries)
+	}
+}
+
+func TestDockerCallsHonourTimeout(t *testing.T) {
+	f := serveVer(t, "1.41", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(3 * time.Second):
+		case <-r.Context().Done():
+		}
+	}))
+	start := time.Now()
+	_, err := New(f.sock, 150*time.Millisecond).Info(ctx(t))
+	if err == nil || time.Since(start) > 2*time.Second {
+		t.Errorf("err = %v after %v", err, time.Since(start))
+	}
+}
+
+// A background refresh passes its own, longer deadline; the short client
+// timeout must not cut it off.
+func TestVolumesDiskUsageHonoursCallerDeadlineBeyondClientTimeout(t *testing.T) {
+	f := serveVer(t, "1.45", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(400 * time.Millisecond) // slower than the client timeout
+		fileHandler(t, map[string]string{"/v1.45/system/df": "system_df_volumes.json"}).ServeHTTP(w, r)
+	}))
+	c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	got, err := New(f.sock, 150*time.Millisecond).VolumesDiskUsage(c)
+	if err != nil {
+		t.Fatalf("df with a 5s deadline failed: %v", err)
+	}
+	if got.Count != 3 {
+		t.Errorf("usage = %+v", got)
+	}
+}
+
+func TestVolumesDiskUsageStillBoundedByCallerDeadline(t *testing.T) {
+	f := serveVer(t, "1.45", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(600 * time.Millisecond)
+	}))
+	c, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if _, err := New(f.sock, 5*time.Second).VolumesDiskUsage(c); err == nil {
+		t.Fatal("want a timeout error")
+	}
+}

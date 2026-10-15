@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatBytes, formatDuration, formatPercent, formatRate, relativeTime } from './format';
+import { formatBytes, formatDuration, formatPercent, formatRate, relativeTime, sparklinePath } from './format';
 
 describe('formatBytes', () => {
   it.each([
@@ -71,5 +71,31 @@ describe('formatPercent', () => {
     [Number.NaN, '0.0%'],
   ])('%s -> %s', (x, want) => {
     expect(formatPercent(x)).toBe(want);
+  });
+});
+
+describe('sparklinePath', () => {
+  it('pads one unit top and bottom so max and zero are not clipped', () => {
+    expect(sparklinePath([0, 5, 10], 60, 18)).toBe('M0,17L30,9L60,1');
+  });
+  it('breaks the path at nulls', () => {
+    expect(sparklinePath([0, 10, null, 10, 0], 60, 18)).toBe('M0,17L15,1M45,1L60,17');
+  });
+  it('draws a lone sample between nulls as a short horizontal segment', () => {
+    expect(sparklinePath([0, 10, null, 5, null, 10, 0], 60, 18)).toBe('M0,17L10,1M29,9L31,9M50,1L60,17');
+  });
+  it('draws a single point as a flat line across the width at its y', () => {
+    expect(sparklinePath([4], 60, 18)).toBe('M0,1L60,1');
+    expect(sparklinePath([null, 4, null], 60, 18)).toBe('M0,1L60,1');
+  });
+  it('puts a single zero point on the baseline like any all-zero series', () => {
+    expect(sparklinePath([0], 60, 18)).toBe('M0,17L60,17');
+  });
+  it('is empty when every value is null or there are no values', () => {
+    expect(sparklinePath([null, null])).toBe('');
+    expect(sparklinePath([])).toBe('');
+  });
+  it('keeps an all-zero series flat on the baseline', () => {
+    expect(sparklinePath([0, 0], 60, 18)).toBe('M0,17L60,17');
   });
 });

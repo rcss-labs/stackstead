@@ -58,6 +58,9 @@ without a platform to maintain.
 
 - **A live overview.** Every stack and service on the machine, its status,
   health and running containers, updated the moment Docker reports a change.
+- **A dashboard at a glance.** Host tiles for CPU, memory, disk and network,
+  a sparkline per stack, alerts for what needs attention and a live feed of
+  Docker events.
 - **Forms instead of YAML.** Image or Dockerfile, ports, volumes, environment
   variables, networks and static IPs, CPU and memory limits, restart policy
   and healthcheck. Port and IP clashes are checked before anything is

@@ -530,6 +530,8 @@ func dockerStack(t *testing.T, c *client) {
 		time.Sleep(2 * time.Second)
 	}
 
+	dashboardEndpoints(t, c)
+
 	got, body = c.do("POST", "/api/stacks/"+name+"/actions/down", map[string]any{})
 	if got != 202 {
 		t.Fatalf("down = %d: %.200s", got, body)
@@ -579,4 +581,45 @@ func readLogIDs(t *testing.T, c *client, name string, idRe *regexp.Regexp) bool 
 		}
 	}
 	return false
+}
+
+// dashboardEndpoints checks the three 8b dashboard routes against the running
+// binary: documented top-level keys, the window validation and the session gate.
+func dashboardEndpoints(t *testing.T, c *client) {
+	t.Helper()
+	keys := func(path string) map[string]json.RawMessage {
+		t.Helper()
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(c.expect(200, "GET", path, nil), &m); err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		return m
+	}
+	requireKeys := func(path string, m map[string]json.RawMessage, want ...string) {
+		t.Helper()
+		for _, k := range want {
+			if _, ok := m[k]; !ok {
+				t.Errorf("%s lacks key %q", path, k)
+			}
+		}
+	}
+
+	requireKeys("/api/host", keys("/api/host"), "hostname", "os", "source", "sampledAt", "containers",
+		"cpu", "memory", "disk", "network", "diskIO", "volumes", "uptime", "restarts24h")
+	requireKeys("/api/metrics/summary", keys("/api/metrics/summary"), "window", "step", "from", "to", "stacks", "top")
+
+	var alerts []json.RawMessage
+	if err := json.Unmarshal(c.expect(200, "GET", "/api/alerts", nil), &alerts); err != nil || alerts == nil {
+		t.Errorf("/api/alerts is not a JSON array: %v", err)
+	}
+
+	var bad struct{ Error string }
+	if err := json.Unmarshal(c.expect(400, "GET", "/api/metrics/summary?window=30m", nil), &bad); err != nil || bad.Error == "" {
+		t.Errorf("window=30m: want a 400 {error} body, got %q (%v)", bad.Error, err)
+	}
+
+	anon := newClient(t, c.base)
+	for _, p := range []string{"/api/host", "/api/alerts", "/api/metrics/summary"} {
+		anon.expect(401, "GET", p, nil)
+	}
 }

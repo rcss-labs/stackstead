@@ -294,3 +294,144 @@ const (
 	OpCancelled = "cancelled"
 	OpTimedOut  = "timed_out"
 )
+
+// HostSnapshot is the GET /api/host body. Every section except the first four
+// fields is a pointer without omitempty so an unavailable source is an
+// explicit JSON null; rate fields are null until two readings exist.
+type HostSnapshot struct {
+	Hostname    string          `json:"hostname"`
+	OS          string          `json:"os"`
+	Source      string          `json:"source"` // "proc" or "docker"
+	SampledAt   time.Time       `json:"sampledAt"`
+	Containers  *HostContainers `json:"containers"`
+	CPU         *HostCPU        `json:"cpu"`
+	Memory      *HostMemory     `json:"memory"`
+	Disk        *HostDisk       `json:"disk"`
+	Network     *HostNetwork    `json:"network"`
+	DiskIO      *HostDiskIO     `json:"diskIO"`
+	Volumes     *HostVolumes    `json:"volumes"`
+	Uptime      *HostUptime     `json:"uptime"`
+	Restarts24h *HostRestarts   `json:"restarts24h"`
+}
+
+type HostContainers struct {
+	Total   int `json:"total"`
+	Running int `json:"running"`
+	Exited  int `json:"exited"`
+	Bad     int `json:"bad"`
+}
+
+type HostCPU struct {
+	Percent *float64 `json:"percent"`
+	Cores   int      `json:"cores"`
+}
+
+type HostMemory struct {
+	Used      uint64 `json:"used"`
+	Total     uint64 `json:"total"`
+	SwapUsed  uint64 `json:"swapUsed"`
+	SwapTotal uint64 `json:"swapTotal"`
+}
+
+type HostDisk struct {
+	Path  string `json:"path"`
+	Free  uint64 `json:"free"`
+	Total uint64 `json:"total"`
+}
+
+type HostNetwork struct {
+	RxBytesPerSec *float64 `json:"rxBytesPerSec"`
+	TxBytesPerSec *float64 `json:"txBytesPerSec"`
+	Interface     string   `json:"interface"`
+}
+
+type HostDiskIO struct {
+	ReadBytesPerSec  *float64 `json:"readBytesPerSec"`
+	WriteBytesPerSec *float64 `json:"writeBytesPerSec"`
+}
+
+type HostVolumes struct {
+	Count    int    `json:"count"`
+	Size     uint64 `json:"size"`
+	Dangling int    `json:"dangling"`
+}
+
+type HostUptime struct {
+	Seconds float64 `json:"seconds"`
+	Load1   float64 `json:"load1"`
+	Load5   float64 `json:"load5"`
+	Load15  float64 `json:"load15"`
+}
+
+type HostRestarts struct {
+	Total int              `json:"total"`
+	Top   []HostRestartTop `json:"top"`
+}
+
+type HostRestartTop struct {
+	Container string `json:"container"`
+	Service   string `json:"service"`
+	Project   string `json:"project"`
+	Count     int    `json:"count"`
+}
+
+// Alert is one active problem from GET /api/alerts; stack, service and
+// container are omitted when they do not apply.
+type Alert struct {
+	Kind      string    `json:"kind"`
+	Severity  string    `json:"severity"` // danger, warning or info
+	Stack     string    `json:"stack,omitempty"`
+	Service   string    `json:"service,omitempty"`
+	Container string    `json:"container,omitempty"`
+	Message   string    `json:"message"`
+	Since     time.Time `json:"since"`
+}
+
+// MetricsSummary is the GET /api/metrics/summary body. Step is in seconds;
+// Stacks is keyed by compose project.
+type MetricsSummary struct {
+	Window string                    `json:"window"`
+	Step   int                       `json:"step"`
+	From   time.Time                 `json:"from"`
+	To     time.Time                 `json:"to"`
+	Stacks map[string]ProjectSummary `json:"stacks"`
+	Top    SummaryTop                `json:"top"`
+}
+
+// ProjectSummary holds one project's sparkline data; null entries are empty
+// buckets and Mem is in bytes.
+type ProjectSummary struct {
+	CPU              []*float64 `json:"cpu"`
+	Mem              []*float64 `json:"mem"`
+	CPUNow           *float64   `json:"cpuNow"`
+	MemNow           *float64   `json:"memNow"`
+	NetRxBytesPerSec *float64   `json:"netRxBytesPerSec"`
+	NetTxBytesPerSec *float64   `json:"netTxBytesPerSec"`
+}
+
+type SummaryTop struct {
+	CPU []TopEntry `json:"cpu"`
+	Mem []TopEntry `json:"mem"`
+}
+
+type TopEntry struct {
+	Container string  `json:"container"`
+	Service   string  `json:"service"`
+	Project   string  `json:"project"`
+	Value     float64 `json:"value"`
+}
+
+// EventMessage is the payload of an "event" message on GET /api/events: one
+// Docker container event. Project and Service are empty for containers that
+// are not part of a compose project. ExitCode is set only for "die" and Health
+// only for "health_status".
+type EventMessage struct {
+	Action    string    `json:"action"`
+	Container string    `json:"container"`
+	Project   string    `json:"project"`
+	Service   string    `json:"service"`
+	Image     string    `json:"image"`
+	Time      time.Time `json:"time"`
+	ExitCode  *int      `json:"exitCode,omitempty"`
+	Health    string    `json:"health,omitempty"`
+}

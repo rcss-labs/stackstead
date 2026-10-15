@@ -1,0 +1,4 @@
+{"Type":"container","Action":"die","Actor":{"ID":"aaa","Attributes":{"name":"web-1","image":"nginx:1.27","exitCode":"1","com.docker.compose.project":"demo","com.docker.compose.service":"web"}},"time":1760436000,"timeNano":1760436000123456789}
+{"Type":"container","Action":"health_status: unhealthy","Actor":{"ID":"aaa","Attributes":{"name":"web-1","image":"nginx:1.27","com.docker.compose.project":"demo","com.docker.compose.service":"web"}},"time":1760436001,"timeNano":1760436001000000000}
+{"Type":"container","Action":"exec_start: sh","Actor":{"ID":"aaa","Attributes":{"name":"web-1","image":"nginx:1.27"}},"time":1760436002,"timeNano":1760436002000000000}
+{"Type":"container","Action":"start","Actor":{"ID":"bbb","Attributes":{"name":"solo","image":"redis:7"}},"time":1760436003,"timeNano":1760436003000000000}

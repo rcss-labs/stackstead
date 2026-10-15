@@ -4,11 +4,14 @@ import type {
   CreateStackRequest,
   FSEntry,
   FieldError,
+  Alert,
   HashResponse,
+  HostSnapshot,
   ImportRequest,
   LoginRequest,
   Me,
   MetricsHistory,
+  MetricsSummary,
   MetricsToken,
   MetricsTokenStatus,
   Network,
@@ -22,6 +25,7 @@ import type {
   StackDetail,
   StackSummary,
   Status,
+  SummaryWindow,
   UpdateServiceRequest,
 } from './types';
 
@@ -182,6 +186,9 @@ export const api = {
   fs: (path?: string) => get<FSEntry[]>(`/api/fs${query({ path })}`),
   networks: () => get<Network[]>('/api/networks'),
   status: () => get<Status>('/api/status'),
+  host: () => get<HostSnapshot>('/api/host'),
+  alerts: () => get<Alert[]>('/api/alerts'),
+  metricsSummary: (window?: SummaryWindow) => get<MetricsSummary>(`/api/metrics/summary${query({ window })}`),
 
   metricsTokenStatus: () => get<MetricsTokenStatus>('/api/settings/metrics-token'),
   createMetricsToken: () => post<MetricsToken>('/api/settings/metrics-token'),

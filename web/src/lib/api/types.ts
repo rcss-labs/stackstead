@@ -273,3 +273,78 @@ export interface ChangePasswordRequest {
 
 export const ACTIONS = ['up', 'down', 'restart', 'pull', 'build'] as const;
 export type Action = (typeof ACTIONS)[number];
+
+/** GET /api/host. A null section is unavailable on this host; rates are null until two readings exist. */
+export interface HostSnapshot {
+  hostname: string;
+  os: string;
+  source: 'proc' | 'docker';
+  sampledAt: string;
+  containers: { total: number; running: number; exited: number; bad: number } | null;
+  cpu: { percent: number | null; cores: number } | null;
+  memory: { used: number; total: number; swapUsed: number; swapTotal: number } | null;
+  disk: { path: string; free: number; total: number } | null;
+  network: { rxBytesPerSec: number | null; txBytesPerSec: number | null; interface: string } | null;
+  diskIO: { readBytesPerSec: number | null; writeBytesPerSec: number | null } | null;
+  volumes: { count: number; size: number; dangling: number } | null;
+  uptime: { seconds: number; load1: number; load5: number; load15: number } | null;
+  restarts24h: { total: number; top: HostRestartTop[] } | null;
+}
+
+export interface HostRestartTop {
+  container: string;
+  service: string;
+  project: string;
+  count: number;
+}
+
+/** GET /api/alerts. */
+export interface Alert {
+  kind: string;
+  severity: 'danger' | 'warning' | 'info';
+  stack?: string;
+  service?: string;
+  container?: string;
+  message: string;
+  since: string;
+}
+
+export type SummaryWindow = '5m' | '15m' | '1h';
+
+export interface TopEntry {
+  container: string;
+  service: string;
+  project: string;
+  value: number;
+}
+
+export interface ProjectSummary {
+  cpu: (number | null)[];
+  mem: (number | null)[];
+  cpuNow: number | null;
+  memNow: number | null;
+  netRxBytesPerSec: number | null;
+  netTxBytesPerSec: number | null;
+}
+
+/** GET /api/metrics/summary. `step` is integer seconds; null entries are empty buckets. */
+export interface MetricsSummary {
+  window: SummaryWindow;
+  step: number;
+  from: string;
+  to: string;
+  stacks: Record<string, ProjectSummary>;
+  top: { cpu: TopEntry[]; mem: TopEntry[] };
+}
+
+/** `event` SSE message. `time` is RFC 3339 UTC, possibly with nanoseconds; parse with Date. */
+export interface DockerEvent {
+  action: string;
+  container: string;
+  project: string;
+  service: string;
+  image: string;
+  time: string;
+  exitCode?: number;
+  health?: 'healthy' | 'unhealthy';
+}

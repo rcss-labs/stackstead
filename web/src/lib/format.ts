@@ -47,3 +47,43 @@ export function formatPercent(x: number): string {
   if (!Number.isFinite(x) || x < 0) return '0.0%';
   return `${x.toFixed(1)}%`;
 }
+
+const trim = (n: number) => String(Number(n.toFixed(1)));
+
+const PAD = 1;
+
+/**
+ * SVG path for a sparkline in a w x h box with 1 unit of padding top and bottom, scaled so
+ * the largest value touches the top padding line and zero sits on the bottom one.
+ * Null samples break the line ("M…L…M…"); a lone sample between nulls is a short horizontal
+ * segment; a single sample in the whole series is a flat line across the width (on the
+ * baseline when it is 0, like any all-zero series); "" when there is nothing to draw.
+ */
+export function sparklinePath(values: (number | null)[], w = 60, h = 18): string {
+  const present = values.filter((v): v is number => v !== null);
+  if (present.length === 0) return '';
+  const max = Math.max(...present);
+  const y = (v: number) => (max > 0 ? PAD + (1 - v / max) * (h - 2 * PAD) : h - PAD);
+  if (present.length === 1) {
+    const flat = y(present[0]);
+    return `M0,${trim(flat)}L${trim(w)},${trim(flat)}`;
+  }
+  const stepX = values.length > 1 ? w / (values.length - 1) : 0;
+  let path = '';
+  let open = false;
+  values.forEach((v, i) => {
+    if (v === null) {
+      open = false;
+      return;
+    }
+    const x = i * stepX;
+    const lone = values[i - 1] == null && values[i + 1] == null;
+    if (lone) {
+      path += `M${trim(Math.max(0, x - 1))},${trim(y(v))}L${trim(Math.min(w, x + 1))},${trim(y(v))}`;
+      return;
+    }
+    path += `${open ? 'L' : 'M'}${trim(x)},${trim(y(v))}`;
+    open = true;
+  });
+  return path;
+}

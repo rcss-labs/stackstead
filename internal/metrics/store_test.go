@@ -227,3 +227,52 @@ func TestHugeCountersClampToInt64Max(t *testing.T) {
 		t.Errorf("clamped counters = %d/%d, want MaxInt64", rows[0].NetRx, rows[0].BlkWrite)
 	}
 }
+
+func TestQueryAllGroupsByProjectContainerBucket(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	step := 10 * time.Second
+	mk := func(off time.Duration, project, container string, cpu float64, mem, rx uint64) metrics.Sample {
+		return metrics.Sample{TS: base.Add(off), Project: project, Service: "svc", Container: container, CPU: cpu, Mem: mem, NetRx: rx, NetTx: rx * 2}
+	}
+	if err := s.InsertBatch(ctx, []metrics.Sample{
+		mk(1*time.Second, "b", "b-1", 1, 10, 100),
+		mk(2*time.Second, "a", "a-2", 2, 20, 200),
+		mk(3*time.Second, "a", "a-1", 4, 40, 300),
+		mk(4*time.Second, "a", "a-1", 6, 60, 500), // same bucket as previous
+		mk(12*time.Second, "a", "a-1", 8, 80, 700),
+		mk(-1*time.Second, "a", "a-1", 9, 90, 900), // before from
+		mk(30*time.Second, "a", "a-1", 9, 90, 900), // at to (exclusive)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.QueryAll(ctx, base, base.Add(30*time.Second), step)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type row struct {
+		p, c string
+		ts   int64
+		n    uint64
+		cpu  float64
+		mem  uint64
+		rx   uint64
+		tx   uint64
+	}
+	want := []row{
+		{"a", "a-1", base.Unix(), 2, 10, 100, 500, 1000},
+		{"a", "a-1", base.Unix() + 10, 1, 8, 80, 700, 1400},
+		{"a", "a-2", base.Unix(), 1, 2, 20, 200, 400},
+		{"b", "b-1", base.Unix(), 1, 1, 10, 100, 200},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d rows, want %d: %+v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		g := got[i]
+		have := row{g.Project, g.Container, g.TS.Unix(), g.Samples, g.CPUSum, g.MemSum, g.NetRx, g.NetTx}
+		if have != w {
+			t.Errorf("row %d = %+v, want %+v", i, have, w)
+		}
+	}
+}

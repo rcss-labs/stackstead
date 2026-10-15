@@ -146,3 +146,49 @@ func (s *Store) SetTokenHash(ctx context.Context, hash string) error {
 	}
 	return nil
 }
+
+// ProjectBucket is one container's samples within one step-sized bucket,
+// tagged with its compose project (empty for non-compose containers).
+type ProjectBucket struct {
+	TS                 time.Time
+	Project, Container string
+	Samples            uint64
+	CPUSum             float64
+	MemSum             uint64
+	NetRx, NetTx       uint64 // bucket max of the cumulative counters
+}
+
+// QueryAll is QueryContainers across every project: samples with
+// from <= ts < to grouped into step-sized buckets per project and container,
+// ordered by project, container, TS. One query feeds every stack's sparkline.
+func (s *Store) QueryAll(ctx context.Context, from, to time.Time, step time.Duration) ([]ProjectBucket, error) {
+	secs := int64(step / time.Second)
+	if secs < 1 {
+		secs = 1
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT ts - ts % ?, project, container, COUNT(*), SUM(cpu), SUM(mem),
+			MAX(net_rx), MAX(net_tx)
+		FROM metric_samples
+		WHERE ts >= ? AND ts < ?
+		GROUP BY project, container, ts - ts % ? ORDER BY project, container, 1`,
+		secs, from.Unix(), to.Unix(), secs)
+	if err != nil {
+		return nil, fmt.Errorf("query all metrics: %w", err)
+	}
+	defer rows.Close()
+	var out []ProjectBucket
+	for rows.Next() {
+		var b ProjectBucket
+		var ts, n, mem, rx, tx int64
+		if err := rows.Scan(&ts, &b.Project, &b.Container, &n, &b.CPUSum, &mem, &rx, &tx); err != nil {
+			return nil, fmt.Errorf("scan all metrics: %w", err)
+		}
+		b.TS = time.Unix(ts, 0)
+		b.Samples, b.MemSum, b.NetRx, b.NetTx = uint64(n), uint64(mem), uint64(rx), uint64(tx)
+		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("query all metrics: %w", err)
+	}
+	return out, nil
+}
