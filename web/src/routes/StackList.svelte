@@ -6,13 +6,28 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import Button from '$lib/components/Button.svelte';
+  import Sparkline from '$lib/components/Sparkline.svelte';
+  import { createDashboard } from '$lib/dashboard/controller';
+  import HostTile from '$lib/dashboard/HostTile.svelte';
+  import { hostTiles } from '$lib/dashboard/tiles';
+  import { formatBytes, formatPercent, formatRate } from '$lib/format';
   import { link, navigate } from '$lib/router';
   import { ICONS } from '$lib/shell/icons';
   import { lifecycleDisabledReason } from '$lib/stacks/lifecycle';
   import { chipCounts, filterStacks, healthCell, portChips, type ChipFilter } from '$lib/stacks/summary';
-  import { live, refreshStatus } from '$lib/stores/live';
+  import { changes, live, refreshStatus } from '$lib/stores/live';
   import { operationsRefresh, refreshRunningOps, refreshStacks, stacks } from '$lib/stores/stacks';
   import { toasts } from '$lib/stores/toasts';
+
+  const dashboard = createDashboard({ host: api.host, alerts: api.alerts, summary: api.metricsSummary, changes });
+  const { host: hostStore, summary } = dashboard;
+  $effect(() => {
+    dashboard.start();
+    return () => dashboard.stop();
+  });
+  const tiles = $derived($hostStore ? hostTiles($hostStore) : []);
+  const netCell = (rx: number | null, tx: number | null) =>
+    rx === null && tx === null ? '—' : `${rx === null ? '—' : formatRate(rx)} / ${tx === null ? '—' : formatRate(tx)}`;
 
   let query = $state('');
   let retrying = $state(false);
@@ -114,6 +129,7 @@
 <section>
   <header class="head">
     <h1 id="stacks-heading">Stacks</h1>
+    {#if $hostStore}<span class="hostname">{$hostStore.hostname}</span>{/if}
     <span class="spacer"></span>
     {#if $stacks.items.length > 0 || $stacks.error}
       <a class="lbtn secondary" href="/stacks/import" use:link>Import</a>
@@ -129,6 +145,12 @@
   {/if}
   {#if degraded}
     <Banner kind="warning" title="Degraded">{#snippet children()}Container status is unavailable, so every stack shows as unknown.{/snippet}</Banner>
+  {/if}
+
+  {#if tiles.length > 0}
+    <div class="tiles">
+      {#each tiles as tile (tile.id)}<HostTile {tile} />{/each}
+    </div>
   {/if}
 
   {#if $stacks.loading}
@@ -177,6 +199,12 @@
             <!-- svelte-ignore a11y_no_redundant_roles -->
             <th role="columnheader" scope="col">Ports</th>
             <!-- svelte-ignore a11y_no_redundant_roles -->
+            <th role="columnheader" scope="col">CPU</th>
+            <!-- svelte-ignore a11y_no_redundant_roles -->
+            <th role="columnheader" scope="col">Memory</th>
+            <!-- svelte-ignore a11y_no_redundant_roles -->
+            <th role="columnheader" scope="col">Net RX / TX</th>
+            <!-- svelte-ignore a11y_no_redundant_roles -->
             <th role="columnheader" scope="col"><span class="visually-hidden">Actions</span></th>
           </tr>
         </thead>
@@ -186,6 +214,7 @@
             {@const health = healthCell(s.health)}
             {@const ports = portChips(s.ports)}
             {@const reason = reasonFor(s)}
+            {@const usage = $summary?.stacks[s.project]}
             <!-- svelte-ignore a11y_no_redundant_roles -->
             <tr role="row">
               <!-- svelte-ignore a11y_no_redundant_roles -->
@@ -235,6 +264,24 @@
                 {/if}
               </td>
               <!-- svelte-ignore a11y_no_redundant_roles -->
+              <td role="cell" data-label="CPU" class="num">
+                <span class="spark">
+                  <Sparkline values={usage?.cpu ?? []} tone="accent" />
+                  <span class="spark-value mono cpu">{usage?.cpuNow != null ? formatPercent(usage.cpuNow) : '—'}</span>
+                </span>
+              </td>
+              <!-- svelte-ignore a11y_no_redundant_roles -->
+              <td role="cell" data-label="Memory" class="num">
+                <span class="spark">
+                  <Sparkline values={usage?.mem ?? []} tone="info" />
+                  <span class="spark-value mono mem">{usage?.memNow != null ? formatBytes(usage.memNow) : '—'}</span>
+                </span>
+              </td>
+              <!-- svelte-ignore a11y_no_redundant_roles -->
+              <td role="cell" data-label="Net RX / TX" class="num">
+                <span class="net mono">{usage ? netCell(usage.netRxBytesPerSec, usage.netTxBytesPerSec) : '—'}</span>
+              </td>
+              <!-- svelte-ignore a11y_no_redundant_roles -->
               <td role="cell" data-label="Actions" class="row-actions">
                 <span class="btns">
                   {#each rowActions as a (a.action)}
@@ -255,7 +302,14 @@
 
 <style>
   .head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
+  .hostname { color: var(--muted); font-size: 14px; font-family: var(--mono); }
   .spacer { flex: 1; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; margin-bottom: var(--space-4); }
+  .spark { display: inline-flex; align-items: center; gap: var(--space-2); }
+  .spark-value { text-align: right; font-size: 12px; }
+  .spark-value.cpu { min-width: 38px; }
+  .spark-value.mem { min-width: 48px; }
+  .net { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
   .lbtn {
     display: inline-flex; align-items: center; gap: var(--space-2); height: 30px; padding: 0 12px;
     border: 1px solid var(--border-strong); border-radius: var(--radius); font-size: 13px; text-decoration: none;
@@ -322,6 +376,7 @@
   .none { color: var(--muted); padding: var(--space-3) 12px; margin: 0; }
 
   @media (max-width: 720px) {
+    .tiles { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
     table, tbody, tr, td { display: block; }
     thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
     tr { border-bottom: 1px solid var(--border); padding: var(--space-2); }

@@ -47,3 +47,30 @@ export function formatPercent(x: number): string {
   if (!Number.isFinite(x) || x < 0) return '0.0%';
   return `${x.toFixed(1)}%`;
 }
+
+const trim = (n: number) => String(Number(n.toFixed(1)));
+
+/**
+ * SVG path for a sparkline in a w x h box, scaled so the largest value touches the top.
+ * Null samples break the line ("M…L…M…"); a lone point is drawn flat across the width;
+ * "" when there is nothing to draw.
+ */
+export function sparklinePath(values: (number | null)[], w = 60, h = 18): string {
+  const present = values.filter((v): v is number => v !== null);
+  if (present.length === 0) return '';
+  const max = Math.max(...present);
+  const y = (v: number) => (max > 0 ? h - (v / max) * h : h);
+  if (present.length === 1) return `M0,${trim(y(present[0]))}L${trim(w)},${trim(y(present[0]))}`;
+  const stepX = values.length > 1 ? w / (values.length - 1) : 0;
+  let path = '';
+  let open = false;
+  values.forEach((v, i) => {
+    if (v === null) {
+      open = false;
+      return;
+    }
+    path += `${open ? 'L' : 'M'}${trim(i * stepX)},${trim(y(v))}`;
+    open = true;
+  });
+  return path;
+}

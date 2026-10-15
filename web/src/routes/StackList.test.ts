@@ -126,7 +126,7 @@ describe('StackList', () => {
   it('names the table and keeps table roles', async () => {
     await mount([stack('alpha')]);
     expect(screen.getByRole('table', { name: 'Stacks' })).toBeTruthy();
-    expect(screen.getAllByRole('columnheader').length).toBe(6);
+    expect(screen.getAllByRole('columnheader').length).toBe(9);
   });
 
   it('shows no-match text only for a non-empty query', async () => {
@@ -329,12 +329,79 @@ describe('StackList', () => {
     });
   });
 
-  it('no 8b sections render', async () => {
-    const { container } = await mount([stack('alpha')]);
-    expect(screen.queryByRole('columnheader', { name: /cpu|memory|net/i })).toBeNull();
-    const section = container.querySelector('section')!;
-    expect(section.lastElementChild?.tagName).toBe('DIV');
-    expect(section.lastElementChild?.querySelector('table')).toBeTruthy();
+  const hostSnap = (over: Record<string, unknown> = {}) => ({
+    hostname: 'nas-01', os: 'linux', source: 'proc', sampledAt: '2026-10-15T10:00:00Z',
+    containers: { total: 10, running: 8, exited: 2, bad: 0 },
+    cpu: { percent: 18, cores: 8 },
+    memory: { used: 4 * 1024 ** 3, total: 16 * 1024 ** 3, swapUsed: 0, swapTotal: 0 },
+    disk: null, network: null, diskIO: null, volumes: null, uptime: null, restarts24h: null,
+    ...over,
+  });
+  const summaryFor = (project: string, over: Record<string, unknown> = {}) => ({
+    window: '15m', step: 30, from: '', to: '', top: { cpu: [], mem: [] },
+    stacks: {
+      [project]: {
+        cpu: [1, 2, 3, ...Array(27).fill(null)], mem: [5, 6, ...Array(28).fill(null)],
+        cpuNow: 12.5, memNow: 2 * 1024 ** 2 * 100, netRxBytesPerSec: 2048, netTxBytesPerSec: 512, ...over,
+      },
+    },
+  });
+  const dashboardFake = (host = hostSnap(), summary: unknown = summaryFor('proj-alpha')) => ({
+    'GET /api/host': { body: host },
+    'GET /api/alerts': { body: [] },
+    'GET /api/metrics/summary': { body: summary },
+  });
+
+  it('hostname shows after heading', async () => {
+    await mount([stack('alpha')], [], dashboardFake());
+    expect(await screen.findByText('nas-01')).toBeTruthy();
+    const h1 = screen.getByRole('heading', { level: 1 });
+    expect(h1.nextElementSibling?.textContent).toBe('nas-01');
+  });
+
+  it('tiles render from host snapshot', async () => {
+    await mount([stack('alpha')], [], dashboardFake());
+    expect(await screen.findByText('8/10')).toBeTruthy();
+    expect(screen.getByText('18.0%')).toBeTruthy();
+    expect(screen.getByText('8 cores')).toBeTruthy();
+    expect(screen.getByText('4.0 GiB / 16.0 GiB')).toBeTruthy();
+    expect(screen.queryByText('Uptime')).toBeNull();
+  });
+
+  it('CPU and Memory cells show sparkline and value', async () => {
+    await mount([stack('alpha')], [], dashboardFake());
+    await screen.findByText('12.5%');
+    const row = screen.getAllByRole('row')[1];
+    expect(within(row).getByText('200.0 MiB')).toBeTruthy();
+    const paths = row.querySelectorAll('svg[viewBox="0 0 60 18"] path');
+    expect(paths).toHaveLength(2);
+    expect(paths[0].getAttribute('stroke')).toBe('var(--accent)');
+    expect(paths[1].getAttribute('stroke')).toBe('var(--info)');
+    expect(paths[0].getAttribute('d')).not.toBe('M0,17L60,17');
+  });
+
+  it('stack without samples shows dash and flat line', async () => {
+    await mount([stack('alpha'), stack('beta')], [], dashboardFake());
+    await screen.findByText('12.5%');
+    const row = screen.getAllByRole('row')[2];
+    expect(row.querySelector('td[data-label="CPU"]')?.textContent).toContain('—');
+    expect(row.querySelector('td[data-label="Memory"]')?.textContent).toContain('—');
+    expect(row.querySelector('td[data-label="CPU"] path')?.getAttribute('d')).toBe('M0,17L60,17');
+  });
+
+  it('Net RX/TX cell', async () => {
+    await mount([stack('alpha'), stack('beta')], [], dashboardFake());
+    await screen.findByText('2.0 KiB/s / 512 B/s');
+    const row = screen.getAllByRole('row')[2];
+    expect(row.querySelector('td[data-label="Net RX / TX"]')?.textContent?.trim()).toBe('—');
+  });
+
+  it('columns keep card data-labels', async () => {
+    await mount([stack('alpha')], [], dashboardFake());
+    const row = screen.getAllByRole('row')[1];
+    const labels = [...row.querySelectorAll('td')].map((td) => td.getAttribute('data-label'));
+    expect(labels).toEqual(['Stack', 'Status', 'Services', 'Health', 'Ports', 'CPU', 'Memory', 'Net RX / TX', 'Actions']);
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent?.trim())).toEqual(['Stack', 'Status', 'Services', 'Health', 'Ports', 'CPU', 'Memory', 'Net RX / TX', 'Actions']);
   });
 
   it('health shows good and bad always and starting only when present', async () => {
