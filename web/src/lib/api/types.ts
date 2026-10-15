@@ -88,6 +88,8 @@ export interface ContainerDetail {
   networks: Record<string, string>;
   mounts: ContainerMount[];
   labels: Record<string, string>;
+  /** Memory limit in bytes; null = no limit. */
+  memoryLimit: number | null;
 }
 
 export interface ContainerInfo {

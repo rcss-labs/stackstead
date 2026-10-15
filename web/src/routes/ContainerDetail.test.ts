@@ -63,6 +63,7 @@ const detail = (over: Partial<Detail> = {}): Detail => ({
   networks: { bridge: '172.17.0.2' },
   mounts: [{ type: 'volume', source: 'redis-data', destination: '/data', readOnly: false }],
   labels: { 'com.example.owner': 'me', 'com.docker.compose.project': 'shop' },
+  memoryLimit: null,
   ...over,
 });
 
@@ -107,7 +108,9 @@ describe('ContainerDetail', () => {
     const group = screen.getByRole('group');
     expect(within(group).getByRole('button', { name: 'Stop redis' })).toBeTruthy();
     expect(within(group).getByRole('button', { name: 'Restart redis' })).toBeTruthy();
-    await waitFor(() => expect(screen.getByText(FULL_ID)).toBeTruthy());
+    await waitFor(() => expect(screen.getByTitle(FULL_ID)).toBeTruthy());
+    expect(screen.getByTitle(FULL_ID).textContent).toBe(FULL_ID.slice(0, 12));
+    expect(screen.queryByText(FULL_ID)).toBeNull();
     expect(screen.getByRole('button', { name: 'Copy id' })).toBeTruthy();
   });
 
@@ -115,7 +118,7 @@ describe('ContainerDetail', () => {
     const user = userEvent.setup(); // installs its own clipboard stub; spy after it
     const writeText = vi.spyOn(navigator.clipboard, 'writeText');
     render(ContainerDetail, { name: 'redis' });
-    await screen.findByText(FULL_ID);
+    await screen.findByTitle(FULL_ID);
     await user.click(screen.getByRole('button', { name: 'Copy id' }));
     expect(writeText).toHaveBeenCalledWith(FULL_ID);
   });
@@ -163,13 +166,24 @@ describe('ContainerDetail', () => {
     expect(container.textContent).not.toMatch(/hunter2|requirepass|SECRET|entrypoint/i);
   });
 
-  it('shows the resources box from the list row with dashes when unknown', async () => {
-    listRes = { body: [row({ cpu: 12.5, mem: 52428800, memLimit: 104857600 })] };
+  it('shows used / limit when the details carry a memory limit (not the stats limit)', async () => {
+    listRes = { body: [row({ cpu: 12.5, mem: 52428800, memLimit: 999999999999 })] };
+    detailRes = { body: detail({ memoryLimit: 104857600 }) };
     render(ContainerDetail, { name: 'redis' });
     const box = await screen.findByRole('region', { name: /resources/i });
     expect(box.textContent).toContain('12.5%');
+    await waitFor(() => expect(box.textContent).toContain('50.0 MiB / 100.0 MiB'));
+  });
+
+  it('shows only the used memory when the container has no limit, even if the stats limit is host RAM', async () => {
+    listRes = { body: [row({ cpu: 12.5, mem: 52428800, memLimit: 17179869184 })] };
+    detailRes = { body: detail({ memoryLimit: null }) };
+    render(ContainerDetail, { name: 'redis' });
+    const box = await screen.findByRole('region', { name: /resources/i });
+    await screen.findByText('unless-stopped');
     expect(box.textContent).toContain('50.0 MiB');
-    expect(box.textContent).toContain('100.0 MiB');
+    expect(box.textContent).not.toContain('/');
+    expect(box.textContent).not.toContain('GiB');
   });
 
   it('shows dashes when there is no sampler reading', async () => {
@@ -190,6 +204,16 @@ describe('ContainerDetail', () => {
     const signal = stream.requests.find((r) => r.path.startsWith(`/api/containers/${ID}/logs`))!.signal!;
     await userEvent.setup().click(screen.getByRole('tab', { name: 'Details' }));
     await waitFor(() => expect(signal.aborted).toBe(true));
+  });
+
+  it('aborts the logs stream when the page is destroyed', async () => {
+    navigate('/containers/redis?tab=logs');
+    const { unmount } = render(ContainerDetail, { name: 'redis' });
+    await waitFor(() => expect(streamed(`/api/containers/${ID}/logs`)).toBe(true));
+    const signal = stream.requests.find((r) => r.path.startsWith(`/api/containers/${ID}/logs`))!.signal!;
+    expect(signal.aborted).toBe(false);
+    unmount();
+    expect(signal.aborted).toBe(true);
   });
 
   it('opens the logs viewer for ?tab=logs', async () => {

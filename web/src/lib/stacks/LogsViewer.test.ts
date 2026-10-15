@@ -21,6 +21,16 @@ afterEach(() => {
 });
 
 describe('LogsViewer', () => {
+  it('aborts its stream when destroyed', async () => {
+    fake = installFakeStream({ [PATH]: [] });
+    const { unmount } = render(LogsViewer, { source: { kind: 'stack', name: 'web' }, services: ['api'] });
+    await tick();
+    const signal = fake.requests[0].signal!;
+    expect(signal.aborted).toBe(false);
+    unmount();
+    expect(signal.aborted).toBe(true);
+  });
+
   it('TestFloodRendersBoundedRows', async () => {
     const flood = Array.from({ length: 20000 }, (_, i) => logEvent(C_A, i + 1, 1, `line ${i}`)).join('');
     fake = installFakeStream({ [PATH]: [flood] });

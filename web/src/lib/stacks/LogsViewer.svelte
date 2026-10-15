@@ -261,5 +261,11 @@
   .txt { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
   .row.danger .txt { color: var(--danger); }
   .row.warning .txt { color: var(--warning); }
+  /* Narrow screens: timestamp, service and stream share one line above the message, which gets the full width. */
+  @media (max-width: 600px) {
+    .row { grid-template-columns: auto auto 1fr; column-gap: 8px; padding-block: 2px; }
+    .row .txt { grid-column: 1 / -1; }
+    .search { width: 100%; flex: 1 1 100%; }
+  }
   .newbar { display: flex; gap: var(--space-2); align-items: center; }
 </style>

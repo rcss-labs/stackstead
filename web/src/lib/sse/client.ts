@@ -32,6 +32,24 @@ export interface SSEHandle {
 
 const MIN_RETRY_MS = 250;
 
+// Every live handle, so leaving the page releases its connections at once: Chrome allows ~6 HTTP/1.1
+// connections per host and keeps a left-behind stream's slot until the server notices.
+interface Pausable {
+  suspend(): void;
+  resume(): void;
+}
+const handles = new Set<Pausable>();
+let pageListeners = false;
+function trackPageLifecycle() {
+  if (pageListeners || typeof window === 'undefined') return;
+  pageListeners = true;
+  window.addEventListener('pagehide', () => handles.forEach((h) => h.suspend()));
+  // Only a back/forward-cache restore re-shows a page that already ran pagehide.
+  window.addEventListener('pageshow', (e) => {
+    if ((e as PageTransitionEvent).persisted) handles.forEach((h) => h.resume());
+  });
+}
+
 export function openSSE(o: SSEOptions): SSEHandle {
   const heartbeatMs = o.heartbeatTimeoutMs ?? 45_000;
   let minMs = o.backoff?.minMs ?? 1000;
@@ -41,6 +59,7 @@ export function openSSE(o: SSEOptions): SSEHandle {
 
   let status: SSEStatus = 'connecting';
   let closed = false;
+  let suspended = false;
   let attempt = 0;
   let trackedId = typeof o.lastEventId === 'string' ? o.lastEventId : undefined;
   let controller: AbortController | undefined;
@@ -59,7 +78,7 @@ export function openSSE(o: SSEOptions): SSEHandle {
   }
 
   function scheduleReconnect(error: string) {
-    if (closed) return;
+    if (closed || suspended) return;
     stopHeartbeat();
     const base = Math.min(maxMs, minMs * 2 ** attempt);
     const delay = Math.max(0, base * (1 + (Math.random() * 2 - 1) * 0.2));
@@ -73,7 +92,7 @@ export function openSSE(o: SSEOptions): SSEHandle {
   }
 
   async function connect() {
-    if (closed) return;
+    if (closed || suspended) return;
     const ac = new AbortController();
     controller = ac;
     let timedOut = false;
@@ -158,16 +177,40 @@ export function openSSE(o: SSEOptions): SSEHandle {
     if (closed) return;
     closed = true;
     status = 'closed';
+    handles.delete(pausable);
     stopHeartbeat();
     if (retryTimer !== undefined) clearT(retryTimer);
     retryTimer = undefined;
     controller?.abort();
   }
 
+  function suspend() {
+    if (closed || suspended) return;
+    suspended = true;
+    stopHeartbeat();
+    if (retryTimer !== undefined) clearT(retryTimer);
+    retryTimer = undefined;
+    const ac = controller;
+    controller = undefined; // makes the in-flight read/catch paths treat themselves as stale
+    ac?.abort();
+  }
+
+  function resume() {
+    if (closed || !suspended) return;
+    suspended = false;
+    attempt = 0;
+    setStatus('reconnecting', { attempt: 0 });
+    void connect();
+  }
+
+  // Registered before the first callback can fire: a callback may close the handle synchronously.
+  const pausable: Pausable = { suspend, resume };
+  handles.add(pausable);
+  trackPageLifecycle();
   setStatus('connecting');
   void connect();
 
-  return {
+  const handle: SSEHandle = {
     close,
     get status() {
       return status;
@@ -176,4 +219,5 @@ export function openSSE(o: SSEOptions): SSEHandle {
       return trackedId;
     },
   };
+  return handle;
 }

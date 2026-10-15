@@ -108,6 +108,11 @@
   function selectTab(id: string) {
     if (id !== activeTab) navigate(containerUrl(id));
   }
+  // The limit comes from the container's own config; the stats limit is host RAM for unlimited containers.
+  function memoryText(used: number | null, limit: number | null): string {
+    if (used === null) return '—';
+    return limit ? `${formatBytes(used)} / ${formatBytes(limit)}` : formatBytes(used);
+  }
   const unknownTime = (iso: string | null) => !iso || iso.startsWith('0001-');
 </script>
 
@@ -130,6 +135,7 @@
   {/if}
 {:else}
   {@const c = row}
+  {@const fullId = detail?.id ?? c.id}
   <section class="page">
     {#if $listError}
       <Banner kind="warning" title="Container list out of date">{#snippet children()}Showing the last known state; {$listError}{/snippet}</Banner>
@@ -159,8 +165,8 @@
         </div>
       </div>
       <div class="row2">
-        <span class="mono id">{detail?.id ?? c.id}</span>
-        <CopyButton text={detail?.id ?? c.id} label="Copy id" />
+        <span class="mono id" title={fullId}>{fullId.slice(0, 12)}</span>
+        <CopyButton text={fullId} label="Copy id" />
       </div>
     </header>
 
@@ -225,7 +231,7 @@
                 <dd class="mono">{c.cpu !== null ? formatPercent(c.cpu) : '—'}</dd>
                 <dt>Memory</dt>
                 <dd class="mono">
-                  {c.mem !== null ? formatBytes(c.mem) : '—'}{#if c.mem !== null && c.memLimit} / {formatBytes(c.memLimit)}{/if}
+                  {memoryText(c.mem, detail?.memoryLimit ?? null)}
                 </dd>
               </dl>
             </section>
@@ -253,8 +259,9 @@
   }
   .open-stack:hover { background: var(--hover); }
   .note { color: var(--muted); font-size: 12.5px; }
-  .row2 { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; min-width: 0; }
-  .id { overflow-wrap: anywhere; min-width: 0; }
+  .row2 { display: flex; align-items: center; flex-wrap: nowrap; gap: 8px; color: var(--muted); font-size: 12.5px; min-width: 0; }
+  .id { white-space: nowrap; }
+  .row2 :global(button) { white-space: nowrap; flex: none; }
   .mono { font-family: var(--mono); }
   .tag { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 5px; }
   .health { display: inline-flex; align-items: center; font-size: 11px; color: var(--muted); }

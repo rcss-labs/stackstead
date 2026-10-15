@@ -66,7 +66,7 @@
       </div>
       <label class="search">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={ICONS.search}></path></svg>
-        <input type="search" aria-label="Search containers" placeholder="Filter by name, image, stack or port" bind:value={query} />
+        <input type="search" aria-label="Search containers" placeholder="Filter containers" bind:value={query} />
       </label>
     </div>
     <div class="card">
