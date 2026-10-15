@@ -183,7 +183,7 @@
   code { font-family: var(--mono); font-size: 12px; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
   .svc :global(.form-error) { white-space: pre-wrap; }
-  .footer { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-top: 1px solid var(--border); }
+  .footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 12px 14px; border-top: 1px solid var(--border); }
   .check { display: flex; gap: 8px; align-items: center; font-size: 12.5px; }
   .spacer { flex: 1; }
   .footer a { color: var(--muted); font-size: 13px; }

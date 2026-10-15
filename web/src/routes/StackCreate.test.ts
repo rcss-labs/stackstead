@@ -127,7 +127,7 @@ describe('StackCreate', () => {
     const user = userEvent.setup();
     render(StackCreate);
     await user.type(screen.getByLabelText('Stack name'), 'web');
-    await user.click(screen.getByLabelText('From build'));
+    await user.click(screen.getByLabelText('From Dockerfile'));
     await user.type(screen.getByLabelText('Build context'), '/etc');
     await submit(user);
     expect(await screen.findByText('path is outside the allowed roots')).toBeTruthy();
@@ -149,12 +149,12 @@ describe('StackCreate', () => {
     const user = userEvent.setup();
     render(StackCreate);
     await user.type(screen.getByLabelText('Stack name'), 'web');
-    await user.click(screen.getByLabelText('From build'));
+    await user.click(screen.getByLabelText('From Dockerfile'));
     await user.type(screen.getByLabelText('Build context'), '/etc');
     await submit(user);
     await screen.findByText('bad context');
-    await user.click(screen.getByLabelText('From image'));
-    await user.click(screen.getByLabelText('From build'));
+    await user.click(screen.getByLabelText('From Image'));
+    await user.click(screen.getByLabelText('From Dockerfile'));
     expect(screen.queryByText('bad context')).toBeNull();
   });
 
@@ -165,7 +165,7 @@ describe('StackCreate', () => {
     });
     const user = userEvent.setup();
     render(StackCreate);
-    await user.click(screen.getByLabelText('From build'));
+    await user.click(screen.getByLabelText('From Dockerfile'));
     await user.type(screen.getByLabelText('Build context'), '/');
     await user.click(screen.getByRole('button', { name: 'Browse for Dockerfile' }));
     await user.click(await screen.findByRole('button', { name: '/' }));
@@ -210,7 +210,7 @@ describe('StackCreate', () => {
     const user = userEvent.setup();
     render(StackCreate);
     await user.type(screen.getByLabelText('Stack name'), 'web');
-    await user.click(screen.getByLabelText('From build'));
+    await user.click(screen.getByLabelText('From Dockerfile'));
     await user.type(screen.getByLabelText('Build context'), '/srv/app');
     await user.click(screen.getByRole('button', { name: 'Browse for Dockerfile' }));
     await user.click(await screen.findByRole('button', { name: '/srv/app' }));

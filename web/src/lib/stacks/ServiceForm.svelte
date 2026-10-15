@@ -174,8 +174,8 @@
     <legend class="title">Source</legend>
     {@render readonlyNote(ro('build') ? 'build' : 'image')}
     <div class="segmented" role="radiogroup" aria-label="Source type">
-      <span class="seg"><input type="radio" name="svc-source" value="image" aria-label="From image" checked={form.source === 'image'} disabled={sourceReadOnly} onchange={() => (form.source = 'image')} /><span aria-hidden="true">Image</span></span>
-      <span class="seg"><input type="radio" name="svc-source" value="build" aria-label="From build" checked={form.source === 'build'} disabled={sourceReadOnly} onchange={() => (form.source = 'build')} /><span aria-hidden="true">Dockerfile</span></span>
+      <label class="seg"><input type="radio" name="svc-source" value="image" checked={form.source === 'image'} disabled={sourceReadOnly} onchange={() => (form.source = 'image')} /><span class="visually-hidden">From</span> Image</label>
+      <label class="seg"><input type="radio" name="svc-source" value="build" checked={form.source === 'build'} disabled={sourceReadOnly} onchange={() => (form.source = 'build')} /><span class="visually-hidden">From</span> Dockerfile</label>
     </div>
     {#if form.source === 'image'}
       <Field label="Image" id="svc-image" mono error={shown['image']} hint="For example nginx:1.27" readonly={sourceReadOnly}>
@@ -184,11 +184,6 @@
         {/snippet}
       </Field>
     {:else}
-      <Field label="Image tag" id="svc-image" mono error={shown['image']} hint="Optional; tag applied to the built image" readonly={sourceReadOnly}>
-        {#snippet children(aria)}
-          <input type="text" {...aria} bind:value={form.image} autocomplete="off" spellcheck="false" />
-        {/snippet}
-      </Field>
       <Field label="Build context" id="svc-build-context" mono error={shown['build.context']} readonly={sourceReadOnly}>
         {#snippet children(aria)}
           <div class="inline">
@@ -207,6 +202,11 @@
               <Button variant="secondary" aria-label="Browse for Dockerfile" onclick={() => browse('file', (p) => (form.dockerfile = p))}>Browse…</Button>
             {/if}
           </div>
+        {/snippet}
+      </Field>
+      <Field label="Image tag" id="svc-image" mono error={shown['image']} hint="Optional; tag applied to the built image" readonly={sourceReadOnly}>
+        {#snippet children(aria)}
+          <input type="text" {...aria} bind:value={form.image} autocomplete="off" spellcheck="false" />
         {/snippet}
       </Field>
     {/if}
@@ -368,40 +368,6 @@
     </Field>
   </fieldset>
 
-  <div class="grid3">
-    <fieldset aria-label="Restart policy group" aria-describedby={ro('restart') ? 'svc-ro-restart' : undefined}>
-      {@render readonlyNote('restart')}
-      <Field label="Restart policy" id="svc-restart" error={shown['restart']} readonly={ro('restart')}>
-        {#snippet children(aria)}
-          {@const { readonly: isReadonly, ...attrs } = aria}
-          <select {...attrs} disabled={isReadonly} bind:value={form.restart}>
-            {#each RESTART as [value, label] (value)}
-              <option {value}>{label}</option>
-            {/each}
-            {#if !RESTART.some(([v]) => v === form.restart)}
-              <option value={form.restart}>{form.restart}</option>
-            {/if}
-          </select>
-        {/snippet}
-      </Field>
-    </fieldset>
-    <fieldset class="limits" aria-label="Resources" aria-describedby={ro('limits') ? 'svc-ro-limits' : undefined}>
-      {@render readonlyNote('limits')}
-      <div class="pair">
-        <Field label="CPUs" id="svc-cpus" mono error={shown['limits.cpus']} hint="For example 0.5" readonly={ro('limits')}>
-          {#snippet children(aria)}
-            <input type="text" {...aria} bind:value={form.cpus} inputmode="decimal" autocomplete="off" />
-          {/snippet}
-        </Field>
-        <Field label="Memory" id="svc-memory" mono error={shown['limits.memory']} hint="For example 512M or 1G" readonly={ro('limits')}>
-          {#snippet children(aria)}
-            <input type="text" {...aria} bind:value={form.memory} autocomplete="off" spellcheck="false" />
-          {/snippet}
-        </Field>
-      </div>
-    </fieldset>
-  </div>
-
   <fieldset aria-describedby={ro('healthcheck') ? 'svc-ro-healthcheck' : undefined}>
     <legend class="title">Healthcheck</legend>
     {@render readonlyNote('healthcheck')}
@@ -437,6 +403,40 @@
       </Field>
     {/if}
   </fieldset>
+
+  <div class="grid3">
+    <fieldset aria-label="Restart policy group" aria-describedby={ro('restart') ? 'svc-ro-restart' : undefined}>
+      {@render readonlyNote('restart')}
+      <Field label="Restart policy" id="svc-restart" error={shown['restart']} readonly={ro('restart')}>
+        {#snippet children(aria)}
+          {@const { readonly: isReadonly, ...attrs } = aria}
+          <select {...attrs} disabled={isReadonly} bind:value={form.restart}>
+            {#each RESTART as [value, label] (value)}
+              <option {value}>{label}</option>
+            {/each}
+            {#if !RESTART.some(([v]) => v === form.restart)}
+              <option value={form.restart}>{form.restart}</option>
+            {/if}
+          </select>
+        {/snippet}
+      </Field>
+    </fieldset>
+    <fieldset class="limits" aria-label="Resources" aria-describedby={ro('limits') ? 'svc-ro-limits' : undefined}>
+      {@render readonlyNote('limits')}
+      <div class="pair">
+        <Field label="CPUs" id="svc-cpus" mono error={shown['limits.cpus']} hint="For example 0.5" readonly={ro('limits')}>
+          {#snippet children(aria)}
+            <input type="text" {...aria} bind:value={form.cpus} inputmode="decimal" autocomplete="off" />
+          {/snippet}
+        </Field>
+        <Field label="Memory" id="svc-memory" mono error={shown['limits.memory']} hint="For example 512M or 1G" readonly={ro('limits')}>
+          {#snippet children(aria)}
+            <input type="text" {...aria} bind:value={form.memory} autocomplete="off" spellcheck="false" />
+          {/snippet}
+        </Field>
+      </div>
+    </fieldset>
+  </div>
 </div>
 
 <style>
@@ -446,7 +446,7 @@
   .service-form > :global(.visually-hidden + *) { border-top: 0; }
   .names { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
   fieldset { display: flex; flex-direction: column; gap: 10px; border: 0; margin: 0; min-width: 0; }
-  fieldset.limits { grid-column: span 2; padding: 0; border: 0; }
+  fieldset.limits { display: contents; }
   legend, .title { font-size: 12.5px; font-weight: 600; padding: 0; margin-bottom: 10px; float: left; width: 100%; }
   legend + :global(*) { clear: both; }
   .form-error { color: var(--danger); border: 1px solid var(--danger); border-radius: var(--radius-md); padding: var(--space-3); overflow-wrap: anywhere; }
@@ -456,7 +456,8 @@
   .inline input { flex: 1; min-width: 0; }
   .grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; }
   .grid3 > fieldset { padding: 0; }
-  .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; }
+  .pair { display: contents; }
+  .grid3 :global(.note) { grid-column: 1 / -1; }
   .segmented { display: inline-flex; align-self: flex-start; border: 1px solid var(--border-strong); border-radius: var(--radius); overflow: hidden; }
   .segmented .seg { position: relative; display: inline-flex; align-items: center; height: 26px; padding: 0 14px; font-size: 12.5px; color: var(--muted); cursor: pointer; }
   .segmented .seg + .seg { border-left: 1px solid var(--border-strong); }
