@@ -859,3 +859,66 @@ func TestDetailsAndActionUseFreshEngineStatus(t *testing.T) {
 		t.Errorf("action row status = %q, want the fresh engine status", row.Status)
 	}
 }
+
+// After an action the next list read must show the new state, not the 2 s
+// cache filled just before the click.
+func TestListIsFreshAfterAction(t *testing.T) {
+	eng := newFakeEngine()
+	for _, c := range containerObserve().containers {
+		eng.list = append(eng.list, c)
+	}
+	env, cookie := actionsEnv(t, eng, nil)
+	listState := func() string {
+		rec := env.do(t, "GET", "/api/containers", "", withCookie(cookie))
+		var rows []apitypes.ContainerRow
+		if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil || rec.Code != 200 {
+			t.Fatalf("%d %s %v", rec.Code, rec.Body, err)
+		}
+		for _, r := range rows {
+			if r.Name == "other-cron-1" {
+				return r.State
+			}
+		}
+		return "missing"
+	}
+	if got := listState(); got != "running" { // fills the cache
+		t.Fatalf("before = %q", got)
+	}
+	eng.onAction = func(id, action string) { // Docker now reports the container stopped, in both views
+		in := eng.inspect[idCron]
+		in.State, in.Status, in.Running = "exited", "exited", false
+		eng.inspect[idCron] = in
+		for i := range eng.list {
+			if eng.list[i].ID == idCron {
+				eng.list[i].State, eng.list[i].Status = "exited", "Exited (0) 1 second ago"
+			}
+		}
+	}
+	if rec := env.post(t, cookie, "/api/containers/"+idCron+"/stop"); rec.Code != 200 {
+		t.Fatalf("stop = %d %s", rec.Code, rec.Body)
+	}
+	if got := listState(); got != "exited" {
+		t.Errorf("list after action says %q, want exited", got)
+	}
+}
+
+// docker run --rm: the container is gone by the time the action returns, which
+// is a success, not a 404.
+func TestActionOnAutoRemoveContainerIs204(t *testing.T) {
+	eng := newFakeEngine()
+	eng.onAction = func(id, action string) { delete(eng.inspect, idCron) }
+	env, cookie := actionsEnv(t, eng, nil)
+	rec := env.post(t, cookie, "/api/containers/"+idCron+"/stop")
+	if rec.Code != 204 || rec.Body.Len() != 0 {
+		t.Errorf("= %d %q, want 204 with no body", rec.Code, rec.Body)
+	}
+}
+
+func TestContainerListDockerRefusalIs502(t *testing.T) {
+	eng := newFakeEngine()
+	eng.listErr = fmt.Errorf("list: %w", &engine.ActionError{Status: 500, Message: "docker exploded"})
+	_, get := containersEnv(t, containerObserve(), func(o *api.Options) { o.ContainerEngine = eng })
+	if res := get("/api/containers"); res.Code != 502 {
+		t.Errorf("= %d %s, want 502", res.Code, res.Body)
+	}
+}

@@ -104,6 +104,12 @@ export function createContainerList(deps: ContainerListDeps) {
   return {
     rows: { subscribe: rowsStore.subscribe } as Readable<ContainerRow[] | undefined>,
     error: { subscribe: errorStore.subscribe } as Readable<string | undefined>,
+    /** Apply a row the server just returned (an action's result) and drop any fetch that started before it. */
+    patch(fresh: ContainerRow) {
+      generation++;
+      busy = false;
+      rowsStore.update((rows) => rows?.map((r) => (r.id === fresh.id ? fresh : r)));
+    },
     /** Fetch now (Retry, or after an action changed a row). */
     refresh() {
       if (started && doc.visibilityState !== 'hidden') void load();

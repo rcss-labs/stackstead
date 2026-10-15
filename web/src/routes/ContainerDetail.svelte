@@ -160,7 +160,10 @@
             <a class="open-stack" href={`/stacks/${encodeURIComponent(c.stack)}`} use:link>Open stack</a>
             <span class="note">Managed by stack {c.stack}; use the stack's actions.</span>
           {:else}
-            <ContainerActions row={c} size="md" onchanged={() => list.refresh()} />
+            <ContainerActions row={c} size="md" onchanged={(fresh) => {
+              if (fresh) list.patch(fresh);
+              list.refresh();
+            }} />
           {/if}
         </div>
       </div>

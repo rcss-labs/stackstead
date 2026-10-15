@@ -19,7 +19,8 @@
     row: ContainerRow;
     /** `icon`: 26 px icon buttons (table rows); `md`: labelled buttons (page header). */
     size?: 'icon' | 'md';
-    onchanged?: (row: ContainerRow) => void;
+    /** The fresh row, or undefined when the action removed the container (204). */
+    onchanged?: (row: ContainerRow | undefined) => void;
   } = $props();
 
   const doneText: Record<ContainerAction, string> = { start: 'started', stop: 'stopped', restart: 'restarted' };

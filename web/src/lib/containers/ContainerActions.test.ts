@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { get } from 'svelte/store';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -101,6 +101,15 @@ describe('ContainerActions', () => {
     await waitFor(() => expect(onchanged).toHaveBeenCalledWith(fresh));
     expect(fake.calls.map((c) => `${c.method} ${c.path}`)).toEqual(['POST /api/containers/abc123def456/start']);
     expect(get(toasts).map((t) => t.message)).toEqual(['redis started']);
+  });
+
+  it('on 204 (the action removed the container) still toasts success and reports no row', async () => {
+    const onchanged = vi.fn();
+    const user = mount(row(), { status: 204 }, { onchanged });
+    await user.click(screen.getByRole('button', { name: 'Stop redis' }));
+    await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Stop' }));
+    await waitFor(() => expect(onchanged).toHaveBeenCalledWith(undefined));
+    expect(get(toasts).map((t) => t.message)).toEqual(['redis stopped']);
   });
 
   it.each([

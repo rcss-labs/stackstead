@@ -162,7 +162,7 @@ export const api = {
   containers: () => get<ContainerRow[]>('/api/containers'),
   container: (id: string) => get<ContainerDetail>(`/api/containers/${seg(id)}`),
   containerAction: (id: string, action: 'start' | 'stop' | 'restart') =>
-    post<ContainerRow>(`/api/containers/${seg(id)}/${seg(action)}`),
+    post<ContainerRow | undefined>(`/api/containers/${seg(id)}/${seg(action)}`), // 204 when the action removed the container
 
   stacks: () => get<StackSummary[]>('/api/stacks'),
   stack: (name: string) => get<StackDetail>(`/api/stacks/${seg(name)}`),

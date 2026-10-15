@@ -69,7 +69,7 @@ const detail = (over: Partial<Detail> = {}): Detail => ({
 
 let fake: FakeFetch;
 let stream: FakeStream;
-let listRes: FakeResponse | (() => FakeResponse);
+let listRes: FakeResponse | (() => FakeResponse | Promise<FakeResponse>);
 let detailRes: FakeResponse | (() => FakeResponse);
 const calls = (path: string) => fake.calls.filter((c) => c.method === 'GET' && c.path === path).length;
 const streamed = (p: string) => stream.requests.some((r) => r.path.startsWith(p));
@@ -221,6 +221,23 @@ describe('ContainerDetail', () => {
     render(ContainerDetail, { name: 'redis' });
     await waitFor(() => expect(streamed(`/api/containers/${ID}/logs`)).toBe(true));
     expect(screen.queryByText('unless-stopped')).toBeNull();
+  });
+
+  it('applies the action row to the header at once, without waiting for the list refetch', async () => {
+    const user = userEvent.setup();
+    render(ContainerDetail, { name: 'redis' });
+    await screen.findByRole('heading', { level: 1, name: 'redis' });
+    const group = screen.getByRole('group');
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    listRes = async () => {
+      await gate;
+      return { body: [row()] };
+    };
+    await user.click(within(group).getByRole('button', { name: 'Stop redis' }));
+    await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Stop' }));
+    await within(group).findByRole('button', { name: 'Start redis' });
+    release();
   });
 
   it('refetches details on a change for its project, any change without a project, and resync', async () => {

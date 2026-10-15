@@ -157,7 +157,10 @@
               <td role="cell" data-label="Actions" class="row-actions">
                 <span class="actions">
                   <a class="logs" href={`/containers/${encodeURIComponent(c.name)}?tab=logs`} use:link>Logs</a>
-                  <ContainerActions row={c} onchanged={() => list.refresh()} />
+                  <ContainerActions row={c} onchanged={(fresh) => {
+                    if (fresh) list.patch(fresh);
+                    list.refresh();
+                  }} />
                 </span>
               </td>
             </tr>

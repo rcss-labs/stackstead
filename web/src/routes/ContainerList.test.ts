@@ -136,17 +136,38 @@ describe('ContainerList', () => {
     expect(screen.getByRole('button', { name: 'Restart free' })).toBeTruthy();
   });
 
-  it('refetches the list after a successful action', async () => {
+  it('applies the returned row at once and also refetches, without waiting for the refetch', async () => {
     const { user } = await mount({ body: [row('free')] });
     await screen.findByRole('link', { name: 'free' });
     fake.restore();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
     fake = installFakeFetch({
-      'GET /api/containers': { body: [row('free', { state: 'exited', exitCode: 0 })] },
-      'POST /api/containers/free00000000/stop': { body: row('free') },
+      'GET /api/containers': async () => {
+        await gate; // the refetch is still in flight (or would serve a stale cache)
+        return { body: [row('free')] };
+      },
+      'POST /api/containers/free00000000/stop': { body: row('free', { state: 'exited', exitCode: 0 }) },
     });
     await user.click(screen.getByRole('button', { name: 'Stop free' }));
     await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Stop' }));
     await screen.findByRole('button', { name: 'Start free' });
+    await waitFor(() => expect(fake.calls.some((c) => c.method === 'GET' && c.path === '/api/containers')).toBe(true));
+    release();
+  });
+
+  it('refetches after a 204 (container removed by the action) and the row disappears', async () => {
+    const { user } = await mount({ body: [row('free'), row('other')] });
+    await screen.findByRole('link', { name: 'free' });
+    fake.restore();
+    fake = installFakeFetch({
+      'GET /api/containers': { body: [row('other')] },
+      'POST /api/containers/free00000000/stop': { status: 204 },
+    });
+    await user.click(screen.getByRole('button', { name: 'Stop free' }));
+    await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Stop' }));
+    await waitFor(() => expect(screen.queryByRole('link', { name: 'free' })).toBeNull());
+    expect(screen.getByRole('link', { name: 'other' })).toBeTruthy();
   });
 
   it('filters by chip with counts and aria-pressed', async () => {

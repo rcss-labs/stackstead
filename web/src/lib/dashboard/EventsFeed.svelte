@@ -40,7 +40,11 @@
         <li>
           <span class="time">{clock(e.time)}</span>
           <span class="action {tone(actionOf(e))}" title={actionOf(e)}>{actionOf(e)}</span>
-          <a class="subject" href={`/containers/${encodeURIComponent(e.container)}`} title={subject(e)} use:link>{subject(e)}</a>
+          {#if e.container}
+            <a class="subject" href={`/containers/${encodeURIComponent(e.container)}`} title={subject(e)} use:link>{subject(e)}</a>
+          {:else}
+            <span class="subject" title={subject(e)}>{subject(e)}</span>
+          {/if}
         </li>
       {/each}
     </ul>

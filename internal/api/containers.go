@@ -52,10 +52,26 @@ type containerCache struct {
 	body     []apitypes.ContainerRow
 	ok       bool
 	inflight *containerFlight
+	// gen counts invalidations; a computation started under an older
+	// generation must not repopulate the cache.
+	gen uint64
+}
+
+// invalidateContainerList drops the cached list after a change Docker has
+// already made, and detaches any running computation so neither it nor new
+// readers reuse pre-change data.
+func (s *server) invalidateContainerList() {
+	c := &s.containerCache
+	c.mu.Lock()
+	c.ok = false
+	c.gen++
+	c.inflight = nil
+	c.mu.Unlock()
 }
 
 type containerFlight struct {
 	done chan struct{}
+	gen  uint64
 	body []apitypes.ContainerRow
 	err  error
 	// unavailable marks a state-cache error wrapping engine.ErrUnavailable.
@@ -75,7 +91,7 @@ func (s *server) handleContainerList(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, engine.ErrUnavailable):
 		writeError(w, http.StatusServiceUnavailable, "docker engine is unavailable")
 	case err != nil:
-		s.internalError(w, r, err)
+		s.writeEngineError(w, r, err)
 	default:
 		writeJSON(w, http.StatusOK, body)
 	}
@@ -94,7 +110,7 @@ func (s *server) containerList(ctx context.Context) ([]apitypes.ContainerRow, er
 	}
 	f := c.inflight
 	if f == nil {
-		f = &containerFlight{done: make(chan struct{})}
+		f = &containerFlight{done: make(chan struct{}), gen: c.gen}
 		c.inflight = f
 		go s.runContainerList(ctx, f, now)
 	}
@@ -119,8 +135,10 @@ func (s *server) runContainerList(ctx context.Context, f *containerFlight, now t
 		}
 		c := &s.containerCache
 		c.mu.Lock()
-		c.inflight = nil
-		if f.err == nil {
+		if c.inflight == f {
+			c.inflight = nil
+		}
+		if f.err == nil && f.gen == c.gen {
 			c.body, c.at, c.ok = f.body, now, true
 		}
 		c.mu.Unlock()
@@ -442,9 +460,16 @@ func (s *server) handleContainerAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.opts.Logger.Info("container action", "container", insp.Name, "action", action)
+	s.invalidateContainerList()
 
 	// Docker's answer, not the cache, says what the container looks like now.
 	after, err := s.opts.ContainerEngine.InspectContainer(r.Context(), insp.ID)
+	if errors.Is(err, engine.ErrNotFound) {
+		// An auto-remove container is gone once it stops: the action worked.
+		s.opts.Logger.Info("container removed by the action", "container", insp.Name, "action", action)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if err != nil {
 		s.writeEngineError(w, r, err)
 		return

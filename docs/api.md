@@ -255,7 +255,9 @@ events, ids and `Last-Event-ID` resume as the stack logs.
 `POST /api/containers/{id}/start`, `stop` or `restart` takes a JSON body
 (`{}`), waits for Docker (at most 30 seconds; `stop` and `restart` give the
 container 10 seconds to exit) and returns the container's row, read fresh from
-Docker. Containers of a registered stack are refused: use the stack's actions.
+Docker, or `204 No Content` when the action removed the container (for
+example a `--rm` container that was stopped). Containers of a registered stack
+are refused: use the stack's actions.
 
 `{id}` is a container id, or an unambiguous prefix, of 12 to 64 hex
 characters; it is never a name (look the id up in the list). Errors: `404`
@@ -271,7 +273,9 @@ the data directory: CPU, memory and limit, and cumulative network and block I/O.
 `metrics_retention` (default `72h`) are pruned hourly. At the default settings
 that is about 26,000 rows per container. Containers outside compose are
 sampled for live values only (the Containers screen, Top consumers and
-`/metrics`) and never stored. If the database cannot be written,
+`/metrics`) and never stored. Sampling runs with a concurrency of 4 and is sized
+for about 40 running containers per 10 s tick; beyond that a tick can overrun
+and the next ticks are skipped, so samples get sparser. If the database cannot be written,
 `/api/status` reports `metricsDegraded` and live data keeps working.
 
 ### Prometheus

@@ -190,6 +190,11 @@ describe('EventsFeed', () => {
     expect(screen.getByRole('link', { name: 'lone' }).getAttribute('href')).toBe('/containers/lone');
   });
 
+  it('does not link an event that has no container', () => {
+    render(EventsFeed, { props: { events: [ev('start', '')], connection: 'open' } });
+    expect(screen.queryByRole('link')).toBeNull();
+  });
+
   it('die shows exit code', () => {
     render(EventsFeed, { props: { events: [ev('die', 'web-1', { exitCode: 137 })], connection: 'open' } });
     expect(screen.getByText('web-1 exit 137')).toBeTruthy();

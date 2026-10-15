@@ -219,6 +219,21 @@ describe('createContainerList', () => {
     c.stop();
   });
 
+  it('patch replaces the row with the same id and drops a fetch that started before it', async () => {
+    let resolve!: (r: ContainerRow[]) => void;
+    const c = make();
+    c.start();
+    await tick();
+    list.mockImplementationOnce(() => new Promise((r) => (resolve = r)));
+    c.refresh();
+    c.patch(row('a', { state: 'exited', exitCode: 0 }));
+    expect(get(c.rows)?.[0].state).toBe('exited');
+    resolve([row('a')]); // pre-action data landing late
+    await tick();
+    expect(get(c.rows)?.[0].state).toBe('exited');
+    c.stop();
+  });
+
   it('skips an interval tick while a fetch is in flight', async () => {
     list.mockImplementation(() => new Promise(() => {}));
     const c = make();
