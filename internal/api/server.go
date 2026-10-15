@@ -55,6 +55,9 @@ type Options struct {
 	// Restarts feeds the restarts24h column of /api/containers; nil reports
 	// zeros.
 	Restarts RestartsAPI
+	// ContainerEngine backs the container details and action routes, which
+	// are registered only when Stacks, Observe and ContainerEngine are set.
+	ContainerEngine ContainerEngineAPI
 }
 
 type server struct {
@@ -108,6 +111,9 @@ func New(opts Options) http.Handler {
 	s.registerDashboardRoutes(mux)
 	if opts.Stacks != nil && opts.Observe != nil {
 		s.registerContainerRoutes(mux)
+		if opts.ContainerEngine != nil {
+			s.registerContainerActionRoutes(mux)
+		}
 	}
 
 	// Unknown API paths get a JSON 404 (after auth, so they don't reveal which

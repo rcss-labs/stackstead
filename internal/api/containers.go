@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
+	"regexp"
 	"sort"
 	"sync"
 	"time"
@@ -17,10 +19,23 @@ import (
 // container id, nil before its first scan.
 type RestartsAPI interface{ RestartCounts() map[string]int }
 
+// ContainerEngineAPI is the part of *engine.Client the details and action
+// routes use.
+type ContainerEngineAPI interface {
+	ContainerAction(ctx context.Context, id, action string, stopTimeout int) error
+	InspectContainer(ctx context.Context, id string) (engine.ContainerInspect, error)
+}
+
 const (
 	containerListTTL = 2 * time.Second
 	// containerListTimeout bounds the shared list computation.
 	containerListTimeout = 10 * time.Second
+
+	// containerActionTimeout bounds one start/stop/restart: longer than the
+	// 10 s stop grace plus Docker's own work, and than the engine client's
+	// default timeout, which a deadline-less context would fall back to.
+	containerActionTimeout = 30 * time.Second
+	containerStopGrace     = 10 // seconds, Docker's ?t=
 
 	managedStack   = "stack"
 	managedCompose = "compose"
@@ -52,6 +67,8 @@ func (s *server) registerContainerRoutes(mux *http.ServeMux) {
 func (s *server) handleContainerList(w http.ResponseWriter, r *http.Request) {
 	body, err := s.containerList(r.Context())
 	switch {
+	case r.Context().Err() != nil:
+		// The client went away while waiting; nobody is left to answer.
 	case errors.Is(err, engine.ErrUnavailable):
 		writeError(w, http.StatusServiceUnavailable, "docker engine is unavailable")
 	case err != nil:
@@ -149,7 +166,9 @@ func (s *server) computeContainerList(ctx context.Context) ([]apitypes.Container
 		for name, ip := range c.Networks {
 			row.Networks[name] = ip
 		}
-		if i, ok := latest[c.Name]; ok {
+		// A stopped container keeps its last sample until the sampler's next
+		// tick; showing it would make a stopped container look busy.
+		if i, ok := latest[c.Name]; ok && c.State == "running" {
 			m := samples[i]
 			cpu, mem, limit := m.CPU, m.Mem, m.MemLimit
 			row.CPU, row.Mem, row.MemLimit = &cpu, &mem, &limit
@@ -207,7 +226,7 @@ func formatPorts(ps []engine.Port) []string {
 		if p.IP == "::" && hasV4[key{p.PublicPort, p.PrivatePort, p.Type}] {
 			continue
 		}
-		entries = append(entries, entry{p.PublicPort, fmt.Sprintf("%s:%d->%d/%s", p.IP, p.PublicPort, p.PrivatePort, p.Type)})
+		entries = append(entries, entry{p.PublicPort, fmt.Sprintf("%s:%d->%d/%s", hostForPort(p.IP), p.PublicPort, p.PrivatePort, p.Type)})
 	}
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].public != entries[j].public {
@@ -220,4 +239,216 @@ func formatPorts(ps []engine.Port) []string {
 		out = append(out, e.text)
 	}
 	return out
+}
+
+// hostForPort brackets IPv6 literals so "host:port" stays unambiguous.
+func hostForPort(ip string) string {
+	if addr, err := netip.ParseAddr(ip); err == nil && addr.Is6() {
+		return "[" + ip + "]"
+	}
+	return ip
+}
+
+var containerIDPattern = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
+
+func (s *server) registerContainerActionRoutes(mux *http.ServeMux) {
+	mux.Handle("GET /api/containers/{id}", s.requireSession(s.handleContainerDetails))
+	mux.Handle("POST /api/containers/{id}/{action}", s.requireSession(s.handleContainerAction))
+}
+
+// projectStacks maps compose project -> registered stack name, read fresh
+// from the registry so ownership checks never act on a cached view.
+func (s *server) projectStacks(ctx context.Context) (map[string]string, error) {
+	summaries, err := s.opts.Stacks.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]string, len(summaries))
+	for _, sum := range summaries {
+		if sum.Project != "" {
+			m[sum.Project] = sum.Name
+		}
+	}
+	return m, nil
+}
+
+// inspectContainer validates the id and inspects it, writing the error
+// response itself (404 bad/unknown id, 503 unavailable, 500 otherwise).
+func (s *server) inspectContainer(w http.ResponseWriter, r *http.Request) (engine.ContainerInspect, bool) {
+	id := r.PathValue("id")
+	if !containerIDPattern.MatchString(id) {
+		writeError(w, http.StatusNotFound, "container not found")
+		return engine.ContainerInspect{}, false
+	}
+	insp, err := s.opts.ContainerEngine.InspectContainer(r.Context(), id)
+	if err != nil {
+		s.writeEngineError(w, r, err)
+		return engine.ContainerInspect{}, false
+	}
+	return insp, true
+}
+
+// writeEngineError maps an engine error to the API's status codes.
+func (s *server) writeEngineError(w http.ResponseWriter, r *http.Request, err error) {
+	var actionErr *engine.ActionError
+	switch {
+	case r.Context().Err() != nil:
+		// The client went away; nobody is left to answer.
+	case errors.Is(err, engine.ErrNotFound):
+		writeError(w, http.StatusNotFound, "container not found")
+	case errors.As(err, &actionErr):
+		writeError(w, http.StatusBadGateway, actionErr.Message)
+	case errors.Is(err, engine.ErrUnavailable):
+		writeError(w, http.StatusServiceUnavailable, "docker engine is unavailable")
+	case errors.Is(err, context.DeadlineExceeded):
+		writeError(w, http.StatusServiceUnavailable, "Docker did not answer in time")
+	default:
+		s.internalError(w, r, err)
+	}
+}
+
+// liveStatus is Docker's human status text ("Up 3 seconds") from the state
+// cache snapshot when the container is there and current; inspect only has State.Status.
+func (s *server) liveStatus(ctx context.Context, insp engine.ContainerInspect) (status string, created time.Time) {
+	list, err := s.opts.Observe.Containers(ctx)
+	if err == nil {
+		for _, c := range list {
+			if c.ID == insp.ID {
+				// A snapshot that predates an action still says "Up ..."; only
+				// trust its text when it agrees with Docker's state.
+				if c.State == insp.State {
+					return c.Status, c.Created
+				}
+				return insp.Status, c.Created
+			}
+		}
+	}
+	return insp.Status, time.Time{}
+}
+
+// exitCodeOf is the exit code for containers that have stopped, else nil.
+func exitCodeOf(insp engine.ContainerInspect) *int {
+	if insp.State == "exited" || insp.State == "dead" {
+		code := insp.ExitCode
+		return &code
+	}
+	return nil
+}
+
+func timeOrNil(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	t = t.UTC()
+	return &t
+}
+
+func (s *server) handleContainerDetails(w http.ResponseWriter, r *http.Request) {
+	insp, ok := s.inspectContainer(w, r)
+	if !ok {
+		return
+	}
+	projects, err := s.projectStacks(r.Context())
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	owner := engine.Container{Labels: insp.Labels}
+	managed, stack := containerManaged(owner, projects)
+	status, _ := s.liveStatus(r.Context(), insp)
+	var restarts int
+	if s.opts.Restarts != nil {
+		restarts = s.opts.Restarts.RestartCounts()[insp.ID]
+	}
+	d := apitypes.ContainerDetail{
+		ID: insp.ID, Name: insp.Name, Image: insp.Image, State: insp.State, Status: status, Health: insp.Health,
+		StartedAt: timeOrNil(insp.StartedAt), FinishedAt: timeOrNil(insp.FinishedAt), ExitCode: exitCodeOf(insp),
+		RestartPolicy: insp.RestartPolicy, Restarts24h: restarts,
+		Project: owner.Project(), Service: owner.ComposeService(), Stack: stack, Managed: managed,
+		Ports: formatPorts(insp.Ports), Networks: map[string]string{}, Mounts: []apitypes.ContainerMount{},
+		Labels: map[string]string{},
+	}
+	for k, v := range insp.Networks {
+		d.Networks[k] = v
+	}
+	for k, v := range insp.Labels {
+		d.Labels[k] = v
+	}
+	for _, m := range insp.Mounts {
+		d.Mounts = append(d.Mounts, apitypes.ContainerMount{Type: m.Type, Source: m.Source, Destination: m.Destination, ReadOnly: m.ReadOnly})
+	}
+	writeJSON(w, http.StatusOK, d)
+}
+
+func (s *server) handleContainerAction(w http.ResponseWriter, r *http.Request) {
+	action := r.PathValue("action")
+	if action != "start" && action != "stop" && action != "restart" {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	var body struct{}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	insp, ok := s.inspectContainer(w, r)
+	if !ok {
+		return
+	}
+	projects, err := s.projectStacks(r.Context())
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if managed, stack := containerManaged(engine.Container{Labels: insp.Labels}, projects); managed == managedStack {
+		writeError(w, http.StatusConflict, fmt.Sprintf("%s belongs to stack %s; use the stack's actions", insp.Name, stack))
+		return
+	}
+
+	actx, cancel := context.WithTimeout(r.Context(), containerActionTimeout)
+	defer cancel()
+	if err := s.opts.ContainerEngine.ContainerAction(actx, insp.ID, action, containerStopGrace); err != nil {
+		s.writeEngineError(w, r, err)
+		return
+	}
+	s.opts.Logger.Info("container action", "container", insp.Name, "action", action)
+
+	// Docker's answer, not the cache, says what the container looks like now.
+	after, err := s.opts.ContainerEngine.InspectContainer(r.Context(), insp.ID)
+	if err != nil {
+		s.writeEngineError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.actionRow(r.Context(), after))
+}
+
+// actionRow is the §4.1 row for a freshly inspected container.
+func (s *server) actionRow(ctx context.Context, insp engine.ContainerInspect) apitypes.ContainerRow {
+	owner := engine.Container{Labels: insp.Labels}
+	managed, stack := managedNone, ""
+	if projects, err := s.projectStacks(ctx); err == nil {
+		managed, stack = containerManaged(owner, projects)
+	}
+	status, created := s.liveStatus(ctx, insp)
+	row := apitypes.ContainerRow{
+		ID: shortID(insp.ID), Name: insp.Name, Image: insp.Image, State: insp.State, Status: status,
+		Health: insp.Health, ExitCode: exitCodeOf(insp), CreatedAt: created.UTC(),
+		Project: owner.Project(), Service: owner.ComposeService(), Stack: stack, Managed: managed,
+		Ports: formatPorts(insp.Ports), Networks: map[string]string{},
+	}
+	for name, ip := range insp.Networks {
+		row.Networks[name] = ip
+	}
+	if s.opts.Restarts != nil {
+		row.Restarts24h = s.opts.Restarts.RestartCounts()[insp.ID]
+	}
+	if insp.State == "running" {
+		for _, m := range s.opts.Observe.Latest() {
+			if m.Container == insp.Name {
+				cpu, mem, limit := m.CPU, m.Mem, m.MemLimit
+				row.CPU, row.Mem, row.MemLimit = &cpu, &mem, &limit
+				break
+			}
+		}
+	}
+	return row
 }

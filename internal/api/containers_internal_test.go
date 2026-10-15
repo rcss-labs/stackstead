@@ -42,7 +42,8 @@ func TestFormatPorts(t *testing.T) {
 			{IP: "::", PrivatePort: 5432, PublicPort: 5432, Type: "tcp"},
 			{IP: "0.0.0.0", PrivatePort: 5432, PublicPort: 5432, Type: "tcp"},
 		}, []string{"0.0.0.0:5432->5432/tcp"}},
-		{"lone v6 kept", []engine.Port{{IP: "::", PrivatePort: 80, PublicPort: 80, Type: "tcp"}}, []string{":::80->80/tcp"}},
+		{"lone v6 is bracketed", []engine.Port{{IP: "::", PrivatePort: 80, PublicPort: 80, Type: "tcp"}}, []string{"[::]:80->80/tcp"}},
+		{"v6 loopback is bracketed", []engine.Port{{IP: "::1", PrivatePort: 80, PublicPort: 8080, Type: "tcp"}}, []string{"[::1]:8080->80/tcp"}},
 		{"sorted by public port, udp kept", []engine.Port{
 			{IP: "0.0.0.0", PrivatePort: 53, PublicPort: 5353, Type: "udp"},
 			{IP: "0.0.0.0", PrivatePort: 80, PublicPort: 8080, Type: "tcp"},
