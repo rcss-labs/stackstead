@@ -53,6 +53,16 @@ Notes on the stacks API:
   lifecycle actions and edits are refused if one appears later. Merge or
   remove the override file.
 
+- **Health and ports.** Each stack in `GET /api/stacks` and `GET
+  /api/stacks/{name}` carries `health`, counts of its containers by healthcheck
+  result (`healthy`, `unhealthy`, `starting`, `none` for running containers
+  without a healthcheck, and `failed` for dead, restarting and non-zero-exit
+  containers; clean exits, created and paused containers count nowhere), and
+  `ports`, the distinct host ports its compose file publishes, sorted by port
+  number (a range as `"8000-8010"`; container-only ports are left out). Each
+  container in the detail has its own `health`: `healthy`, `unhealthy`,
+  `starting` or `none`.
+
 Removing a stack never deletes files: the compose file and its folder stay on
 disk, and volumes are removed only when `volumes=true`. Stopping Stackstead
 never stops containers.
