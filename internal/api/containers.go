@@ -129,17 +129,18 @@ func (s *server) runContainerList(ctx context.Context, f *containerFlight, now t
 	f.body, f.err = s.computeContainerList(qctx)
 }
 
-func (s *server) computeContainerList(ctx context.Context) ([]apitypes.ContainerRow, error) {
-	// Docker's human Status ("Up 3 minutes") goes stale in the state cache, so
-	// read a fresh listing; the state cache is only the fallback when no engine
-	// is wired.
-	var list []engine.Container
-	var err error
+// freshContainers is the container listing with Docker's live human Status
+// ("Up 3 minutes"), which goes stale in the state cache; the cache is only the
+// fallback when no engine is wired.
+func (s *server) freshContainers(ctx context.Context) ([]engine.Container, error) {
 	if s.opts.ContainerEngine != nil {
-		list, err = s.opts.ContainerEngine.Containers(ctx)
-	} else {
-		list, err = s.opts.Observe.Containers(ctx)
+		return s.opts.ContainerEngine.Containers(ctx)
 	}
+	return s.opts.Observe.Containers(ctx)
+}
+
+func (s *server) computeContainerList(ctx context.Context) ([]apitypes.ContainerRow, error) {
+	list, err := s.freshContainers(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -330,14 +331,14 @@ func (s *server) writeEngineError(w http.ResponseWriter, r *http.Request, err er
 	}
 }
 
-// liveStatus is Docker's human status text ("Up 3 seconds") from the state
-// cache snapshot when the container is there and current; inspect only has State.Status.
+// liveStatus is Docker's human status text ("Up 3 seconds") from a fresh
+// listing when the container is there and current; inspect only has State.Status.
 func (s *server) liveStatus(ctx context.Context, insp engine.ContainerInspect) (status string, created time.Time) {
-	list, err := s.opts.Observe.Containers(ctx)
+	list, err := s.freshContainers(ctx)
 	if err == nil {
 		for _, c := range list {
 			if c.ID == insp.ID {
-				// A snapshot that predates an action still says "Up ..."; only
+				// A listing that predates an action may still say "Up ..."; only
 				// trust its text when it agrees with Docker's state.
 				if c.State == insp.State {
 					return c.Status, c.Created

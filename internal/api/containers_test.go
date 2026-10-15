@@ -410,7 +410,9 @@ func errorBody(t *testing.T, rec *httptest.ResponseRecorder) string {
 }
 
 func TestDetailsMapsInspect(t *testing.T) {
-	env, cookie := actionsEnv(t, newFakeEngine(), nil)
+	eng := newFakeEngine()
+	eng.list = containerObserve().containers
+	env, cookie := actionsEnv(t, eng, nil)
 	rec := env.do(t, "GET", "/api/containers/"+idWeb, "", withCookie(cookie))
 	if rec.Code != 200 {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
@@ -542,6 +544,7 @@ func TestActionGuardReadsRegistryEveryRequest(t *testing.T) {
 
 func TestActionAllowsUnregisteredComposeProject(t *testing.T) {
 	eng := newFakeEngine()
+	eng.list = containerObserve().containers
 	env, cookie := actionsEnv(t, eng, nil)
 	rec := env.post(t, cookie, "/api/containers/"+idCron+"/restart")
 	if rec.Code != 200 {
@@ -813,5 +816,46 @@ func TestContainerLogsRequiresSession(t *testing.T) {
 	env, _ := containersEnv(t, containerLogsObserve(), nil)
 	if rec := env.do(t, "GET", "/api/containers/"+idWeb+"/logs", ""); rec.Code != 401 {
 		t.Errorf("without cookie = %d, want 401", rec.Code)
+	}
+}
+
+// Details and action rows must show Docker's live Status text, not the state
+// cache's snapshot ("Up Less than a second" frozen at the last resync).
+func TestDetailsAndActionUseFreshEngineStatus(t *testing.T) {
+	eng := newFakeEngine()
+	for _, c := range containerObserve().containers {
+		if c.ID == idWeb || c.ID == idCron {
+			c.Status = "Up 3 minutes"
+		}
+		eng.list = append(eng.list, c)
+	}
+	var cached []engine.Container
+	for _, c := range containerObserve().containers {
+		if c.ID == idWeb || c.ID == idCron {
+			c.Status = "Up Less than a second"
+		}
+		cached = append(cached, c)
+	}
+	obs := containerObserve()
+	obs.containers = cached
+	env, _ := containersEnv(t, obs, func(o *api.Options) { o.ContainerEngine = eng })
+	cookie := env.login(t)
+
+	rec := env.do(t, "GET", "/api/containers/"+idWeb, "", withCookie(cookie))
+	var d apitypes.ContainerDetail
+	if err := json.Unmarshal(rec.Body.Bytes(), &d); err != nil || rec.Code != 200 {
+		t.Fatalf("%d %s %v", rec.Code, rec.Body, err)
+	}
+	if d.Status != "Up 3 minutes" {
+		t.Errorf("details status = %q, want the fresh engine status", d.Status)
+	}
+
+	rec = env.post(t, cookie, "/api/containers/"+idCron+"/restart")
+	var row apitypes.ContainerRow
+	if err := json.Unmarshal(rec.Body.Bytes(), &row); err != nil || rec.Code != 200 {
+		t.Fatalf("%d %s %v", rec.Code, rec.Body, err)
+	}
+	if row.Status != "Up 3 minutes" {
+		t.Errorf("action row status = %q, want the fresh engine status", row.Status)
 	}
 }
