@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { DockerEvent } from '$lib/api/types';
+  import { link } from '$lib/router';
   import type { SSEStatus } from '$lib/sse/client';
 
   let { events, connection }: { events: DockerEvent[]; connection: SSEStatus } = $props();
@@ -39,7 +40,11 @@
         <li>
           <span class="time">{clock(e.time)}</span>
           <span class="action {tone(actionOf(e))}" title={actionOf(e)}>{actionOf(e)}</span>
-          <span class="subject" title={subject(e)}>{subject(e)}</span>
+          {#if e.container}
+            <a class="subject" href={`/containers/${encodeURIComponent(e.container)}`} title={subject(e)} use:link>{subject(e)}</a>
+          {:else}
+            <span class="subject" title={subject(e)}>{subject(e)}</span>
+          {/if}
         </li>
       {/each}
     </ul>
@@ -63,5 +68,6 @@
   .action.warning { color: var(--warning); }
   .action.success { color: var(--success); }
   .action.muted { color: var(--muted); }
-  .subject { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .subject { color: inherit; text-decoration: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .subject:hover { color: var(--accent); }
 </style>

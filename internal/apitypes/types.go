@@ -435,3 +435,58 @@ type EventMessage struct {
 	ExitCode  *int      `json:"exitCode,omitempty"`
 	Health    string    `json:"health,omitempty"`
 }
+
+// ContainerRow is one row of GET /api/containers.
+type ContainerRow struct {
+	ID          string            `json:"id"` // first 12 hex
+	Name        string            `json:"name"`
+	Image       string            `json:"image"`
+	State       string            `json:"state"`
+	Status      string            `json:"status"`
+	Health      string            `json:"health"`
+	ExitCode    *int              `json:"exitCode"` // null unless exited with a parsed code
+	CreatedAt   time.Time         `json:"createdAt"`
+	Project     string            `json:"project"`
+	Service     string            `json:"service"`
+	Stack       string            `json:"stack"`
+	Managed     string            `json:"managed"`  // "stack" | "compose" | "none"
+	Ports       []string          `json:"ports"`    // published only, never null
+	Networks    map[string]string `json:"networks"` // never null
+	CPU         *float64          `json:"cpu"`      // null without a sampler reading
+	Mem         *uint64           `json:"mem"`
+	MemLimit    *uint64           `json:"memLimit"`
+	Restarts24h int               `json:"restarts24h"`
+}
+
+// ContainerMount is one mount in ContainerDetail.
+type ContainerMount struct {
+	Type        string `json:"type"`
+	Source      string `json:"source"`
+	Destination string `json:"destination"`
+	ReadOnly    bool   `json:"readOnly"`
+}
+
+// ContainerDetail is GET /api/containers/{id}. It is deliberately without
+// env, command, entrypoint, user and host config: they can hold secrets.
+type ContainerDetail struct {
+	ID            string            `json:"id"` // full
+	Name          string            `json:"name"`
+	Image         string            `json:"image"`
+	State         string            `json:"state"`
+	Status        string            `json:"status"`
+	Health        string            `json:"health"`
+	StartedAt     *time.Time        `json:"startedAt"`  // null when Docker reports none
+	FinishedAt    *time.Time        `json:"finishedAt"` // null when Docker reports none
+	ExitCode      *int              `json:"exitCode"`   // null while running
+	RestartPolicy string            `json:"restartPolicy"`
+	MemoryLimit   *uint64           `json:"memoryLimit"` // HostConfig.Memory in bytes; null when unlimited
+	Restarts24h   int               `json:"restarts24h"`
+	Project       string            `json:"project"`
+	Service       string            `json:"service"`
+	Stack         string            `json:"stack"`
+	Managed       string            `json:"managed"`
+	Ports         []string          `json:"ports"`    // never null
+	Networks      map[string]string `json:"networks"` // never null
+	Mounts        []ContainerMount  `json:"mounts"`   // never null
+	Labels        map[string]string `json:"labels"`   // never null
+}

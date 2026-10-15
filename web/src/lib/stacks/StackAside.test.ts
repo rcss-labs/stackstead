@@ -57,6 +57,7 @@ describe('StackAside', () => {
     const section = screen.getByRole('region', { name: 'Containers' });
     expect(within(section).getByText('web-app-1')).toBeTruthy();
     expect(within(section).getByText('web-db-1')).toBeTruthy();
+    expect(within(section).getByRole('link', { name: 'web-app-1' }).getAttribute('href')).toBe('/containers/web-app-1');
   });
 
   it('says so when there are no containers', () => {

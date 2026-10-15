@@ -531,6 +531,7 @@ func dockerStack(t *testing.T, c *client) {
 	}
 
 	dashboardEndpoints(t, c)
+	t.Run("containers", func(t *testing.T) { containerEndpoints(t, c, name) })
 
 	got, body = c.do("POST", "/api/stacks/"+name+"/actions/down", map[string]any{})
 	if got != 202 {
@@ -621,5 +622,88 @@ func dashboardEndpoints(t *testing.T, c *client) {
 	anon := newClient(t, c.base)
 	for _, p := range []string{"/api/host", "/api/alerts", "/api/metrics/summary"} {
 		anon.expect(401, "GET", p, nil)
+	}
+}
+
+// containerEndpoints checks the Containers routes with a real plain container
+// next to the running smoke stack: managed values, start/stop, the 409 guard
+// on stack containers, details without env, the logs stream and the session gate.
+func containerEndpoints(t *testing.T, c *client, stackName string) {
+	t.Helper()
+	plainName := "ss-e2e-plain-" + strings.ToLower(rand.Text()[:8])
+	t.Cleanup(func() { _, _ = dockerOutput("rm", "-f", plainName) })
+	if out, err := dockerOutput("run", "-d", "--label", "io.stackstead.e2e=1", "--name", plainName,
+		"busybox", "sh", "-c", "echo ss-e2e-ready; sleep 300"); err != nil {
+		t.Skipf("cannot start the plain container (busybox unavailable?): %v: %.200s", err, out)
+	}
+
+	type row struct {
+		ID, Name, State, Managed, Stack string
+	}
+	find := func(match func(row) bool) (row, bool) {
+		var rows []row
+		_ = json.Unmarshal(c.expect(200, "GET", "/api/containers", nil), &rows)
+		for _, r := range rows {
+			if match(r) {
+				return r, true
+			}
+		}
+		return row{}, false
+	}
+	var plain, stackRow row
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		p, okPlain := find(func(r row) bool { return r.Name == plainName })
+		s, okStack := find(func(r row) bool { return r.Stack == stackName })
+		if okPlain && okStack {
+			plain, stackRow = p, s
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	if plain.ID == "" || stackRow.ID == "" {
+		t.Fatalf("list lacks the plain container (%q) or a %s container (%q)", plain.ID, stackName, stackRow.ID)
+	}
+	if plain.Managed != "none" || stackRow.Managed != "stack" {
+		t.Errorf("managed = %q (plain), %q (stack); want none, stack", plain.Managed, stackRow.Managed)
+	}
+
+	var after row
+	_ = json.Unmarshal(c.expect(200, "POST", "/api/containers/"+plain.ID+"/stop", map[string]any{}), &after)
+	if after.State != "exited" {
+		t.Errorf("state after stop = %q, want exited", after.State)
+	}
+	_ = json.Unmarshal(c.expect(200, "POST", "/api/containers/"+plain.ID+"/start", map[string]any{}), &after)
+	if after.State != "running" {
+		t.Errorf("state after start = %q, want running", after.State)
+	}
+	if refusal := c.expect(409, "POST", "/api/containers/"+stackRow.ID+"/stop", map[string]any{}); !strings.Contains(string(refusal), "belongs to stack") {
+		t.Errorf("409 body = %.200s, want it to say the container belongs to a stack", refusal)
+	}
+
+	var details map[string]json.RawMessage
+	if err := json.Unmarshal(c.expect(200, "GET", "/api/containers/"+plain.ID, nil), &details); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"env", "cmd", "entrypoint"} {
+		if _, ok := details[k]; ok {
+			t.Errorf("container details expose %q", k)
+		}
+	}
+
+	logs := c.expect(200, "GET", "/api/containers/"+plain.ID+"/logs?tail=10&follow=false", nil)
+	if !strings.Contains(string(logs), "event: log") || !strings.Contains(string(logs), "ss-e2e-ready") {
+		t.Errorf("logs stream has no log event with ss-e2e-ready: %.300s", logs)
+	}
+	if !strings.Contains(string(logs), "event: end") {
+		t.Errorf("logs stream has no end event: %.200s", logs)
+	}
+
+	anon := newClient(t, c.base)
+	for _, p := range []string{"/api/containers", "/api/containers/" + plain.ID, "/api/containers/" + plain.ID + "/logs?follow=false"} {
+		anon.expect(401, "GET", p, nil)
+	}
+	for _, a := range []string{"start", "stop", "restart"} {
+		anon.expect(401, "POST", "/api/containers/"+plain.ID+"/"+a, map[string]any{})
 	}
 }

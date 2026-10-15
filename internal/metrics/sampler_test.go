@@ -133,7 +133,7 @@ func (h *harness) rows() int {
 	return n
 }
 
-func TestTickWritesRunningComposeContainersOnly(t *testing.T) {
+func TestTickStoresRunningComposeContainersOnly(t *testing.T) {
 	h := newHarness(t,
 		ctr("a", "p", "web", "running"),
 		ctr("b", "p", "db", "running"),
@@ -147,11 +147,11 @@ func TestTickWritesRunningComposeContainersOnly(t *testing.T) {
 	if n := h.rows(); n != 2 {
 		t.Fatalf("rows = %d, want 2", n)
 	}
-	if n := atomic.LoadInt32(&h.stats.calls); n != 3 {
-		t.Errorf("stats calls = %d, want 3 (non-compose and non-running not queried)", n)
+	if n := atomic.LoadInt32(&h.stats.calls); n != 4 {
+		t.Errorf("stats calls = %d, want 4 (non-running not queried)", n)
 	}
 	got := h.s.Latest()
-	if len(got) != 2 || got[0].Project != "p" || got[0].Mem != 10 {
+	if len(got) != 3 || got[0].Project != "p" || got[0].Mem != 10 {
 		t.Errorf("Latest = %+v", got)
 	}
 	got[0].Project = "mutated"
@@ -603,5 +603,104 @@ func TestStatsTimeoutNeverBelowDockerCPUWindow(t *testing.T) {
 		if got := metrics.StatsTimeout(interval); got != want {
 			t.Errorf("StatsTimeout(%s) = %s, want %s", interval, got, want)
 		}
+	}
+}
+
+func TestSamplerSamplesNonComposeContainersLive(t *testing.T) {
+	h := newHarness(t, ctr("a", "p", "web", "running"), ctr("plain", "", "", "running"))
+	h.start(t)
+	h.tick()
+	got := h.s.Latest()
+	if len(got) != 2 {
+		t.Fatalf("Latest = %+v, want both containers", got)
+	}
+	var sawPlain bool
+	for _, e := range got {
+		if e.Container == "plain" && e.Project == "" {
+			sawPlain = true
+		}
+	}
+	if !sawPlain {
+		t.Errorf("non-compose container missing from Latest: %+v", got)
+	}
+}
+
+func TestSamplerStoresOnlyComposeSamples(t *testing.T) {
+	var mu sync.Mutex
+	var stored []metrics.Sample
+	st := &recordingStore{insert: func(b []metrics.Sample) {
+		mu.Lock()
+		defer mu.Unlock()
+		stored = append(stored, b...)
+	}}
+	real, _ := newStore(t)
+	lst := &fakeLister{list: []engine.Container{ctr("a", "p", "web", "running"), ctr("plain", "", "", "running")}}
+	s := metrics.NewSampler(real, lst, &fakeStats{}, 10*time.Second, time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)), (&clock{t: base}).now)
+	s.UseStore(st)
+	ticks := make(chan time.Time)
+	s.UseTicks(ticks)
+	fin := make(chan struct{}, 10)
+	s.OnTickDone(func() { fin <- struct{}{} })
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+	ticks <- base
+	<-fin
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(stored) != 1 || stored[0].Container != "a" || stored[0].Project != "p" {
+		t.Errorf("stored = %+v, want only the compose sample", stored)
+	}
+	if n := len(s.Latest()); n != 2 {
+		t.Errorf("Latest len = %d, want 2", n)
+	}
+}
+
+func TestSamplerSamplesAllRunningContainersWithinConcurrency(t *testing.T) {
+	var cs []engine.Container
+	for i := 0; i < 200; i++ {
+		cs = append(cs, ctr(fmt.Sprint("c", i), "", "", "running"))
+	}
+	h := newHarness(t, cs...)
+	h.stats.delay = time.Millisecond
+	h.start(t)
+	h.tick()
+	h.stats.mu.Lock()
+	maxInFlight := h.stats.max
+	h.stats.mu.Unlock()
+	if maxInFlight > metrics.MaxStatsConcurrency {
+		t.Errorf("max in-flight = %d, want <= %d", maxInFlight, metrics.MaxStatsConcurrency)
+	}
+	if n := len(h.s.Latest()); n != 200 {
+		t.Errorf("Latest len = %d, want 200", n)
+	}
+	if h.rows() != 0 {
+		t.Errorf("non-compose samples were stored: %d rows", h.rows())
+	}
+}
+
+// recordingStore captures the batches handed to the sampler's store.
+type recordingStore struct {
+	insert func(b []metrics.Sample)
+}
+
+func (r *recordingStore) InsertBatch(_ context.Context, b []metrics.Sample) error {
+	r.insert(b)
+	return nil
+}
+func (r *recordingStore) Prune(context.Context, time.Time) (int64, error) { return 0, nil }
+
+func TestSubscribeEmptyProjectReceivesNothing(t *testing.T) {
+	h := newHarness(t, ctr("plain", "", "", "running"))
+	ch, cancel := h.s.Subscribe("")
+	defer cancel()
+	h.start(t)
+	h.tick()
+	select {
+	case m, ok := <-ch:
+		t.Fatalf("Subscribe(\"\") delivered %+v (ok=%v)", m, ok)
+	case <-time.After(100 * time.Millisecond):
 	}
 }

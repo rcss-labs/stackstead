@@ -40,8 +40,8 @@ type sampleStore interface {
 
 type subscriber struct{ ch chan Sample }
 
-// Sampler periodically reads stats of running compose containers, stores them
-// in one batch per tick and fans them out to live subscribers. Store failures
+// Sampler periodically reads stats of every running container, stores the
+// compose ones in one batch per tick and fans them all out to live subscribers. Store failures
 // only raise the Degraded flag; they never affect anything else.
 type Sampler struct {
 	store     sampleStore
@@ -114,11 +114,16 @@ func (s *Sampler) Latest() []ExpositionSample {
 	return append([]ExpositionSample(nil), s.latest...)
 }
 
-// Subscribe returns a channel of live samples for project. A subscriber that
+// Subscribe returns a channel of live samples for project. An empty project
+// never receives anything. A subscriber that
 // cannot keep up is dropped and its channel closed. The cancel func is
 // idempotent.
 func (s *Sampler) Subscribe(project string) (<-chan Sample, func()) {
 	sub := &subscriber{ch: make(chan Sample, subscriberBuffer)}
+	if project == "" {
+		// Non-compose samples have project ""; nobody may subscribe to them.
+		return sub.ch, func() {}
+	}
 	s.mu.Lock()
 	if s.subs[project] == nil {
 		s.subs[project] = map[*subscriber]struct{}{}
@@ -162,7 +167,7 @@ func (s *Sampler) tick(ctx context.Context) {
 	}
 	var targets []engine.Container
 	for _, c := range containers {
-		if c.State == "running" && c.Project() != "" {
+		if c.State == "running" {
 			targets = append(targets, c)
 		}
 	}
@@ -201,13 +206,18 @@ func (s *Sampler) tick(ctx context.Context) {
 		return
 	}
 
-	var batch []Sample
+	// Every running container is live (latest and fan-out); only compose
+	// samples are persisted, so history stays bounded to compose projects.
+	var all, batch []Sample
 	var latest []ExpositionSample
 	for _, r := range results {
 		if r == nil {
 			continue
 		}
-		batch = append(batch, *r)
+		all = append(all, *r)
+		if r.Project != "" {
+			batch = append(batch, *r)
+		}
 		latest = append(latest, ExpositionSample{
 			Project: r.Project, Service: r.Service, Container: r.Container, CPU: r.CPU,
 			Mem: r.Mem, MemLimit: r.MemLimit, NetRx: r.NetRx, NetTx: r.NetTx, BlkRead: r.BlkRead, BlkWrite: r.BlkWrite,
@@ -229,7 +239,7 @@ func (s *Sampler) tick(ctx context.Context) {
 		s.lastWarn = now
 	}
 	perProject := map[string]int{}
-	for _, m := range batch {
+	for _, m := range all {
 		perProject[m.Project]++
 	}
 	// A subscriber is dropped only when it has no room for this tick's whole
@@ -241,7 +251,7 @@ func (s *Sampler) tick(ctx context.Context) {
 			}
 		}
 	}
-	for _, m := range batch {
+	for _, m := range all {
 		for sub := range s.subs[m.Project] {
 			sub.ch <- m
 		}

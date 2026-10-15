@@ -299,6 +299,14 @@ func (s *server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		cs = cs[:maxLogContainers]
 	}
 
+	s.streamContainerLogs(w, r, cs, opts)
+}
+
+// streamContainerLogs is the SSE core shared by the stack and single-container
+// log routes: it starts the stream, merges the containers' lines (resuming
+// from Last-Event-ID cursors) and ends with "end". See handleLogs for the
+// event contract.
+func (s *server) streamContainerLogs(w http.ResponseWriter, r *http.Request, cs []engine.Container, opts engine.LogOptions) {
 	sw, err := startSSE(w, s.sseWriteTimeout())
 	if err != nil {
 		return
@@ -474,8 +482,14 @@ func (s *server) handleMetricsLive(w http.ResponseWriter, r *http.Request) {
 		s.writeStackError(w, r, err)
 		return
 	}
-	samples, cancel := s.opts.Observe.SubscribeSamples(detail.Project)
-	defer cancel()
+	// An empty project would otherwise match every non-compose container; keep
+	// the stream open (heartbeats only) without subscribing.
+	var samples <-chan metrics.Sample
+	if detail.Project != "" {
+		var cancel func()
+		samples, cancel = s.opts.Observe.SubscribeSamples(detail.Project)
+		defer cancel()
+	}
 	sw, err := startSSE(w, s.sseWriteTimeout())
 	if err != nil {
 		return

@@ -9,6 +9,8 @@ export interface TileModel {
   subTone?: 'muted' | 'success' | 'warning' | 'danger';
   /** 0..1, draws the bar. */
   ratio?: number;
+  /** When set the tile is a link to this in-app path. */
+  href?: string;
 }
 
 const clamp01 = (x: number) => (Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : 0);
@@ -28,6 +30,7 @@ export function hostTiles(h: HostSnapshot): TileModel[] {
       value: `${running}/${total}`,
       ...(bad > 0 ? { sub: `${bad} bad`, subTone: 'danger' as const } : {}),
       ratio: total > 0 ? clamp01(running / total) : 0,
+      href: '/containers',
     });
   }
   if (h.cpu) {

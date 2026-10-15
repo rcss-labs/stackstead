@@ -1,7 +1,5 @@
 <script lang="ts">
-  import type { ContainerHealth, OpState, StackStatus } from '$lib/api/types';
-
-  let { status }: { status: StackStatus | OpState | ContainerHealth | 'restarting' | 'exited' } = $props();
+  let { status }: { status: string } = $props();
 
   type Tone = 'success' | 'warning' | 'muted' | 'danger';
   const looks: Record<string, { tone: Tone; label: string }> = {
@@ -16,12 +14,16 @@
     cancelled: { tone: 'muted', label: 'cancelled' },
     unknown: { tone: 'muted', label: 'unknown' },
     exited: { tone: 'muted', label: 'exited' },
+    created: { tone: 'muted', label: 'created' },
+    paused: { tone: 'warning', label: 'paused' },
+    dead: { tone: 'danger', label: 'dead' },
     none: { tone: 'muted', label: 'none' },
     unavailable: { tone: 'danger', label: 'unavailable' },
     failed: { tone: 'danger', label: 'failed' },
     unhealthy: { tone: 'danger', label: 'unhealthy' },
   };
-  const look = $derived(looks[status] ?? looks.unknown);
+  // Docker may report states we do not know (e.g. removing): show the raw word, muted.
+  const look = $derived(looks[status] ?? { tone: 'muted' as Tone, label: status });
 </script>
 
 <span class="badge {look.tone}">{look.label}</span>

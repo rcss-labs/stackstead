@@ -19,7 +19,8 @@
           <i class="dot {a.severity}" aria-hidden="true"></i><span class="visually-hidden">{a.severity}</span>
           <div class="body">
             <div class="top">
-              {#if a.stack}<a class="stack mono" href={`/stacks/${encodeURIComponent(a.stack)}`} use:link>{a.stack}</a>{/if}
+              {#if a.stack}<a class="stack mono" href={`/stacks/${encodeURIComponent(a.stack)}`} use:link>{a.stack}</a>
+              {:else if a.container}<a class="stack mono" href={`/containers/${encodeURIComponent(a.container)}`} use:link>{a.container}</a>{/if}
               <span class="kind {a.severity}">{a.kind}</span>
             </div>
             <div class="msg">{a.message}</div>

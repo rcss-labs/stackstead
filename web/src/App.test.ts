@@ -32,6 +32,7 @@ beforeEach(() => {
     'GET /api/setup/status': () => ({ body: { needsSetup: setupStatus } }),
     'GET /api/status': () => ({ body: status }),
     'GET /api/stacks': () => stacksRes,
+    'GET /api/containers': () => ({ body: [] }),
     'GET /api/operations?state=running': () => ({ body: running }),
     'POST /api/logout': { status: 204 },
     'POST /api/login': { status: 204 },
@@ -51,7 +52,7 @@ const user = () => userEvent.setup();
 const at = (path: string) => navigate(path, { replace: true });
 
 describe('App landmarks', () => {
-  it.each(['/', '/stacks/new', '/stacks/import', '/settings', '/nope'])('has exactly one main landmark on %s', async (path) => {
+  it.each(['/', '/stacks/new', '/stacks/import', '/settings', '/containers', '/nope'])('has exactly one main landmark on %s', async (path) => {
     at(path);
     render(App);
     await screen.findByRole('navigation', { name: 'Main' });
@@ -162,6 +163,38 @@ describe('App routing and session', () => {
     await waitFor(() => expect(fake.calls.some((c) => c.path === '/api/status')).toBe(true));
     expect(screen.getByRole('navigation', { name: 'Main' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Log out' }).getAttribute('title')).toBe('admin · Log out');
+  });
+
+  it('renders the Containers page at /containers with its title', async () => {
+    at('/containers');
+    render(App);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Containers' })).toBeTruthy();
+    await waitFor(() => expect(document.title).toBe('Containers · Stackstead'));
+    expect(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Containers' }).getAttribute('aria-current')).toBe('page');
+    await waitFor(() => expect(fake.calls.some((c) => c.path === '/api/containers')).toBe(true));
+  });
+
+  it('shows "Container not found" (not "no longer exists") after navigating from a found container to an unknown one', async () => {
+    stream.restore();
+    fake.restore();
+    fake = installFakeFetch({
+      'GET /api/me': () => me,
+      'GET /api/setup/status': () => ({ body: { needsSetup: false } }),
+      'GET /api/status': () => ({ body: status }),
+      'GET /api/stacks': () => stacksRes,
+      'GET /api/containers': () => ({
+        body: [{ id: 'aaa000aaa000', name: 'a', image: 'x:1', state: 'running', status: 'Up', health: 'none', exitCode: null, createdAt: '2026-01-01T00:00:00Z', project: '', service: '', stack: '', managed: 'none', ports: [], networks: {}, cpu: null, mem: null, memLimit: null, restarts24h: 0 }],
+      }),
+      'GET /api/containers/aaa000aaa000': { status: 500, body: { error: 'x' } },
+      'GET /api/operations?state=running': () => ({ body: [] }),
+    });
+    stream = installFakeStream({ '/api/events': [] });
+    at('/containers/a');
+    render(App);
+    await screen.findByRole('heading', { level: 1, name: 'a' });
+    navigate('/containers/b');
+    await screen.findByText('Container not found');
+    expect(screen.queryByText('This container no longer exists')).toBeNull();
   });
 
   it('shows a not-found view with a link home for unknown paths', async () => {

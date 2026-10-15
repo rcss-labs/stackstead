@@ -268,3 +268,36 @@ describe('dashboard endpoints', () => {
   });
 });
 
+
+describe('container endpoints', () => {
+  beforeEach(() => onUnauthorized(() => {}));
+
+  it('lists, reads and acts on containers', async () => {
+    fake = installFakeFetch({
+      'GET /api/containers': { body: [] },
+      'GET /api/containers/abc123def456': { body: { id: 'abc123def456' } },
+      'POST /api/containers/abc123def456/start': { body: { id: 'abc123def456' } },
+      'POST /api/containers/abc123def456/stop': { body: {} },
+      'POST /api/containers/abc123def456/restart': { body: {} },
+    });
+    await api.containers();
+    await api.container('abc123def456');
+    await api.containerAction('abc123def456', 'start');
+    await api.containerAction('abc123def456', 'stop');
+    await api.containerAction('abc123def456', 'restart');
+    expect(fake.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      'GET /api/containers',
+      'GET /api/containers/abc123def456',
+      'POST /api/containers/abc123def456/start',
+      'POST /api/containers/abc123def456/stop',
+      'POST /api/containers/abc123def456/restart',
+    ]);
+    expect(fake.calls[2].body).toEqual({});
+  });
+
+  it('encodes the id as one path segment', async () => {
+    fake = installFakeFetch({ 'GET /api/containers/a%2Fb': { body: {} } });
+    await api.container('a/b');
+    expect(fake.calls[0].path).toBe('/api/containers/a%2Fb');
+  });
+});

@@ -1,10 +1,11 @@
-// Path data from the v2 mock-up, drawn in a 24x24 box. Stroke icons use stroke-width 1.8 at 18 px;
+// Path data from the v2 mock-up (box is drawn in the same style), drawn in a 24x24 box. Stroke icons use stroke-width 1.8 at 18 px;
 // play/stop are filled. Shapes that were <rect>/<circle> in the mock-up are expressed as paths.
 export const ICONS: Record<
-  'stacks' | 'plus' | 'import' | 'settings' | 'sun' | 'moon' | 'play' | 'stop' | 'restart' | 'file' | 'copy' | 'search',
+  'stacks' | 'box' | 'plus' | 'import' | 'settings' | 'sun' | 'moon' | 'play' | 'stop' | 'restart' | 'file' | 'copy' | 'search',
   string
 > = {
   stacks: 'M3 7 12 3l9 4-9 4-9-4zM3 12l9 4 9-4M3 17l9 4 9-4',
+  box: 'M21 8v8l-9 5-9-5V8l9-5zM3 8l9 5 9-5M12 13v8',
   plus: 'M12 5v14M5 12h14',
   import: 'M12 3v12M7 10l5 5 5-5M4 21h16',
   settings:

@@ -61,13 +61,13 @@ All routes require a session (`requireSession`); unknown `/api/*` keeps answerin
   "cpu": 3.1, "mem": 1174405120, "memLimit": 4294967296, "restarts24h": 0}]
 ```
 
-- One row per container in the state cache snapshot (all states). Sorted by name (the UI applies its own order).
+- One row per container (all states) from a fresh Docker container listing, not the state cache snapshot, so Docker's human `status` ("Up 3 minutes") is current (ruling R4). Sorted by name (the UI applies its own order).
 - `health` per `engine.Container.Health()` (`healthy|unhealthy|starting|none`); `exitCode` from `ExitCode()` when exited, else `null`.
 - `managed`: `stack` when the compose project matches a registered stack's project (then `stack` = that stack's name); `compose` when the container has a compose project label that no registered stack has; `none` otherwise. `project`/`service`/`stack` are empty strings when not applicable.
 - `ports`: published bindings as `hostIP:hostPort->containerPort/proto`, deduplicated (IPv4/IPv6 duplicates collapsed), sorted by host port.
 - `cpu`/`mem`/`memLimit`: from `Sampler.Latest()` by container name; `null` when the container has no current sample (stopped, or not sampled yet).
 - `restarts24h`: from the host collector's `RestartCounts()` by container id; `0` when absent; the whole field is `0` for every row before the first restart scan completes.
-- Cached 2 s, single-flight (detached context, bounded timeout, panic-safe like the 8b flights). 503 `{error}` while the state cache is disconnected.
+- Cached 2 s, single-flight (detached context, bounded timeout, panic-safe like the 8b flights). 503 `{error}` while Docker is unavailable.
 
 ### 4.2 `GET /api/containers/{id}`
 
@@ -75,20 +75,21 @@ All routes require a session (`requireSession`); unknown `/api/*` keeps answerin
 {"id": "4e344ea0e904…", "name": "media-jellyfin-1", "image": "jellyfin/jellyfin:10.9",
  "state": "running", "status": "Up 3 days (healthy)", "health": "healthy",
  "startedAt": "2026-10-12T08:01:25Z", "finishedAt": null, "exitCode": null,
- "restartPolicy": "unless-stopped", "restarts24h": 0,
+ "restartPolicy": "unless-stopped", "memoryLimit": 4294967296, "restarts24h": 0,
  "project": "media", "service": "jellyfin", "stack": "media", "managed": "stack",
  "ports": ["0.0.0.0:8096->8096/tcp"], "networks": {"media_default": "172.20.0.3"},
  "mounts": [{"type": "bind", "source": "/srv/media", "destination": "/media", "readOnly": true}],
  "labels": {"com.docker.compose.project": "media"}}
 ```
 
+- `memoryLimit` is the configured limit from `HostConfig.Memory` in bytes; `null` when 0 (unlimited).
 - `{id}` is a container id or unambiguous id prefix (≥ 12 hex) — never a name (names are resolved by the client from the list).
 - One `GET /containers/{id}/json` per request, short engine timeout. 404 for an unknown id, 503 when Docker is unavailable.
-- Never includes `Env`, `Cmd`, `Entrypoint`, `Config.User`, secrets, or `HostConfig` fields beyond `RestartPolicy.Name` and the mounts list.
+- Never includes `Env`, `Cmd`, `Entrypoint`, `Config.User`, secrets, or `HostConfig` fields beyond `RestartPolicy.Name`, `Memory` and the mounts list.
 
 ### 4.3 `GET /api/containers/{id}/logs`
 
-SSE with exactly the stack logs contract (same query options `stream`, `tail`, `follow`, `since`; same `log`/`error`/`end` events; same `id:` cursor and `Last-Event-ID` resume) for one container. The streaming core of the stack `handleLogs` is extracted into a shared helper used by both routes. 404 for an unknown id.
+SSE with exactly the stack logs contract (same query options `tail`, `follow`, `since`; same `log`/`error`/`end` events; same `id:` cursor and `Last-Event-ID` resume) for one container. The streaming core of the stack `handleLogs` is extracted into a shared helper used by both routes. 404 for an unknown id.
 
 ### 4.4 `POST /api/containers/{id}/{start|stop|restart}`
 

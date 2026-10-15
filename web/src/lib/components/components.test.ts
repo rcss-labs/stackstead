@@ -377,6 +377,11 @@ describe('StatusBadge', () => {
     expect(badge.classList.contains(tone)).toBe(true);
   });
 
+  it('renders an unknown state muted with the raw word', () => {
+    render(StatusBadge, { status: 'removing' });
+    expect(screen.getByText('removing').classList.contains('muted')).toBe(true);
+  });
+
   it('renders no decorative glyph', () => {
     const { container } = render(StatusBadge, { status: 'running' });
     expect(container.querySelector('[aria-hidden]')).toBeNull();

@@ -116,6 +116,8 @@ func TestJSONTagsMatchContract(t *testing.T) {
 		{"Alert", populated[apitypes.Alert](), "container,kind,message,service,severity,since,stack"},
 		{"MetricsSummary", populated[apitypes.MetricsSummary](), "from,stacks,step,to,top,window"},
 		{"ProjectSummary", populated[apitypes.ProjectSummary](), "cpu,cpuNow,mem,memNow,netRxBytesPerSec,netTxBytesPerSec"},
+		{"ContainerRow", populated[apitypes.ContainerRow](), "cpu,createdAt,exitCode,health,id,image,managed,mem,memLimit,name,networks,ports,project,restarts24h,service,stack,state,status"},
+		{"ContainerDetail", populated[apitypes.ContainerDetail](), "exitCode,finishedAt,health,id,image,labels,managed,memoryLimit,mounts,name,networks,ports,project,restartPolicy,restarts24h,service,stack,startedAt,state,status"},
 		{"TopEntry", populated[apitypes.TopEntry](), "container,project,service,value"},
 	}
 	for _, tc := range cases {

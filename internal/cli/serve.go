@@ -209,6 +209,8 @@ func serve(ctx context.Context, env *Env, args []string) error {
 			Host:             collector,
 			Alerts:           alertsEngine,
 			Summary:          api.SummarySources{Store: metricsStore, Sampler: sampler},
+			Restarts:         collector,
+			ContainerEngine:  dockerEngine,
 			Observe: api.ObserveSources{
 				Cache: cache, Sampler: sampler, Store: metricsStore, Engine: dockerEngine,
 			},

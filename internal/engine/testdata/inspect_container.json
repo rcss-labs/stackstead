@@ -1,0 +1,40 @@
+{
+  "Id": "abc123def456",
+  "Name": "/demo-postgres-1",
+  "Image": "sha256:0123456789abcdef",
+  "State": {
+    "Status": "running",
+    "Running": true,
+    "ExitCode": 0,
+    "StartedAt": "2026-10-14T08:30:00.123456789Z",
+    "FinishedAt": "0001-01-01T00:00:00Z",
+    "Health": {"Status": "healthy"}
+  },
+  "Config": {
+    "Image": "postgres:16.9",
+    "Env": ["DB_PASSWORD=hunter2"],
+    "Cmd": ["--token", "abc"],
+    "Entrypoint": ["docker-entrypoint.sh"],
+    "User": "postgres",
+    "Labels": {"com.docker.compose.project": "demo", "com.docker.compose.service": "postgres"}
+  },
+  "HostConfig": {
+    "RestartPolicy": {"Name": "unless-stopped", "MaximumRetryCount": 0},
+    "Memory": 536870912,
+    "Privileged": false
+  },
+  "Mounts": [
+    {"Type": "volume", "Name": "pgdata", "Source": "/var/lib/docker/volumes/pgdata/_data", "Destination": "/var/lib/postgresql/data", "RW": true},
+    {"Type": "bind", "Source": "/etc/ssl", "Destination": "/certs", "RW": false}
+  ],
+  "NetworkSettings": {
+    "Ports": {
+      "5432/tcp": [{"HostIp": "0.0.0.0", "HostPort": "5432"}],
+      "9187/tcp": null
+    },
+    "Networks": {
+      "demo_default": {"IPAddress": "172.18.0.2"},
+      "demo_backend": {"IPAddress": "172.19.0.5"}
+    }
+  }
+}

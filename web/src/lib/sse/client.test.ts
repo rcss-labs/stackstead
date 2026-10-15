@@ -345,4 +345,50 @@ describe('openSSE', () => {
     expect(fake.requests[1].headers.get('Last-Event-ID')).toBe('5');
     h.close();
   });
+
+  it('pagehide aborts the open connection and stops reconnecting; a persisted pageshow resumes', async () => {
+    fake = installFakeStream({ '/p': { responses: [{ chunks: ['data: a\n\n'] }, { chunks: ['data: b\n\n'] }] } });
+    const c = collect();
+    const h = openSSE({ url: '/p', ...c });
+    await tick();
+    const signal = fake.requests[0].signal!;
+    window.dispatchEvent(new Event('pagehide'));
+    expect(signal.aborted).toBe(true);
+    await tick(60000);
+    expect(fake.requests).toHaveLength(1);
+    window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }));
+    await tick(10);
+    expect(fake.requests).toHaveLength(2);
+    expect(c.messages.map((m) => m.data)).toEqual(['a', 'b']);
+    h.close();
+  });
+
+  it('a closed handle ignores a pagehide/pageshow cycle', async () => {
+    fake = installFakeStream({ '/p': { responses: [{ chunks: ['data: a\n\n'] }, { chunks: ['data: b\n\n'] }] } });
+    const h = openSSE({ url: '/p', onMessage() {} });
+    await tick();
+    h.close();
+    window.dispatchEvent(new Event('pagehide'));
+    window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }));
+    await tick(10);
+    expect(fake.requests).toHaveLength(1);
+    expect(h.status).toBe('closed');
+  });
+
+  it.each([
+    [401, 'unauthorized'],
+    [404, 'gone'],
+  ] as const)('a %i-terminated stream stays finished across pagehide and a persisted pageshow', async (status, expected) => {
+    fake = installFakeStream({ '/t': { responses: [{ status, body: { error: 'no' } }, { chunks: ['data: x\n\n'] }] } });
+    const c = collect();
+    const h = openSSE({ url: '/t', ...c });
+    await tick();
+    expect(h.status).toBe(expected);
+    window.dispatchEvent(new Event('pagehide'));
+    window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }));
+    await tick(10);
+    expect(fake.requests).toHaveLength(1);
+    expect(h.status).toBe(expected);
+    expect(c.statuses.at(-1)).toBe(expected);
+  });
 });
