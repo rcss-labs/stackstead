@@ -7,8 +7,10 @@
 
   const crumbs = $derived(breadcrumb(path));
   const dockerOk = $derived($live.docker === 'ok');
+  const dockerDown = $derived($live.docker === 'unavailable');
+  // 'unknown' (before the first status answer) stays neutral: only a real 'unavailable' is an error.
   const dockerText = $derived(
-    dockerOk ? ($live.dockerVersion ? `Docker ${$live.dockerVersion}` : 'Docker') : 'Docker unavailable',
+    dockerDown ? 'Docker unavailable' : dockerOk && $live.dockerVersion ? `Docker ${$live.dockerVersion}` : 'Docker',
   );
   const composeText = $derived(
     $live.compose === 'unavailable' ? 'compose unavailable' : `compose ${$live.compose}`,
@@ -31,8 +33,8 @@
   {#if runningOps > 0}
     <span class="pill running" role="status"><span class="dot live" aria-hidden="true"></span>{runningOps} running</span>
   {/if}
-  <span class="pill docker" role="group" aria-label={dockerText}>
-    <span class="dot" class:ok={dockerOk} class:bad={!dockerOk} aria-hidden="true"></span><span class="label">{dockerText}</span>
+  <span class="pill docker" role="group" aria-label={dockerText} title={dockerText}>
+    <span class="dot" class:ok={dockerOk} class:bad={dockerDown} aria-hidden="true"></span><span class="label">{dockerText}</span>
   </span>
   {#if $live.compose !== 'unknown'}<span class="pill compose">{composeText}</span>{/if}
 </header>
@@ -77,6 +79,7 @@
   .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
   .dot.ok { background: var(--success); }
   .dot.bad { background: var(--danger); }
+  .docker .dot:not(.ok):not(.bad) { background: var(--faint); }
   @media (max-width: 900px) {
     .compose { display: none; }
     .docker .label { display: none; }

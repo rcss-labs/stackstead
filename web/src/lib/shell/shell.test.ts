@@ -132,6 +132,29 @@ describe('TopBar', () => {
     expect(screen.getByText('Docker unavailable')).toBeTruthy();
   });
 
+  it('docker pill is neutral before the first status answer', () => {
+    render(TopBar, { path: '/', runningOps: 0 });
+    const pill = screen.getByRole('group', { name: 'Docker' });
+    expect(pill.textContent?.trim()).toBe('Docker');
+    expect(pill.querySelector('.bad')).toBeNull();
+  });
+
+  it('docker pill title equals its text in every state', async () => {
+    for (const [s, text] of [
+      [{}, 'Docker 27.1.1'],
+      [{ dockerVersion: '' }, 'Docker'],
+      [{ docker: 'unavailable', dockerVersion: '' }, 'Docker unavailable'],
+    ] as const) {
+      stopLive();
+      await withStatus(s as Partial<Status>);
+      const { unmount } = render(TopBar, { path: '/', runningOps: 0 });
+      const pill = screen.getByRole('group', { name: text });
+      expect(pill.getAttribute('title')).toBe(text);
+      expect(pill.textContent?.trim()).toBe(text);
+      unmount();
+    }
+  });
+
   it('compose pill shows the version or unavailable', async () => {
     await withStatus({});
     const { unmount } = render(TopBar, { path: '/', runningOps: 0 });
