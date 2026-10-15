@@ -31,6 +31,10 @@
   const visible = $derived(filterStacks(sorted, chip, query));
   const counts = $derived(chipCounts($stacks.items));
   // Unavailable / Unknown chips only appear when they would match something.
+  // A filter on a chip that no longer exists would show an empty list with no way back.
+  $effect(() => {
+    if ((chip === 'unavailable' || chip === 'unknown') && counts[chip] === 0) chip = 'all';
+  });
   const chips = $derived<{ id: ChipFilter; label: string }[]>([
     { id: 'all', label: 'All' },
     { id: 'running', label: 'Running' },
@@ -185,7 +189,8 @@
             <!-- svelte-ignore a11y_no_redundant_roles -->
             <tr role="row">
               <!-- svelte-ignore a11y_no_redundant_roles -->
-              <td role="cell" data-label="Stack" class="stack">
+              <td role="cell" data-label="Stack">
+               <span class="stack">
                 <span class="sq {s.status}" aria-hidden="true"></span>
                 <span class="stack-text">
                   <span class="name">
@@ -195,33 +200,37 @@
                   </span>
                   <span class="path" title={s.path}>{s.path}</span>
                 </span>
+               </span>
               </td>
               <!-- svelte-ignore a11y_no_redundant_roles -->
               <td role="cell" data-label="Status"><StatusBadge status={s.status} /></td>
               <!-- svelte-ignore a11y_no_redundant_roles -->
-              <td role="cell" data-label="Services" class="services">
+              <td role="cell" data-label="Services" class="num">
                 <span class="mono">{s.running}/{s.serviceCount}</span>
+                <span class="cells" aria-hidden="true">
+                  {#each Array.from({ length: s.serviceCount }, (_, i) => i) as i (i)}<span class="cell" class:on={i < s.running}></span>{/each}
+                </span>
               </td>
               <!-- svelte-ignore a11y_no_redundant_roles -->
-              <td role="cell" data-label="Health">
+              <td role="cell" data-label="Health" class="num">
                 {#if health.empty}
                   <span class="dash" title={health.title}>—</span>
                 {:else}
                   <span class="health mono" title={health.title}>
-                    <span class="good">{health.good}</span>
-                    {#if health.bad > 0}<span class="bad">{health.bad}</span>{/if}
-                    {#if health.starting > 0}<span class="starting">{health.starting}</span>{/if}
+                    <span class="good"><i class="dot"></i>{health.good}</span>
+                    <span class="bad"><i class="dot"></i>{health.bad}</span>
+                    {#if health.starting > 0}<span class="starting"><i class="dot"></i>{health.starting}</span>{/if}
                   </span>
                 {/if}
               </td>
               <!-- svelte-ignore a11y_no_redundant_roles -->
-              <td role="cell" data-label="Ports">
+              <td role="cell" data-label="Ports" class="num">
                 {#if ports.shown.length === 0}
                   <span class="dash">—</span>
                 {:else}
                   <span class="ports" title={ports.title}>
                     {#each ports.shown as p (p)}<span class="port mono">{p}</span>{/each}
-                    {#if ports.more > 0}<span class="port mono">+{ports.more}</span>{/if}
+                    {#if ports.more > 0}<span class="port more mono">+{ports.more}</span>{/if}
                   </span>
                 {/if}
               </td>
@@ -259,25 +268,35 @@
   .filters { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-3); }
   .chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .chip {
-    display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; font: inherit; font-size: 12px;
+    display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; font: inherit; font-size: 12px; font-weight: 500;
     border: 1px solid var(--border); border-radius: var(--radius-pill); background: transparent; color: var(--muted); cursor: pointer;
   }
   .chip:hover { background: var(--hover); color: var(--text); }
-  .chip[aria-pressed='true'] { background: var(--accent-soft, var(--hover)); border-color: var(--accent); color: var(--text); }
-  .n { font-family: var(--mono); }
+  .chip[aria-pressed='true'] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .n { font-family: var(--mono); color: var(--muted); font-weight: 400; }
   .search { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--muted); }
-  .search input { min-width: 16rem; max-width: 100%; }
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
+  .search input { width: 260px; max-width: 100%; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); overflow-x: auto; }
   .card.pad { padding: var(--space-4); }
   table { width: 100%; border-collapse: collapse; }
   th { text-align: left; font-size: 12px; font-weight: 500; color: var(--muted); padding: var(--space-2) 12px; border-bottom: 1px solid var(--border); }
   td { text-align: left; height: var(--row); padding: var(--pad) 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  td.num { padding: var(--pad) 8px; }
+  tbody tr:hover { background: var(--hover); }
   tbody tr:last-child td { border-bottom: 0; }
   .stack { display: flex; align-items: center; gap: var(--space-3); }
   .stack-text { display: flex; flex-direction: column; min-width: 0; }
   .name { display: inline-flex; align-items: center; gap: var(--space-2); }
   .tag { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 5px; }
-  .path { max-width: 22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .path { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+  .name a { font-weight: 500; text-decoration: none; color: var(--text); }
+  .name a:hover { color: var(--accent); }
+  .services { display: inline-flex; }
+  td.num .mono { font-size: 12px; }
+  .cells { display: inline-flex; gap: 2px; margin-left: var(--space-2); vertical-align: middle; }
+  .cell { width: 10px; height: 6px; border-radius: 1px; background: var(--border-strong); }
+  .cell.on { background: var(--success); }
+  .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; margin-right: 4px; }
   .sq { flex: none; width: 8px; height: 8px; border-radius: 2px; background: var(--faint); }
   .sq.running { background: var(--success); }
   .sq.partial { background: var(--warning); }
@@ -289,9 +308,13 @@
   .bad { color: var(--danger); }
   .starting { color: var(--warning); }
   .ports { display: inline-flex; flex-wrap: wrap; gap: 4px; }
-  .port { font-size: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 5px; }
+  .port { font-size: 10.5px; background: var(--raised); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 5px; }
+  .port.more { color: var(--faint); background: transparent; border-color: transparent; }
   .row-actions { width: 1%; }
   .btns { display: inline-flex; gap: var(--space-1); }
+  .btns :global(button:nth-of-type(1):hover) { color: var(--success); }
+  .btns :global(button:nth-of-type(2):hover) { color: var(--danger); }
+  .btns :global(button:nth-of-type(3):hover) { color: var(--text); }
   .none { color: var(--muted); padding: var(--space-3) 12px; margin: 0; }
 
   @media (max-width: 720px) {
@@ -300,9 +323,11 @@
     tr { border-bottom: 1px solid var(--border); padding: var(--space-2); }
     td { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); height: auto; border-bottom: 0; padding: var(--space-1) var(--space-2); }
     td::before { content: attr(data-label); color: var(--muted); }
-    .stack::before, .row-actions::before { content: none; }
+    td[data-label='Stack']::before, .row-actions::before { content: none; }
     .row-actions { width: auto; }
     .btns { flex-direction: row; }
     .path { max-width: 60vw; }
+    .search, .search input { width: 100%; }
+    .search { flex: 1 1 100%; }
   }
 </style>

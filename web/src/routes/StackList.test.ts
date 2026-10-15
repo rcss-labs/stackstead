@@ -4,7 +4,7 @@ import { writable } from 'svelte/store';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Change, Operation, StackSummary } from '$lib/api/types';
 import { navigate } from '$lib/router';
-import { refreshRunningOps, startStacks } from '$lib/stores/stacks';
+import { refreshRunningOps, refreshStacks, startStacks } from '$lib/stores/stacks';
 import * as liveModule from '$lib/stores/live';
 import { toasts } from '$lib/stores/toasts';
 import { get } from 'svelte/store';
@@ -31,9 +31,9 @@ let stop: (() => void) | undefined;
 
 async function mount(items: StackSummary[], ops: Operation[] = [], extra: Parameters<typeof installFakeFetch>[0] = {}) {
   fake = installFakeFetch({
-    ...extra,
     'GET /api/stacks': { body: items },
     'GET /api/operations?state=running': { body: ops },
+    ...extra,
   });
   stop = startStacks({
     list: () => fetch('/api/stacks').then((r) => r.json()),
@@ -260,7 +260,9 @@ describe('StackList', () => {
     ]);
     const rows = screen.getAllByRole('row').slice(1);
     const cell = within(rows[0]).getByTitle(/2 healthy, 1 unhealthy, 1 starting/);
-    expect(cell.textContent).toMatch(/2/);
+    expect(cell.querySelector('.good')?.textContent).toBe('2');
+    expect(cell.querySelector('.bad')?.textContent).toBe('1');
+    expect(cell.querySelector('.starting')?.textContent).toBe('1');
     expect(within(rows[1]).getByTitle(/0 healthy/).textContent).toBe('—');
   });
 
@@ -333,5 +335,36 @@ describe('StackList', () => {
     const section = container.querySelector('section')!;
     expect(section.lastElementChild?.tagName).toBe('DIV');
     expect(section.lastElementChild?.querySelector('table')).toBeTruthy();
+  });
+
+  it('health shows good and bad always and starting only when present', async () => {
+    await mount([stack('alpha', { health: { healthy: 2, none: 1, unhealthy: 0, failed: 1, starting: 0 } }), stack('beta', { health: { healthy: 1, none: 0, unhealthy: 0, failed: 0, starting: 0 } })]);
+    const rows = screen.getAllByRole('row').slice(1);
+    const a = within(rows[0]).getByTitle(/2 healthy/);
+    expect(a.querySelector('.good')?.textContent).toBe('3');
+    expect(a.querySelector('.bad')?.textContent).toBe('1');
+    expect(a.querySelector('.starting')).toBeNull();
+    const b = within(rows[1]).getByTitle(/1 healthy/);
+    expect(b.querySelector('.bad')?.textContent).toBe('0');
+  });
+
+  it('services strip has one cell per service with the running ones tinted', async () => {
+    await mount([stack('alpha', { serviceCount: 4, running: 3 })]);
+    const row = screen.getAllByRole('row')[1];
+    expect(row.querySelectorAll('.cells .cell')).toHaveLength(4);
+    expect(row.querySelectorAll('.cells .cell.on')).toHaveLength(3);
+    expect(row.querySelector('.cells')?.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('resets to All when the active Unavailable chip disappears', async () => {
+    let items = [stack('a'), stack('b', { status: 'unavailable' })];
+    await mount([], [], { 'GET /api/stacks': () => ({ body: items }) });
+    await refreshStacks();
+    await userEvent.setup().click(await screen.findByRole('button', { name: /^Unavailable/ }));
+    expect(screen.queryByRole('link', { name: 'a' })).toBeNull();
+    items = [stack('a'), stack('b')];
+    await refreshStacks();
+    await waitFor(() => expect(screen.getByRole('button', { name: /^All/ }).getAttribute('aria-pressed')).toBe('true'));
+    expect(screen.getByRole('link', { name: 'a' })).toBeTruthy();
   });
 });
