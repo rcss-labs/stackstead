@@ -2,6 +2,7 @@ import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MetricPoint, Sample } from '../api/types';
 import type { SSEOptions } from '../sse/client';
+import { createStackLiveMetrics } from './liveMetrics';
 import { createMetricsController, serviceColorIndex } from './metrics';
 
 const NOW = new Date('2026-10-14T10:03:47Z');
@@ -171,6 +172,30 @@ describe('createMetricsController publishing', () => {
     releaseSecond();
     await second;
     expect(get(h.ctl.loaded)).toBe(true);
+  });
+});
+
+describe('createMetricsController with a shared live source', () => {
+  it('controller with a shared live source does not open its own stream', async () => {
+    const opens: SSEOptions[] = [];
+    const open = vi.fn((opts: SSEOptions) => {
+      opens.push(opts);
+      return { close: vi.fn(), status: 'open' as const };
+    });
+    const live = createStackLiveMetrics('web', { open });
+    const history = vi.fn(async () => ({ points: [hp('web', 0, 1)] }));
+    const ctl = createMetricsController('web', { history, live, open: vi.fn(), now: () => NOW });
+    await ctl.reload();
+    expect(open).toHaveBeenCalledTimes(1); // the shared source's own stream, nothing from the controller
+    const send = (s: Sample) => opens[0].onMessage({ event: 'sample', data: JSON.stringify(s) });
+    send(sample('web', 'c1', 10, { cpu: 50 }));
+    send(sample('web', 'c1', 12, { cpu: 60 }));
+    expect(get(ctl.series).get('web')!.map((p) => p.cpu)).toEqual([1, 50]);
+    ctl.close();
+    expect(opens).toHaveLength(1);
+    // another holder keeps the stream alive after the controller releases it
+    const release = live.acquire();
+    release();
   });
 });
 

@@ -1,11 +1,11 @@
 // Controller for the metrics tab: history (JSON) + live (SSE) merged into one
 // SeriesSet. Kept free of Svelte components so the lifecycle is testable.
 import { get, writable, derived, type Readable, type Writable } from 'svelte/store';
-import type { MetricsHistory, Sample } from '../api/types';
-import { openSSE, type SSEHandle, type SSEStatus } from '../sse/client';
+import type { MetricsHistory } from '../api/types';
+import type { openSSE, SSEStatus } from '../sse/client';
+import { createStackLiveMetrics, type StackLiveMetrics } from './liveMetrics';
 import {
   appendLive,
-  createLiveAggregator,
   historyToSeries,
   joinHistoryAndLive,
   rangeToQuery,
@@ -21,9 +21,6 @@ export const RANGE_MS: Record<Range, number> = {
   '72h': 72 * 3_600_000,
 };
 
-/** The aggregator emits a tick only when the next one starts; flush after this much silence. */
-const IDLE_FLUSH_MS = 1200;
-const RECONNECT_DELAY_MS = 1000;
 export const COLOR_SLOTS = 8;
 
 /** Colour slot of a service: its position in the sorted list of services, wrapping after 8. */
@@ -35,6 +32,8 @@ export function serviceColorIndex(service: string, all: string[]): number {
 export interface MetricsDeps {
   history: (q: { from: string; to: string; step: string }, signal?: AbortSignal) => Promise<MetricsHistory>;
   open?: typeof openSSE;
+  /** A shared source (one stream per page); without it the controller owns one built from `open`. */
+  live?: StackLiveMetrics;
   now?: () => Date;
 }
 
@@ -54,23 +53,21 @@ export interface MetricsController {
 const isAbort = (e: unknown, signal: AbortSignal) => signal.aborted || (e as { name?: string })?.name === 'AbortError';
 
 export function createMetricsController(stackName: string, deps: MetricsDeps): MetricsController {
-  const open = deps.open ?? openSSE;
   const now = deps.now ?? (() => new Date());
+  const live = deps.live ?? createStackLiveMetrics(stackName, { open: deps.open });
+  const ownsLive = deps.live === undefined;
   const range = writable<Range>('1h');
   const seriesStore = writable<SeriesSet>(new Map());
-  const status = writable<SSEStatus>('connecting');
   const degraded = writable(false);
 
   let history: SeriesSet = new Map();
   let liveSet: SeriesSet = new Map();
-  // One aggregator per service: aggregator output carries no service name.
-  let aggregators = new Map<string, ReturnType<typeof createLiveAggregator>>();
   let abort: AbortController | undefined;
-  let handle: SSEHandle | undefined;
-  let idleTimer: ReturnType<typeof setTimeout> | undefined;
-  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
   let closed = false;
+  // Points that arrive while a history load is in flight are dropped: history covers them.
+  let accepting = false;
+  let dirty = false;
 
   const loaded = writable(false);
 
@@ -88,73 +85,29 @@ export function createMetricsController(stackName: string, deps: MetricsDeps): M
     seriesStore.set(joined);
   }
 
-  function stopStream() {
-    handle?.close();
-    handle = undefined;
-    clearTimeout(idleTimer);
-    clearTimeout(reconnectTimer);
-  }
-
-  /** Appends points without publishing; returns whether anything was added. */
-  function emit(service: string, points: SeriesPoint[]): boolean {
+  const releaseLive = live.acquire();
+  const offPoints = live.onPoints((service, points) => {
+    if (!accepting || closed) return;
     const windowMs = RANGE_MS[get(range)];
     for (const p of points) appendLive(liveSet, service, p, windowMs);
-    return points.length > 0;
-  }
-
-  function flushAll() {
-    let changed = false;
-    for (const [service, agg] of aggregators) changed = emit(service, agg.flush()) || changed;
-    if (changed) publish();
-  }
-
-  function onMessage(m: { event: string; data: string }) {
-    if (m.event === 'dropped') {
-      handle?.close();
-      handle = undefined;
-      clearTimeout(reconnectTimer);
-      const gen = generation;
-      reconnectTimer = setTimeout(() => {
-        if (!closed && gen === generation) connect();
-      }, RECONNECT_DELAY_MS);
-      return;
-    }
-    if (m.event !== 'sample') return;
-    let parsed: Sample | Sample[];
-    try {
-      parsed = JSON.parse(m.data);
-    } catch {
-      return;
-    }
-    const samples = Array.isArray(parsed) ? parsed : [parsed];
-    let changed = false;
-    for (const s of samples) {
-      let agg = aggregators.get(s.service);
-      if (!agg) aggregators.set(s.service, (agg = createLiveAggregator()));
-      changed = emit(s.service, agg.ingest([s])) || changed;
-    }
-    if (changed) publish();
-    clearTimeout(idleTimer);
-    idleTimer = setTimeout(flushAll, IDLE_FLUSH_MS);
-  }
-
-  function connect() {
-    handle = open({
-      url: `/api/stacks/${encodeURIComponent(stackName)}/metrics/live`,
-      onMessage,
-      onStatus: (s) => status.set(s),
-    });
-  }
+    dirty = dirty || points.length > 0;
+  });
+  // `latest` is set once per message after every service's points, so a multi-service message publishes once.
+  const offLatest = live.latest.subscribe(() => {
+    if (!dirty) return;
+    dirty = false;
+    publish();
+  });
 
   async function reload(): Promise<void> {
     abort?.abort();
-    stopStream();
+    accepting = false;
+    dirty = false;
     loaded.set(false);
     const gen = ++generation;
     const ctl = (abort = new AbortController());
     const q = rangeToQuery(get(range), now());
     liveSet = new Map();
-    aggregators = new Map();
     try {
       const res = await deps.history(q, ctl.signal);
       if (ctl.signal.aborted || closed) return;
@@ -168,7 +121,7 @@ export function createMetricsController(stackName: string, deps: MetricsDeps): M
     if (gen !== generation) return;
     publish();
     loaded.set(true);
-    connect();
+    accepting = true;
   }
 
   let first = true;
@@ -184,7 +137,7 @@ export function createMetricsController(stackName: string, deps: MetricsDeps): M
     series: { subscribe: seriesStore.subscribe },
     range,
     services: derived(seriesStore, (s) => [...s.keys()].sort()),
-    status: { subscribe: status.subscribe },
+    status: live.status,
     degraded: { subscribe: degraded.subscribe },
     loaded: { subscribe: loaded.subscribe },
     reload,
@@ -192,7 +145,11 @@ export function createMetricsController(stackName: string, deps: MetricsDeps): M
       closed = true;
       generation++;
       abort?.abort();
-      stopStream();
+      accepting = false;
+      offPoints();
+      offLatest();
+      releaseLive();
+      if (ownsLive) live.close();
       unsubscribeRange();
     },
   };
