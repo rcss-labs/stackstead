@@ -60,7 +60,12 @@ type Cache struct {
 	seq        uint64
 	nextSub    int
 	subs       map[int]chan Change
+	eventSubs  map[int]chan engine.Event
 }
+
+// ForwardedActions are the container event actions SubscribeEvents delivers.
+var ForwardedActions = []string{"create", "start", "die", "stop", "kill", "restart", "destroy",
+	"pause", "unpause", "oom", "health_status"}
 
 func New(src Source, logger *slog.Logger, backoff Backoff) *Cache {
 	if logger == nil {
@@ -76,7 +81,7 @@ func New(src Source, logger *slog.Logger, backoff Backoff) *Cache {
 		backoff.Max = backoff.Min
 	}
 	return &Cache{src: src, log: logger, backoff: backoff, debounce: defaultDebounce,
-		subs: map[int]chan Change{}}
+		subs: map[int]chan Change{}, eventSubs: map[int]chan engine.Event{}}
 }
 
 // Run keeps the cache current until ctx is done. Each round subscribes to
@@ -167,6 +172,9 @@ func (c *Cache) session(ctx context.Context) (stable bool, err error) {
 				continue // healthchecks emit these every interval; they change nothing
 			}
 			stable = true
+			if slices.Contains(ForwardedActions, ev.Action) {
+				c.publishEvent(ev)
+			}
 			if fire == nil {
 				timer = time.NewTimer(c.debounce)
 				fire = timer.C
@@ -340,6 +348,41 @@ func (c *Cache) Subscribe() (changes <-chan Change, cancel func()) {
 		defer c.mu.Unlock()
 		if _, ok := c.subs[id]; ok {
 			delete(c.subs, id)
+			close(ch)
+		}
+	}
+}
+
+// publishEvent fans a container event out without blocking; like publishLocked,
+// a subscriber whose buffer is full is dropped (its channel is closed).
+func (c *Cache) publishEvent(ev engine.Event) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for id, sub := range c.eventSubs {
+		select {
+		case sub <- ev:
+		default:
+			delete(c.eventSubs, id)
+			close(sub)
+		}
+	}
+}
+
+// SubscribeEvents returns a channel of container events whose action is in
+// ForwardedActions, and an idempotent cancel. Subscribers survive reconnects.
+// Same drop-on-slow semantics as Subscribe: a full buffer closes the channel.
+func (c *Cache) SubscribeEvents() (events <-chan engine.Event, cancel func()) {
+	ch := make(chan engine.Event, subscriberBuffer)
+	c.mu.Lock()
+	id := c.nextSub
+	c.nextSub++
+	c.eventSubs[id] = ch
+	c.mu.Unlock()
+	return ch, func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if _, ok := c.eventSubs[id]; ok {
+			delete(c.eventSubs, id)
 			close(ch)
 		}
 	}
