@@ -239,7 +239,9 @@
       {:else if view === 'containers'}
         <ContainerList />
       {:else if view === 'container' && containerParams}
-        <ContainerDetail name={containerParams.name} />
+        {#key containerParams.name}
+          <ContainerDetail name={containerParams.name} />
+        {/key}
       {:else if view === 'create'}
         <StackCreate />
       {:else if view === 'import'}

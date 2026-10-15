@@ -274,6 +274,15 @@ describe('ContainerDetail', () => {
     expect(screen.getByRole('link', { name: /back/i }).getAttribute('href')).toBe('/containers');
   });
 
+  it('keeps the page and warns when a later list refresh fails', async () => {
+    render(ContainerDetail, { name: 'redis' });
+    await screen.findByRole('heading', { level: 1, name: 'redis' });
+    listRes = { status: 500, body: { error: 'list exploded' } };
+    pushChange({ project: '', seq: 1, resync: true });
+    await screen.findByText(/Showing the last known state; list exploded/);
+    expect(screen.getByRole('heading', { level: 1, name: 'redis' })).toBeTruthy();
+  });
+
   it('keeps the page while details fail to load and reports the error', async () => {
     detailRes = { status: 500, body: { error: 'boom' } };
     render(ContainerDetail, { name: 'redis' });

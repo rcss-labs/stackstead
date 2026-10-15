@@ -131,6 +131,9 @@
 {:else}
   {@const c = row}
   <section class="page">
+    {#if $listError}
+      <Banner kind="warning" title="Container list out of date">{#snippet children()}Showing the last known state; {$listError}{/snippet}</Banner>
+    {/if}
     <header class="head">
       <div class="row1">
         <h1>{c.name}</h1>
