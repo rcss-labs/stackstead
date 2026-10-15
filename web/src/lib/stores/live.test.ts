@@ -2,7 +2,7 @@ import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Status } from '../api/types';
 import { installFakeStream, type FakeStream } from '../../vitest-setup';
-import { changes, live, refreshStatus, startLive, stopLive } from './live';
+import { changes, events, live, refreshStatus, startLive, stopLive } from './live';
 
 let fake: FakeStream;
 const status: Status = {
@@ -232,5 +232,40 @@ describe('live store', () => {
     const s = get(live);
     expect(s.connection).toBe('unauthorized');
     expect([s.events, s.docker, s.compose, s.metricsDegraded]).toEqual(['unknown', 'unknown', 'unknown', false]);
+  });
+
+  const ev = (n: number) =>
+    `event: event\ndata: ${JSON.stringify({ action: 'start', container: `c${n}`, project: 'p', service: 's', image: 'i', time: '2026-10-15T12:05:41.123456789Z' })}\n\n`;
+
+  it('event messages prepend and cap at 50', async () => {
+    fake = installFakeStream({ '/api/events': [] });
+    startLive({ fetchStatus });
+    await tick();
+    for (let i = 0; i < 55; i++) fake.push('/api/events', ev(i));
+    await tick();
+    const list = get(events);
+    expect(list).toHaveLength(50);
+    expect(list[0].container).toBe('c54');
+    expect(list[49].container).toBe('c5');
+  });
+
+  it('malformed event ignored', async () => {
+    fake = installFakeStream({ '/api/events': [] });
+    startLive({ fetchStatus });
+    await tick();
+    fake.push('/api/events', 'event: event\ndata: {nope\n\n');
+    await tick();
+    expect(get(events)).toEqual([]);
+  });
+
+  it('stopLive clears events', async () => {
+    fake = installFakeStream({ '/api/events': [] });
+    startLive({ fetchStatus });
+    await tick();
+    fake.push('/api/events', ev(1));
+    await tick();
+    expect(get(events)).toHaveLength(1);
+    stopLive();
+    expect(get(events)).toEqual([]);
   });
 });

@@ -237,3 +237,34 @@ describe('401 handling', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 });
+
+describe('dashboard endpoints', () => {
+  beforeEach(() => onUnauthorized(() => {}));
+
+  it('requests host, alerts and the summary window', async () => {
+    fake = installFakeFetch({
+      'GET /api/host': { body: {} },
+      'GET /api/alerts': { body: [] },
+      'GET /api/metrics/summary': { body: {} },
+      'GET /api/metrics/summary?window=1h': { body: {} },
+    });
+    await api.host();
+    await api.alerts();
+    await api.metricsSummary();
+    await api.metricsSummary('1h');
+    expect(fake.calls.map((c) => c.path)).toEqual([
+      '/api/host',
+      '/api/alerts',
+      '/api/metrics/summary',
+      '/api/metrics/summary?window=1h',
+    ]);
+  });
+
+  it('surfaces a 400 as ApiError', async () => {
+    fake = installFakeFetch({ 'GET /api/metrics/summary?window=1h': { status: 400, body: { error: 'bad window' } } });
+    const err = await api.metricsSummary('1h').catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(400);
+  });
+});
+

@@ -2,7 +2,7 @@
 // change signal; screens refetch on every `resync` because events missed
 // while disconnected are not replayed.
 import { readable, writable, type Readable } from 'svelte/store';
-import type { Status } from '../api/types';
+import type { DockerEvent, Status } from '../api/types';
 import { openSSE, type SSEHandle, type SSEStatus } from '../sse/client';
 import type { SSEMessage } from '../sse/parse';
 
@@ -35,9 +35,13 @@ const initial: LiveState = {
 
 const state = writable<LiveState>({ ...initial });
 const changeStore = writable<LiveChange | null>(null);
+const eventStore = writable<DockerEvent[]>([]);
+const MAX_EVENTS = 50;
 
 export const live: Readable<LiveState> = { subscribe: state.subscribe };
 export const changes: Readable<LiveChange | null> = { subscribe: changeStore.subscribe };
+/** Recent Docker container events, newest first. */
+export const events: Readable<DockerEvent[]> = { subscribe: eventStore.subscribe };
 
 interface Deps {
   fetchStatus: () => Promise<Status>;
@@ -109,6 +113,13 @@ function handleMessage(m: SSEMessage): void {
       }
       return;
     }
+    case 'event': {
+      const e = parse<DockerEvent>(m.data);
+      if (e && typeof e.action === 'string' && typeof e.container === 'string') {
+        eventStore.update((list) => [e, ...list].slice(0, MAX_EVENTS));
+      }
+      return;
+    }
     case 'dropped': {
       // The server ended a slow client. Reconnect now, unless we only just opened:
       // then let the client's own backoff handle the stream ending.
@@ -139,6 +150,7 @@ export function stopLive(): void {
   // Logout or teardown: forget flags so the next session never sees the last one's state.
   state.set({ ...initial });
   changeStore.set(null);
+  eventStore.set([]);
   statusSeq++;
   deps = null;
 }
