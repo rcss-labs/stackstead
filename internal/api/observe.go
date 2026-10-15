@@ -474,8 +474,14 @@ func (s *server) handleMetricsLive(w http.ResponseWriter, r *http.Request) {
 		s.writeStackError(w, r, err)
 		return
 	}
-	samples, cancel := s.opts.Observe.SubscribeSamples(detail.Project)
-	defer cancel()
+	// An empty project would otherwise match every non-compose container; keep
+	// the stream open (heartbeats only) without subscribing.
+	var samples <-chan metrics.Sample
+	if detail.Project != "" {
+		var cancel func()
+		samples, cancel = s.opts.Observe.SubscribeSamples(detail.Project)
+		defer cancel()
+	}
 	sw, err := startSSE(w, s.sseWriteTimeout())
 	if err != nil {
 		return

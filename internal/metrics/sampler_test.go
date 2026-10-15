@@ -668,10 +668,10 @@ func TestSamplerSamplesAllRunningContainersWithinConcurrency(t *testing.T) {
 	h.start(t)
 	h.tick()
 	h.stats.mu.Lock()
-	max := h.stats.max
+	maxInFlight := h.stats.max
 	h.stats.mu.Unlock()
-	if max > 4 {
-		t.Errorf("max in-flight = %d, want <= 4", max)
+	if maxInFlight > metrics.MaxStatsConcurrency {
+		t.Errorf("max in-flight = %d, want <= %d", maxInFlight, metrics.MaxStatsConcurrency)
 	}
 	if n := len(h.s.Latest()); n != 200 {
 		t.Errorf("Latest len = %d, want 200", n)
@@ -691,3 +691,16 @@ func (r *recordingStore) InsertBatch(_ context.Context, b []metrics.Sample) erro
 	return nil
 }
 func (r *recordingStore) Prune(context.Context, time.Time) (int64, error) { return 0, nil }
+
+func TestSubscribeEmptyProjectReceivesNothing(t *testing.T) {
+	h := newHarness(t, ctr("plain", "", "", "running"))
+	ch, cancel := h.s.Subscribe("")
+	defer cancel()
+	h.start(t)
+	h.tick()
+	select {
+	case m, ok := <-ch:
+		t.Fatalf("Subscribe(\"\") delivered %+v (ok=%v)", m, ok)
+	case <-time.After(100 * time.Millisecond):
+	}
+}

@@ -1393,3 +1393,30 @@ func TestMetricsTokenStatus(t *testing.T) {
 		t.Error("configured after delete")
 	}
 }
+
+// A stack without a compose project must not stream other containers' samples:
+// non-compose samples carry project "".
+func TestLiveMetricsEmptyProjectStreamsNoSamples(t *testing.T) {
+	fake := newFakeObserve()
+	st := newFakeStacks()
+	st.summary.Project = ""
+	env, cookie := newObserveEnvWith(t, fake, st)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, ch := openSSE(t, env, cookie, ctx, "/api/stacks/web/metrics/live")
+	fake.samples <- metrics.Sample{TS: t0, Project: "", Container: "plain", CPU: 1}
+	deadline := time.After(300 * time.Millisecond)
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				t.Fatal("stream ended; want it kept open with heartbeats")
+			}
+			if ev.name == "sample" {
+				t.Fatalf("empty-project stack streamed a sample: %s", ev.data)
+			}
+		case <-deadline:
+			return
+		}
+	}
+}

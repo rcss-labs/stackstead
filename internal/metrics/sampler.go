@@ -114,11 +114,16 @@ func (s *Sampler) Latest() []ExpositionSample {
 	return append([]ExpositionSample(nil), s.latest...)
 }
 
-// Subscribe returns a channel of live samples for project. A subscriber that
+// Subscribe returns a channel of live samples for project. An empty project
+// never receives anything. A subscriber that
 // cannot keep up is dropped and its channel closed. The cancel func is
 // idempotent.
 func (s *Sampler) Subscribe(project string) (<-chan Sample, func()) {
 	sub := &subscriber{ch: make(chan Sample, subscriberBuffer)}
+	if project == "" {
+		// Non-compose samples have project ""; nobody may subscribe to them.
+		return sub.ch, func() {}
+	}
 	s.mu.Lock()
 	if s.subs[project] == nil {
 		s.subs[project] = map[*subscriber]struct{}{}

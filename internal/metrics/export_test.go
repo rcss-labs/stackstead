@@ -13,3 +13,6 @@ func (s *Sampler) UseStore(st sampleStore) { s.store = st }
 
 // StatsTimeout exposes the per-container stats timeout for an interval.
 func StatsTimeout(interval time.Duration) time.Duration { return statsTimeout(interval) }
+
+// MaxStatsConcurrency exposes the stats concurrency cap.
+const MaxStatsConcurrency = maxStatsConcurrency
