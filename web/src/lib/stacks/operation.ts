@@ -202,3 +202,34 @@ export function createOperationStream(id: string, deps: OperationStreamDeps = {}
     },
   };
 }
+
+/** Display-only tone for an output line: docker compose success marks and error wording. */
+export function outputTone(line: string): 'success' | 'danger' | undefined {
+  if (line.includes('✔')) return 'success';
+  if (line.includes('✘') || line.includes('Error') || line.includes('error:') || line.includes('failed')) return 'danger';
+  return undefined;
+}
+
+export type StateTone = 'success' | 'warning' | 'danger' | 'muted';
+
+/** Tone and label for an operation state, shared by the list rows and the panel header. */
+export function operationStateLook(state: string): { tone: StateTone; label: string } {
+  switch (state) {
+    case 'running':
+    case 'succeeded':
+      return { tone: 'success', label: state };
+    case 'failed':
+      return { tone: 'danger', label: state };
+    case 'timed_out':
+      return { tone: 'warning', label: 'timed out' };
+    default:
+      return { tone: 'muted', label: state.replace('_', ' ') };
+  }
+}
+
+/** Milliseconds an operation ran (up to `now` while running); undefined if the timestamps do not parse. */
+export function operationDurationMs(op: Pick<Operation, 'startedAt' | 'endedAt'>, now: number): number | undefined {
+  const start = Date.parse(op.startedAt);
+  const end = op.endedAt ? Date.parse(op.endedAt) : now;
+  return Number.isNaN(start) || Number.isNaN(end) ? undefined : Math.max(0, end - start);
+}
