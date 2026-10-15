@@ -88,8 +88,8 @@ describe('sparklinePath', () => {
     expect(sparklinePath([4], 60, 18)).toBe('M0,1L60,1');
     expect(sparklinePath([null, 4, null], 60, 18)).toBe('M0,1L60,1');
   });
-  it('puts a single zero point at mid-height', () => {
-    expect(sparklinePath([0], 60, 18)).toBe('M0,9L60,9');
+  it('puts a single zero point on the baseline like any all-zero series', () => {
+    expect(sparklinePath([0], 60, 18)).toBe('M0,17L60,17');
   });
   it('is empty when every value is null or there are no values', () => {
     expect(sparklinePath([null, null])).toBe('');

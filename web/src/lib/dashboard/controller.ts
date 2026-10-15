@@ -37,17 +37,22 @@ export function createDashboard(deps: DashboardDeps) {
 
   // Per-key generation: bumped when a fetch starts and on stop/hide, so a response that
   // arrives after stop, after the tab went hidden, or after a newer fetch of the same key
-  // started is dropped (value and error alike).
+  // started is dropped (value and error alike). Interval ticks skip a key that already has
+  // a fetch in flight, so a slow endpoint still lands instead of being overtaken forever.
   const generation: Record<keyof DashboardErrors, number> = { host: 0, alerts: 0, summary: 0 };
+  const busy: Record<keyof DashboardErrors, boolean> = { host: false, alerts: false, summary: false };
   const invalidateInFlight = () => {
-    generation.host++;
-    generation.alerts++;
-    generation.summary++;
+    for (const key of Object.keys(generation) as (keyof DashboardErrors)[]) {
+      generation[key]++;
+      busy[key] = false;
+    }
   };
 
   // A failed fetch keeps the previous value; the next tick retries.
-  async function load<T>(key: keyof DashboardErrors, fetcher: () => Promise<T>, target: { set(v: T): void }) {
+  async function load<T>(key: keyof DashboardErrors, fetcher: () => Promise<T>, target: { set(v: T): void }, interval = false) {
+    if (interval && busy[key]) return;
     const mine = ++generation[key];
+    busy[key] = true;
     try {
       const value = await fetcher();
       if (mine !== generation[key]) return;
@@ -57,19 +62,21 @@ export function createDashboard(deps: DashboardDeps) {
       if (mine !== generation[key]) return;
       const message = err instanceof Error ? err.message : String(err);
       errorStore.update((e) => ({ ...e, [key]: message }));
+    } finally {
+      if (mine === generation[key]) busy[key] = false;
     }
   }
-  const fetchHost = () => load('host', deps.host, hostStore);
-  const fetchAlerts = () => load('alerts', deps.alerts, alertsStore);
-  const fetchSummary = () => load('summary', deps.summary, summaryStore);
+  const fetchHost = (interval = false) => load('host', deps.host, hostStore, interval);
+  const fetchAlerts = (interval = false) => load('alerts', deps.alerts, alertsStore, interval);
+  const fetchSummary = (interval = false) => load('summary', deps.summary, summaryStore, interval);
 
   const alertsOnChange = debounce(() => void fetchAlerts());
 
   function startTimers() {
     timers = [
-      setInterval(() => void fetchHost(), HOST_MS),
-      setInterval(() => void fetchSummary(), SUMMARY_MS),
-      setInterval(() => void fetchAlerts(), ALERTS_MS),
+      setInterval(() => void fetchHost(true), HOST_MS),
+      setInterval(() => void fetchSummary(true), SUMMARY_MS),
+      setInterval(() => void fetchAlerts(true), ALERTS_MS),
     ];
   }
 

@@ -197,34 +197,57 @@ describe('dashboard controller', () => {
       d.stop();
     });
 
+    const alertsA = [{ kind: 'unhealthy', severity: 'danger', stack: 'a', message: 'a', since: '' }] as Alert[];
+    const alertsB = [] as Alert[];
+
+    // A change event forces a refetch even while one is in flight, so it can overtake.
     it('an older slow response does not overwrite a newer one', async () => {
-      const older = deferred<HostSnapshot>();
-      const newer = deferred<HostSnapshot>();
-      fetchHost.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+      const older = deferred<Alert[]>();
+      const newer = deferred<Alert[]>();
+      fetchAlerts.mockReset().mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
       const d = make();
       d.start();
-      await tick(10_000); // second host fetch starts
-      newer.resolve(hostB);
       await tick();
-      older.resolve(hostA);
+      changes.set({ project: '', seq: 0, resync: true });
       await tick();
-      expect(get(d.host)).toBe(hostB);
+      newer.resolve(alertsB);
+      await tick();
+      older.resolve(alertsA);
+      await tick();
+      expect(get(d.alerts)).toBe(alertsB);
       d.stop();
     });
 
     it('a late failure does not re-record an error after a newer success', async () => {
-      const older = deferred<HostSnapshot>();
-      const newer = deferred<HostSnapshot>();
-      fetchHost.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+      const older = deferred<Alert[]>();
+      const newer = deferred<Alert[]>();
+      fetchAlerts.mockReset().mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
       const d = make();
       d.start();
-      await tick(10_000);
-      newer.resolve(hostB);
+      await tick();
+      changes.set({ project: '', seq: 0, resync: true });
+      await tick();
+      newer.resolve(alertsB);
       await tick();
       older.reject(new Error('late'));
       await tick();
-      expect(get(d.errors).host).toBeUndefined();
-      expect(get(d.host)).toBe(hostB);
+      expect(get(d.errors).alerts).toBeUndefined();
+      expect(get(d.alerts)).toBe(alertsB);
+      d.stop();
+    });
+
+    it('a host fetch slower than two intervals still lands and no second one starts meanwhile', async () => {
+      const slow = deferred<HostSnapshot>();
+      fetchHost.mockReturnValueOnce(slow.promise);
+      const d = make();
+      d.start();
+      await tick(25_000);
+      expect(fetchHost).toHaveBeenCalledTimes(1);
+      slow.resolve(hostA);
+      await tick();
+      expect(get(d.host)).toBe(hostA);
+      await tick(10_000);
+      expect(fetchHost).toHaveBeenCalledTimes(2);
       d.stop();
     });
   });

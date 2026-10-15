@@ -56,8 +56,8 @@ const PAD = 1;
  * SVG path for a sparkline in a w x h box with 1 unit of padding top and bottom, scaled so
  * the largest value touches the top padding line and zero sits on the bottom one.
  * Null samples break the line ("M…L…M…"); a lone sample between nulls is a short horizontal
- * segment; a single sample in the whole series is a flat line across the width (mid-height
- * when it is 0); "" when there is nothing to draw.
+ * segment; a single sample in the whole series is a flat line across the width (on the
+ * baseline when it is 0, like any all-zero series); "" when there is nothing to draw.
  */
 export function sparklinePath(values: (number | null)[], w = 60, h = 18): string {
   const present = values.filter((v): v is number => v !== null);
@@ -65,7 +65,7 @@ export function sparklinePath(values: (number | null)[], w = 60, h = 18): string
   const max = Math.max(...present);
   const y = (v: number) => (max > 0 ? PAD + (1 - v / max) * (h - 2 * PAD) : h - PAD);
   if (present.length === 1) {
-    const flat = max > 0 ? y(present[0]) : h / 2;
+    const flat = y(present[0]);
     return `M0,${trim(flat)}L${trim(w)},${trim(flat)}`;
   }
   const stepX = values.length > 1 ? w / (values.length - 1) : 0;

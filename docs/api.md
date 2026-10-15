@@ -112,7 +112,7 @@ compose containers.
   project's containers changed; refetch the affected stack on `change`. It
   also sends `event`, one Docker container event: `action`, `container`
   (name), `project` and `service` (empty strings for a container that is not
-  part of a compose project), `image` and `time` (UTC RFC 3339, possibly with fractional seconds), plus
+  part of a compose project), `image` and `time`, plus
   `exitCode` (a number, only on `die`, and only when Docker reports one) and
   `health` (only on `health_status`, and only `healthy` or `unhealthy`).
   `time` is UTC RFC 3339 and may include fractional seconds. Only these actions
@@ -196,8 +196,10 @@ truncated to `step`, plus one `step`, and `from` is `to` minus `window`.
 stored buckets each, `null` for an empty bucket), `cpuNow`, `memNow`,
 `netRxBytesPerSec` and `netTxBytesPerSec`. `cpuNow` and `memNow` are the newest
 non-empty stored bucket. The network rates are computed across each
-container's last two stored buckets and summed per project; they are `null`
-when fewer than two buckets exist or the gap between them exceeds 3 buckets.
+container's last two stored buckets and summed per project. The `null` rule is
+per container: a container has no rate when fewer than two buckets exist or the
+gap between them exceeds 3 buckets, and a project's value is `null` only when
+none of its containers has a rate.
 Units: `cpu`, `cpuNow` and `top.cpu` values are percent where 100 is one core;
 `mem`, `memNow` and `top.mem` values are bytes. Only `top` comes from the
 sampler's latest readings: `cpu` and `mem` each list the five heaviest
