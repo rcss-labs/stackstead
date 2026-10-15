@@ -28,6 +28,7 @@
     dashboard.start();
     return () => dashboard.stop();
   });
+  const stackNames = $derived(Object.fromEntries($stacks.items.map((s) => [s.project, s.name])));
   const tiles = $derived($hostStore ? hostTiles($hostStore) : []);
   const netCell = (rx: number | null, tx: number | null) =>
     rx === null && tx === null ? '—' : `${rx === null ? '—' : formatRate(rx)} / ${tx === null ? '—' : formatRate(tx)}`;
@@ -303,8 +304,8 @@
   {/if}
 
   <div class="sections">
-    <AlertsCard alerts={$alertsStore ?? []} />
-    <TopConsumersCard top={$summary?.top ?? { cpu: [], mem: [] }} />
+    <AlertsCard alerts={$alertsStore} />
+    <TopConsumersCard top={$summary?.top} {stackNames} />
     <EventsFeed events={$events} connection={$live.connection} />
   </div>
 </section>

@@ -2,10 +2,15 @@
   import type { TopEntry } from '$lib/api/types';
   import { formatBytes, formatPercent } from '$lib/format';
 
-  let { top }: { top: { cpu: TopEntry[]; mem: TopEntry[] } } = $props();
+  let { top, stackNames = {} }: { top: { cpu: TopEntry[]; mem: TopEntry[] } | undefined; stackNames?: Record<string, string> } = $props();
 
   let metric = $state<'cpu' | 'mem'>('cpu');
-  const rows = $derived(top[metric].slice(0, 5));
+  const rows = $derived((top?.[metric] ?? []).slice(0, 5));
+  // Compose project and stack name differ for imported stacks; fall back to the project when unmatched.
+  const label = (r: TopEntry) => {
+    const owner = stackNames[r.project] ?? r.project;
+    return owner ? `${r.container} · ${owner}` : r.container;
+  };
   const max = $derived(Math.max(0, ...rows.map((r) => r.value)));
   const ratio = (v: number) => (max > 0 ? Math.round((v / max) * 100) : 0);
   const options = [
@@ -23,14 +28,16 @@
       {/each}
     </span>
   </h3>
-  {#if rows.length === 0}
+  {#if !top}
+    <!-- not loaded yet or the fetch failed -->
+  {:else if rows.length === 0}
     <p class="empty">No samples yet.</p>
   {:else}
     <ul>
       {#each rows as r (`${r.project}|${r.container}`)}
         <li>
           <div class="line">
-            <span class="name mono" title={`${r.container} · ${r.project}`}>{r.container} · {r.project}</span>
+            <span class="name mono" title={label(r)}>{label(r)}</span>
             <span class="value mono">{metric === 'cpu' ? formatPercent(r.value) : formatBytes(r.value)}</span>
           </div>
           <div class="bar" aria-hidden="true"><span class={metric} style={`width:${ratio(r.value)}%`}></span></div>

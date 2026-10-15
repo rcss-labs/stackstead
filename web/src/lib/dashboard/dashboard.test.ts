@@ -61,6 +61,17 @@ describe('AlertsCard', () => {
     expect(screen.getByText('Docker is unreachable')).toBeTruthy();
   });
 
+  it('alert severity is available as text', () => {
+    render(AlertsCard, { alerts: [alert({ severity: 'warning' })] });
+    expect(screen.getByRole('listitem').textContent).toContain('warning');
+  });
+
+  it('alerts not loaded shows no empty text', () => {
+    render(AlertsCard, { alerts: undefined });
+    expect(screen.queryByText('No alerts.')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Alerts' })).toBeTruthy();
+  });
+
   it('empty alerts message', () => {
     render(AlertsCard, { alerts: [] });
     expect(screen.getByText('No alerts.')).toBeTruthy();
@@ -86,6 +97,21 @@ describe('TopConsumersCard', () => {
     expect(screen.getByText('2.0 GiB')).toBeTruthy();
     expect(screen.getByText('cache-1 · kv')).toBeTruthy();
     expect(fills()).toEqual(['100%', '50%']);
+  });
+
+  it('top consumers label uses the stack name, falling back to project, and omits an empty project', () => {
+    render(TopConsumersCard, {
+      top: { cpu: [entry('web-1', 'proj-a', 3), entry('x-1', 'other', 2), entry('lone', '', 1)], mem: [] },
+      stackNames: { 'proj-a': 'alpha' },
+    });
+    expect(screen.getByText('web-1 · alpha')).toBeTruthy();
+    expect(screen.getByText('x-1 · other')).toBeTruthy();
+    expect(screen.getByText('lone')).toBeTruthy();
+  });
+
+  it('top consumers not loaded shows no empty text', () => {
+    render(TopConsumersCard, { top: undefined });
+    expect(screen.queryByText('No samples yet.')).toBeNull();
   });
 
   it('top consumers empty', () => {
@@ -127,6 +153,17 @@ describe('EventsFeed', () => {
   it('events feed empty', () => {
     render(EventsFeed, { props: { events: [], connection: 'open' } });
     expect(screen.getByText('Waiting for events…')).toBeTruthy();
+  });
+
+  it('time is zero-padded 24h local, midnight is 00', () => {
+    const d = new Date(2026, 9, 15, 0, 5, 9);
+    render(EventsFeed, { props: { events: [ev('start', 'a', { time: d.toISOString() })], connection: 'open' } });
+    expect(screen.getByText('00:05:09')).toBeTruthy();
+  });
+
+  it('action cell has a title with the full text', () => {
+    render(EventsFeed, { props: { events: [ev('health_status', 'a', { health: 'unhealthy' })], connection: 'open' } });
+    expect(screen.getByText('unhealthy').getAttribute('title')).toBe('unhealthy');
   });
 
   it('die shows exit code', () => {

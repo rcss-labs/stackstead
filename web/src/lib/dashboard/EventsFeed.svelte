@@ -14,7 +14,9 @@
   const actionOf = (e: DockerEvent) => (e.action === 'health_status' && e.health ? e.health : e.action);
   const clock = (iso: string) => {
     const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour12: false });
+    if (Number.isNaN(d.getTime())) return '';
+    const two = (n: number) => String(n).padStart(2, '0');
+    return `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
   };
   const subject = (e: DockerEvent) => (e.action === 'die' && e.exitCode !== undefined ? `${e.container} exit ${e.exitCode}` : e.container);
 </script>
@@ -36,7 +38,7 @@
       {#each events as e, i (`${e.time}|${e.container}|${e.action}|${i}`)}
         <li>
           <span class="time">{clock(e.time)}</span>
-          <span class="action {tone(actionOf(e))}">{actionOf(e)}</span>
+          <span class="action {tone(actionOf(e))}" title={actionOf(e)}>{actionOf(e)}</span>
           <span class="subject" title={subject(e)}>{subject(e)}</span>
         </li>
       {/each}
@@ -56,6 +58,7 @@
   ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-family: var(--mono); font-size: 11.5px; }
   li { display: grid; grid-template-columns: 62px 58px 1fr; gap: 6px; min-width: 0; }
   .time { color: var(--faint); }
+  .action { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .action.danger { color: var(--danger); }
   .action.warning { color: var(--warning); }
   .action.success { color: var(--success); }

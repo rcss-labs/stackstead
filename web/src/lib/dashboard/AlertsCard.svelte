@@ -3,18 +3,20 @@
   import RelativeTime from '$lib/components/RelativeTime.svelte';
   import { link } from '$lib/router';
 
-  let { alerts }: { alerts: Alert[] } = $props();
+  let { alerts }: { alerts: Alert[] | undefined } = $props();
 </script>
 
 <section class="card">
-  <h3>Alerts <span class="count mono">{alerts.length}</span></h3>
-  {#if alerts.length === 0}
+  <h3>Alerts{#if alerts}{" "}<span class="count mono">{alerts.length}</span>{/if}</h3>
+  {#if !alerts}
+    <!-- not loaded yet or the fetch failed: say nothing rather than claim there are none -->
+  {:else if alerts.length === 0}
     <p class="empty">No alerts.</p>
   {:else}
     <ul>
       {#each alerts as a, i (`${a.kind}|${a.stack ?? ''}|${a.container ?? ''}|${a.since}|${i}`)}
         <li>
-          <i class="dot {a.severity}" aria-hidden="true"></i>
+          <i class="dot {a.severity}" aria-hidden="true"></i><span class="visually-hidden">{a.severity}</span>
           <div class="body">
             <div class="top">
               {#if a.stack}<a class="stack mono" href={`/stacks/${encodeURIComponent(a.stack)}`} use:link>{a.stack}</a>{/if}

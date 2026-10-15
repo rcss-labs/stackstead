@@ -448,7 +448,7 @@ describe('StackList', () => {
   it('dashboard sections render below the table with alerts, top consumers and events', async () => {
     const alerts = [{ kind: 'unhealthy', severity: 'danger', stack: 'alpha', message: 'db is unhealthy', since: '2026-10-15T10:00:00Z' }];
     const summary = summaryFor('proj-alpha');
-    (summary as { top: unknown }).top = { cpu: [{ container: 'web-1', service: 'web', project: 'alpha', value: 42 }], mem: [] };
+    (summary as { top: unknown }).top = { cpu: [{ container: 'web-1', service: 'web', project: 'proj-alpha', value: 42 }], mem: [] };
     await mount([stack('alpha')], [], { ...dashboardFake(hostSnap(), summary), 'GET /api/alerts': { body: alerts } });
     expect(await screen.findByRole('heading', { name: 'Alerts 1' })).toBeTruthy();
     expect(screen.getByText('db is unhealthy')).toBeTruthy();
@@ -459,6 +459,17 @@ describe('StackList', () => {
     expect(screen.getByText('live')).toBeTruthy();
     setLiveState({ ...liveState.value, connection: 'reconnecting' });
     expect(await screen.findByText('reconnecting')).toBeTruthy();
+  });
+
+  it('empty texts only show once alerts and summary have loaded', async () => {
+    await mount([stack('alpha')], [], {
+      'GET /api/host': { status: 500, body: { error: 'x' } },
+      'GET /api/alerts': { status: 500, body: { error: 'x' } },
+      'GET /api/metrics/summary': { status: 500, body: { error: 'x' } },
+    });
+    expect(screen.getByRole('heading', { name: 'Alerts' })).toBeTruthy();
+    expect(screen.queryByText('No alerts.')).toBeNull();
+    expect(screen.queryByText('No samples yet.')).toBeNull();
   });
 
   it('dashboard sections show even when there are no stacks', async () => {
