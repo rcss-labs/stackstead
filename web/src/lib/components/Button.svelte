@@ -52,7 +52,7 @@
   aria-disabled={soft ? 'true' : undefined}
   aria-busy={loading ? 'true' : undefined}
   aria-describedby={disabledReason ? `${uid}-reason` : undefined}
-  title={disabledReason}
+  title={disabledReason ?? (typeof rest.title === 'string' ? rest.title : undefined)}
   onclick={handleClick}
 >
   {#if loading}<span class="spin" aria-hidden="true"></span>{/if}

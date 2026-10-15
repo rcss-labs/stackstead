@@ -15,6 +15,7 @@
   import { toasts } from '$lib/stores/toasts';
   import Rail from '$lib/shell/Rail.svelte';
   import TopBar from '$lib/shell/TopBar.svelte';
+  import ContainerList from './routes/ContainerList.svelte';
   import Login, { safeNext } from './routes/Login.svelte';
   import Settings from './routes/Settings.svelte';
   import Setup from './routes/Setup.svelte';
@@ -34,6 +35,7 @@
   const stackParams = $derived(matchRoute('/stacks/:name', path));
   const view = $derived.by(() => {
     if (path === '/') return 'list' as const;
+    if (path === '/containers') return 'containers' as const;
     if (path === '/stacks/new') return 'create' as const;
     if (path === '/stacks/import') return 'import' as const;
     if (stackParams) return 'detail' as const;
@@ -151,6 +153,7 @@
   $effect(() => {
     const titles: Record<string, string> = {
       list: 'Stacks',
+      containers: 'Containers',
       settings: 'Settings',
       notfound: 'Page not found',
     };
@@ -230,6 +233,8 @@
     <main bind:this={mainEl}>
       {#if view === 'list'}
         <StackList />
+      {:else if view === 'containers'}
+        <ContainerList />
       {:else if view === 'create'}
         <StackCreate />
       {:else if view === 'import'}

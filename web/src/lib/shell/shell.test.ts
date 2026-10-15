@@ -18,6 +18,9 @@ describe('breadcrumb', () => {
     ['/stacks/web', [{ label: 'Stacks', href: '/' }, { label: 'web', mono: true }]],
     ['/stacks/my%20stack', [{ label: 'Stacks', href: '/' }, { label: 'my stack', mono: true }]],
     ['/settings', [{ label: 'Settings' }]],
+    ['/containers', [{ label: 'Containers' }]],
+    ['/containers/redis', [{ label: 'Containers', href: '/containers' }, { label: 'redis', mono: true }]],
+    ['/containers/my%20db', [{ label: 'Containers', href: '/containers' }, { label: 'my db', mono: true }]],
     ['/nope', [{ label: 'Stacks', href: '/' }, { label: 'Not found' }]],
   ])('%s', (path, crumbs) => {
     expect(breadcrumb(path)).toEqual(crumbs);
@@ -50,6 +53,21 @@ describe('Rail', () => {
     expect(screen.getByRole('link', { name: 'New stack' }).getAttribute('aria-current')).toBe('page');
     rerender({ username: 'ana', onlogout: () => {}, current: '/stacks/import' });
     expect(screen.getByRole('link', { name: 'Stacks' }).getAttribute('aria-current')).toBeNull();
+  });
+
+  it('has a Containers item after Stacks, current on the list and on a container page only', () => {
+    const { rerender } = render(Rail, { username: 'ana', onlogout: () => {}, current: '/containers' });
+    const names = screen.getAllByRole('link').map((a) => a.getAttribute('aria-label'));
+    expect(names.indexOf('Containers')).toBe(names.indexOf('Stacks') + 1);
+    const item = screen.getByRole('link', { name: 'Containers' });
+    expect(item.getAttribute('href')).toBe('/containers');
+    expect(item.getAttribute('title')).toBe('Containers');
+    expect(item.getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('link', { name: 'Stacks' }).getAttribute('aria-current')).toBeNull();
+    rerender({ username: 'ana', onlogout: () => {}, current: '/containers/redis' });
+    expect(screen.getByRole('link', { name: 'Containers' }).getAttribute('aria-current')).toBe('page');
+    rerender({ username: 'ana', onlogout: () => {}, current: '/' });
+    expect(screen.getByRole('link', { name: 'Containers' }).getAttribute('aria-current')).toBeNull();
   });
 
   it('navigates client-side when a link is clicked', async () => {

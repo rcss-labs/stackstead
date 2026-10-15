@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { ContainerHealth, OpState, StackStatus } from '$lib/api/types';
 
-  let { status }: { status: StackStatus | OpState | ContainerHealth | 'restarting' | 'exited' } = $props();
+  let { status }: { status: StackStatus | OpState | ContainerHealth | 'restarting' | 'exited' | 'created' | 'paused' | 'dead' } = $props();
 
   type Tone = 'success' | 'warning' | 'muted' | 'danger';
   const looks: Record<string, { tone: Tone; label: string }> = {
@@ -16,6 +16,9 @@
     cancelled: { tone: 'muted', label: 'cancelled' },
     unknown: { tone: 'muted', label: 'unknown' },
     exited: { tone: 'muted', label: 'exited' },
+    created: { tone: 'muted', label: 'created' },
+    paused: { tone: 'warning', label: 'paused' },
+    dead: { tone: 'danger', label: 'dead' },
     none: { tone: 'muted', label: 'none' },
     unavailable: { tone: 'danger', label: 'unavailable' },
     failed: { tone: 'danger', label: 'failed' },
