@@ -89,7 +89,7 @@
   });
 
   const hasRunning = $derived(operations.some((o) => o.state === 'running'));
-  const lifecycleReason = $derived(lifecycleDisabledReason({ live: $live, parseError, busy: hasRunning || acting }));
+  const lifecycleReason = $derived(lifecycleDisabledReason({ live: $live, parseError }));
 
   // One live-metrics stream for the whole page, shared by the aside and the Metrics tab; it is open only
   // while one of them is showing. The page is keyed by stack name, so the name is read once on purpose.
@@ -97,7 +97,7 @@
   const liveMetrics = createStackLiveMetrics(name);
   onDestroy(() => liveMetrics.close());
   const wide = mediaQuery('(min-width: 1100px)');
-  const asideShown = $derived($wide && !parseError);
+  const asideShown = $derived($wide && !!detail && !parseError);
   const needsLive = $derived(asideShown || activeTab === 'metrics');
   $effect(() => {
     if (!needsLive) return;
@@ -442,7 +442,13 @@
     </Tabs>
     </div>
     {#if asideShown}
-      <StackAside detail={d} {operations} live={liveMetrics} opsHref={stackUrl({ tab: 'operations' })} />
+      <StackAside
+        detail={d}
+        {operations}
+        live={liveMetrics}
+        opsHref={stackUrl({ tab: 'operations' })}
+        opHref={(id) => stackUrl({ tab: 'operations', op: id })}
+      />
     {/if}
     </div>
   </section>

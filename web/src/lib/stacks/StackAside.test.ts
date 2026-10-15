@@ -53,7 +53,7 @@ const point = (over: Partial<SeriesPoint>) => ({ t: 0, cpu: 0, mem: 0, memLimit:
 
 describe('StackAside', () => {
   it('lists containers of all services', () => {
-    render(StackAside, { detail: detail(), operations: [], live: fakeLive().live, opsHref: '/stacks/web?tab=operations' });
+    render(StackAside, { detail: detail(), operations: [], live: fakeLive().live, opsHref: '/stacks/web?tab=operations', opHref: (id: string) => `/stacks/web?tab=operations&op=${id}` });
     const section = screen.getByRole('region', { name: 'Containers' });
     expect(within(section).getByText('web-app-1')).toBeTruthy();
     expect(within(section).getByText('web-db-1')).toBeTruthy();
@@ -62,13 +62,13 @@ describe('StackAside', () => {
   it('says so when there are no containers', () => {
     const d = detail();
     d.services = d.services.map((s) => ({ ...s, containers: [] }));
-    render(StackAside, { detail: d, operations: [], live: fakeLive().live, opsHref: '/x' });
+    render(StackAside, { detail: d, operations: [], live: fakeLive().live, opsHref: '/x', opHref: (id: string) => `/x&op=${id}` });
     expect(screen.getByText('No containers.')).toBeTruthy();
   });
 
   it('resources show dash until samples then totals', async () => {
     const { live, latest } = fakeLive();
-    render(StackAside, { detail: detail(), operations: [], live, opsHref: '/x' });
+    render(StackAside, { detail: detail(), operations: [], live, opsHref: '/x', opHref: (id: string) => `/x&op=${id}` });
     const section = screen.getByRole('region', { name: 'Resources · now' });
     expect(within(section).getAllByText('—')).toHaveLength(3);
     latest.set(
@@ -89,14 +89,15 @@ describe('StackAside', () => {
       op('c', '2026-10-14T12:00:00Z', 'pull'),
       op('d', '2026-10-14T13:00:00Z', 'build'),
     ];
-    render(StackAside, { detail: detail(), operations: ops, live: fakeLive().live, opsHref: '/stacks/web?tab=operations' });
+    render(StackAside, { detail: detail(), operations: ops, live: fakeLive().live, opsHref: '/stacks/web?tab=operations', opHref: (id: string) => `/stacks/web?tab=operations&op=${id}` });
     const section = screen.getByRole('region', { name: 'Recent operations' });
     expect(within(section).getAllByRole('listitem').map((li) => li.textContent?.match(/build|pull|down|up/)?.[0])).toEqual(['build', 'pull', 'down']);
+    expect(within(section).getByRole('link', { name: 'build' }).getAttribute('href')).toBe('/stacks/web?tab=operations&op=d');
     expect(within(section).getByRole('link', { name: 'All' }).getAttribute('href')).toBe('/stacks/web?tab=operations');
   });
 
   it('shows None yet. without operations', () => {
-    render(StackAside, { detail: detail(), operations: [], live: fakeLive().live, opsHref: '/x' });
+    render(StackAside, { detail: detail(), operations: [], live: fakeLive().live, opsHref: '/x', opHref: (id: string) => `/x&op=${id}` });
     expect(screen.getByText('None yet.')).toBeTruthy();
   });
 });

@@ -12,12 +12,19 @@
     operations,
     live,
     opsHref,
-  }: { detail: StackDetail; operations: Operation[]; live: StackLiveMetrics; opsHref: string } = $props();
+    opHref,
+  }: {
+    detail: StackDetail;
+    operations: Operation[];
+    live: StackLiveMetrics;
+    opsHref: string;
+    opHref: (id: string) => string;
+  } = $props();
 
   const latest = $derived(live.latest);
   const containers = $derived(
     detail.services.flatMap((svc) =>
-      svc.containers.map((c) => ({ id: c.id, name: c.name, tone: serviceState({ ...svc, containers: [c] }).tone })),
+      svc.containers.map((c) => ({ id: c.id, name: c.name, status: c.status, tone: serviceState({ ...svc, containers: [c] }).tone })),
     ),
   );
   const totals = $derived(totalsNow($latest));
@@ -37,7 +44,7 @@
     {:else}
       <ul class="containers">
         {#each containers as c (c.id)}
-          <li><span class="dot {c.tone}" aria-hidden="true"></span><span class="mono">{c.name}</span></li>
+          <li><span class="dot {c.tone}" aria-hidden="true"></span><span class="mono">{c.name}</span><span class="muted status">{c.status}</span></li>
         {/each}
       </ul>
     {/if}
@@ -68,7 +75,7 @@
           {@const look = operationStateLook(o.state)}
           <li>
             <span class="dot {look.tone}" aria-hidden="true"></span>
-            <a href="{opsHref}&op={encodeURIComponent(o.id)}" use:link>{o.action}</a>
+            <a href={opHref(o.id)} use:link>{o.action}</a>
             <span class="muted">{look.label}</span>
             <RelativeTime iso={o.startedAt} />
           </li>
@@ -96,5 +103,6 @@
   dd { margin: 0; font-family: var(--mono); }
   dd.dash { color: var(--faint); }
   .muted { color: var(--muted); }
+  .status { margin-inline-start: auto; font-size: 11.5px; text-align: end; }
   .empty { margin: 0; color: var(--muted); font-size: 12.5px; }
 </style>

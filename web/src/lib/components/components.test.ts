@@ -392,8 +392,9 @@ describe('Tabs badges', () => {
       onselect: () => {},
     });
     const alpha = screen.getByRole('tab', { name: /^Alpha/ });
-    expect(alpha.textContent).toMatch(/Alpha\s*3/);
+    expect(alpha.textContent).toMatch(/^Alpha/);
     expect(alpha.querySelector('.badge')?.textContent).toBe('3');
+    expect(screen.getByRole('tab', { name: 'Alpha, 3' })).toBe(alpha);
     expect(alpha.querySelector('[aria-hidden]')).toBeNull();
     expect(alpha.getAttribute('tabindex')).toBe('0');
     expect(screen.getByRole('tab', { name: 'Beta' }).getAttribute('tabindex')).toBe('-1');

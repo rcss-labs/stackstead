@@ -4,6 +4,8 @@
   import { link } from '$lib/router';
   import { serviceState } from './summary';
 
+  const containerTone = (c: ServiceDetail['containers'][number]) => serviceState({ ...service, containers: [c] }).tone;
+
   let {
     stack,
     service,
@@ -22,12 +24,12 @@
   const state = $derived(serviceState(service));
   const image = $derived(service.config.image ?? (service.config.build ? `build: ${service.config.build.context}` : ''));
   const limits = $derived(
-    [service.config.limits.cpus ? `${service.config.limits.cpus} CPU` : '', service.config.limits.memory ?? ''].filter(Boolean).join(' · '),
+    [service.config.limits.cpus ? `${service.config.limits.cpus} cpus` : '', service.config.limits.memory ?? ''].filter(Boolean).join(' · '),
   );
-  const rows = $derived([
+  const rows = $derived<{ label: string; value?: string; chips?: string[] }[]>([
     { label: 'Image', value: image },
-    { label: 'Ports', value: (service.config.ports ?? []).join(', ') },
-    { label: 'Volumes', value: (service.config.volumes ?? []).join(', ') },
+    { label: 'Ports', chips: service.config.ports ?? [] },
+    { label: 'Volumes', chips: service.config.volumes ?? [] },
     { label: 'Restart', value: service.config.restart ?? '' },
     { label: 'Limits', value: limits },
   ]);
@@ -56,7 +58,13 @@
   <dl>
     {#each rows as row (row.label)}
       <dt>{row.label}</dt>
-      <dd class:dash={!row.value}>{row.value || '—'}</dd>
+      {#if row.chips}
+        <dd class:dash={row.chips.length === 0}>
+          {#if row.chips.length === 0}—{:else}<span class="chips">{#each row.chips as chip (chip)}<span class="chip">{chip}</span>{/each}</span>{/if}
+        </dd>
+      {:else}
+        <dd class:dash={!row.value}>{row.value || '—'}</dd>
+      {/if}
     {/each}
   </dl>
   {#if service.readOnly.length > 0}
@@ -65,7 +73,7 @@
   {#if service.containers.length > 0}
     <ul class="containers">
       {#each service.containers as c (c.id)}
-        <li><span class="mono">{c.name}</span> <span class="muted">{c.state}</span> <span class="muted">{c.status}</span></li>
+        <li><span class="dot {containerTone(c)}" aria-hidden="true"></span><span class="mono">{c.name}</span> <span class="muted">{c.state}</span> <span class="muted">{c.status}</span></li>
       {/each}
     </ul>
   {/if}
@@ -86,7 +94,7 @@
     border: 1px solid var(--border); border-radius: var(--radius); color: var(--muted); text-decoration: none;
   }
   .logs:hover { background: var(--hover); color: var(--text); }
-  dl { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 6px 12px; margin: 12px 0 0; font-size: 12.5px; }
+  dl { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 6px 12px; margin: 12px 0 0; font-size: 12.5px; }
   dt { color: var(--muted); }
   dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
   dd.dash { color: var(--faint); }
@@ -94,4 +102,8 @@
   p.muted { margin: 10px 0 0; font-size: 12.5px; }
   .containers { list-style: none; padding: 10px 0 0; margin: 10px 0 0; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
   .mono { font-family: var(--mono); }
+  .containers li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .containers .dot { width: 7px; height: 7px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip { font-family: var(--mono); font-size: 11.5px; padding: 1px 6px; border-radius: var(--radius-sm); background: var(--raised); overflow-wrap: anywhere; }
 </style>

@@ -54,6 +54,7 @@ const op = (over: Partial<Operation> = {}): Operation => ({
 let fake: FakeFetch;
 let stream: FakeStream;
 let stackRes: FakeResponse;
+let stackGate: Promise<void> | undefined;
 let opsRes: Operation[];
 let statusRes: { docker: string; compose: string; events: string; metricsDegraded: boolean };
 
@@ -61,16 +62,22 @@ beforeEach(() => {
   toasts.reset();
   navigate('/stacks/web');
   stackRes = { body: detail() };
+  stackGate = undefined;
   opsRes = [];
   statusRes = { docker: 'ok', compose: '2.29.0', events: 'connected', metricsDegraded: false };
   fake = installFakeFetch({
-    'GET /api/stacks/web': () => stackRes,
+    'GET /api/stacks/web': async () => {
+      if (stackGate) await stackGate;
+      return stackRes;
+    },
     'GET /api/stacks/web/operations': () => ({ body: opsRes }),
     'GET /api/stacks/web/compose': { body: { content: 'services: {}\n', hash: 'h1' } },
     'GET /api/status': () => ({ body: statusRes }),
     'GET /api/stacks': { body: [] },
     'GET /api/operations?state=running': { body: [] },
     'GET /api/operations/op1': () => ({ body: { ...op(), lines: [] } }),
+    'POST /api/stacks/web/services/app/preview': { body: { content: 'services: {}\n', hash: 'h1' } },
+    'PUT /api/stacks/web/services/app': { body: { hash: 'h2' } },
     'POST /api/stacks/web/actions/up': { body: op() },
     'DELETE /api/stacks/web': { body: op({ id: 'rm1', action: 'down' }) },
     'GET /api/operations/rm1': { body: { ...op({ id: 'rm1', action: 'down' }), lines: [] } },
@@ -399,11 +406,71 @@ describe('StackDetail', () => {
       expect(get(route).query.get('tab')).toBeNull();
     });
 
+    it('no live stream while the stack is loading, failed to load, or not found', async () => {
+      wide();
+      let release!: () => void;
+      stackGate = new Promise<void>((r) => (release = r));
+      const first = render(StackDetail, { name: 'web' });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(liveRequests()).toHaveLength(0);
+      release();
+      await screen.findByRole('complementary', { name: 'Stack summary' });
+      first.unmount();
+      const before = liveRequests().length;
+
+      stackGate = undefined;
+      stackRes = { status: 500, body: { error: 'boom' } };
+      const failing = render(StackDetail, { name: 'web' });
+      await screen.findByText(/Could not load the stack/);
+      await new Promise((r) => setTimeout(r, 30));
+      expect(liveRequests().length).toBe(before);
+      failing.unmount();
+
+      stackRes = { status: 404, body: { error: 'stack not found' } };
+      render(StackDetail, { name: 'web' });
+      await screen.findByText(/not found/i);
+      await new Promise((r) => setTimeout(r, 30));
+      expect(liveRequests().length).toBe(before);
+    });
+
+    it('opens one stream when the window widens and closes it when it narrows again', async () => {
+      const listeners = new Set<(e: { matches: boolean }) => void>();
+      vi.stubGlobal('matchMedia', () => ({
+        matches: false,
+        addEventListener: (_: string, fn: (e: { matches: boolean }) => void) => listeners.add(fn),
+        removeEventListener: (_: string, fn: (e: { matches: boolean }) => void) => listeners.delete(fn),
+      }));
+      render(StackDetail, { name: 'web' });
+      await screen.findByRole('heading', { name: 'web' });
+      expect(liveRequests()).toHaveLength(0);
+      listeners.forEach((fn) => fn({ matches: true }));
+      await waitFor(() => expect(liveRequests()).toHaveLength(1));
+      const signal = liveRequests()[0].signal!;
+      listeners.forEach((fn) => fn({ matches: false }));
+      await waitFor(() => expect(signal.aborted).toBe(true));
+      expect(liveRequests()).toHaveLength(1);
+    });
+
+    it('the service editor Apply is not soft-disabled by a running operation of the page', async () => {
+      opsRes = [op()];
+      render(StackDetail, { name: 'web' });
+      await user().click(await screen.findByRole('button', { name: 'Edit app' }));
+      const image = (await screen.findByLabelText('Image')) as HTMLInputElement;
+      await user().clear(image);
+      await user().type(image, 'nginx:2');
+      await user().click(screen.getByRole('button', { name: 'Preview changes' }));
+      await screen.findByTestId('diff-view');
+      await user().click(screen.getByRole('button', { name: 'Save' }));
+      const apply = await screen.findByRole('button', { name: 'Apply' });
+      expect(apply.getAttribute('aria-disabled')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Up' }).getAttribute('aria-disabled')).toBe('true');
+    });
+
     it('tab badges show service and operation counts', async () => {
       opsRes = [op({ state: 'succeeded' }), op({ id: 'op0', state: 'failed' })];
       render(StackDetail, { name: 'web' });
-      expect(await screen.findByRole('tab', { name: /^Services\s?1$/ })).toBeTruthy();
-      expect(await screen.findByRole('tab', { name: /^Operations\s?2$/ })).toBeTruthy();
+      expect(await screen.findByRole('tab', { name: 'Services, 1' })).toBeTruthy();
+      expect(await screen.findByRole('tab', { name: 'Operations, 2' })).toBeTruthy();
     });
 
     it('copy path button', async () => {

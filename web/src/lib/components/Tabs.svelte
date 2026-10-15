@@ -59,6 +59,7 @@
       bind:this={buttons[tab.id]}
       type="button"
       role="tab"
+      aria-label={tab.badge === undefined ? undefined : `${tab.label}, ${tab.badge}`}
       id="{uid}-tab-{tab.id}"
       aria-selected={tab.id === selected}
       aria-controls="{uid}-panel"
