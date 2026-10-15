@@ -27,4 +27,14 @@ describe('changedLines', () => {
     expect(changedLines('a: 1', 'a: 1\n')).toEqual([1]);
     expect(changedLines('a: 1\n', 'a: 1')).toEqual([1]);
   });
+
+  it('does not mark unchanged neighbours that share a prefix with an inserted line', () => {
+    expect(changedLines('k: 1\nk: 3\n', 'k: 1\nk: 2\nk: 3\n')).toEqual([2]);
+    expect(changedLines('  - "80:80"\n', '  - "8080:80"\n  - "80:80"\n')).toEqual([1]);
+    expect(changedLines('a:\n  - "80:80"\n', 'a:\n  - "8080:80"\n  - "80:80"\n')).toEqual([2]);
+  });
+
+  it('marks only the appended line when the original has no trailing newline', () => {
+    expect(changedLines('a: 1\nb: 2', 'a: 1\nb: 2\nc: 3')).toEqual([3]);
+  });
 });

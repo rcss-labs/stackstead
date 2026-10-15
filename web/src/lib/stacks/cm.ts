@@ -6,7 +6,6 @@ import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { unifiedMergeView } from '@codemirror/merge';
 import { Compartment, EditorState, type Extension, RangeSet, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, GutterMarker, gutter, keymap, lineNumbers, ViewPlugin, type ViewUpdate } from '@codemirror/view';
-// Already installed as a dependency of @codemirror/language; only used for highlight tags.
 import { tags } from '@lezer/highlight';
 import { changedLines } from './changedLines';
 
@@ -37,8 +36,9 @@ const readonlyExtensions = (readonly: boolean): Extension[] => [
 
 const highlightStyle = HighlightStyle.define([
   { tag: [tags.propertyName, tags.definition(tags.propertyName)], color: 'var(--info)' },
-  { tag: [tags.string, tags.special(tags.string)], color: 'var(--success)' },
-  { tag: [tags.number, tags.bool, tags.null], color: 'var(--warning)' },
+  // YAML plain scalars are all `tags.content`; numbers cannot be told apart from other
+  // plain values, so spec 6.4's "numbers --warning" is not applied.
+  { tag: [tags.string, tags.special(tags.string), tags.content], color: 'var(--success)' },
   { tag: [tags.comment, tags.lineComment], color: 'var(--faint)' },
 ]);
 
