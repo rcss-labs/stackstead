@@ -80,6 +80,7 @@
     display: flex;
     gap: var(--space-1);
     overflow-x: auto;
+    overflow-y: hidden;
     border-bottom: 1px solid var(--border);
   }
   [role='tab'] {

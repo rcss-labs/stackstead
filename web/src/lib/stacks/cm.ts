@@ -54,7 +54,7 @@ function baseExtensions(ariaLabel: string): Extension[] {
       '.cm-content': { fontFamily: 'var(--mono)', caretColor: 'var(--text)' },
       '.cm-gutters': { background: 'var(--surface)', color: 'var(--faint)', border: 'none' },
       '.cm-activeLine, .cm-activeLineGutter': { background: 'transparent' },
-      '&.cm-focused': { outline: '2px solid var(--accent)' },
+      '&.cm-focused': { outline: '2px solid var(--accent)', outlineOffset: '-2px' },
     }),
   ];
 }

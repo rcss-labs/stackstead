@@ -267,7 +267,7 @@
   .layout { display: flex; min-height: 100vh; }
   .column { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .banners { display: flex; flex-direction: column; gap: var(--space-2); padding: 16px 20px 0; }
-  .banners:empty { display: none; }
+  .banners:not(:has(*)) { display: none; }
   main { flex: 1; min-width: 0; padding: 20px 20px 40px; }
   main.bare { padding: 0; }
   @media (max-width: 720px) {

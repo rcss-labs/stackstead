@@ -471,7 +471,8 @@
   h1 { margin: 0; font-family: var(--mono); font-size: 20px; font-weight: 600; overflow-wrap: anywhere; }
   .meta { margin: 0; color: var(--muted); font-size: 12.5px; }
   .actions { margin-inline-start: auto; }
-  .row2 { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; min-width: 0; }
+  .row2 { display: flex; align-items: flex-start; gap: 8px; color: var(--muted); font-size: 12.5px; min-width: 0; }
+  .row2 svg { flex: none; margin-top: 2px; }
   .mono { font-family: var(--mono); }
   .path { overflow-wrap: anywhere; min-width: 0; }
   .cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }

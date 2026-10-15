@@ -190,7 +190,7 @@
             <tr role="row">
               <!-- svelte-ignore a11y_no_redundant_roles -->
               <td role="cell" data-label="Stack">
-               <span class="stack">
+               <span class="stack-cell">
                 <span class="sq {s.status}" aria-hidden="true"></span>
                 <span class="stack-text">
                   <span class="name">
@@ -274,8 +274,12 @@
   .chip:hover { background: var(--hover); color: var(--text); }
   .chip[aria-pressed='true'] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
   .n { font-family: var(--mono); color: var(--muted); font-weight: 400; }
-  .search { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--muted); }
-  .search input { width: 260px; max-width: 100%; }
+  .search { position: relative; display: inline-flex; align-items: center; color: var(--muted); }
+  .search :global(svg) { position: absolute; left: 10px; pointer-events: none; }
+  .search input {
+    width: 260px; max-width: 100%; box-sizing: border-box; height: 32px; padding: 0 10px 0 32px;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border-input); border-radius: var(--radius); font: inherit;
+  }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); overflow-x: auto; }
   .card.pad { padding: var(--space-4); }
   table { width: 100%; border-collapse: collapse; }
@@ -284,7 +288,7 @@
   td.num { padding: var(--pad) 8px; }
   tbody tr:hover { background: var(--hover); }
   tbody tr:last-child td { border-bottom: 0; }
-  .stack { display: flex; align-items: center; gap: var(--space-3); }
+  .stack-cell { display: flex; flex-direction: row; align-items: center; gap: var(--space-3); }
   .stack-text { display: flex; flex-direction: column; min-width: 0; }
   .name { display: inline-flex; align-items: center; gap: var(--space-2); }
   .tag { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 5px; }

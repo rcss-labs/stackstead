@@ -61,6 +61,10 @@
     color: var(--text);
     text-decoration: none;
   }
+  @media (max-width: 720px) {
+    .row { grid-template-columns: auto 1fr auto; row-gap: 2px; }
+    .cmd { grid-column: 1 / -1; grid-row: 2; }
+  }
   .row:hover { background: var(--hover); }
   .row[aria-current='true'] { background: var(--accent-soft); }
   .action { font-family: var(--mono); font-weight: 500; }

@@ -101,6 +101,7 @@
     color: var(--text);
     resize: vertical;
   }
+  .fallback:focus-visible { outline-offset: -2px; }
   .yaml-editor :global(.cm-editor) { max-height: 70vh; }
   .yaml-editor :global(.cm-scroller) { overflow: auto; }
 </style>

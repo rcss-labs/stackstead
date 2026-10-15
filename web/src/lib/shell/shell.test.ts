@@ -62,7 +62,7 @@ describe('Rail', () => {
     setTheme('dark');
     render(Rail, { username: 'ana', onlogout: () => {}, current: '/' });
     await userEvent.setup().click(screen.getByRole('button', { name: 'Switch to light theme' }));
-    expect(screen.getByRole('button', { name: 'Switch to dark theme' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Switch to dark theme' }).getAttribute('title')).toBe('Switch to dark theme');
     await userEvent.setup().click(screen.getByRole('button', { name: 'Switch to dark theme' }));
     expect(screen.getByRole('button', { name: 'Switch to light theme' })).toBeTruthy();
   });
