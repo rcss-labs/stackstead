@@ -25,7 +25,10 @@ All routes except health, setup and login need a session cookie. Errors are
 | `GET /api/operations?state=running` | operations across all stacks, optionally only running ones |
 | `GET /api/stacks/{name}/logs` | live container logs (SSE); every `log` event has an `id`, and `Last-Event-ID` resumes exactly |
 | `GET /api/stacks/{name}/metrics`, `.../metrics/live` | resource history (JSON) and live samples (SSE) |
-| `GET /api/events` | container changes as they happen (SSE) |
+| `GET /api/host` | host tiles data: hostname, containers, CPU, memory, disk, network, disk I/O, volumes, uptime and restarts; see [Dashboard data](#dashboard-data) |
+| `GET /api/alerts` | active problems, most urgent first; see [Dashboard data](#dashboard-data) |
+| `GET /api/metrics/summary?window=15m` | per-project sparkline series and top consumers; see [Dashboard data](#dashboard-data) |
+| `GET /api/events` | container changes and Docker container events as they happen (SSE) |
 | `POST /api/password` | change the signed-in user's password (`{current, new}`; 204) |
 | `GET /api/settings/metrics-token` | whether a scrape token exists, `{configured}` (never the token) |
 | `POST`/`DELETE /api/settings/metrics-token` | create or rotate, or revoke, the Prometheus scrape token |
@@ -106,10 +109,86 @@ compose containers.
   (`sample` events). History and live `time` are both UTC RFC3339.
 - **Events.** `GET /api/events` sends `status` (`events`, `metricsDegraded`)
   when it connects or changes, and `change` (`project`, `seq`) when a
-  project's containers changed; refetch the affected stack on `change`.
+  project's containers changed; refetch the affected stack on `change`. It
+  also sends `event`, one Docker container event: `action`, `container`
+  (name), `project` and `service` (empty strings for a container that is not
+  part of a compose project), `image` and `time` (UTC RFC3339), plus
+  `exitCode` (a number, only on `die`) and `health` (only on
+  `health_status`, for example `healthy` or `unhealthy`). Only these actions
+  are forwarded: `create`, `start`, `die`, `stop`, `kill`, `restart`,
+  `destroy`, `pause`, `unpause`, `oom` and `health_status`. Events are not
+  replayed: a client sees only what happens while it is connected.
   `/api/events` and `metrics/live` send `event: dropped` and then end when the
   client falls behind; reconnect. A stack without a compose project has no
   logs: the logs stream sends just `end`.
+
+### Dashboard data
+
+Three read-only routes feed the stack list's dashboard. They cost nothing
+while nobody is looking (no background collection) and are cached on the
+server, so ten open tabs cost the same as one.
+
+**`GET /api/host`** is always `200`. The body has `hostname`, `os`
+(`linux`, `darwin`, ...), `source` (`proc` or `docker`, see below) and
+`sampledAt`, then these sections, each an object or `null` when its source is
+unavailable:
+
+| Key | Contents |
+| --- | --- |
+| `containers` | `total`, `running`, `exited`, `bad` (unhealthy, dead, restarting, or exited non-zero) |
+| `cpu` | `percent` (null until two readings exist), `cores` |
+| `memory` | `used`, `total`, `swapUsed`, `swapTotal` (bytes) |
+| `disk` | `path` (the stacks directory), `free`, `total` (bytes) |
+| `network` | `rxBytesPerSec`, `txBytesPerSec` (null until two readings exist), `interface` |
+| `diskIO` | `readBytesPerSec`, `writeBytesPerSec` (null until two readings exist) |
+| `volumes` | `count`, `size` (bytes), `dangling` |
+| `uptime` | `seconds`, `load1`, `load5`, `load15` |
+| `restarts24h` | `total` and `top`: the two busiest containers as `{container, service, project, count}` |
+
+`source` is `proc` when `/proc/stat` is readable: CPU, memory, network, disk
+I/O and uptime then describe the whole host, and `network.interface` is the
+busiest interface by traffic. Otherwise (macOS, Docker Desktop, Windows) it is
+`docker`: CPU, memory, network and disk I/O are summed over the running
+compose containers using the engine's core count and total memory, with
+`network.interface` set to `containers`, and `uptime` is `null`. When Docker is
+unreachable, `containers`, `volumes` and `restarts24h` are `null`, and with
+`source: "docker"` so are `cpu`, `memory`, `network` and `diskIO`. `disk` is
+`null` only when the stacks directory cannot be read. Each Docker call times
+out after 5 seconds.
+
+The snapshot is collected at most once every 5 seconds. `volumes` and
+`restarts24h` (a 24-hour scan of `start` events: the first start of a
+container is not a restart) are refreshed in the background at most once a
+minute and are `null` until the first refresh finishes.
+
+**`GET /api/alerts`** is a JSON array, `[]` when nothing is wrong. Each alert
+has `kind`, `severity` (`danger`, `warning` or `info`), `message`, `since`
+(RFC3339) and, where they apply, `stack`, `service` and `container`. The list
+is sorted by severity, then by `since`, newest first. `since` is when this
+Stackstead process first saw the alert; nothing is stored, so it restarts with
+the process. The list is recomputed at most once every 5 seconds; a failure
+reading the registry is a `500` `{error}`.
+
+| `kind` | Severity | Message |
+| --- | --- | --- |
+| `exited` | danger | `web exited (137)`, with ` and restart policy is always` (or `unless-stopped`) and `; 4 restarts in 24h` when they apply. Registered stacks only, non-zero exit, not one-off runs |
+| `unhealthy` | danger | `web is unhealthy` |
+| `restart_loop` | warning | `web restarted 5 times in 24h` (3 or more) |
+| `port_clash` | warning | `web wants 8080 but api holds it`: another stack, or a running container, holds a host port the service declares |
+| `override` | warning | `compose.override.yaml found; override files are not supported yet` |
+| `parse_error` | warning | the first line of the compose parse error |
+| `docker_disconnected` | danger | `Docker is unreachable; status may be stale` |
+| `metrics_degraded` | warning | `Metrics are not being stored (database write failures)` |
+
+**`GET /api/metrics/summary`** takes `window` as `5m`, `15m` (the default) or
+`1h`; anything else is a `400` `{error}`, and a store failure is a `500`. The
+body is `window`, `step` (seconds, window divided by 30), `from`, `to`,
+`stacks` and `top`. `stacks` is keyed by compose project; each value has `cpu`
+and `mem` (30 buckets each, `null` for an empty bucket; `mem` in bytes),
+`cpuNow`, `memNow`, `netRxBytesPerSec` and `netTxBytesPerSec` (latest sampler
+reading, `null` when there is none). `top` has `cpu` and `mem`, each a list
+of the five heaviest containers as `{container, service, project, value}`.
+Results are cached for 10 seconds per window.
 
 ### What is stored
 
