@@ -88,6 +88,52 @@ func TestEvaluate(t *testing.T) {
 				Message: "web is unhealthy"}},
 		},
 		{
+			name:       "unhealthy non-compose container has no stack or service",
+			containers: []engine.Container{ctr("x1", "legacy-nginx", "", "", "running", "Up 1 minute (unhealthy)")},
+			connected:  true,
+			want: []alerts.Alert{{Kind: "unhealthy", Severity: "danger", Container: "legacy-nginx",
+				Message: "legacy-nginx is unhealthy"}},
+		},
+		{
+			name:       "restart loop of an unregistered project names the container",
+			containers: []engine.Container{ctr("x1", "other-x-1", "other", "x", "running", "Up 5 seconds")},
+			restarts:   map[string]int{"x1": 5},
+			connected:  true,
+			want: []alerts.Alert{{Kind: "restart_loop", Severity: "warning", Container: "other-x-1",
+				Message: "other-x-1 restarted 5 times in 24h"}},
+		},
+		{
+			name:    "exited one-off container is ignored",
+			details: []stacks.Detail{stack("s", "s", svc("web", ""))},
+			containers: []engine.Container{func() engine.Container {
+				c := ctr("c1", "s-web-run-1", "s", "web", "exited", "Exited (1) 1 minute ago")
+				c.Labels["com.docker.compose.oneoff"] = "True"
+				return c
+			}()},
+			connected: true,
+		},
+		{
+			name:       "port clash with a container of an unregistered project",
+			details:    []stacks.Detail{stack("a", "a", svc("web", "", "8080:80"))},
+			containers: []engine.Container{ctr("x1", "other-x-1", "other", "x", "running", "Up 1 minute", published(8080))},
+			connected:  true,
+			want: []alerts.Alert{{Kind: "port_clash", Severity: "warning", Stack: "a", Service: "web",
+				Message: "web wants 8080 but a container of project other (other-x-1) holds it"}},
+		},
+		{
+			name: "two override files give two alerts",
+			details: []stacks.Detail{func() stacks.Detail {
+				d := stack("a", "a")
+				d.Overrides = []string{"compose.override.yaml", "docker-compose.override.yml"}
+				return d
+			}()},
+			connected: true,
+			want: []alerts.Alert{
+				{Kind: "override", Severity: "warning", Stack: "a", Message: "compose.override.yaml found; override files are not supported yet"},
+				{Kind: "override", Severity: "warning", Stack: "a", Message: "docker-compose.override.yml found; override files are not supported yet"},
+			},
+		},
+		{
 			name:       "restart loop at three restarts",
 			details:    []stacks.Detail{stack("s", "s", svc("web", ""))},
 			containers: []engine.Container{ctr("c1", "s-web-1", "s", "web", "running", "Up 5 seconds")},

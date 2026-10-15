@@ -14,21 +14,27 @@ import (
 )
 
 type fakeDetails struct {
-	mu      sync.Mutex
-	details []stacks.Detail
-	err     error
-	calls   atomic.Int32
-	gate    chan struct{} // when set, Details blocks until closed
-	entered chan struct{} // receives once per call when set
+	mu       sync.Mutex
+	details  []stacks.Detail
+	err      error
+	calls    atomic.Int32
+	gate     chan struct{} // when set, Details blocks until closed
+	entered  chan struct{} // receives once per call when set
+	honorCtx bool          // fail with ctx.Err() after the gate when ctx is done
 }
 
-func (f *fakeDetails) Details(context.Context) ([]stacks.Detail, error) {
+func (f *fakeDetails) Details(ctx context.Context) ([]stacks.Detail, error) {
 	f.calls.Add(1)
 	if f.entered != nil {
 		f.entered <- struct{}{}
 	}
 	if f.gate != nil {
 		<-f.gate
+	}
+	if f.honorCtx {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -255,5 +261,98 @@ func TestDisconnectedStillReportsFileAlerts(t *testing.T) {
 	}
 	if len(got) != 2 || !kinds["docker_disconnected"] || !kinds["parse_error"] {
 		t.Errorf("got %+v", got)
+	}
+}
+
+func TestOverrideAndClashAlertsKeepTheirOwnSince(t *testing.T) {
+	r := newRig()
+	d := stack("s", "s", svc("web", "", "8080:80"))
+	d.Overrides = []string{"compose.override.yaml"}
+	r.det.details = []stacks.Detail{d}
+	r.cont.set(ctr("x1", "legacy-a", "", "", "running", "Up", published(8080)))
+	t1 := r.clock.now()
+	first := r.get(t)
+	if len(first) != 2 {
+		t.Fatalf("first = %+v", first)
+	}
+
+	r.clock.advance(time.Minute)
+	t2 := r.clock.now()
+	d.Overrides = []string{"compose.override.yaml", "docker-compose.override.yml"}
+	r.det.mu.Lock()
+	r.det.details = []stacks.Detail{d}
+	r.det.mu.Unlock()
+	r.cont.set(ctr("x1", "legacy-a", "", "", "running", "Up", published(8080)),
+		ctr("x2", "legacy-b", "", "", "running", "Up", published(8080)))
+	got := r.get(t)
+	if len(got) != 4 {
+		t.Fatalf("got %+v", got)
+	}
+	for _, a := range got {
+		wantSince := t2
+		if a.Message == "compose.override.yaml found; override files are not supported yet" ||
+			a.Message == "web wants 8080 but a non-compose container (legacy-a) holds it" {
+			wantSince = t1
+		}
+		if !a.Since.Equal(wantSince) {
+			t.Errorf("%q since = %v, want %v", a.Message, a.Since, wantSince)
+		}
+	}
+}
+
+func TestContainerAlertSinceSurvivesDisconnect(t *testing.T) {
+	r := newRig()
+	r.cont.set(ctr("c1", "s-web-1", "s", "web", "running", "Up 1 minute (unhealthy)"))
+	t1 := r.clock.now()
+	r.get(t)
+
+	r.clock.advance(time.Minute)
+	r.connected.v.Store(false)
+	r.cont.mu.Lock()
+	r.cont.err = engine.ErrUnavailable
+	r.cont.mu.Unlock()
+	got := r.get(t)
+	if len(got) != 1 || got[0].Kind != "docker_disconnected" {
+		t.Fatalf("while disconnected: %+v", got)
+	}
+
+	r.clock.advance(time.Minute)
+	r.connected.v.Store(true)
+	r.cont.mu.Lock()
+	r.cont.err = nil
+	r.cont.mu.Unlock()
+	got = r.get(t)
+	if len(got) != 1 || got[0].Kind != "unhealthy" || !got[0].Since.Equal(t1) {
+		t.Errorf("after reconnect: %+v, want since %v", got, t1)
+	}
+}
+
+func TestCancelledLeaderDoesNotFailJoiners(t *testing.T) {
+	r := newRig()
+	r.det.honorCtx = true
+	r.det.gate = make(chan struct{})
+	r.det.entered = make(chan struct{}, 4)
+	leaderCtx, cancel := context.WithCancel(context.Background())
+	type result struct {
+		a   []alerts.Alert
+		err error
+	}
+	leader, joiner := make(chan result, 1), make(chan result, 1)
+	go func() {
+		a, err := r.engine.Alerts(leaderCtx)
+		leader <- result{a, err}
+	}()
+	<-r.det.entered
+	go func() {
+		a, err := r.engine.Alerts(context.Background())
+		joiner <- result{a, err}
+	}()
+	cancel()
+	close(r.det.gate)
+	if res := <-joiner; res.err != nil {
+		t.Errorf("joiner failed: %v", res.err)
+	}
+	if res := <-leader; res.err != nil {
+		t.Errorf("leader computation must outlive its request: %v", res.err)
 	}
 }
