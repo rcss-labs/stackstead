@@ -61,32 +61,38 @@
   }
 </script>
 
-<div>
+<div class="page">
   <h1>Import stack</h1>
+  <p class="lead">Register a compose file where it already lives. Nothing is moved or changed until you edit it.</p>
   {#if unavailable}
     <Banner kind="danger" title="Docker/compose unavailable: the stack was not imported">{unavailable}</Banner>
   {/if}
-  <form class="stack" onsubmit={submit} novalidate>
-    <p>Register an existing compose file. The file is not modified until you edit it.</p>
-    <Field
-      label="Compose file path"
-      id="import-path"
-      hint="Absolute path. Browse lists the allowed directories only; the path may also point outside them."
-      error={pathError}
-    >
-      {#snippet children(c)}
-        <div class="inline">
-          <input {...c} type="text" bind:value={path} autocomplete="off" spellcheck="false" autocapitalize="off" />
-          <Button variant="secondary" aria-label="Browse for compose file" onclick={() => (browsing = true)}>Browse…</Button>
+  <form class="card" onsubmit={submit} novalidate>
+    <div class="body">
+      <Field
+        label="Compose file path"
+        id="import-path"
+        mono
+        hint="Absolute path. Browse lists the allowed directories only; the path may also point outside them."
+        error={pathError}
+      >
+        {#snippet children(c)}
+          <div class="inline">
+            <input {...c} type="text" bind:value={path} autocomplete="off" spellcheck="false" autocapitalize="off" />
+            <Button variant="secondary" aria-label="Browse for compose file" onclick={() => (browsing = true)}>Browse…</Button>
+          </div>
+        {/snippet}
+      </Field>
+      {#if composeError}
+        <div class="compose-error" role="alert" tabindex="-1">
+          <div class="head"><span class="what">Compose file</span><span class="verdict">cannot import</span></div>
+          <pre>{composeError}</pre>
         </div>
-      {/snippet}
-    </Field>
-    {#if composeError}
-      <div class="compose-error" role="alert" tabindex="-1">{composeError}</div>
-    {/if}
-    <div class="actions">
-      <Button variant="primary" type="submit" loading={pending}>Import stack</Button>
+      {/if}
+    </div>
+    <div class="footer">
       <a href="/" use:link>Cancel</a>
+      <Button variant="primary" type="submit" loading={pending}>Import stack</Button>
     </div>
   </form>
 </div>
@@ -104,10 +110,17 @@
 />
 
 <style>
-  .container { max-width: 40rem; padding-block: var(--space-5, 1.5rem); }
-  .stack { display: flex; flex-direction: column; gap: var(--space-4); }
-  .inline { display: flex; gap: var(--space-2); }
+  .page { max-width: 640px; display: flex; flex-direction: column; gap: 12px; }
+  .lead { color: var(--muted); font-size: 13px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
+  .body { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+  .inline { display: flex; gap: 8px; }
   .inline input { flex: 1; min-width: 0; }
-  .compose-error { color: var(--danger); border: 1px solid var(--danger); border-radius: var(--radius-md); padding: var(--space-3); white-space: pre-wrap; overflow-wrap: anywhere; }
-  .actions { display: flex; gap: var(--space-4); align-items: center; }
+  .compose-error { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; font-size: 12px; }
+  .head { display: flex; justify-content: space-between; gap: 8px; }
+  .what { color: var(--muted); }
+  .verdict { color: var(--danger); }
+  pre { margin: 6px 0 0; font-family: var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .footer { display: flex; justify-content: flex-end; align-items: center; gap: 14px; padding: 12px 14px; border-top: 1px solid var(--border); }
+  .footer a { color: var(--muted); font-size: 13px; }
 </style>

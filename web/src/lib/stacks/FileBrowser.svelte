@@ -2,6 +2,7 @@
   import { tick } from 'svelte';
   import { api, ApiError } from '../api/client';
   import type { FSEntry } from '../api/types';
+  import Button from '../components/Button.svelte';
   import Dialog from '../components/Dialog.svelte';
   import Spinner from '../components/Spinner.svelte';
 
@@ -121,13 +122,13 @@
 <Dialog {open} {title} {onclose}>
   <nav aria-label="Current location" class="crumbs">
     {#if path}
-      <button type="button" onclick={() => load('', '')}>Allowed directories</button>
+      <button type="button" class="crumb" onclick={() => load('', '')}>Allowed directories</button>
       {#each crumbs as crumb, i (crumb.path)}
         <span aria-hidden="true">›</span>
         {#if i === crumbs.length - 1}
           <span aria-current="location" class="here">{crumb.label}</span>
         {:else}
-          <button type="button" onclick={() => load(crumb.path, root)}>{crumb.label}</button>
+          <button type="button" class="crumb" onclick={() => load(crumb.path, root)}>{crumb.label}</button>
         {/if}
       {/each}
     {:else}
@@ -146,7 +147,7 @@
         <ul class="entries">
           {#each sorted as e, i (i)}
             <li>
-              <button type="button" disabled={!e.isDir && mode === 'dir'} onclick={() => choose(e)}>
+              <button type="button" class="entry" disabled={!e.isDir && mode === 'dir'} onclick={() => choose(e)}>
                 <span aria-hidden="true">{e.isDir ? '📁' : '📄'} </span>{e.name}
               </button>
             </li>
@@ -157,31 +158,37 @@
   </div>
 
   <div class="actions">
-    <button type="button" onclick={onclose}>Cancel</button>
+    <Button variant="secondary" onclick={onclose}>Cancel</Button>
     {#if mode === 'dir' && path}
-      <button type="button" class="primary" disabled={!!error || loading} onclick={() => onpick(path)}>Use this directory</button>
+      <Button variant="primary" disabled={!!error || loading} onclick={() => onpick(path)}>Use this directory</Button>
     {/if}
   </div>
 </Dialog>
 
 <style>
-  .crumbs { display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center; overflow-wrap: anywhere; }
-  .here { font-weight: 600; }
-  .entries { list-style: none; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
-  .entries button { width: 100%; text-align: left; }
+  .crumbs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; overflow-wrap: anywhere; font-size: 12.5px; margin-bottom: 10px; }
+  .crumbs span[aria-hidden='true'] { color: var(--faint); }
+  .here { font-weight: 600; font-family: var(--mono); }
+  .crumb { border: 0; background: none; padding: 0; color: var(--accent); text-decoration: underline; cursor: pointer; font-family: var(--mono); font-size: 12.5px; }
+  .entries { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 50vh; overflow-y: auto; }
+  .entry {
+    width: 100%;
+    height: 30px;
+    padding: 0 10px;
+    text-align: left;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .entry:hover:not(:disabled) { background: var(--hover); border-color: var(--border); }
+  .entry:disabled { color: var(--faint); cursor: default; }
   .error { color: var(--danger); overflow-wrap: anywhere; }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .list { outline: none; }
   .muted { color: var(--muted); }
-  .actions { display: flex; gap: var(--space-2); justify-content: flex-end; }
-  button {
-    padding: var(--space-1) var(--space-3);
-    background: var(--raised);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    color: inherit;
-  }
-  button:disabled { opacity: 0.6; cursor: default; }
-  .crumbs button { border: none; background: none; text-decoration: underline; padding: 0; }
+  .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
 </style>

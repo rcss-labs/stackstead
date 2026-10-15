@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -33,7 +33,7 @@ describe('StackImport', () => {
   it('explains the file is not modified', () => {
     routes();
     render(StackImport);
-    expect(screen.getByText(/not modified until you edit it/)).toBeTruthy();
+    expect(screen.getByText(/Nothing is moved or changed until you edit it/)).toBeTruthy();
   });
 
   it('posts the path and navigates to the stack', async () => {
@@ -97,9 +97,21 @@ describe('StackImport', () => {
     render(StackImport);
     await user.type(screen.getByLabelText('Compose file path'), '/srv/x.yaml');
     await submit(user);
-    const el = await screen.findByText(/yaml: line 3/);
-    expect(el.textContent).toBe('yaml: line 3\n  bad');
-    await waitFor(() => expect(document.activeElement).toBe(el));
+    const message = await screen.findByText(/yaml: line 3/);
+    expect(message.textContent).toBe('yaml: line 3\n  bad');
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('alert')));
+  });
+
+  it('import error renders in the compose-file box with its message', async () => {
+    routes({ 'POST /api/stacks/import': { status: 422, body: { error: 'yaml: line 3\n  bad' } } });
+    const user = userEvent.setup();
+    render(StackImport);
+    await user.type(screen.getByLabelText('Compose file path'), '/srv/x.yaml');
+    await submit(user);
+    const box = await screen.findByRole('alert');
+    expect(within(box).getByText('Compose file')).toBeTruthy();
+    expect(within(box).getByText('cannot import')).toBeTruthy();
+    expect(within(box).getByText(/yaml: line 3/)).toBeTruthy();
   });
 
   it('browse picks a file into the input', async () => {

@@ -9,6 +9,8 @@
     row,
     readonly = false,
     errors = {},
+    title,
+    hint,
   }: {
     items: T[];
     onchange: (items: T[]) => void;
@@ -18,6 +20,9 @@
     row: Snippet<[T, number, (value: T) => void]>;
     readonly?: boolean;
     errors?: Record<number, string>;
+    /** Group heading shown left of the add button. */
+    title?: string;
+    hint?: string;
   } = $props();
 
   const uid = $props.id();
@@ -66,6 +71,15 @@
 </script>
 
 <div class="editor">
+  {#if title || !readonly}
+    <div class="head">
+      {#if title}<span class="title">{title}</span>{/if}
+      {#if hint}<span class="hint">{hint}</span>{/if}
+      {#if !readonly}
+        <button type="button" class="add" aria-label={addLabel} bind:this={addButton} onclick={add}>+ Add</button>
+      {/if}
+    </div>
+  {/if}
   <ul bind:this={list} class="rows">
     {#each items as item, i (i)}
       <li>
@@ -79,17 +93,30 @@
       </li>
     {/each}
   </ul>
-  {#if !readonly}
-    <button type="button" class="add" bind:this={addButton} onclick={add}>{addLabel}</button>
-  {/if}
 </div>
 
 <style>
-  .editor { display: flex; flex-direction: column; gap: var(--space-2); align-items: flex-start; }
-  .rows { list-style: none; padding: 0; width: 100%; display: flex; flex-direction: column; gap: var(--space-2); }
-  .row { display: flex; gap: var(--space-2); align-items: center; }
-  .cell { flex: 1; min-width: 0; display: flex; }
-  .cell :global(input) { flex: 1; min-width: 0; }
+  .editor { display: flex; flex-direction: column; gap: 8px; }
+  .head { display: flex; align-items: baseline; gap: 10px; min-height: 24px; }
+  .title { font-size: 12.5px; font-weight: 600; }
+  .hint { color: var(--faint); font-size: 11.5px; font-family: var(--mono); }
+  .rows { list-style: none; padding: 0; width: 100%; display: flex; flex-direction: column; gap: 8px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .cell { flex: 1; min-width: 0; display: flex; gap: 8px; }
+  .cell > :global(input) {
+    flex: 1;
+    min-width: 0;
+    height: 32px;
+    padding: 0 10px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border-input);
+    border-radius: var(--radius);
+    font-family: var(--mono);
+    font-size: 12.5px;
+  }
+  .cell > :global(input[aria-invalid='true']) { border-color: var(--danger); }
+  .cell > :global(input:read-only) { background: var(--raised); color: var(--muted); }
   .error { color: var(--danger); font-size: 0.875rem; overflow-wrap: anywhere; }
   button {
     background: transparent;
@@ -102,5 +129,5 @@
   }
   button:hover { background: var(--hover); color: var(--text); }
   button[data-remove] { flex: none; width: 30px; height: 30px; font-size: 16px; line-height: 1; }
-  .add { height: 24px; padding: 0 8px; }
+  .add { height: 24px; padding: 0 8px; margin-left: auto; align-self: center; }
 </style>
