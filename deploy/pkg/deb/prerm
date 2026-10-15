@@ -1,0 +1,39 @@
+#!/bin/sh
+# Debian prerm: stop and disable on removal only; an upgrade keeps the service running.
+set -e
+
+R="${STACKSTEAD_PKG_ROOT:-}"
+UNIT=stackstead.service
+
+# systemctl is only usable on a host booted with systemd (not in chroots or
+# container image builds); every call is best-effort so a package operation
+# never fails because of the service manager.
+have_systemd() {
+    command -v systemctl >/dev/null 2>&1 && [ -d "$R/run/systemd/system" ]
+}
+
+svc() {
+    if have_systemd; then
+        systemctl "$@" || true
+    fi
+}
+
+case "$1" in
+    remove)
+        # Remember that the package disabled the service, so a reinstall after
+        # `apt remove` enables it again (dpkg passes the old version to postinst
+        # configure then, so $2 alone cannot tell it from an upgrade).
+        # The marker lives in the state dir: purge deletes it, remove keeps it.
+        if [ -d "$R/var/lib/stackstead" ]; then
+            : > "$R/var/lib/stackstead/.disabled-by-remove"
+        fi
+        svc stop "$UNIT"
+        svc disable "$UNIT"
+        ;;
+    upgrade | deconfigure | failed-upgrade) ;;
+    *)
+        echo "prerm called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+exit 0

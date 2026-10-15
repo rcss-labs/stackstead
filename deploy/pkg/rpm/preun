@@ -1,0 +1,25 @@
+#!/bin/sh
+# rpm %preun: only a real removal ($1 = 0) stops the service; an upgrade keeps it running.
+set -e
+
+R="${STACKSTEAD_PKG_ROOT:-}"
+UNIT=stackstead.service
+
+# systemctl is only usable on a host booted with systemd (not in chroots or
+# container image builds); every call is best-effort so a package operation
+# never fails because of the service manager.
+have_systemd() {
+    command -v systemctl >/dev/null 2>&1 && [ -d "$R/run/systemd/system" ]
+}
+
+svc() {
+    if have_systemd; then
+        systemctl "$@" || true
+    fi
+}
+
+if [ "${1:-1}" = 0 ]; then
+    svc stop "$UNIT"
+    svc disable "$UNIT"
+fi
+exit 0

@@ -1,0 +1,73 @@
+#!/bin/sh
+# Stackstead .pkg postinstall. Runs as root, started by installer(8) with
+#   $1 package path  $2 install location  $3 target volume  $4 root of the system
+#
+# What it does: nothing for a non-boot volume ("staged only"); otherwise it hands
+# the per-user setup (directories, config, LaunchAgent, start) to the installed
+# install.sh --from-pkg for the console user. install.sh does every file operation
+# in that user's home AS that user (root never writes there or follows the user's
+# symlinks) and refuses uid 0.
+#
+# Which user: the owner of /dev/console, i.e. the person logged in at the Mac. The
+# environment the installer was started with (USER, SUDO_USER, HOME, TMPDIR) is not
+# trusted and is not passed on. With nobody logged in (ssh, MDM at the login
+# window) the owner is root: the installation still succeeds, and the message says
+# how to finish it. The postinstall never fails the installation because the
+# agent could not be set up; the package files are in place either way.
+#
+# Where install.sh comes from: installer extracts the package's Scripts into a
+# temporary directory only root can write, and this script, install.sh and the two
+# templates sit together in it. Root runs and reads those copies, never anything
+# under /usr/local/share (on some Macs that directory is writable by a non-root
+# user, who could swap it between the extraction and this script).
+#
+# Test seams: STACKSTEAD_PKG_PATH replaces PATH, and STACKSTEAD_PKG_ASSUME_ROOT=1
+# makes a non-root run behave as root. The PATH seam is honoured only when NOT
+# root (a real root run ignores both variables), so it cannot redirect an install.
+set -eu
+
+if [ "$(/usr/bin/id -u)" -eq 0 ] || [ "${STACKSTEAD_PKG_ASSUME_ROOT:-}" = 1 ]; then
+	PATH=/usr/bin:/bin:/usr/sbin:/sbin
+else
+	PATH=${STACKSTEAD_PKG_PATH:-$PATH}
+fi
+export PATH
+
+HERE=$(cd "$(dirname "$0")" && pwd -P)
+HELPER=$HERE/install.sh
+SHARED=/usr/local/share/stackstead/install.sh # only printed, as a hint for later
+
+volume=${3:-/}
+if [ "$volume" != / ]; then
+	echo "Stackstead: installed to $volume: files staged only, no user agent was set up."
+	exit 0
+fi
+
+# finish_by_hand REASON: succeed, and say how to set the agent up later.
+finish_by_hand() {
+	echo "Stackstead: $1; the package files are installed."
+	echo "Stackstead: to set up the agent for a user, run:  sudo $SHARED --from-pkg --user <name>"
+	exit 0
+}
+
+console_user=$(stat -f %Su /dev/console 2>/dev/null) || console_user=
+case $console_user in
+"" | root) finish_by_hand "no user is logged in at the console" ;;
+_* | -* | *[!A-Za-z0-9._-]*) finish_by_hand "the console user is not a regular account" ;;
+esac
+if [ "$(id -u "$console_user" 2>/dev/null || echo 0)" -eq 0 ]; then
+	finish_by_hand "the console user has uid 0"
+fi
+if [ ! -f "$HELPER" ]; then
+	finish_by_hand "the installer's copy of install.sh is missing"
+fi
+
+echo "Stackstead: setting up the LaunchAgent for $console_user"
+status=0
+# A clean environment: nothing the installer was started with reaches install.sh.
+/usr/bin/env -i PATH="$PATH" /bin/sh "$HELPER" --from-pkg --payload-dir "$HERE" --user "$console_user" || status=$?
+if [ "$status" -ne 0 ]; then
+	echo "Stackstead: the agent setup did not finish (install.sh exit status $status); the package files are installed." >&2
+	echo "Stackstead: retry as an administrator:  sudo $SHARED --from-pkg --user $console_user" >&2
+fi
+exit 0

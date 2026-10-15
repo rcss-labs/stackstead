@@ -160,7 +160,9 @@ the service; a drop-in (`systemctl edit stackstead`) with
 paths (and `PrivateTmp=no` if stacks live in `/tmp`). Account, group and
 cleanup details of packaged installs are described with the installers.
 
-The unit file lives at `deploy/stackstead.service` in this tree; the installers
-move it to `deploy/systemd/stackstead.service`. Earlier versions of the unit
-ran the bare `stackstead --config ...`; that form still works but prints a
-deprecation note, so switch to `serve`.
+The unit file lives at `deploy/systemd/stackstead.service` and expects the
+binary at `/usr/bin/stackstead` (where the `.deb` and `.rpm` put it; the install
+script puts it in `/usr/local/bin` and rewrites the unit). Earlier versions of
+the unit ran the bare `stackstead --config ...`; that form still works but
+prints a deprecation note, so switch to `serve`. Install, upgrade and removal
+are covered in [install.md](install.md).

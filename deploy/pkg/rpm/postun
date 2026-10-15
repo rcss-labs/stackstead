@@ -1,0 +1,21 @@
+#!/bin/sh
+# rpm %postun: reload units only. rpm has no purge; config and data stay (README documents the manual purge).
+set -e
+
+R="${STACKSTEAD_PKG_ROOT:-}"
+
+# systemctl is only usable on a host booted with systemd (not in chroots or
+# container image builds); every call is best-effort so a package operation
+# never fails because of the service manager.
+have_systemd() {
+    command -v systemctl >/dev/null 2>&1 && [ -d "$R/run/systemd/system" ]
+}
+
+svc() {
+    if have_systemd; then
+        systemctl "$@" || true
+    fi
+}
+
+svc daemon-reload
+exit 0

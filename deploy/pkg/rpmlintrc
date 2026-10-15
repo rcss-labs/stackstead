@@ -1,0 +1,25 @@
+# Manual page deferred; `stackstead --help` and the README cover usage for now.
+addFilter("no-manual-page-for-binary")
+# nfpm does not emit a changelog; release notes live on the GitHub release page.
+addFilter("no-changelogname-tag")
+# /opt/stacks is setgid (2775 stackstead:docker) on purpose so compose projects share a group.
+addFilter("non-standard-dir-perm")
+# The unit is the only file under /usr/lib; the binary lives in /usr/bin.
+addFilter("only-non-binary-in-usr-lib")
+# The stackstead user and group are created by %pre (see deploy/pkg/rpm/pre); files owned by them are intentional.
+addFilter("non-standard-uid .* stackstead$")
+addFilter("non-standard-gid .* stackstead$")
+# The config is 0640 root:stackstead on purpose: it can hold secrets and only the service user may read it.
+addFilter("non-readable /etc/stackstead/config.yaml 640")
+# Releases are unsigned for now (SHA256SUMS only; user decision recorded in the Plan 7 header).
+addFilter("no-signature")
+# nfpm cannot emit a Group tag; the tag is deprecated in current rpm packaging guidelines.
+addFilter("no-group-tag")
+# The licence text is installed with %license; there is no separate documentation to ship yet.
+addFilter("no-documentation")
+# %post chowns only /opt/stacks (created by the script itself) to stackstead:docker.
+addFilter("dangerous-command-in-%post .*chown")
+# Go binaries are static and not built as PIE by default; the service has no setuid or network-exposed privilege
+# that PIE would harden, and the deb's lintian check covers the same binary.
+addFilter("statically-linked-binary")
+addFilter("position-independent-executable-suggested")

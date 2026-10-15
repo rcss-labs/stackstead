@@ -1,0 +1,74 @@
+#!/bin/sh
+# Debian postinst: directories, ownership, then enable+start (fresh) or try-restart (upgrade).
+set -e
+
+R="${STACKSTEAD_PKG_ROOT:-}"
+UNIT=stackstead.service
+
+# systemctl is only usable on a host booted with systemd (not in chroots or
+# container image builds); every call is best-effort so a package operation
+# never fails because of the service manager.
+have_systemd() {
+    command -v systemctl >/dev/null 2>&1 && [ -d "$R/run/systemd/system" ]
+}
+
+svc() {
+    if have_systemd; then
+        systemctl "$@" || true
+    fi
+}
+
+ensure_dirs() {
+    # the stacks dir is set up only when it is created: upgrades and reinstalls
+    # never change an existing one (the admin may have chosen its owner and mode)
+    if [ ! -d "$R/opt/stacks" ]; then
+        mkdir -p "$R/opt/stacks"
+        chown stackstead:docker "$R/opt/stacks"
+        chmod 2775 "$R/opt/stacks"
+    fi
+    mkdir -p "$R/var/lib/stackstead"
+    chown stackstead:stackstead "$R/var/lib/stackstead"
+    chmod 0700 "$R/var/lib/stackstead"
+    if [ -f "$R/etc/stackstead/config.yaml" ]; then
+        chgrp stackstead "$R/etc/stackstead/config.yaml"
+        chmod 0640 "$R/etc/stackstead/config.yaml"
+    fi
+}
+
+print_fresh_install_hints() {
+    printf '%s\n' \
+        'Stackstead is installed and started. Finish setup in a browser on this host:' \
+        '  http://127.0.0.1:8420' \
+        'To set it up from another machine, use the one-time setup token from:' \
+        '  journalctl -u stackstead' \
+        'Config: /etc/stackstead/config.yaml (restart the service after editing).'
+}
+
+warn_if_no_docker() {
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "Warning: Docker was not found on this host. Stackstead starts without it" >&2
+        echo "but cannot manage stacks until Docker Engine and the compose plugin are installed." >&2
+    fi
+}
+
+case "$1" in
+    configure)
+        ensure_dirs
+        svc daemon-reload
+        marker="$R/var/lib/stackstead/.disabled-by-remove"
+        if [ -z "${2:-}" ] || [ -e "$marker" ]; then
+            rm -f "$marker"
+            svc enable --now "$UNIT"
+            print_fresh_install_hints
+        else
+            svc try-restart "$UNIT"
+        fi
+        warn_if_no_docker
+        ;;
+    abort-upgrade | abort-remove | abort-deconfigure) ;;
+    *)
+        echo "postinst called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+exit 0

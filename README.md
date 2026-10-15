@@ -83,10 +83,46 @@ Dockerfile-first builds, built-in logs and metrics history, and a single
 small binary that runs natively on the host, with no containers or external
 database of its own.
 
-## Quick start
+## Install
 
-You need a Linux or macOS machine with Docker Engine and the Docker Compose
-v2 plugin (`docker compose`).
+One command on a Linux server (systemd) or a Mac:
+
+```bash
+curl -fsSL https://github.com/rcss-labs/stackstead/releases/latest/download/install.sh | sudo sh
+```
+
+The script downloads the latest release, verifies it against the release's `SHA256SUMS`
+(it always does, and refuses on a mismatch), installs a supervised service and prints
+the URL to finish setup. Pin a version with `... | sudo sh -s -- --version vX.Y.Z`.
+Running it again upgrades in place and never touches your config, data or stacks.
+Releases are not signed yet; the checksum guards against corrupt downloads, and you can
+compare `SHA256SUMS` by hand.
+
+- **Debian, Ubuntu, Fedora, Rocky and friends:** download the `.deb` or `.rpm` from the
+  [releases page](https://github.com/rcss-labs/stackstead/releases) and run
+  `sudo apt install ./stackstead_<version>_amd64.deb` or
+  `sudo dnf install ./stackstead-<version>-1.x86_64.rpm`. The binary lands in
+  `/usr/bin/stackstead` and the service starts right away.
+- **macOS (Intel and Apple silicon):** the script above, or the universal `.pkg`. The
+  package is not signed with an Apple Developer ID yet, so Gatekeeper blocks a
+  double-click: right-click it and choose **Open**, or run
+  `sudo installer -pkg stackstead_<version>_darwin.pkg -target /`. Stackstead runs as a
+  LaunchAgent while you are logged in.
+- **From source, by hand:** build with `make build` and follow the
+  [manual systemd steps](docs/install.md#manual-install-systemd).
+
+Stackstead listens on `127.0.0.1:8420`. Open it on the host and create your admin account;
+from another machine you also need the one-time setup token from
+`journalctl -u stackstead | grep setup_token` (on macOS from
+`~/Library/Logs/Stackstead/stackstead.log`). The service user is in the `docker` group, which
+is root-equivalent on the host, so keep it on localhost or behind a TLS proxy.
+Paths, private registries, unit drop-ins, uninstall and purge are in
+[docs/install.md](docs/install.md).
+
+## Build from source
+
+Prefer to hack on it, or try it without installing a service? You need Docker Engine
+and the Docker Compose v2 plugin (`docker compose`).
 
 ```bash
 make build                 # needs Go and Node >= 22; produces bin/stackstead
@@ -102,22 +138,7 @@ variables; see [`deploy/config.example.yaml`](deploy/config.example.yaml)
 for every option (listen address, stacks folder, data folder, metrics
 retention and more).
 
-### Run it as a service (systemd)
-
-```bash
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin stackstead
-sudo install -m 0755 bin/stackstead /usr/local/bin/stackstead
-sudo install -d /etc/stackstead && sudo install -m 0644 deploy/config.example.yaml /etc/stackstead/config.yaml
-sudo install -d -o stackstead -g stackstead /opt/stacks
-sudo install -m 0644 deploy/stackstead.service /etc/systemd/system/stackstead.service
-sudo systemctl daemon-reload && sudo systemctl enable --now stackstead
-```
-
-To finish setup from another machine, use the one-time setup token from
-`journalctl -u stackstead`. Ready-made installers and packages for Linux and
-macOS are planned.
-
-### Command line
+## Command line
 
 The same binary is a command-line client for a running server, and a set of
 host-side admin commands:
@@ -161,6 +182,8 @@ progress. Full reference: [docs/cli.md](docs/cli.md).
 
 - [API and observability reference](docs/api.md): every endpoint, log
   streaming and resume, metrics history, Prometheus setup.
+- [Installing](docs/install.md): the script, packages, the macOS installer,
+  paths, upgrades, uninstall and purge, exit codes.
 - [Command line](docs/cli.md): every command, exit codes, host administration,
   backup and restore.
 - [Security](docs/security.md): threat model, reverse proxies, first-run
@@ -171,9 +194,13 @@ progress. Full reference: [docs/cli.md](docs/cli.md).
 ## Status
 
 Stackstead is young and under active development. The web UI, stack
-management, logs, metrics and a command-line client are in place; installers
-are next.
+management, logs, metrics, a command-line client and installers for Linux and
+macOS are in place.
 
 ## Licence
 
-AGPL-3.0. The LICENSE file is added together with the installers.
+AGPL-3.0-only; see [LICENSE](LICENSE). The AGPL asks that anyone who interacts
+with Stackstead over a network can get its source: the public repository
+satisfies that for unmodified published versions (`stackstead version` and
+`/api/status` show the exact version and commit). If you run a modified copy for
+other people, publish your changes.

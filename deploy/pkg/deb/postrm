@@ -1,0 +1,38 @@
+#!/bin/sh
+# Debian postrm: remove keeps config and data; purge deletes config, data and the user.
+# /opt/stacks and the docker group are never touched.
+set -e
+
+R="${STACKSTEAD_PKG_ROOT:-}"
+
+# systemctl is only usable on a host booted with systemd (not in chroots or
+# container image builds); every call is best-effort so a package operation
+# never fails because of the service manager.
+have_systemd() {
+    command -v systemctl >/dev/null 2>&1 && [ -d "$R/run/systemd/system" ]
+}
+
+svc() {
+    if have_systemd; then
+        systemctl "$@" || true
+    fi
+}
+
+case "$1" in
+    remove)
+        svc daemon-reload
+        ;;
+    purge)
+        svc daemon-reload
+        rm -rf "$R/etc/stackstead" "$R/var/lib/stackstead"
+        if getent passwd stackstead >/dev/null 2>&1; then
+            userdel stackstead || true
+        fi
+        ;;
+    upgrade | failed-upgrade | abort-install | abort-upgrade | disappear) ;;
+    *)
+        echo "postrm called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+exit 0
