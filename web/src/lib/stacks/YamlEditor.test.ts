@@ -10,7 +10,7 @@ vi.mock('./cm', () => ({
     const rec = { opts, destroy: vi.fn(), setValue: vi.fn(), setReadonly: vi.fn(), current: opts.value };
     rec.setValue.mockImplementation((v: string) => (rec.current = v));
     created.push(rec);
-    return { getValue: () => rec.current, setValue: rec.setValue, setReadonly: rec.setReadonly, goToLine: vi.fn(), focus: vi.fn(), destroy: rec.destroy };
+    return { getValue: () => rec.current, setValue: rec.setValue, setReadonly: rec.setReadonly, setOriginal: vi.fn(), goToLine: vi.fn(), focus: vi.fn(), destroy: rec.destroy };
   },
 }));
 

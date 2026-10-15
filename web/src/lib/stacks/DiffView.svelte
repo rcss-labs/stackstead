@@ -51,6 +51,6 @@
   }
   .diff :global(.cm-editor) { max-height: 70vh; }
   .diff :global(.cm-scroller) { overflow: auto; }
-  .diff :global(.cm-deletedChunk) { background: color-mix(in srgb, var(--danger) 15%, transparent); }
-  .diff :global(.cm-changedLine) { background: color-mix(in srgb, var(--success) 15%, transparent); }
+  .diff :global(.cm-deletedChunk) { background: var(--danger-soft); }
+  .diff :global(.cm-changedLine) { background: var(--success-soft); }
 </style>

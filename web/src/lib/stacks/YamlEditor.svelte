@@ -6,8 +6,16 @@
     value = $bindable(''),
     readonly = false,
     ariaLabel,
+    original,
     onchange,
-  }: { value?: string; readonly?: boolean; ariaLabel: string; onchange?: (v: string) => void } = $props();
+  }: {
+    value?: string;
+    readonly?: boolean;
+    ariaLabel: string;
+    /** Baseline for the changed-line marks; none are drawn when absent. */
+    original?: string;
+    onchange?: (v: string) => void;
+  } = $props();
 
   let host: HTMLDivElement | undefined = $state();
   let textarea: HTMLTextAreaElement | undefined = $state();
@@ -26,7 +34,7 @@
       .then(({ createEditor }) => {
         if (destroyed || !host) return;
         const hadFocus = textarea !== undefined && document.activeElement === textarea;
-        handle = createEditor({ parent: host, value, readonly, ariaLabel, onchange: update });
+        handle = createEditor({ parent: host, value, readonly, ariaLabel, original, onchange: update });
         if (hadFocus) handle.focus(); // the textarea is about to be removed; do not drop the user's focus
       })
       .catch(() => {});
@@ -41,6 +49,11 @@
   $effect(() => {
     const v = value;
     if (handle && handle.getValue() !== v) handle.setValue(v);
+  });
+
+  $effect(() => {
+    const o = original;
+    handle?.setOriginal(o);
   });
 
   $effect(() => {
@@ -83,8 +96,7 @@
     font-family: var(--mono);
     font-size: 0.875rem;
     padding: var(--space-3);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border: 0;
     background: var(--surface);
     color: var(--text);
     resize: vertical;

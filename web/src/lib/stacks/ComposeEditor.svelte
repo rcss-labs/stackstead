@@ -43,6 +43,7 @@
   let yaml: YamlEditor | undefined = $state();
   const isDirty = $derived($st.draft !== $st.content);
   const showEditor = $derived($st.phase !== 'previewing');
+  const fileName = $derived(composePath?.split('/').filter(Boolean).pop() ?? 'compose.yaml');
   const backupName = $derived(
     composePath ? `${composePath.split('/').filter(Boolean).pop()}.bak` : 'a .bak file next to it',
   );
@@ -114,53 +115,66 @@
     {#if $st.error}<pre class="msg">{$st.error}</pre>{/if}
   {/if}
 
-  {#if $st.phase === 'previewing'}
-    <p class="hint">Showing the file as it is now against your draft.</p>
-    <DiffView original={$st.content} modified={$st.draft} ariaLabel="Changes to compose.yaml" />
-  {/if}
-
   {#if $st.phase !== 'loading' && $st.phase !== 'loadFailed'}
-    <!-- Kept mounted (hidden) during preview so the editor and its undo history survive. -->
-    <div hidden={!showEditor}>
-      <YamlEditor
-        bind:this={yaml}
-        value={$st.draft}
-        ariaLabel="Compose file"
-                onchange={(v) => editor.setDraft(v)}
-      />
-    </div>
-
-    {#if $st.phase === 'editing' && $st.error}
-      <pre class="msg error" data-testid="compose-error">{$st.error}</pre>
-    {/if}
-
-    <div class="row">
-      {#if $st.phase === 'previewing'}
-        <Button variant="secondary" onclick={() => editor.cancelPreview()}>Back to editing</Button>
-      {:else}
+    <div class="card">
+      <div class="toolbar">
+        <span class="file">{fileName}</span>
+        {#if isDirty}<span class="modified">· modified</span>{/if}
+        <span class="spacer"></span>
+        <span class="shortcut">⌘S / Ctrl+S to save</span>
+        {#if $st.phase === 'previewing'}
+          <Button variant="secondary" size="sm" onclick={() => editor.cancelPreview()}>Back to editing</Button>
+        {:else}
+          <Button
+            variant="secondary"
+            size="sm"
+            disabledReason={!isDirty
+              ? 'No changes to preview'
+              : $st.phase === 'conflict'
+                ? 'Resolve the conflict first (Reload or Discard)'
+                : undefined}
+            onclick={() => editor.preview()}>Preview changes</Button
+          >
+        {/if}
         <Button
-          variant="secondary"
+          variant="primary"
+          size="sm"
+          loading={$st.phase === 'saving'}
           disabledReason={!isDirty
-            ? 'No changes to preview'
+            ? 'No changes to save'
             : $st.phase === 'conflict'
               ? 'Resolve the conflict first (Reload or Discard)'
               : undefined}
-          onclick={() => editor.preview()}>Preview changes</Button
+          onclick={save}>Save</Button
         >
+        {#if $st.phase === 'saved'}
+          <Button variant="secondary" size="sm" onclick={() => onapply?.()}>Apply</Button>
+        {/if}
+      </div>
+
+      {#if $st.phase === 'previewing'}
+        <p class="hint">Showing the file as it is now against your draft.</p>
+        <DiffView original={$st.content} modified={$st.draft} ariaLabel="Changes to compose.yaml" />
       {/if}
-      <Button
-        variant="primary"
-        loading={$st.phase === 'saving'}
-        disabledReason={!isDirty
-          ? 'No changes to save'
-          : $st.phase === 'conflict'
-            ? 'Resolve the conflict first (Reload or Discard)'
-            : undefined}
-        onclick={save}>Save</Button
-      >
-      {#if $st.phase === 'saved'}
-        <Button variant="secondary" onclick={() => onapply?.()}>Apply</Button>
+
+      <!-- Kept mounted (hidden) during preview so the editor and its undo history survive. -->
+      <div hidden={!showEditor}>
+        <YamlEditor
+          bind:this={yaml}
+          value={$st.draft}
+          original={$st.content}
+          ariaLabel="Compose file"
+          onchange={(v) => editor.setDraft(v)}
+        />
+      </div>
+
+      {#if $st.phase === 'editing' && $st.error}
+        <pre class="msg error" data-testid="compose-error">{$st.error}</pre>
       {/if}
+
+      <p class="footer">
+        Saving keeps the previous version as <code>{fileName}.bak</code>. Comments and key order are preserved.
+      </p>
     </div>
   {/if}
 </div>
@@ -168,7 +182,29 @@
 <style>
   .compose { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
   .row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-  .hint { margin: 0; color: var(--muted); }
+  .card {
+    min-width: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .file { font-family: var(--mono); }
+  .modified { color: var(--warning); }
+  .spacer { flex: 1; }
+  .shortcut { color: var(--faint); font-family: var(--mono); }
+  .footer { margin: 0; padding: 8px 12px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+  .footer code { font-family: var(--mono); }
+  .hint { margin: 0; padding: 8px 12px; color: var(--muted); }
   .msg {
     margin: var(--space-2) 0 0;
     white-space: pre-wrap;
@@ -176,6 +212,6 @@
     font-family: var(--mono);
     font-size: 0.875rem;
   }
-  .error { padding: var(--space-3); border: 1px solid var(--danger); border-radius: var(--radius-md); }
+  .error { margin: 0; padding: var(--space-3); border-top: 1px solid var(--danger); color: var(--danger); }
   [hidden] { display: none; }
 </style>
