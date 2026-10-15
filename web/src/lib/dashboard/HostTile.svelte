@@ -17,7 +17,7 @@
   .tile { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 10px 12px; min-width: 0; }
   .label { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .value { font-family: var(--mono); font-size: 17px; font-weight: 600; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .sub { font-family: var(--mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sub { font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere; }
   .sub.muted { color: var(--muted); }
   .sub.success { color: var(--success); }
   .sub.warning { color: var(--warning); }
