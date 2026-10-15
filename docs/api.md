@@ -232,18 +232,25 @@ not sampled yet). `managed` says who owns the container: `stack` when its
 compose project belongs to a registered stack (`stack` then holds that stack's
 name), `compose` when it has a compose project that no registered stack uses,
 and `none` for a plain container. `project`, `service` and `stack` are empty
-strings where they do not apply. The list is computed at most once every 2
-seconds however many clients ask, and answers `503` while the Docker event
-stream is disconnected.
+strings where they do not apply. `status` is Docker's own text ("Up 3
+minutes"), read from a fresh Docker listing, not from the event-fed state
+cache. The list is computed at most once every 2 seconds however many clients
+ask, and answers `503` while Docker is unavailable.
 
-`GET /api/containers/{id}` adds `startedAt`, `finishedAt`, `restartPolicy`,
-`mounts` (`type`, `source`, `destination`, `readOnly`) and `labels`. It never
-includes environment variables, the command, the entrypoint, the user or other
-host configuration.
+`GET /api/containers/{id}` returns `id` (the full 64 hex), `name`, `image`,
+`state`, `status`, `health`, `startedAt` and `finishedAt` (`null` when Docker
+reports none), `exitCode` (`null` while running), `restartPolicy`,
+`memoryLimit` (the container's configured memory limit in bytes, from
+`HostConfig.Memory`; `null` when unlimited), `restarts24h`, `project`,
+`service`, `stack`, `managed`, `ports`, `networks`, `mounts` (`type`,
+`source`, `destination`, `readOnly`) and `labels`. It has no `createdAt`,
+`cpu`, `mem` or `memLimit`: live usage comes from the list. It never includes
+environment variables, the command, the entrypoint, the user or other host
+configuration.
 
-`GET /api/containers/{id}/logs` takes the same query (`stream`, `tail`,
-`follow`, `since`) and sends the same `log`, `error` and `end` events, ids and
-`Last-Event-ID` resume as the stack logs.
+`GET /api/containers/{id}/logs` takes `tail`, `follow` and `since` (there
+is no `stream` or `service` filter) and sends the same `log`, `error` and `end`
+events, ids and `Last-Event-ID` resume as the stack logs.
 
 `POST /api/containers/{id}/start`, `stop` or `restart` takes a JSON body
 (`{}`), waits for Docker (at most 30 seconds; `stop` and `restart` give the
@@ -259,8 +266,8 @@ when Docker is unavailable.
 ### What is stored
 
 Every `metrics_interval` (default `10s`) every running container is sampled,
-and one row per running compose container is written to the SQLite database in the data directory: CPU,
-memory and limit, and cumulative network and block I/O. Rows older than
+and one row per running compose container is written to the SQLite database in
+the data directory: CPU, memory and limit, and cumulative network and block I/O. Rows older than
 `metrics_retention` (default `72h`) are pruned hourly. At the default settings
 that is about 26,000 rows per container. Containers outside compose are
 sampled for live values only (the Containers screen, Top consumers and

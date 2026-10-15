@@ -20,6 +20,7 @@
   },
   "HostConfig": {
     "RestartPolicy": {"Name": "unless-stopped", "MaximumRetryCount": 0},
+    "Memory": 536870912,
     "Privileged": false
   },
   "Mounts": [

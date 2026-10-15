@@ -531,7 +531,7 @@ func dockerStack(t *testing.T, c *client) {
 	}
 
 	dashboardEndpoints(t, c)
-	containerEndpoints(t, c, name)
+	t.Run("containers", func(t *testing.T) { containerEndpoints(t, c, name) })
 
 	got, body = c.do("POST", "/api/stacks/"+name+"/actions/down", map[string]any{})
 	if got != 202 {
@@ -630,11 +630,10 @@ func dashboardEndpoints(t *testing.T, c *client) {
 // on stack containers, details without env, the logs stream and the session gate.
 func containerEndpoints(t *testing.T, c *client, stackName string) {
 	t.Helper()
-	const plainName = "ss-e2e-plain"
+	plainName := "ss-e2e-plain-" + strings.ToLower(rand.Text()[:8])
 	t.Cleanup(func() { _, _ = dockerOutput("rm", "-f", plainName) })
-	_, _ = dockerOutput("rm", "-f", plainName)
-	if out, err := exec.Command("docker", "run", "-d", "--label", "io.stackstead.e2e=1",
-		"--name", plainName, "busybox", "sleep", "300").CombinedOutput(); err != nil {
+	if out, err := dockerOutput("run", "-d", "--label", "io.stackstead.e2e=1", "--name", plainName,
+		"busybox", "sh", "-c", "echo ss-e2e-ready; sleep 300"); err != nil {
 		t.Skipf("cannot start the plain container (busybox unavailable?): %v: %.200s", err, out)
 	}
 
@@ -678,7 +677,9 @@ func containerEndpoints(t *testing.T, c *client, stackName string) {
 	if after.State != "running" {
 		t.Errorf("state after start = %q, want running", after.State)
 	}
-	c.expect(409, "POST", "/api/containers/"+stackRow.ID+"/stop", map[string]any{})
+	if refusal := c.expect(409, "POST", "/api/containers/"+stackRow.ID+"/stop", map[string]any{}); !strings.Contains(string(refusal), "belongs to stack") {
+		t.Errorf("409 body = %.200s, want it to say the container belongs to a stack", refusal)
+	}
 
 	var details map[string]json.RawMessage
 	if err := json.Unmarshal(c.expect(200, "GET", "/api/containers/"+plain.ID, nil), &details); err != nil {
@@ -691,6 +692,9 @@ func containerEndpoints(t *testing.T, c *client, stackName string) {
 	}
 
 	logs := c.expect(200, "GET", "/api/containers/"+plain.ID+"/logs?tail=10&follow=false", nil)
+	if !strings.Contains(string(logs), "event: log") || !strings.Contains(string(logs), "ss-e2e-ready") {
+		t.Errorf("logs stream has no log event with ss-e2e-ready: %.300s", logs)
+	}
 	if !strings.Contains(string(logs), "event: end") {
 		t.Errorf("logs stream has no end event: %.200s", logs)
 	}

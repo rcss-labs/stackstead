@@ -81,6 +81,7 @@ type ContainerInspect struct {
 	ExitCode                               int
 	Running                                bool
 	RestartPolicy                          string
+	MemoryLimit                            int64 // HostConfig.Memory in bytes; 0 = unlimited
 	Labels                                 map[string]string
 	Ports                                  []Port
 	Networks                               map[string]string // network name -> IPv4 address
@@ -151,6 +152,7 @@ type apiInspect struct {
 	}
 	HostConfig struct {
 		RestartPolicy struct{ Name string }
+		Memory        int64
 	}
 	Mounts []struct {
 		Type, Source, Destination string
@@ -168,7 +170,7 @@ func (r apiInspect) toInspect() ContainerInspect {
 		State: r.State.Status, Status: r.State.Status, Health: "none",
 		StartedAt: r.State.StartedAt, FinishedAt: r.State.FinishedAt,
 		ExitCode: r.State.ExitCode, Running: r.State.Running,
-		RestartPolicy: r.HostConfig.RestartPolicy.Name, Labels: r.Config.Labels,
+		RestartPolicy: r.HostConfig.RestartPolicy.Name, MemoryLimit: r.HostConfig.Memory, Labels: r.Config.Labels,
 		Networks: make(map[string]string, len(r.NetworkSettings.Networks)),
 	}
 	if out.Image == "" {

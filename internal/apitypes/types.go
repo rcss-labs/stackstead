@@ -479,6 +479,7 @@ type ContainerDetail struct {
 	FinishedAt    *time.Time        `json:"finishedAt"` // null when Docker reports none
 	ExitCode      *int              `json:"exitCode"`   // null while running
 	RestartPolicy string            `json:"restartPolicy"`
+	MemoryLimit   *uint64           `json:"memoryLimit"` // HostConfig.Memory in bytes; null when unlimited
 	Restarts24h   int               `json:"restarts24h"`
 	Project       string            `json:"project"`
 	Service       string            `json:"service"`

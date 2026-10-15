@@ -695,6 +695,9 @@ func TestInspectContainerDecodes(t *testing.T) {
 	if got.RestartPolicy != "unless-stopped" {
 		t.Errorf("RestartPolicy = %q", got.RestartPolicy)
 	}
+	if got.MemoryLimit != 536870912 {
+		t.Errorf("MemoryLimit = %d, want 536870912", got.MemoryLimit)
+	}
 	if got.Labels["com.docker.compose.project"] != "demo" || len(got.Labels) != 2 {
 		t.Errorf("labels: %+v", got.Labels)
 	}

@@ -144,6 +144,44 @@ func (c *countingObserve) callCount() int {
 	return c.calls
 }
 
+// The list must show Docker's live Status, not the state cache's snapshot,
+// which can be minutes old.
+func TestContainerListUsesFreshEngineListing(t *testing.T) {
+	eng := newFakeEngine()
+	for _, c := range containerObserve().containers {
+		c.Status = "Up 3 minutes"
+		eng.list = append(eng.list, c)
+	}
+	_, get := containersEnv(t, containerObserve(), func(o *api.Options) { o.ContainerEngine = eng })
+	var rows []apitypes.ContainerRow
+	res := get("/api/containers")
+	if err := json.Unmarshal(res.Body, &rows); err != nil || res.Code != 200 || len(rows) != 3 {
+		t.Fatalf("%d %s %v", res.Code, res.Body, err)
+	}
+	for _, r := range rows {
+		if r.Name == "web-web-1" && r.Status != "Up 3 minutes" {
+			t.Errorf("status = %q, want the fresh engine status", r.Status)
+		}
+	}
+}
+
+func TestContainerListEngineErrors(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want int
+	}{
+		{fmt.Errorf("list: %w", engine.ErrUnavailable), 503},
+		{errors.New("boom"), 500},
+	} {
+		eng := newFakeEngine()
+		eng.listErr = tc.err
+		_, get := containersEnv(t, containerObserve(), func(o *api.Options) { o.ContainerEngine = eng })
+		if res := get("/api/containers"); res.Code != tc.want {
+			t.Errorf("%v = %d, want %d", tc.err, res.Code, tc.want)
+		}
+	}
+}
+
 func TestContainerListCachedFor2s(t *testing.T) {
 	obs := &countingObserve{fakeObserve: containerObserve()}
 	now := summaryNow
@@ -280,6 +318,14 @@ type fakeContainerEngine struct {
 	actionCtx  context.Context
 	onAction   func(id, action string)
 	aliases    map[string]string // a name Docker would resolve -> full id
+	list       []engine.Container
+	listErr    error
+}
+
+func (f *fakeContainerEngine) Containers(context.Context) ([]engine.Container, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.list, f.listErr
 }
 
 func (f *fakeContainerEngine) InspectContainer(_ context.Context, id string) (engine.ContainerInspect, error) {
@@ -320,7 +366,7 @@ func inspectFixtures() map[string]engine.ContainerInspect {
 	started := time.Date(2026, 10, 15, 6, 0, 0, 0, time.UTC)
 	return map[string]engine.ContainerInspect{
 		idWeb: {ID: idWeb, Name: "web-web-1", Image: "web:1", State: "running", Status: "running", Health: "unhealthy",
-			StartedAt: started, Running: true, RestartPolicy: "unless-stopped",
+			StartedAt: started, Running: true, RestartPolicy: "unless-stopped", MemoryLimit: 536870912,
 			Labels: map[string]string{"com.docker.compose.project": "web", "com.docker.compose.service": "web"},
 			Ports: []engine.Port{{IP: "0.0.0.0", PrivatePort: 80, PublicPort: 8080, Type: "tcp"},
 				{IP: "::", PrivatePort: 80, PublicPort: 8080, Type: "tcp"}},
@@ -370,7 +416,7 @@ func TestDetailsMapsInspect(t *testing.T) {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
 	}
 	want := `{"id":"` + idWeb + `","name":"web-web-1","image":"web:1","state":"running","status":"Up 2 hours (unhealthy)","health":"unhealthy",
-	 "startedAt":"2026-10-15T06:00:00Z","finishedAt":null,"exitCode":null,"restartPolicy":"unless-stopped","restarts24h":3,
+	 "startedAt":"2026-10-15T06:00:00Z","finishedAt":null,"exitCode":null,"restartPolicy":"unless-stopped","restarts24h":3,"memoryLimit":536870912,
 	 "project":"web","service":"web","stack":"web","managed":"stack",
 	 "ports":["0.0.0.0:8080->80/tcp"],"networks":{"web_default":"172.18.0.2"},
 	 "mounts":[{"type":"bind","source":"/srv/web","destination":"/data","readOnly":true}],
@@ -399,6 +445,9 @@ func TestDetailsMapsInspect(t *testing.T) {
 			t.Errorf("%s must never be null", k)
 		}
 	}
+	if v, ok := db["memoryLimit"]; !ok || v != nil {
+		t.Errorf("memoryLimit = %v (present %v), want null for an unlimited container", v, ok)
+	}
 }
 
 func TestDetailsBodyHasNoEnvOrCmd(t *testing.T) {
@@ -413,7 +462,7 @@ func TestDetailsBodyHasNoEnvOrCmd(t *testing.T) {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	want := []string{"exitCode", "finishedAt", "health", "id", "image", "labels", "managed", "mounts", "name", "networks",
+	want := []string{"exitCode", "finishedAt", "health", "id", "image", "labels", "managed", "memoryLimit", "mounts", "name", "networks",
 		"ports", "project", "restartPolicy", "restarts24h", "service", "stack", "startedAt", "state", "status"}
 	if !reflect.DeepEqual(keys, want) {
 		t.Errorf("keys = %v\nwant %v", keys, want)
@@ -748,6 +797,15 @@ func TestContainerLogsCacheErrorIs503(t *testing.T) {
 	env, _ := containersEnv(t, obs, nil)
 	if rec := env.do(t, "GET", "/api/containers/"+idWeb+"/logs", "", withCookie(env.login(t))); rec.Code != 503 {
 		t.Errorf("= %d, want 503", rec.Code)
+	}
+}
+
+func TestContainerLogsCacheErrorIs500(t *testing.T) {
+	obs := containerLogsObserve()
+	obs.containersErr = errors.New("cache exploded")
+	env, _ := containersEnv(t, obs, nil)
+	if rec := env.do(t, "GET", "/api/containers/"+idWeb+"/logs", "", withCookie(env.login(t))); rec.Code != 500 {
+		t.Errorf("= %d, want 500", rec.Code)
 	}
 }
 

@@ -20,9 +20,10 @@ import (
 // container id, nil before its first scan.
 type RestartsAPI interface{ RestartCounts() map[string]int }
 
-// ContainerEngineAPI is the part of *engine.Client the details and action
-// routes use.
+// ContainerEngineAPI is the part of *engine.Client the list, details and
+// action routes use. The list reads Containers for Docker's live status.
 type ContainerEngineAPI interface {
+	Containers(ctx context.Context) ([]engine.Container, error)
 	ContainerAction(ctx context.Context, id, action string, stopTimeout int) error
 	InspectContainer(ctx context.Context, id string) (engine.ContainerInspect, error)
 }
@@ -129,7 +130,16 @@ func (s *server) runContainerList(ctx context.Context, f *containerFlight, now t
 }
 
 func (s *server) computeContainerList(ctx context.Context) ([]apitypes.ContainerRow, error) {
-	list, err := s.opts.Observe.Containers(ctx)
+	// Docker's human Status ("Up 3 minutes") goes stale in the state cache, so
+	// read a fresh listing; the state cache is only the fallback when no engine
+	// is wired.
+	var list []engine.Container
+	var err error
+	if s.opts.ContainerEngine != nil {
+		list, err = s.opts.ContainerEngine.Containers(ctx)
+	} else {
+		list, err = s.opts.Observe.Containers(ctx)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -373,10 +383,15 @@ func (s *server) handleContainerDetails(w http.ResponseWriter, r *http.Request) 
 	if s.opts.Restarts != nil {
 		restarts = s.opts.Restarts.RestartCounts()[insp.ID]
 	}
+	var memoryLimit *uint64
+	if insp.MemoryLimit > 0 {
+		limit := uint64(insp.MemoryLimit)
+		memoryLimit = &limit
+	}
 	d := apitypes.ContainerDetail{
 		ID: insp.ID, Name: insp.Name, Image: insp.Image, State: insp.State, Status: status, Health: insp.Health,
 		StartedAt: timeOrNil(insp.StartedAt), FinishedAt: timeOrNil(insp.FinishedAt), ExitCode: exitCodeOf(insp),
-		RestartPolicy: insp.RestartPolicy, Restarts24h: restarts,
+		RestartPolicy: insp.RestartPolicy, MemoryLimit: memoryLimit, Restarts24h: restarts,
 		Project: owner.Project(), Service: owner.ComposeService(), Stack: stack, Managed: managed,
 		Ports: formatPorts(insp.Ports), Networks: map[string]string{}, Mounts: []apitypes.ContainerMount{},
 		Labels: map[string]string{},
@@ -483,8 +498,14 @@ func (s *server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	all, err := s.opts.Observe.Containers(r.Context())
-	if err != nil {
+	switch {
+	case r.Context().Err() != nil:
+		return
+	case errors.Is(err, engine.ErrUnavailable):
 		writeError(w, http.StatusServiceUnavailable, "docker engine is unavailable")
+		return
+	case err != nil:
+		s.internalError(w, r, err)
 		return
 	}
 	var matches []engine.Container
