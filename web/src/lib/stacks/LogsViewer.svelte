@@ -4,14 +4,15 @@
   import { filterLines, type LogLine } from '../logs/buffer';
   import type { LogError } from '../api/types';
   import type { SSEStatus } from '../sse/client';
-  import { createLogStream, type LogStreamOptions } from './logs';
+  import { effectiveTheme } from '../stores/appearance';
+  import { createLogStream, lineTone, type LogStreamOptions } from './logs';
 
-  let { stackName, services }: { stackName: string; services: string[] } = $props();
-
-  const uid = $props.id();
+  let { stackName, services, service: initialService }: { stackName: string; services: string[]; service?: string } = $props();
   const TAILS = ['100', '200', '1000', 'all'] as const;
 
-  let service = $state('');
+  // Unknown names fall back to all services.
+  // svelte-ignore state_referenced_locally
+  let service = $state(initialService && services.includes(initialService) ? initialService : '');
   let tail = $state<string>('200');
   let follow = $state(true);
   let streamFilter = $state<'' | 'stdout' | 'stderr'>('');
@@ -117,10 +118,21 @@
     return out;
   }
 
+  const statusTone = $derived(
+    ended || status === 'unauthorized' || status === 'gone' || status === 'closed'
+      ? 'muted'
+      : paused || status !== 'open'
+        ? 'warning'
+        : 'live',
+  );
+
   function hue(name: string): number {
     let h = 0;
     for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
     return h;
+  }
+  function serviceColor(name: string): string {
+    return $effectiveTheme === 'dark' ? `hsl(${hue(name)} 60% 65%)` : `hsl(${hue(name)} 60% 42%)`;
   }
   function clock(iso: string): string {
     const d = new Date(iso);
@@ -134,8 +146,12 @@
   const statusLabel = $derived(
     ended
       ? 'ended'
-      : status === 'open'
-        ? 'live'
+      : paused
+        ? 'paused'
+        : status === 'open'
+          ? follow
+            ? 'live · following'
+            : 'live'
         : status === 'connecting'
           ? 'connecting'
           : status === 'reconnecting'
@@ -150,28 +166,24 @@
 
 <section class="logs" aria-label="Logs">
   <div class="toolbar">
-    <label for="{uid}-svc">Service</label>
-    <select id="{uid}-svc" bind:value={service} onchange={restart}>
-      <option value="">All</option>
+    <select aria-label="Service" bind:value={service} onchange={restart}>
+      <option value="">All services</option>
       {#each services as s (s)}<option value={s}>{s}</option>{/each}
     </select>
-    <label for="{uid}-tail">Tail</label>
-    <select id="{uid}-tail" bind:value={tail} onchange={restart}>
-      {#each TAILS as t (t)}<option value={t}>{t}</option>{/each}
-    </select>
-    <label class="check"><input type="checkbox" bind:checked={follow} onchange={restart} /> Follow</label>
-    <label for="{uid}-stream">Stream</label>
-    <select id="{uid}-stream" bind:value={streamFilter}>
-      <option value="">All</option>
+    <select aria-label="Stream" bind:value={streamFilter}>
+      <option value="">stdout + stderr</option>
       <option value="stdout">stdout</option>
       <option value="stderr">stderr</option>
     </select>
-    <label for="{uid}-search">Search logs</label>
-    <input id="{uid}-search" type="search" bind:value={searchInput} oninput={onSearchInput} />
-    <Button variant="secondary" onclick={togglePause}>{paused ? 'Resume' : 'Pause'}</Button>
-    <Button variant="ghost" onclick={clear}>Clear</Button>
-    {#if ended}<Button variant="secondary" onclick={restart}>Reconnect</Button>{/if}
-    <small class="status" role="status" aria-live="polite">{statusLabel}</small>
+    <select aria-label="Tail" bind:value={tail} onchange={restart}>
+      {#each TAILS as t (t)}<option value={t}>{t === 'all' ? 'Tail all' : `Tail ${t}`}</option>{/each}
+    </select>
+    <label class="chip"><input type="checkbox" bind:checked={follow} onchange={restart} /> Follow</label>
+    <input class="search" type="search" aria-label="Search logs" placeholder="Search" bind:value={searchInput} oninput={onSearchInput} />
+    <small class="status {statusTone}" role="status" aria-live="polite">{statusLabel}</small>
+    <Button variant="secondary" size="sm" onclick={togglePause}>{paused ? 'Resume' : 'Pause'}</Button>
+    <Button variant="ghost" size="sm" onclick={clear}>Clear</Button>
+    {#if ended}<Button variant="secondary" size="sm" onclick={restart}>Reconnect</Button>{/if}
   </div>
 
   {#if tail === 'all'}
@@ -191,9 +203,9 @@
   <!-- svelte-ignore a11y_no_noninteractive_tabindex (keyboard-scrollable log region) -->
   <div class="scroller" aria-live="off" bind:this={scroller} onscroll={onScroll} tabindex="0" role="log" aria-label="Log output">
     {#each visible as line (line.seq)}
-      <div class="row" data-testid="log-row">
+      <div class="row {lineTone(line.text) ?? ''}" data-testid="log-row">
         <time datetime={line.time} title={utc(line.time)}>{clock(line.time)}</time>
-        <small class="svc" style="color: hsl({hue(line.service)} 65% 50%)">{line.service}</small>
+        <small class="svc" style="color: {serviceColor(line.service)}">{line.service}</small>
         <small class="strm {line.stream}">{line.stream}</small>
         <span class="txt">{#each segments(line.text, search) as seg, i (i)}{#if seg.match}<mark>{seg.text}</mark>{:else}{seg.text}{/if}{/each}</span>
       </div>
@@ -204,26 +216,48 @@
   {#if paused && newLines > 0}
     <div class="newbar">
       <small>{newLines} new lines</small>
-      <Button variant="secondary" onclick={togglePause}>Jump to latest</Button>
+      <Button variant="secondary" size="sm" onclick={togglePause}>Jump to latest</Button>
     </div>
   {/if}
 </section>
 
 <style>
   .logs { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
-  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-  .check { display: inline-flex; align-items: center; gap: var(--space-1); }
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
+  select, .search {
+    height: 26px; padding: 0 8px; background: var(--raised); color: var(--text);
+    border: 1px solid var(--border-input); border-radius: var(--radius-sm); font: inherit; font-size: 12px;
+  }
+  .search { width: 180px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; font-size: 12px;
+    background: var(--raised); border: 1px solid var(--border-input); border-radius: var(--radius-pill);
+  }
+  .status { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .status.live { color: var(--success); }
+  .status.warning { color: var(--warning); }
+  .status.live::before {
+    content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--success);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+  @media (prefers-reduced-motion: reduce) { .status.live::before { animation: none; } }
   .note { margin: 0; color: var(--muted); font-size: 0.85rem; }
   .note.warn { color: var(--warning); }
   .err { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; color: var(--danger); }
   .scroller {
-    height: 60vh; overflow: auto; background: var(--raised); border: 1px solid var(--border);
-    border-radius: var(--radius-md); padding: var(--space-2); font-family: var(--mono); font-size: 0.8rem;
+    height: clamp(280px, 60vh, 720px); overflow: auto; background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius-md); padding: 4px 0; font-family: var(--mono); font-size: 11.5px; line-height: 18px;
   }
-  .row { display: flex; gap: var(--space-2); align-items: baseline; }
-  .row time, .row small { flex: none; color: var(--muted); }
+  .row {
+    display: grid; grid-template-columns: 72px 90px 44px minmax(0, 1fr); gap: 10px; padding: 0 12px; align-items: baseline;
+  }
+  .row:hover { background: var(--surface); }
+  .row time, .row small { color: var(--faint); font-size: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .svc { font-weight: 600; }
   .strm.stderr { color: var(--danger); }
   .txt { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+  .row.danger .txt { color: var(--danger); }
+  .row.warning .txt { color: var(--warning); }
   .newbar { display: flex; gap: var(--space-2); align-items: center; }
 </style>

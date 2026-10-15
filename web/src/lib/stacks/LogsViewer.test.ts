@@ -128,4 +128,29 @@ describe('LogsViewer', () => {
     await fireEvent.change(screen.getByLabelText('Service'), { target: { value: 'worker' } });
     expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
   });
+
+  it('service prop preselects the stream filter', async () => {
+    fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'x')] });
+    render(LogsViewer, { stackName: 'web', services: ['api', 'worker'], service: 'worker' });
+    await tick();
+    expect(fake.requests[0]!.path).toContain('service=worker');
+    expect((screen.getByLabelText('Service') as HTMLSelectElement).value).toBe('worker');
+  });
+
+  it('unknown service prop falls back to all services', async () => {
+    fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'x')] });
+    render(LogsViewer, { stackName: 'web', services: ['api', 'worker'], service: 'nope' });
+    await tick();
+    expect(fake.requests[0]!.path).not.toContain('service=');
+    expect((screen.getByLabelText('Service') as HTMLSelectElement).value).toBe('');
+  });
+
+  it('shows the live status text', async () => {
+    fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'x')] });
+    render(LogsViewer, { stackName: 'web', services: ['api'] });
+    await tick();
+    expect(screen.getByRole('status').textContent).toContain('live · following');
+    await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    expect(screen.getByRole('status').textContent).toContain('paused');
+  });
 });

@@ -1,7 +1,7 @@
 import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installFakeStream, type FakeStream } from '../../vitest-setup';
-import { createLogStream, mergeCursor } from './logs';
+import { createLogStream, lineTone, mergeCursor } from './logs';
 
 const PATH = '/api/stacks/web/logs';
 const C_A = 'aaaaaaaaaaaa';
@@ -167,5 +167,18 @@ describe('createLogStream', () => {
     s.clear();
     expect(s.buffer.snapshot()).toHaveLength(0);
     expect(get(s.dropped)).toBe(0);
+  });
+});
+
+describe('lineTone', () => {
+  it.each([
+    ['2026 [Error] boom', 'danger'],
+    ['ERROR: failed', 'danger'],
+    ['[Warn] slow', 'warning'],
+    ['WARN disk', 'warning'],
+    ['all good', undefined],
+    ['[Error] and WARN', 'danger'],
+  ])('%s -> %s', (text, tone) => {
+    expect(lineTone(text)).toBe(tone);
   });
 });
