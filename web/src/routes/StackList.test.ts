@@ -15,6 +15,8 @@ const stack = (name: string, over: Partial<StackSummary> = {}): StackSummary => 
   status: 'running',
   serviceCount: 3,
   running: 2,
+  health: { healthy: 0, unhealthy: 0, starting: 0, none: 0, failed: 0 },
+  ports: [],
   ...over,
 });
 const op = (name: string): Operation => ({ id: 'op1', stack: name, action: 'up', state: 'running', startedAt: '2026-10-14T10:00:00Z' });

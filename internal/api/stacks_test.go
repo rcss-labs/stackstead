@@ -55,7 +55,8 @@ type fakeStacks struct {
 func newFakeStacks() *fakeStacks {
 	return &fakeStacks{
 		summary: stacks.Summary{Name: "web", Path: "/srv/web/compose.yaml", Project: "web",
-			Origin: stacks.OriginManaged, Status: stacks.StatusRunning, Services: 2, Running: 1},
+			Origin: stacks.OriginManaged, Status: stacks.StatusRunning, Services: 2, Running: 1,
+			Health: stacks.HealthCounts{Healthy: 1, None: 1}, Ports: []string{"8080"}},
 		op: stacks.Operation{ID: "op1", Stack: "web", Action: "up", State: stacks.OpRunning,
 			StartedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), ExitCode: -1},
 		unsubscribed: make(chan struct{}),
@@ -84,7 +85,7 @@ func (f *fakeStacks) Get(context.Context, string) (stacks.Detail, error) {
 		Name:       "app",
 		Config:     composefile.ServiceConfig{Image: "nginx:1", Networks: []composefile.NetworkAttachment{{Name: "lan", IPv4Address: "10.0.0.5"}}},
 		ReadOnly:   []composefile.Field{composefile.FieldVolumes},
-		Containers: []stacks.ContainerInfo{{ID: "c1", Name: "web-app-1", Service: "app", State: "running", Status: "Up"}},
+		Containers: []stacks.ContainerInfo{{ID: "c1", Name: "web-app-1", Service: "app", State: "running", Status: "Up", Health: "none"}},
 	}}}, f.err
 }
 func (f *fakeStacks) Raw(context.Context, string) ([]byte, string, error) {
@@ -269,14 +270,25 @@ func TestImportStack(t *testing.T) {
 func TestListAndGetStack(t *testing.T) {
 	env, cookie := newStacksEnv(t, newFakeStacks())
 	rec := env.do(t, "GET", "/api/stacks", "", withCookie(cookie))
-	if rec.Code != 200 || !strings.HasPrefix(rec.Body.String(), `[{"name":"web"`) || !strings.Contains(rec.Body.String(), `"serviceCount":2`) || strings.Contains(rec.Body.String(), `"services"`) {
+	if rec.Code != 200 || !strings.HasPrefix(rec.Body.String(), `[{"name":"web"`) || !strings.Contains(rec.Body.String(), `"serviceCount":2`) || !strings.Contains(rec.Body.String(), `"health":{"healthy":1,"unhealthy":0,"starting":0,"none":1,"failed":0}`) || !strings.Contains(rec.Body.String(), `"ports":["8080"]`) || strings.Contains(rec.Body.String(), `"services"`) {
 		t.Fatalf("list = %d %s", rec.Code, rec.Body)
 	}
 	rec = env.do(t, "GET", "/api/stacks/web", "", withCookie(cookie))
 	body := rec.Body.String()
-	for _, want := range []string{`"hash":"h1"`, `"serviceCount":1`, `"services":[{`, `"image":"nginx:1"`, `"ipv4Address":"10.0.0.5"`, `"readOnly":["volumes"]`, `"containers":[{"id":"c1"`} {
+	for _, want := range []string{`"hash":"h1"`, `"serviceCount":1`, `"services":[{`, `"image":"nginx:1"`, `"ipv4Address":"10.0.0.5"`, `"readOnly":["volumes"]`, `"containers":[{"id":"c1"`, `"health":"none"`, `"ports":["8080"]`, `"health":{"healthy":1`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("detail lacks %s: %s", want, body)
+		}
+	}
+}
+
+func TestNilPortsEncodeAsEmptyArray(t *testing.T) {
+	fake := newFakeStacks()
+	fake.summary.Ports = nil
+	env, cookie := newStacksEnv(t, fake)
+	for _, path := range []string{"/api/stacks", "/api/stacks/web"} {
+		if body := env.do(t, "GET", path, "", withCookie(cookie)).Body.String(); !strings.Contains(body, `"ports":[]`) {
+			t.Errorf("%s lacks empty ports array: %s", path, body)
 		}
 	}
 }

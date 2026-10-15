@@ -8,6 +8,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -75,12 +78,18 @@ type Summary struct {
 	Origin              Origin
 	Status              Status
 	Services, Running   int
+	Health              HealthCounts
+	Ports               []string // host ports the compose file publishes; ranges as "a-b"
 	// ChecksPartial is set by Create when the engine was unreachable and only
 	// the ports declared by other stacks could be checked.
 	ChecksPartial bool
 }
 
-type ContainerInfo struct{ ID, Name, Service, State, Status string }
+type ContainerInfo struct{ ID, Name, Service, State, Status, Health string }
+
+// HealthCounts tallies a stack's containers. Failed covers dead, restarting
+// and non-zero-exit containers; clean exits, created and paused count nowhere.
+type HealthCounts struct{ Healthy, Unhealthy, Starting, None, Failed int }
 
 type ServiceDetail struct {
 	Name       string
@@ -359,13 +368,15 @@ func (s *Service) Get(ctx context.Context, name string) (Detail, error) {
 // containers; it never fails.
 func (s *Service) describe(e Entry, containers []engine.Container, engErr error) Detail {
 	d := Detail{Summary: Summary{Name: e.Name, Path: e.ComposePath, Project: e.Project, Origin: e.Origin}}
+	d.Health = countHealth(e.Project, containers)
 	_, hash, f, err := readFile(e)
 	if err == nil {
+		d.Ports = publishedPorts(f)
 		err = fillServices(&d, f, e.Project, containers)
 	}
 	if err != nil {
 		d.Status, d.ParseError = StatusUnavailable, err.Error()
-		d.Services, d.Summary.Services, d.Running = nil, 0, 0
+		d.Services, d.Summary.Services, d.Running, d.Ports = nil, 0, 0, nil
 		return d
 	}
 	d.Hash = hash
@@ -398,7 +409,7 @@ func fillServices(d *Detail, f *composefile.File, project string, containers []e
 			if project == "" || c.Project() != project || c.ComposeService() != name {
 				continue
 			}
-			sd.Containers = append(sd.Containers, ContainerInfo{ID: c.ID, Name: c.Name, Service: name, State: c.State, Status: c.Status})
+			sd.Containers = append(sd.Containers, ContainerInfo{ID: c.ID, Name: c.Name, Service: name, State: c.State, Status: c.Status, Health: c.Health()})
 			running = running || c.State == "running"
 		}
 		if running {
@@ -555,4 +566,84 @@ func (s *Service) confirmNoContainers(ctx context.Context, e Entry) error {
 
 func (s *Service) Networks(ctx context.Context) ([]engine.Network, error) {
 	return s.engine.Networks(ctx)
+}
+
+// countHealth tallies every container labeled with the compose project,
+// including orphans that no service in the file claims.
+func countHealth(project string, containers []engine.Container) HealthCounts {
+	var h HealthCounts
+	if project == "" {
+		return h
+	}
+	for _, c := range containers {
+		if c.Project() != project {
+			continue
+		}
+		switch c.State {
+		case "running":
+			switch c.Health() {
+			case "healthy":
+				h.Healthy++
+			case "unhealthy":
+				h.Unhealthy++
+			case "starting":
+				h.Starting++
+			default:
+				h.None++
+			}
+		case "dead", "restarting":
+			h.Failed++
+		case "exited":
+			if code, ok := c.ExitCode(); ok && code != 0 {
+				h.Failed++
+			}
+		}
+	}
+	return h
+}
+
+// publishedPorts lists the distinct host ports the file publishes, sorted by
+// port number. IP and protocol are dropped; a range renders as "first-last".
+// Container-only ports, unresolved variables and invalid specs are skipped.
+func publishedPorts(f *composefile.File) []string {
+	ports := []string{}
+	names, err := f.Services()
+	if err != nil {
+		return ports
+	}
+	seen := map[string]bool{}
+	for _, name := range names {
+		svc, err := f.Service(name)
+		if err != nil {
+			continue
+		}
+		for _, spec := range svc.Config.Ports {
+			hp, err := ParsePorts(spec)
+			if err != nil || len(hp) == 0 {
+				continue
+			}
+			label := strconv.Itoa(int(hp[0].Port))
+			if len(hp) > 1 {
+				label += "-" + strconv.Itoa(int(hp[len(hp)-1].Port))
+			}
+			if !seen[label] {
+				seen[label] = true
+				ports = append(ports, label)
+			}
+		}
+	}
+	sort.Slice(ports, func(i, j int) bool {
+		if a, b := lowPort(ports[i]), lowPort(ports[j]); a != b {
+			return a < b
+		}
+		return ports[i] < ports[j]
+	})
+	return ports
+}
+
+// lowPort is the numeric first port of a "80" or "8000-8010" label.
+func lowPort(label string) int {
+	first, _, _ := strings.Cut(label, "-")
+	n, _ := strconv.Atoi(first)
+	return n
 }

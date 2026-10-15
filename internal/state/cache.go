@@ -10,8 +10,8 @@ import (
 	"maps"
 	"math/rand/v2"
 	"reflect"
-	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -256,21 +256,14 @@ type view struct {
 	Networks                        map[string]string
 }
 
-var exitCode = regexp.MustCompile(`^Exited \((-?\d+)\)`)
-
 func project(c engine.Container) view {
 	v := view{ID: c.ID, Name: c.Name, Service: c.ComposeService(), State: c.State, Image: c.Image,
 		Ports: c.Ports, Networks: c.Networks}
-	switch {
-	case strings.Contains(c.Status, "(unhealthy)"):
-		v.Health = "unhealthy"
-	case strings.Contains(c.Status, "(healthy)"):
-		v.Health = "healthy"
-	case strings.Contains(c.Status, "(health: starting)"):
-		v.Health = "starting"
+	if h := c.Health(); h != "none" {
+		v.Health = h
 	}
-	if m := exitCode.FindStringSubmatch(c.Status); m != nil {
-		v.ExitCode = m[1]
+	if code, ok := c.ExitCode(); ok {
+		v.ExitCode = strconv.Itoa(code)
 	}
 	return v
 }

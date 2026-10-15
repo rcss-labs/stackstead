@@ -39,12 +39,22 @@ type (
 
 func toSummary(s stacks.Summary) summaryDTO {
 	return summaryDTO{Name: s.Name, Path: s.Path, Project: s.Project, Origin: string(s.Origin),
-		Status: string(s.Status), ServiceCount: s.Services, Running: s.Running}
+		Status: string(s.Status), ServiceCount: s.Services, Running: s.Running,
+		Health: apitypes.HealthCounts(s.Health), Ports: nonNil(s.Ports)}
+}
+
+// nonNil keeps empty lists encoding as [] instead of null.
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 func toDetail(d stacks.Detail) detailDTO {
 	out := detailDTO{Name: d.Name, Path: d.Path, Project: d.Project, Origin: string(d.Origin),
 		Status: string(d.Status), Running: d.Running, ServiceCount: len(d.Services), Hash: d.Hash, ParseError: d.ParseError,
+		Health: apitypes.HealthCounts(d.Health), Ports: nonNil(d.Ports),
 		Services: make([]serviceDetailDTO, 0, len(d.Services))}
 	for _, sd := range d.Services {
 		dto := serviceDetailDTO{Name: sd.Name, Config: toServiceConfig(sd.Config),

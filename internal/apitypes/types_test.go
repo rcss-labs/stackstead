@@ -74,11 +74,11 @@ func TestJSONTagsMatchContract(t *testing.T) {
 		v    any
 		want string
 	}{
-		{"StackSummary", populated[apitypes.StackSummary](), "name,origin,path,project,running,serviceCount,status"},
-		{"StackDetail", populated[apitypes.StackDetail](), "hash,name,origin,parseError,path,project,running,serviceCount,services,status"},
+		{"StackSummary", populated[apitypes.StackSummary](), "health,name,origin,path,ports,project,running,serviceCount,status"},
+		{"StackDetail", populated[apitypes.StackDetail](), "hash,health,name,origin,parseError,path,ports,project,running,serviceCount,services,status"},
 		{"ServiceDetail", populated[apitypes.ServiceDetail](), "config,containers,name,readOnly"},
 		{"ServiceConfig", populated[apitypes.ServiceConfig](), "build,environment,healthcheck,image,limits,networkMode,networks,ports,restart,volumes"},
-		{"ContainerInfo", populated[apitypes.ContainerInfo](), "id,name,service,state,status"},
+		{"ContainerInfo", populated[apitypes.ContainerInfo](), "health,id,name,service,state,status"},
 		{"Build", populated[apitypes.Build](), "context,dockerfile"},
 		{"EnvVar", populated[apitypes.EnvVar](), "name,value"},
 		{"NetworkAttachment", populated[apitypes.NetworkAttachment](), "ipv4Address,name"},

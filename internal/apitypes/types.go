@@ -14,6 +14,19 @@ type StackSummary struct {
 	Status       string `json:"status"`
 	ServiceCount int    `json:"serviceCount"`
 	Running      int    `json:"running"`
+	// Health counts the stack's containers by healthcheck result; Failed counts
+	// dead, restarting and non-zero-exit containers.
+	Health HealthCounts `json:"health"`
+	// Ports lists the host ports the compose file publishes, ranges as "a-b".
+	Ports []string `json:"ports"`
+}
+
+type HealthCounts struct {
+	Healthy   int `json:"healthy"`
+	Unhealthy int `json:"unhealthy"`
+	Starting  int `json:"starting"`
+	None      int `json:"none"`
+	Failed    int `json:"failed"`
 }
 
 type ContainerInfo struct {
@@ -22,6 +35,8 @@ type ContainerInfo struct {
 	Service string `json:"service"`
 	State   string `json:"state"`
 	Status  string `json:"status"`
+	// Health is "healthy", "unhealthy", "starting" or "none".
+	Health string `json:"health"`
 }
 
 type Build struct {
@@ -86,6 +101,8 @@ type StackDetail struct {
 	Hash         string          `json:"hash"`
 	Services     []ServiceDetail `json:"services"`
 	ParseError   string          `json:"parseError,omitempty"`
+	Health       HealthCounts    `json:"health"`
+	Ports        []string        `json:"ports"`
 }
 
 type Operation struct {

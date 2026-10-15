@@ -29,13 +29,15 @@ const detail = (over: Partial<Detail> = {}): Detail => ({
   status: 'running',
   serviceCount: 1,
   running: 1,
+  health: { healthy: 0, unhealthy: 0, starting: 0, none: 0, failed: 0 },
+  ports: [],
   hash: 'h1',
   services: [
     {
       name: 'app',
       config: { image: 'nginx:1', ports: ['80:80'], limits: {} },
       readOnly: [],
-      containers: [{ id: 'abc', name: 'web-app-1', service: 'app', state: 'running', status: 'Up 2 minutes' }],
+      containers: [{ id: 'abc', name: 'web-app-1', service: 'app', state: 'running', status: 'Up 2 minutes', health: 'none' }],
     },
   ],
   ...over,

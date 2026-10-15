@@ -6,6 +6,17 @@
 export type StackStatus = 'running' | 'partial' | 'stopped' | 'unavailable' | 'unknown';
 export type Origin = 'managed' | 'external';
 
+export type ContainerHealth = 'healthy' | 'unhealthy' | 'starting' | 'none';
+
+/** Containers of a stack by healthcheck result; `failed` is dead, restarting and non-zero exits. */
+export interface HealthCounts {
+  healthy: number;
+  unhealthy: number;
+  starting: number;
+  none: number;
+  failed: number;
+}
+
 export interface StackSummary {
   name: string;
   path: string;
@@ -14,6 +25,9 @@ export interface StackSummary {
   status: StackStatus;
   serviceCount: number;
   running: number;
+  health: HealthCounts;
+  /** Published host ports from the compose file; ranges as "8000-8010". */
+  ports: string[];
 }
 
 export interface ContainerInfo {
@@ -22,6 +36,7 @@ export interface ContainerInfo {
   service: string;
   state: string;
   status: string;
+  health: ContainerHealth;
 }
 
 /** Fields of a service the form editor can touch; also the `readOnly` vocabulary. */
