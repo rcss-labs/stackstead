@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/Stackstead%20DevOps%20UI%20redesign/assets/full-logo-cropped.png" alt="Stackstead logo" width="360">
+  <img src="web/src/assets/logos/full-logo-white.png" alt="Stackstead logo" width="360">
 
   <h1>Your Docker host, finally in view.</h1>
   <p>Build, run, and troubleshoot Docker Compose stacks from one browser tab.</p>
