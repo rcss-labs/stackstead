@@ -112,9 +112,10 @@ compose containers.
   project's containers changed; refetch the affected stack on `change`. It
   also sends `event`, one Docker container event: `action`, `container`
   (name), `project` and `service` (empty strings for a container that is not
-  part of a compose project), `image` and `time` (UTC RFC3339), plus
-  `exitCode` (a number, only on `die`) and `health` (only on
-  `health_status`, for example `healthy` or `unhealthy`). Only these actions
+  part of a compose project), `image` and `time` (UTC RFC 3339, possibly with fractional seconds), plus
+  `exitCode` (a number, only on `die`, and only when Docker reports one) and
+  `health` (only on `health_status`, and only `healthy` or `unhealthy`).
+  `time` is UTC RFC 3339 and may include fractional seconds. Only these actions
   are forwarded: `create`, `start`, `die`, `stop`, `kill`, `restart`,
   `destroy`, `pause`, `unpause`, `oom` and `health_status`. Events are not
   replayed: a client sees only what happens while it is connected.
@@ -136,10 +137,10 @@ unavailable:
 | Key | Contents |
 | --- | --- |
 | `containers` | `total`, `running`, `exited`, `bad` (unhealthy, dead, restarting, or exited non-zero) |
-| `cpu` | `percent` (null until two readings exist), `cores` |
-| `memory` | `used`, `total`, `swapUsed`, `swapTotal` (bytes) |
+| `cpu` | `percent`, `cores`. On `source: "proc"` `percent` is null until two readings exist; on `docker` it is available immediately (null only if the engine reports 0 cores) |
+| `memory` | `used`, `total`, `swapUsed`, `swapTotal` (bytes); on `docker` the swap fields are always 0 |
 | `disk` | `path` (the stacks directory), `free`, `total` (bytes) |
-| `network` | `rxBytesPerSec`, `txBytesPerSec` (null until two readings exist), `interface` |
+| `network` | `rxBytesPerSec`, `txBytesPerSec` (null until two readings exist), `interface` (on `proc` it may be `""` until the second reading) |
 | `diskIO` | `readBytesPerSec`, `writeBytesPerSec` (null until two readings exist) |
 | `volumes` | `count`, `size` (bytes), `dangling` |
 | `uptime` | `seconds`, `load1`, `load5`, `load15` |
@@ -150,7 +151,10 @@ I/O and uptime then describe the whole host, and `network.interface` is the
 busiest interface by traffic. Otherwise (macOS, Docker Desktop, Windows) it is
 `docker`: CPU, memory, network and disk I/O are summed over the running
 compose containers using the engine's core count and total memory, with
-`network.interface` set to `containers`, and `uptime` is `null`. When Docker is
+`network.interface` set to `containers`, and `uptime` is `null`. On `docker`
+the network and disk I/O rates come from the sampler's counters: they are
+null on the first reading, then 0 B/s while containers are idle; between
+sampler ticks the last rates are held for at most 30 seconds. When Docker is
 unreachable, `containers`, `volumes` and `restarts24h` are `null`, and with
 `source: "docker"` so are `cpu`, `memory`, `network` and `diskIO`. `disk` is
 `null` only when the stacks directory cannot be read. Each Docker call times
@@ -164,16 +168,19 @@ minute and are `null` until the first refresh finishes.
 **`GET /api/alerts`** is a JSON array, `[]` when nothing is wrong. Each alert
 has `kind`, `severity` (`danger`, `warning` or `info`), `message`, `since`
 (RFC3339) and, where they apply, `stack`, `service` and `container`. The list
-is sorted by severity, then by `since`, newest first. `since` is when this
-Stackstead process first saw the alert; nothing is stored, so it restarts with
-the process. The list is recomputed at most once every 5 seconds; a failure
+is sorted by severity, then by `since`, newest first. `since` is the start
+of the alert's current continuous occurrence, as seen by this Stackstead
+process: it resets if the alert clears and later returns, and it survives
+Docker disconnects for container-derived alerts. Nothing is stored, so it
+restarts with the process. Distinct problems (several override files, several
+holders of a clashing port) are separate alerts. The list is recomputed at most once every 5 seconds; a failure
 reading the registry is a `500` `{error}`.
 
 | `kind` | Severity | Message |
 | --- | --- | --- |
 | `exited` | danger | `web exited (137)`, with ` and restart policy is always` (or `unless-stopped`) and `; 4 restarts in 24h` when they apply. Registered stacks only, non-zero exit, not one-off runs |
-| `unhealthy` | danger | `web is unhealthy` |
-| `restart_loop` | warning | `web restarted 5 times in 24h` (3 or more) |
+| `unhealthy` | danger | `web is unhealthy`. Applies to every container on the host; `stack` and `service` are set only for registered stacks, otherwise the message names the container |
+| `restart_loop` | warning | `web restarted 5 times in 24h` (3 or more). Same scope and naming as `unhealthy` |
 | `port_clash` | warning | `web wants 8080 but api holds it`: another stack, or a running container, holds a host port the service declares |
 | `override` | warning | `compose.override.yaml found; override files are not supported yet` |
 | `parse_error` | warning | the first line of the compose parse error |
@@ -182,12 +189,19 @@ reading the registry is a `500` `{error}`.
 
 **`GET /api/metrics/summary`** takes `window` as `5m`, `15m` (the default) or
 `1h`; anything else is a `400` `{error}`, and a store failure is a `500`. The
-body is `window`, `step` (seconds, window divided by 30), `from`, `to`,
-`stacks` and `top`. `stacks` is keyed by compose project; each value has `cpu`
-and `mem` (30 buckets each, `null` for an empty bucket; `mem` in bytes),
-`cpuNow`, `memNow`, `netRxBytesPerSec` and `netTxBytesPerSec` (latest sampler
-reading, `null` when there is none). `top` has `cpu` and `mem`, each a list
-of the five heaviest containers as `{container, service, project, value}`.
+body is `window`, `step` (seconds, window divided by 30), `from`, `to`
+(UTC), `stacks` and `top`. The range is aligned to the step: `to` is now
+truncated to `step`, plus one `step`, and `from` is `to` minus `window`.
+`stacks` is keyed by compose project; each value has `cpu` and `mem` (30
+stored buckets each, `null` for an empty bucket), `cpuNow`, `memNow`,
+`netRxBytesPerSec` and `netTxBytesPerSec`. `cpuNow` and `memNow` are the newest
+non-empty stored bucket. The network rates are computed across each
+container's last two stored buckets and summed per project; they are `null`
+when fewer than two buckets exist or the gap between them exceeds 3 buckets.
+Units: `cpu`, `cpuNow` and `top.cpu` values are percent where 100 is one core;
+`mem`, `memNow` and `top.mem` values are bytes. Only `top` comes from the
+sampler's latest readings: `cpu` and `mem` each list the five heaviest
+containers as `{container, service, project, value}`.
 Results are cached for 10 seconds per window.
 
 ### What is stored

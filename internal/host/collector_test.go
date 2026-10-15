@@ -634,18 +634,52 @@ func TestDockerRatesHoldBetweenSamplerTicks(t *testing.T) {
 	r.sampler.set(tick1)
 	r.c.Snapshot(ctx) // t
 	r.clock.Advance(5 * time.Second)
-	s := r.c.Snapshot(ctx) // t+5: no new sampler tick
-	if s.Network.RxBytesPerSec != nil || s.DiskIO.ReadBytesPerSec != nil {
-		t.Fatalf("rates without a baseline tick = %v %v, want nil", s.Network.RxBytesPerSec, s.DiskIO.ReadBytesPerSec)
-	}
+	s := r.c.Snapshot(ctx) // t+5: identical tuple, nothing held yet -> idle, 0 B/s (R10)
+	near(t, "idle rx", s.Network.RxBytesPerSec, 0)
 	r.sampler.set(tick2)
 	r.clock.Advance(5 * time.Second)
-	s = r.c.Snapshot(ctx) // t+10: tick landed, 10 s since baseline
-	near(t, "rx", s.Network.RxBytesPerSec, 100)
-	near(t, "read", s.DiskIO.ReadBytesPerSec, 200)
+	s = r.c.Snapshot(ctx) // t+10: tick landed, 5 s since the t+5 baseline
+	near(t, "rx", s.Network.RxBytesPerSec, 200)
+	near(t, "read", s.DiskIO.ReadBytesPerSec, 400)
 
 	r.clock.Advance(5 * time.Second)
 	s = r.c.Snapshot(ctx) // t+15: no new tick, keep the last rate
+	near(t, "held rx", s.Network.RxBytesPerSec, 200)
+	near(t, "held read", s.DiskIO.ReadBytesPerSec, 400)
+}
+
+func TestDockerRatesIdleContainersReportZeroNotNil(t *testing.T) {
+	r := newRig(t, "")
+	ctx := context.Background()
+	r.sampler.set(metrics.ExpositionSample{Container: "a", NetRx: 500, NetTx: 500, BlkRead: 500, BlkWrite: 500})
+	s := r.c.Snapshot(ctx)
+	if s.Network.RxBytesPerSec != nil {
+		t.Fatalf("first reading rx = %v, want nil", s.Network.RxBytesPerSec)
+	}
+	r.clock.Advance(5 * time.Second)
+	s = r.c.Snapshot(ctx)
+	near(t, "rx", s.Network.RxBytesPerSec, 0)
+	near(t, "tx", s.Network.TxBytesPerSec, 0)
+	near(t, "read", s.DiskIO.ReadBytesPerSec, 0)
+	near(t, "write", s.DiskIO.WriteBytesPerSec, 0)
+}
+
+func TestDockerHeldRatesExpireAfter30Seconds(t *testing.T) {
+	r := newRig(t, "")
+	ctx := context.Background()
+	r.sampler.set(metrics.ExpositionSample{Container: "a", NetRx: 1000})
+	r.c.Snapshot(ctx) // t
+	r.sampler.set(metrics.ExpositionSample{Container: "a", NetRx: 2000})
+	r.clock.Advance(10 * time.Second)
+	s := r.c.Snapshot(ctx) // t+10: 100 B/s computed
+	near(t, "rx", s.Network.RxBytesPerSec, 100)
+	r.clock.Advance(20 * time.Second)
+	s = r.c.Snapshot(ctx) // t+30: no tick, still within 30 s -> held
 	near(t, "held rx", s.Network.RxBytesPerSec, 100)
-	near(t, "held read", s.DiskIO.ReadBytesPerSec, 200)
+	r.clock.Advance(5 * time.Second)
+	s = r.c.Snapshot(ctx) // t+35: computed at t+10, 25 s old -> still held
+	near(t, "held rx", s.Network.RxBytesPerSec, 100)
+	r.clock.Advance(10 * time.Second)
+	s = r.c.Snapshot(ctx) // t+45: 35 s since computed -> expired, idle over the 35 s since baseline
+	near(t, "expired rx", s.Network.RxBytesPerSec, 0)
 }

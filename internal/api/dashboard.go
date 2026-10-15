@@ -43,19 +43,28 @@ func (s SummarySources) QueryAll(ctx context.Context, from, to time.Time, step t
 }
 func (s SummarySources) Latest() []metrics.ExpositionSample { return s.Sampler.Latest() }
 
-// summaryEntry is the single-flight cache slot of one window: mu is held
-// while computing, so concurrent requests share one query.
+// summaryEntry is the single-flight cache slot of one window. mu guards the
+// fields; the query itself runs outside it, shared through inflight.
 type summaryEntry struct {
-	mu   sync.Mutex
-	at   time.Time
+	mu       sync.Mutex
+	at       time.Time
+	body     apitypes.MetricsSummary
+	ok       bool
+	inflight *summaryFlight
+}
+
+type summaryFlight struct {
+	done chan struct{}
 	body apitypes.MetricsSummary
-	ok   bool
+	err  error
 }
 
 const (
 	summaryBuckets  = 30
 	summaryCacheTTL = 10 * time.Second
-	summaryTopN     = 5
+	// summaryQueryTimeout bounds the shared store query.
+	summaryQueryTimeout = 10 * time.Second
+	summaryTopN         = 5
 )
 
 func (s *server) registerDashboardRoutes(mux *http.ServeMux) {
@@ -77,7 +86,7 @@ func (s *server) handleHost(w http.ResponseWriter, r *http.Request) {
 // hostDTO maps section by section so a field added to host.Snapshot cannot
 // reach the wire without a deliberate change here.
 func hostDTO(h host.Snapshot) apitypes.HostSnapshot {
-	out := apitypes.HostSnapshot{Hostname: h.Hostname, OS: h.OS, Source: h.Source, SampledAt: h.SampledAt}
+	out := apitypes.HostSnapshot{Hostname: h.Hostname, OS: h.OS, Source: h.Source, SampledAt: h.SampledAt.UTC()}
 	if c := h.Containers; c != nil {
 		out.Containers = &apitypes.HostContainers{Total: c.Total, Running: c.Running, Exited: c.Exited, Bad: c.Bad}
 	}
@@ -121,7 +130,7 @@ func (s *server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	out := make([]apitypes.Alert, 0, len(list)) // [] rather than null when empty
 	for _, a := range list {
 		out = append(out, apitypes.Alert{Kind: a.Kind, Severity: a.Severity, Stack: a.Stack,
-			Service: a.Service, Container: a.Container, Message: a.Message, Since: a.Since})
+			Service: a.Service, Container: a.Container, Message: a.Message, Since: a.Since.UTC()})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -152,17 +161,43 @@ func (s *server) summary(ctx context.Context, window time.Duration) (apitypes.Me
 	s.summaryMu.Unlock()
 
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	now := s.opts.Now()
 	if e.ok && now.Sub(e.at) < summaryCacheTTL {
-		return e.body, nil
+		body := e.body
+		e.mu.Unlock()
+		return body, nil
 	}
-	body, err := s.computeSummary(ctx, window, now)
-	if err != nil {
-		return apitypes.MetricsSummary{}, err
+	f := e.inflight
+	if f == nil {
+		f = &summaryFlight{done: make(chan struct{})}
+		e.inflight = f
+		go s.runSummary(ctx, e, f, window, now)
 	}
-	e.body, e.at, e.ok = body, now, true
-	return body, nil
+	e.mu.Unlock()
+
+	// Every caller, the one that started the query included, waits on its own
+	// context, so a cancelled request neither blocks nor fails the others.
+	select {
+	case <-f.done:
+		return f.body, f.err
+	case <-ctx.Done():
+		return apitypes.MetricsSummary{}, ctx.Err()
+	}
+}
+
+// runSummary runs the shared query detached from any request (bounded by
+// summaryQueryTimeout) and publishes the result. Errors are not cached.
+func (s *server) runSummary(ctx context.Context, e *summaryEntry, f *summaryFlight, window time.Duration, now time.Time) {
+	qctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), summaryQueryTimeout)
+	defer cancel()
+	f.body, f.err = s.computeSummary(qctx, window, now)
+	e.mu.Lock()
+	e.inflight = nil
+	if f.err == nil {
+		e.body, e.at, e.ok = f.body, now, true
+	}
+	e.mu.Unlock()
+	close(f.done)
 }
 
 func (s *server) computeSummary(ctx context.Context, window time.Duration, now time.Time) (apitypes.MetricsSummary, error) {
@@ -182,7 +217,7 @@ func (s *server) computeSummary(ctx context.Context, window time.Duration, now t
 	}
 	latest := s.opts.Summary.Latest()
 	return apitypes.MetricsSummary{
-		Window: windowLabel(window), Step: int(step / time.Second), From: from, To: to, Stacks: stacks,
+		Window: windowLabel(window), Step: int(step / time.Second), From: from.UTC(), To: to.UTC(), Stacks: stacks,
 		Top: apitypes.SummaryTop{
 			CPU: topEntries(latest, func(m metrics.ExpositionSample) float64 { return m.CPU }),
 			Mem: topEntries(latest, func(m metrics.ExpositionSample) float64 { return float64(m.Mem) }),

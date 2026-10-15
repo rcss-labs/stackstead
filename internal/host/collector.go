@@ -184,7 +184,13 @@ type dockerPrev struct {
 	at         time.Time
 	containers map[string]containerCounters
 	last       dockerRates // rates computed from the last advance, served between sampler ticks
+	lastAt     time.Time   // when last was computed; held rates expire dockerHoldMax after it
 }
+
+// dockerHoldMax bounds how long rates are held while the sampler shows no
+// change. Beyond it an unchanged tuple means idle containers, so rates are
+// computed normally (0 B/s) instead of staying unavailable forever.
+const dockerHoldMax = 30 * time.Second
 
 func New(cfg Config) *Collector {
 	if cfg.ProcRoot == "" {
@@ -441,10 +447,11 @@ func (c *Collector) collectDocker(ctx context.Context, s *Snapshot, now time.Tim
 			d.blkRead += sub(cv.blkRead, pv.blkRead)
 			d.blkWrite += sub(cv.blkWrite, pv.blkWrite)
 		}
-		if shared > 0 && !changed {
+		if shared > 0 && !changed && prev.last.rx != nil && now.Sub(prev.lastAt) <= dockerHoldMax {
 			// The sampler has not ticked since prev (it runs less often than
-			// snapshots). Serve the last rates and keep the baseline, so the
-			// next tick is divided by the whole interval it covers.
+			// snapshots). Serve the last rates (while they exist and are at
+			// most dockerHoldMax old) and keep the baseline, so the next
+			// tick is divided by the whole interval it covers.
 			s.Network.RxBytesPerSec, s.Network.TxBytesPerSec = prev.last.rx, prev.last.tx
 			s.DiskIO.ReadBytesPerSec, s.DiskIO.WriteBytesPerSec = prev.last.blkRead, prev.last.blkWrite
 			return
@@ -454,6 +461,7 @@ func (c *Collector) collectDocker(ctx context.Context, s *Snapshot, now time.Tim
 		s.DiskIO.ReadBytesPerSec = rate(0, d.blkRead, dt)
 		s.DiskIO.WriteBytesPerSec = rate(0, d.blkWrite, dt)
 		cur.last = dockerRates{s.Network.RxBytesPerSec, s.Network.TxBytesPerSec, s.DiskIO.ReadBytesPerSec, s.DiskIO.WriteBytesPerSec}
+		cur.lastAt = now
 	}
 	if !prev.has || dt >= time.Second {
 		c.prevDocker = cur

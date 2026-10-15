@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -37,13 +38,24 @@ type fakeSummary struct {
 	from, to   time.Time
 	step       time.Duration
 	lastWindow time.Duration
+	// gate, when set, makes QueryAll announce itself on entered and then block
+	// until gate is closed.
+	gate    chan struct{}
+	entered chan struct{}
 }
 
 func (f *fakeSummary) QueryAll(_ context.Context, from, to time.Time, step time.Duration) ([]metrics.ProjectBucket, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.calls++
 	f.from, f.to, f.step = from, to, step
+	gate, entered := f.gate, f.entered
+	f.mu.Unlock()
+	if gate != nil {
+		entered <- struct{}{}
+		<-gate
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.rows, f.err
 }
 func (f *fakeSummary) Latest() []metrics.ExpositionSample { return f.latest }
@@ -422,5 +434,97 @@ func TestDashboardBodiesDecodeIntoAPITypes(t *testing.T) {
 	strict("/api/metrics/summary", &s)
 	if h.Hostname != "docker-host-01" || h.Network == nil || *h.Network.RxBytesPerSec != 16e6 || len(a) != 1 || s.Window != "15m" {
 		t.Errorf("decoded = %+v %+v %+v", h, a, s)
+	}
+}
+
+func (f *fakeSummary) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+func TestSummaryConcurrentRequestsShareOneQuery(t *testing.T) {
+	fake := &fakeSummary{gate: make(chan struct{}), entered: make(chan struct{}, 8)}
+	env, _ := dashboardEnv(t, func(o *api.Options) {
+		o.Summary = fake
+		o.Now = func() time.Time { return summaryNow }
+	})
+	cookie := env.login(t)
+	codes := make(chan int, 4)
+	for i := 0; i < 4; i++ {
+		go func() { codes <- env.do(t, "GET", "/api/metrics/summary", "", withCookie(cookie)).Code }()
+	}
+	<-fake.entered
+	time.Sleep(50 * time.Millisecond) // let the others queue behind the leader
+	close(fake.gate)
+	for i := 0; i < 4; i++ {
+		if c := <-codes; c != 200 {
+			t.Errorf("status = %d, want 200", c)
+		}
+	}
+	if n := fake.callCount(); n != 1 {
+		t.Errorf("QueryAll calls = %d, want 1", n)
+	}
+}
+
+func TestSummaryCancelledLeaderDoesNotFailWaiter(t *testing.T) {
+	fake := &fakeSummary{gate: make(chan struct{}), entered: make(chan struct{}, 8)}
+	env, _ := dashboardEnv(t, func(o *api.Options) {
+		o.Summary = fake
+		o.Now = func() time.Time { return summaryNow }
+	})
+	cookie := env.login(t)
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	withCtx := func(req *http.Request) { *req = *req.WithContext(leaderCtx) }
+	leaderDone := make(chan struct{})
+	go func() {
+		defer close(leaderDone)
+		env.do(t, "GET", "/api/metrics/summary", "", withCookie(cookie), withCtx)
+	}()
+	<-fake.entered
+	waiter := make(chan int, 1)
+	go func() { waiter <- env.do(t, "GET", "/api/metrics/summary", "", withCookie(cookie)).Code }()
+	time.Sleep(50 * time.Millisecond)
+	cancelLeader()
+	<-leaderDone
+	close(fake.gate)
+	if c := <-waiter; c != 200 {
+		t.Errorf("waiter status = %d, want 200", c)
+	}
+	if n := fake.callCount(); n != 1 {
+		t.Errorf("QueryAll calls = %d, want 1 (waiter must not re-query)", n)
+	}
+}
+
+func TestDashboardTimesAreUTCOnTheWire(t *testing.T) {
+	zone := time.FixedZone("EST", -5*3600)
+	local := time.Date(2026, 10, 15, 9, 2, 37, 0, zone)
+	snap := fullSnapshot()
+	snap.SampledAt = local
+	_, get := dashboardEnv(t, func(o *api.Options) {
+		o.Host = fakeHost{snap}
+		o.Alerts = fakeAlerts{list: []alerts.Alert{{Kind: "unhealthy", Severity: "danger", Message: "m", Since: local}}}
+		o.Summary = &fakeSummary{}
+		o.Now = func() time.Time { return local }
+	})
+	for path, key := range map[string]string{"/api/host": "sampledAt", "/api/alerts": "since",
+		"/api/metrics/summary": "from"} {
+		res := get(path)
+		var obj any
+		if err := json.Unmarshal(res.Body, &obj); err != nil {
+			t.Fatal(err)
+		}
+		if arr, ok := obj.([]any); ok {
+			obj = arr[0]
+		}
+		raw, _ := obj.(map[string]any)[key].(string)
+		if !strings.HasSuffix(raw, "Z") {
+			t.Errorf("%s %s = %q, want UTC (Z)", path, key, raw)
+		}
+		if path == "/api/metrics/summary" {
+			if to, _ := obj.(map[string]any)["to"].(string); !strings.HasSuffix(to, "Z") {
+				t.Errorf("summary to = %q, want UTC", to)
+			}
+		}
 	}
 }
