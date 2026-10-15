@@ -146,10 +146,10 @@
   const statusLabel = $derived(
     ended
       ? 'ended'
-      : paused
-        ? 'paused'
-        : status === 'open'
-          ? follow
+      : status === 'open'
+        ? paused
+          ? 'paused'
+          : follow
             ? 'live · following'
             : 'live'
         : status === 'connecting'

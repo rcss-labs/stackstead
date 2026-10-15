@@ -153,4 +153,26 @@ describe('LogsViewer', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
     expect(screen.getByRole('status').textContent).toContain('paused');
   });
+
+  it('while paused, a session-expired stream still announces it', async () => {
+    fake = installFakeStream({ [PATH]: { responses: [{ chunks: [logEvent(C_A, 1, 1, 'a')] }, { status: 401, body: {} }] } });
+    render(LogsViewer, { stackName: 'web', services: ['api'] });
+    await tick();
+    await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    fake.close(PATH);
+    await tick(60000);
+    expect(screen.getByRole('status').textContent).toContain('session expired - sign in again');
+  });
+
+  it('while paused, a reconnecting stream reads reconnecting in the warning tone', async () => {
+    fake = installFakeStream({ [PATH]: { responses: [{ chunks: [logEvent(C_A, 1, 1, 'a')] }, { chunks: [] }] } });
+    render(LogsViewer, { stackName: 'web', services: ['api'] });
+    await tick();
+    await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    fake.close(PATH);
+    await tick(1);
+    const status = screen.getByRole('status');
+    expect(status.textContent).toContain('reconnecting');
+    expect(status.classList.contains('warning')).toBe(true);
+  });
 });
