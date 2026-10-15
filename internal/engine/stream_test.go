@@ -647,3 +647,18 @@ func TestEventsAttributesOnLiveStream(t *testing.T) {
 	got, _ := drainEvents(t, evs, errs)
 	checkWindowEvents(t, got)
 }
+
+func TestEventsWindowHonoursCallerDeadlineBeyondClientTimeout(t *testing.T) {
+	sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(400 * time.Millisecond) // slower than the client timeout
+		io.WriteString(w, readTestdata(t, "events_window.json"))
+	}))
+	c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	since, until := time.Unix(1760435000, 0), time.Unix(1760437000, 0)
+	got, err := New(sock, 150*time.Millisecond).EventsWindow(c, since, until, nil)
+	if err != nil {
+		t.Fatalf("events with a 5s deadline failed: %v", err)
+	}
+	checkWindowEvents(t, got)
+}

@@ -37,6 +37,16 @@ type fakeDocker struct {
 	gotActions  []string
 	gotSince    time.Time
 	gotUntil    time.Time
+
+	// time left on the context deadline the last df / events call received
+	volumesBudget, eventsBudget time.Duration
+}
+
+func budget(ctx context.Context) time.Duration {
+	if dl, ok := ctx.Deadline(); ok {
+		return time.Until(dl)
+	}
+	return 0
 }
 
 func (f *fakeDocker) Info(context.Context) (engine.Info, error) {
@@ -53,9 +63,10 @@ func (f *fakeDocker) Info(context.Context) (engine.Info, error) {
 	return f.info, f.infoErr
 }
 
-func (f *fakeDocker) VolumesDiskUsage(context.Context) (engine.VolumeUsage, error) {
+func (f *fakeDocker) VolumesDiskUsage(ctx context.Context) (engine.VolumeUsage, error) {
 	f.volumesCalls.Add(1)
 	f.mu.Lock()
+	f.volumesBudget = budget(ctx)
 	in, gate := f.volumesIn, f.volumesGate
 	f.mu.Unlock()
 	if in != nil {
@@ -67,10 +78,11 @@ func (f *fakeDocker) VolumesDiskUsage(context.Context) (engine.VolumeUsage, erro
 	return f.volumes, f.volumesErr
 }
 
-func (f *fakeDocker) EventsWindow(_ context.Context, since, until time.Time, actions []string) ([]engine.Event, error) {
+func (f *fakeDocker) EventsWindow(ctx context.Context, since, until time.Time, actions []string) ([]engine.Event, error) {
 	f.eventsCalls.Add(1)
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.eventsBudget = budget(ctx)
 	f.gotSince, f.gotUntil, f.gotActions = since, until, actions
 	return f.events, f.eventsErr
 }
@@ -491,7 +503,7 @@ func TestSubCacheServesStaleAndRefreshesOnce(t *testing.T) {
 	in, gate := r.docker.volumesIn, r.docker.volumesGate
 	r.docker.mu.Unlock()
 
-	r.clock.Advance(61 * time.Second)
+	r.clock.Advance(volumesMaxAge + time.Second)
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
@@ -682,4 +694,55 @@ func TestDockerHeldRatesExpireAfter30Seconds(t *testing.T) {
 	r.clock.Advance(10 * time.Second)
 	s = r.c.Snapshot(ctx) // t+45: 35 s since computed -> expired, idle over the 35 s since baseline
 	near(t, "expired rx", s.Network.RxBytesPerSec, 0)
+}
+
+// ---- background refresh bounds and cadence ----
+
+func TestBackgroundRefreshesUseRefreshTimeout(t *testing.T) {
+	r := newRig(t, "")
+	r.conts.list = []engine.Container{{State: "running"}}
+	r.c.cfg.RefreshTimeout = 20 * time.Second
+	r.c.Snapshot(context.Background())
+	r.c.volumes.wait()
+	r.c.restarts.wait()
+	r.docker.mu.Lock()
+	vb, eb := r.docker.volumesBudget, r.docker.eventsBudget
+	r.docker.mu.Unlock()
+	for name, b := range map[string]time.Duration{"volumes": vb, "events": eb} {
+		if b < 10*time.Second || b > 20*time.Second {
+			t.Errorf("%s call budget = %v, want about the 20s RefreshTimeout", name, b)
+		}
+	}
+}
+
+func TestRefreshTimeoutDefaultsTo30Seconds(t *testing.T) {
+	if got := New(Config{}).cfg.RefreshTimeout; got != 30*time.Second {
+		t.Fatalf("default RefreshTimeout = %v, want 30s", got)
+	}
+}
+
+func TestVolumesRefreshEveryTenMinutesRestartsEveryMinute(t *testing.T) {
+	r := newRig(t, "")
+	r.conts.list = []engine.Container{{State: "running"}}
+	ctx := context.Background()
+	snap := func(advance time.Duration) {
+		r.clock.Advance(advance)
+		r.c.Snapshot(ctx)
+		r.c.volumes.wait()
+		r.c.restarts.wait()
+	}
+	snap(0)
+	snap(6 * time.Second) // past the 5 s snapshot cache
+	snap(61 * time.Second)
+	if v, e := r.docker.volumesCalls.Load(), r.docker.eventsCalls.Load(); v != 1 || e != 2 {
+		t.Fatalf("after 67s: volumes=%d events=%d, want 1 and 2", v, e)
+	}
+	snap(8 * time.Minute) // 9 min 7 s since the first load
+	if v := r.docker.volumesCalls.Load(); v != 1 {
+		t.Fatalf("volumes refreshed after 9 min: %d calls", v)
+	}
+	snap(2 * time.Minute) // over 10 min
+	if v := r.docker.volumesCalls.Load(); v != 2 {
+		t.Fatalf("volumes not refreshed after 10 min: %d calls", v)
+	}
 }

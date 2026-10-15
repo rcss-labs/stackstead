@@ -108,7 +108,8 @@ type VolumeUsage struct {
 	Dangling int    // volumes no container references
 }
 
-// VolumesDiskUsage reads volume usage. The type=volume filter exists from API
+// VolumesDiskUsage reads volume usage, bounded by ctx's deadline (the client
+// timeout when ctx has none). The type=volume filter exists from API
 // 1.45; on older engines, or when the typed call is rejected with HTTP 400,
 // it falls back to the full /system/df.
 func (c *Client) VolumesDiskUsage(ctx context.Context) (VolumeUsage, error) {
@@ -148,12 +149,23 @@ func (c *Client) dfBody(ctx context.Context) ([]byte, error) {
 		return nil, err
 	}
 	if typedDF, _ := parseVersion("1.45"); !v.less(typedDF) {
-		body, err := c.get(ctx, "/system/df?type=volume")
+		body, err := c.getWithin(ctx, "/system/df?type=volume", c.callerBound(ctx))
 		if err == nil || !strings.Contains(err.Error(), "HTTP 400") {
 			return body, err
 		}
 	}
-	return c.get(ctx, "/system/df")
+	return c.getWithin(ctx, "/system/df", c.callerBound(ctx))
+}
+
+// callerBound is the deadline for the slow, background-only calls (system df,
+// the events window): the caller's own deadline when it set one, otherwise the
+// client timeout. `docker system df` takes seconds on a busy host, so the
+// short client timeout that suits Info must not cap it.
+func (c *Client) callerBound(ctx context.Context) time.Duration {
+	if dl, ok := ctx.Deadline(); ok {
+		return time.Until(dl)
+	}
+	return c.timeout
 }
 
 // negotiatedVersion returns the parsed API version, negotiating if needed.

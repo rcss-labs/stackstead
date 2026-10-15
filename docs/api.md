@@ -157,13 +157,19 @@ null on the first reading, then 0 B/s while containers are idle; between
 sampler ticks the last rates are held for at most 30 seconds. When Docker is
 unreachable, `containers`, `volumes` and `restarts24h` are `null`, and with
 `source: "docker"` so are `cpu`, `memory`, `network` and `diskIO`. `disk` is
-`null` only when the stacks directory cannot be read. Each Docker call times
-out after 5 seconds.
+`null` only when the stacks directory cannot be read. The Docker `/info` call
+used on the request path has a short client timeout (2 seconds in the
+server); the background volume and restart refreshes get 30 seconds each, and
+never block a request.
 
 The snapshot is collected at most once every 5 seconds. `volumes` and
 `restarts24h` (a 24-hour scan of `start` events: the first start of a
-container is not a restart) are refreshed in the background at most once a
-minute and are `null` until the first refresh finishes.
+container is not a restart) are refreshed in the background, `volumes` at
+most every 10 minutes and `restarts24h` at most every 60 seconds, and are
+`null` until the first refresh finishes. A failed refresh is not retried
+before its interval has passed. `restarts24h` and the `restart_loop` alert
+only see the container events Docker still holds in memory, which on a busy
+host can be less than 24 hours.
 
 **`GET /api/alerts`** is a JSON array, `[]` when nothing is wrong. Each alert
 has `kind`, `severity` (`danger`, `warning` or `info`), `message`, `since`
@@ -173,8 +179,10 @@ of the alert's current continuous occurrence, as seen by this Stackstead
 process: it resets if the alert clears and later returns, and it survives
 Docker disconnects for container-derived alerts. Nothing is stored, so it
 restarts with the process. Distinct problems (several override files, several
-holders of a clashing port) are separate alerts. The list is recomputed at most once every 5 seconds; a failure
-reading the registry is a `500` `{error}`.
+holders of a clashing port) are separate alerts. The list is recomputed at
+most once every 5 seconds; a failure reading the registry is a `500`
+`{error}`. `port_clash` compares the host port and protocol, not the bind
+address.
 
 | `kind` | Severity | Message |
 | --- | --- | --- |

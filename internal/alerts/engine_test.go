@@ -21,10 +21,14 @@ type fakeDetails struct {
 	gate     chan struct{} // when set, Details blocks until closed
 	entered  chan struct{} // receives once per call when set
 	honorCtx bool          // fail with ctx.Err() after the gate when ctx is done
+	panicNow atomic.Bool   // the next call panics, once
 }
 
 func (f *fakeDetails) Details(ctx context.Context) ([]stacks.Detail, error) {
 	f.calls.Add(1)
+	if f.panicNow.CompareAndSwap(true, false) {
+		panic("details exploded")
+	}
 	if f.entered != nil {
 		f.entered <- struct{}{}
 	}
@@ -354,5 +358,33 @@ func TestCancelledLeaderDoesNotFailJoiners(t *testing.T) {
 	}
 	if res := <-leader; res.err != nil {
 		t.Errorf("leader computation must outlive its request: %v", res.err)
+	}
+}
+
+func TestPanickingComputeBecomesErrorAndEngineRecovers(t *testing.T) {
+	r := newRig()
+	r.det.panicNow.Store(true)
+	var got []alerts.Alert
+	var err error
+	func() {
+		defer func() {
+			if p := recover(); p != nil {
+				t.Fatalf("panic escaped Alerts: %v", p)
+			}
+		}()
+		got, err = r.engine.Alerts(context.Background())
+	}()
+	if err == nil || got != nil {
+		t.Fatalf("got %v, %v; want nil, error", got, err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := r.engine.Alerts(context.Background()); done <- err }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("engine did not recover after the panic: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("later Alerts call hung: the failed flight was never cleared")
 	}
 }

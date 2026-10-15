@@ -14,7 +14,9 @@ import (
 
 const (
 	snapshotMaxAge  = 5 * time.Second
-	subCacheMaxAge  = time.Minute
+	restartsMaxAge  = time.Minute
+	volumesMaxAge   = 10 * time.Minute // system df is slow and volumes change rarely
+	defaultRefresh  = 30 * time.Second
 	restartWindow   = 24 * time.Hour
 	defaultTimeout  = 5 * time.Second
 	labelService    = "com.docker.compose.service"
@@ -56,7 +58,8 @@ type Config struct {
 	Now                          func() time.Time
 	Hostname                     func() (string, error)
 	GOOS                         string
-	CallTimeout                  time.Duration // per Docker call, default 5s
+	CallTimeout                  time.Duration // per Docker call on a request path, default 5s
+	RefreshTimeout               time.Duration // per background df / events refresh, default 30s
 }
 
 // Snapshot is the GET /api/host body. A nil section means "no source".
@@ -211,6 +214,9 @@ func New(cfg Config) *Collector {
 	if cfg.CallTimeout <= 0 {
 		cfg.CallTimeout = defaultTimeout
 	}
+	if cfg.RefreshTimeout <= 0 {
+		cfg.RefreshTimeout = defaultRefresh
+	}
 	return &Collector{
 		cfg:      cfg,
 		snap:     newCached[Snapshot](cfg.Now),
@@ -236,7 +242,7 @@ func (c *Collector) Snapshot(ctx context.Context) Snapshot {
 // RestartCounts maps container id to its restarts in the last 24 h, or nil
 // before the first scan has finished. The map is shared: do not modify it.
 func (c *Collector) RestartCounts() map[string]int {
-	scan, ok := c.restarts.GetStale(subCacheMaxAge, c.loadRestarts)
+	scan, ok := c.restarts.GetStale(restartsMaxAge, c.loadRestarts)
 	if !ok {
 		return nil
 	}
@@ -269,10 +275,10 @@ func (c *Collector) collect(ctx context.Context) Snapshot {
 	s.Disk = c.disk()
 
 	if dockerUp {
-		if v, ok := c.volumes.GetStale(subCacheMaxAge, c.loadVolumes); ok {
+		if v, ok := c.volumes.GetStale(volumesMaxAge, c.loadVolumes); ok {
 			s.Volumes = &Volumes{Count: v.Count, Size: v.Size, Dangling: v.Dangling}
 		}
-		if scan, ok := c.restarts.GetStale(subCacheMaxAge, c.loadRestarts); ok {
+		if scan, ok := c.restarts.GetStale(restartsMaxAge, c.loadRestarts); ok {
 			r := scan.restarts
 			s.Restarts24h = &r
 		}
@@ -489,7 +495,7 @@ func (c *Collector) loadVolumes() (engine.VolumeUsage, error) {
 	if c.cfg.Docker == nil {
 		return engine.VolumeUsage{}, context.Canceled
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.CallTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.RefreshTimeout)
 	defer cancel()
 	return c.cfg.Docker.VolumesDiskUsage(ctx)
 }
@@ -498,7 +504,7 @@ func (c *Collector) loadRestarts() (restartScan, error) {
 	if c.cfg.Docker == nil {
 		return restartScan{}, context.Canceled
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.CallTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.RefreshTimeout)
 	defer cancel()
 	now := c.cfg.Now()
 	events, err := c.cfg.Docker.EventsWindow(ctx, now.Add(-restartWindow), now, []string{"start"})

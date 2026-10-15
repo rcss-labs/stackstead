@@ -2,6 +2,7 @@ package alerts
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -51,7 +52,7 @@ func NewEngine(st StackDetails, cs ContainerSource, rc RestartCounts, conn Conne
 // Alerts returns the current alerts, most urgent first. Concurrent calls share
 // one computation and the result is reused for 5 s. It fails only when the
 // stack registry cannot be read; failures are not cached.
-func (e *Engine) Alerts(ctx context.Context) ([]Alert, error) {
+func (e *Engine) Alerts(ctx context.Context) (out []Alert, err error) {
 	e.mu.Lock()
 	if e.cached != nil && e.now().Before(e.expires) {
 		out := append([]Alert{}, e.cached...)
@@ -76,16 +77,24 @@ func (e *Engine) Alerts(ctx context.Context) ([]Alert, error) {
 
 	// Detached so a cancelled leader request cannot fail the joiners.
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), computeTimeout)
-	f.alerts, f.err = e.compute(cctx)
-	cancel()
+	defer cancel()
 
-	e.mu.Lock()
-	e.inflight = nil
-	if f.err == nil {
-		e.cached, e.expires = f.alerts, e.now().Add(cacheTTL)
-	}
-	e.mu.Unlock()
-	close(f.done)
+	// Always release the flight, even if compute panics: a recovered panic is
+	// an error for this computation, never cached, and joiners are not stranded.
+	defer func() {
+		if r := recover(); r != nil {
+			f.alerts, f.err = nil, fmt.Errorf("alerts computation panicked: %v", r)
+			out, err = nil, f.err
+		}
+		e.mu.Lock()
+		e.inflight = nil
+		if f.err == nil {
+			e.cached, e.expires = f.alerts, e.now().Add(cacheTTL)
+		}
+		e.mu.Unlock()
+		close(f.done)
+	}()
+	f.alerts, f.err = e.compute(cctx)
 	if f.err != nil {
 		return nil, f.err
 	}

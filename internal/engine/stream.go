@@ -58,7 +58,7 @@ type LogOptions struct {
 // openStream issues a versioned GET whose body is bound only by caller. The
 // client timeout still bounds version negotiation and the wait for response
 // headers. The returned cancel must be called once the body is done with.
-func (c *Client) openStream(caller context.Context, path string) (*http.Response, context.CancelFunc, error) {
+func (c *Client) openStream(caller context.Context, path string, headerTimeout time.Duration) (*http.Response, context.CancelFunc, error) {
 	if err := caller.Err(); err != nil {
 		return nil, nil, fmt.Errorf("docker engine request: %w", err)
 	}
@@ -71,7 +71,7 @@ func (c *Client) openStream(caller context.Context, path string) (*http.Response
 	ctx, cancelCause := context.WithCancelCause(caller)
 	cancel := context.CancelFunc(func() { cancelCause(context.Canceled) })
 	// The cause lets a header timeout report a deadline rather than "canceled".
-	headerTimer := time.AfterFunc(c.timeout, func() { cancelCause(context.DeadlineExceeded) })
+	headerTimer := time.AfterFunc(headerTimeout, func() { cancelCause(context.DeadlineExceeded) })
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker/v"+v+path, nil)
 	if err != nil {
 		headerTimer.Stop()
@@ -143,9 +143,10 @@ func (raw apiEvent) event() Event {
 
 // EventsWindow returns every container event with since <= time < until whose
 // action is in actions (nil = all). Docker ends the stream because until is
-// set; the whole call is bounded by the client timeout.
+// set; the whole call is bounded by ctx's deadline, or the client timeout when
+// ctx has none.
 func (c *Client) EventsWindow(ctx context.Context, since, until time.Time, actions []string) ([]Event, error) {
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	ctx, cancel := context.WithTimeout(ctx, c.callerBound(ctx))
 	defer cancel()
 	filters := map[string][]string{"type": {"container"}}
 	if len(actions) > 0 {
@@ -160,7 +161,7 @@ func (c *Client) EventsWindow(ctx context.Context, since, until time.Time, actio
 		"since":   {strconv.FormatInt(since.Unix(), 10)},
 		"until":   {strconv.FormatInt(until.Unix(), 10)},
 	}
-	resp, cancelStream, err := c.openStream(ctx, "/events?"+q.Encode())
+	resp, cancelStream, err := c.openStream(ctx, "/events?"+q.Encode(), c.callerBound(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +210,7 @@ func (c *Client) streamEvents(ctx context.Context, since time.Time, out chan<- E
 	if !since.IsZero() {
 		q.Set("since", strconv.FormatInt(since.Unix(), 10))
 	}
-	resp, cancel, err := c.openStream(ctx, "/events?"+q.Encode())
+	resp, cancel, err := c.openStream(ctx, "/events?"+q.Encode(), c.timeout)
 	if err != nil {
 		return err
 	}
@@ -350,7 +351,7 @@ func (c *Client) streamLogs(ctx context.Context, containerID string, opts LogOpt
 		// exactly after a line it has already seen.
 		q.Set("since", fmt.Sprintf("%d.%09d", opts.Since.Unix(), opts.Since.Nanosecond()))
 	}
-	resp, cancel, err := c.openStream(ctx, "/containers/"+url.PathEscape(containerID)+"/logs?"+q.Encode())
+	resp, cancel, err := c.openStream(ctx, "/containers/"+url.PathEscape(containerID)+"/logs?"+q.Encode(), c.timeout)
 	if err != nil {
 		return err
 	}

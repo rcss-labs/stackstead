@@ -40,8 +40,9 @@ type fakeSummary struct {
 	lastWindow time.Duration
 	// gate, when set, makes QueryAll announce itself on entered and then block
 	// until gate is closed.
-	gate    chan struct{}
-	entered chan struct{}
+	gate     chan struct{}
+	entered  chan struct{}
+	panicNow bool // the next QueryAll panics, once
 }
 
 func (f *fakeSummary) QueryAll(_ context.Context, from, to time.Time, step time.Duration) ([]metrics.ProjectBucket, error) {
@@ -49,6 +50,11 @@ func (f *fakeSummary) QueryAll(_ context.Context, from, to time.Time, step time.
 	f.calls++
 	f.from, f.to, f.step = from, to, step
 	gate, entered := f.gate, f.entered
+	if f.panicNow {
+		f.panicNow = false
+		f.mu.Unlock()
+		panic("query exploded")
+	}
 	f.mu.Unlock()
 	if gate != nil {
 		entered <- struct{}{}
@@ -526,5 +532,21 @@ func TestDashboardTimesAreUTCOnTheWire(t *testing.T) {
 				t.Errorf("summary to = %q, want UTC", to)
 			}
 		}
+	}
+}
+
+func TestSummaryPanickingQueryIs500AndLaterCallWorks(t *testing.T) {
+	fake := &fakeSummary{panicNow: true}
+	_, get := dashboardEnv(t, func(o *api.Options) {
+		o.Summary = fake
+		o.Now = func() time.Time { return summaryNow }
+	})
+	res := get("/api/metrics/summary")
+	var body map[string]string
+	if res.Code != 500 || json.Unmarshal(res.Body, &body) != nil || body["error"] == "" {
+		t.Fatalf("status %d body %s, want 500 {error}", res.Code, res.Body)
+	}
+	if res := get("/api/metrics/summary"); res.Code != 200 {
+		t.Errorf("after the panic status = %d, want 200", res.Code)
 	}
 }

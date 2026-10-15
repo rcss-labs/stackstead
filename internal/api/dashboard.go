@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"sort"
 	"sync"
@@ -190,14 +191,21 @@ func (s *server) summary(ctx context.Context, window time.Duration) (apitypes.Me
 func (s *server) runSummary(ctx context.Context, e *summaryEntry, f *summaryFlight, window time.Duration, now time.Time) {
 	qctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), summaryQueryTimeout)
 	defer cancel()
+	// A panicking query is an error for this flight, never a crashed server or
+	// a stranded waiter; it is not cached.
+	defer func() {
+		if r := recover(); r != nil {
+			f.body, f.err = apitypes.MetricsSummary{}, fmt.Errorf("summary query panicked: %v", r)
+		}
+		e.mu.Lock()
+		e.inflight = nil
+		if f.err == nil {
+			e.body, e.at, e.ok = f.body, now, true
+		}
+		e.mu.Unlock()
+		close(f.done)
+	}()
 	f.body, f.err = s.computeSummary(qctx, window, now)
-	e.mu.Lock()
-	e.inflight = nil
-	if f.err == nil {
-		e.body, e.at, e.ok = f.body, now, true
-	}
-	e.mu.Unlock()
-	close(f.done)
 }
 
 func (s *server) computeSummary(ctx context.Context, window time.Duration, now time.Time) (apitypes.MetricsSummary, error) {

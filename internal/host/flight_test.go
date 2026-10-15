@@ -147,7 +147,7 @@ func TestGetStaleRefreshFailureKeepsOld(t *testing.T) {
 	}
 }
 
-func TestGetStaleRetriesSoonBeforeFirstValue(t *testing.T) {
+func TestGetStaleFailedFirstRefreshWaitsForMaxAge(t *testing.T) {
 	clock := newFakeClock()
 	c := newCached[int](clock.Now)
 	var calls atomic.Int32
@@ -159,13 +159,13 @@ func TestGetStaleRetriesSoonBeforeFirstValue(t *testing.T) {
 	}
 	c.GetStale(time.Minute, load)
 	c.wait()
-	clock.Advance(2 * time.Second)
+	clock.Advance(55 * time.Second)
 	c.GetStale(time.Minute, load)
 	c.wait()
 	if got := calls.Load(); got != 1 {
-		t.Fatalf("retried after 2s: %d calls", got)
+		t.Fatalf("retried within maxAge after a failure: %d calls", got)
 	}
-	clock.Advance(3 * time.Second)
+	clock.Advance(6 * time.Second)
 	c.GetStale(time.Minute, load)
 	c.wait()
 	if v, ok := c.GetStale(time.Minute, load); !ok || v != 9 {

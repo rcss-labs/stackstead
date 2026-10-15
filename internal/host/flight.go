@@ -7,9 +7,6 @@ import (
 	"time"
 )
 
-// retryBeforeFirstValue is how soon GetStale retries while it has no value yet.
-const retryBeforeFirstValue = 5 * time.Second
-
 // cached holds one value with single-flight loading. At most one load runs at
 // a time, whether it was started by Get (synchronous) or GetStale (background).
 type cached[T any] struct {
@@ -74,14 +71,12 @@ func (c *cached[T]) Get(ctx context.Context, maxAge time.Duration, load func(con
 // GetStale returns the last loaded value immediately. When the last refresh
 // attempt is older than maxAge (or there was none) and no load is running, it
 // starts one background load. ok is false until the first load succeeds. A
-// failed refresh keeps the old value and is not retried before maxAge passes.
+// failed refresh (including the first) keeps the old value and is not retried
+// before maxAge passes, so a slow or failing Docker call is never hammered.
 func (c *cached[T]) GetStale(maxAge time.Duration, load func() (T, error)) (v T, ok bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	v, ok = c.val, c.has
-	if !c.has && maxAge > retryBeforeFirstValue {
-		maxAge = retryBeforeFirstValue // keep trying soon until there is something to show
-	}
 	if c.inflight == nil && (!c.checkedOK || c.now().Sub(c.checked) >= maxAge) {
 		f := &flight[T]{done: make(chan struct{})}
 		c.inflight = f

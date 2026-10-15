@@ -560,3 +560,32 @@ func TestDockerCallsHonourTimeout(t *testing.T) {
 		t.Errorf("err = %v after %v", err, time.Since(start))
 	}
 }
+
+// A background refresh passes its own, longer deadline; the short client
+// timeout must not cut it off.
+func TestVolumesDiskUsageHonoursCallerDeadlineBeyondClientTimeout(t *testing.T) {
+	f := serveVer(t, "1.45", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(400 * time.Millisecond) // slower than the client timeout
+		fileHandler(t, map[string]string{"/v1.45/system/df": "system_df_volumes.json"}).ServeHTTP(w, r)
+	}))
+	c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	got, err := New(f.sock, 150*time.Millisecond).VolumesDiskUsage(c)
+	if err != nil {
+		t.Fatalf("df with a 5s deadline failed: %v", err)
+	}
+	if got.Count != 3 {
+		t.Errorf("usage = %+v", got)
+	}
+}
+
+func TestVolumesDiskUsageStillBoundedByCallerDeadline(t *testing.T) {
+	f := serveVer(t, "1.45", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(600 * time.Millisecond)
+	}))
+	c, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if _, err := New(f.sock, 5*time.Second).VolumesDiskUsage(c); err == nil {
+		t.Fatal("want a timeout error")
+	}
+}
