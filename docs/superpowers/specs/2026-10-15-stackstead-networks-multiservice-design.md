@@ -51,7 +51,7 @@ The TypeSafe skill named in the global rules is a placeholder (the installed `ty
 
 ## 4. API
 
-All routes require a session; mutating routes require `Content-Type: application/json` (existing CSRF rule); error bodies are `{error}`; validation errors are `{error, fields: [{field, message}]}` as today (422).
+All routes require a session; mutating routes require `Content-Type: application/json` (existing CSRF rule); error bodies are `{error}`; validation errors are `{error, fields: [{field, message}]}` with 400, as today.
 
 ### 4.1 `GET /api/networks` (extended)
 
@@ -78,7 +78,7 @@ Existing fields (`name`, `subnets` as CIDR strings) keep their meaning; new fiel
  "ipRange": "192.168.0.224/27", "parent": "enp3s0", "ipvlanMode": "l2", "internal": false}
 ```
 
-Validation (422 with field errors), before calling Docker:
+Validation (400 with field errors), before calling Docker:
 
 - `name`: compose network name rules (`[a-zA-Z0-9][a-zA-Z0-9_.-]*`, at most 63 chars); not an existing network name (409 if it exists).
 - `driver`: `bridge`, `macvlan` or `ipvlan`.
@@ -112,7 +112,7 @@ Linux only (`runtime.GOOS == "linux"`), `[]` elsewhere. Interfaces that are up, 
 ```
 
 - `services`: 1–20 entries. Legacy `{name, service, config}` is converted to a one-entry list (service defaults to `name`, as today). Both `services` and `service`/`config` present: 400.
-- Service names: valid compose service names, unique in the request (422 `services[i].service`). An empty name on entry 0 defaults to the stack name; on any other entry it is an error.
+- Service names: valid compose service names, unique in the request (400 `services[i].service`). An empty name on entry 0 defaults to the stack name; on any other entry it is an error.
 - Each config goes through the existing `prepareConfig` and `ValidateConfig`.
 - `checkChanges` receives all services. New: ports published twice within the request, and the same static IP on the same network twice within the request, are errors on the later entry.
 - Field paths are prefixed `services[i].` (e.g. `services[1].ports[0]`, `services[0].networks.lan.ipv4_address`). Legacy-form requests keep the unprefixed paths so old clients still map errors.
