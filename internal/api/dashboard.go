@@ -1,0 +1,221 @@
+package api
+
+import (
+	"context"
+	"net/http"
+	"sort"
+	"sync"
+	"time"
+
+	"github.com/rcss-labs/stackstead/internal/alerts"
+	"github.com/rcss-labs/stackstead/internal/apitypes"
+	"github.com/rcss-labs/stackstead/internal/host"
+	"github.com/rcss-labs/stackstead/internal/metrics"
+)
+
+// HostAPI is satisfied by *host.Collector, which caches for 5 s itself.
+type HostAPI interface {
+	Snapshot(ctx context.Context) host.Snapshot
+}
+
+// AlertsAPI is satisfied by *alerts.Engine, which caches for 5 s itself.
+type AlertsAPI interface {
+	Alerts(ctx context.Context) ([]alerts.Alert, error)
+}
+
+// SummaryAPI is the metrics store's all-projects query plus the sampler's
+// latest per-container readings.
+type SummaryAPI interface {
+	QueryAll(ctx context.Context, from, to time.Time, step time.Duration) ([]metrics.ProjectBucket, error)
+	Latest() []metrics.ExpositionSample
+}
+
+// SummarySources adapts the store and sampler to SummaryAPI.
+type SummarySources struct {
+	Store   *metrics.Store
+	Sampler *metrics.Sampler
+}
+
+var _ SummaryAPI = SummarySources{}
+
+func (s SummarySources) QueryAll(ctx context.Context, from, to time.Time, step time.Duration) ([]metrics.ProjectBucket, error) {
+	return s.Store.QueryAll(ctx, from, to, step)
+}
+func (s SummarySources) Latest() []metrics.ExpositionSample { return s.Sampler.Latest() }
+
+// summaryEntry is the single-flight cache slot of one window: mu is held
+// while computing, so concurrent requests share one query.
+type summaryEntry struct {
+	mu   sync.Mutex
+	at   time.Time
+	body apitypes.MetricsSummary
+	ok   bool
+}
+
+const (
+	summaryBuckets  = 30
+	summaryCacheTTL = 10 * time.Second
+	summaryTopN     = 5
+)
+
+func (s *server) registerDashboardRoutes(mux *http.ServeMux) {
+	if s.opts.Host != nil {
+		mux.Handle("GET /api/host", s.requireSession(s.handleHost))
+	}
+	if s.opts.Alerts != nil {
+		mux.Handle("GET /api/alerts", s.requireSession(s.handleAlerts))
+	}
+	if s.opts.Summary != nil {
+		mux.Handle("GET /api/metrics/summary", s.requireSession(s.handleMetricsSummary))
+	}
+}
+
+func (s *server) handleHost(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, hostDTO(s.opts.Host.Snapshot(r.Context())))
+}
+
+// hostDTO maps section by section so a field added to host.Snapshot cannot
+// reach the wire without a deliberate change here.
+func hostDTO(h host.Snapshot) apitypes.HostSnapshot {
+	out := apitypes.HostSnapshot{Hostname: h.Hostname, OS: h.OS, Source: h.Source, SampledAt: h.SampledAt}
+	if c := h.Containers; c != nil {
+		out.Containers = &apitypes.HostContainers{Total: c.Total, Running: c.Running, Exited: c.Exited, Bad: c.Bad}
+	}
+	if c := h.CPU; c != nil {
+		out.CPU = &apitypes.HostCPU{Percent: c.Percent, Cores: c.Cores}
+	}
+	if m := h.Memory; m != nil {
+		out.Memory = &apitypes.HostMemory{Used: m.Used, Total: m.Total, SwapUsed: m.SwapUsed, SwapTotal: m.SwapTotal}
+	}
+	if d := h.Disk; d != nil {
+		out.Disk = &apitypes.HostDisk{Path: d.Path, Free: d.Free, Total: d.Total}
+	}
+	if n := h.Network; n != nil {
+		out.Network = &apitypes.HostNetwork{RxBytesPerSec: n.RxBytesPerSec, TxBytesPerSec: n.TxBytesPerSec, Interface: n.Interface}
+	}
+	if d := h.DiskIO; d != nil {
+		out.DiskIO = &apitypes.HostDiskIO{ReadBytesPerSec: d.ReadBytesPerSec, WriteBytesPerSec: d.WriteBytesPerSec}
+	}
+	if v := h.Volumes; v != nil {
+		out.Volumes = &apitypes.HostVolumes{Count: v.Count, Size: v.Size, Dangling: v.Dangling}
+	}
+	if u := h.Uptime; u != nil {
+		out.Uptime = &apitypes.HostUptime{Seconds: u.Seconds, Load1: u.Load1, Load5: u.Load5, Load15: u.Load15}
+	}
+	if rs := h.Restarts24h; rs != nil {
+		top := make([]apitypes.HostRestartTop, 0, len(rs.Top))
+		for _, t := range rs.Top {
+			top = append(top, apitypes.HostRestartTop{Container: t.Container, Service: t.Service, Project: t.Project, Count: t.Count})
+		}
+		out.Restarts24h = &apitypes.HostRestarts{Total: rs.Total, Top: top}
+	}
+	return out
+}
+
+func (s *server) handleAlerts(w http.ResponseWriter, r *http.Request) {
+	list, err := s.opts.Alerts.Alerts(r.Context())
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	out := make([]apitypes.Alert, 0, len(list)) // [] rather than null when empty
+	for _, a := range list {
+		out = append(out, apitypes.Alert{Kind: a.Kind, Severity: a.Severity, Stack: a.Stack,
+			Service: a.Service, Container: a.Container, Message: a.Message, Since: a.Since})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *server) handleMetricsSummary(w http.ResponseWriter, r *http.Request) {
+	window, err := metrics.ParseSummaryWindow(r.URL.Query().Get("window"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	body, err := s.summary(r.Context(), window)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// summary returns the window's body from the 10 s cache, computing it under
+// the entry lock so concurrent requests share one query. Errors are not cached.
+func (s *server) summary(ctx context.Context, window time.Duration) (apitypes.MetricsSummary, error) {
+	s.summaryMu.Lock()
+	e := s.summaryCache[window]
+	if e == nil {
+		e = &summaryEntry{}
+		s.summaryCache[window] = e
+	}
+	s.summaryMu.Unlock()
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	now := s.opts.Now()
+	if e.ok && now.Sub(e.at) < summaryCacheTTL {
+		return e.body, nil
+	}
+	body, err := s.computeSummary(ctx, window, now)
+	if err != nil {
+		return apitypes.MetricsSummary{}, err
+	}
+	e.body, e.at, e.ok = body, now, true
+	return body, nil
+}
+
+func (s *server) computeSummary(ctx context.Context, window time.Duration, now time.Time) (apitypes.MetricsSummary, error) {
+	step := window / summaryBuckets
+	// QueryAll buckets are epoch-aligned, so the range must be too: it ends
+	// with the bucket that contains now and starts window earlier.
+	to := now.Truncate(step).Add(step)
+	from := to.Add(-window)
+	rows, err := s.opts.Summary.QueryAll(ctx, from, to, step)
+	if err != nil {
+		return apitypes.MetricsSummary{}, err
+	}
+	stacks := map[string]apitypes.ProjectSummary{}
+	for project, series := range metrics.AggregateProjects(rows, from, step, summaryBuckets) {
+		stacks[project] = apitypes.ProjectSummary{CPU: series.CPU, Mem: series.Mem,
+			CPUNow: series.CPUNow, MemNow: series.MemNow, NetRxBytesPerSec: series.NetRx, NetTxBytesPerSec: series.NetTx}
+	}
+	latest := s.opts.Summary.Latest()
+	return apitypes.MetricsSummary{
+		Window: windowLabel(window), Step: int(step / time.Second), From: from, To: to, Stacks: stacks,
+		Top: apitypes.SummaryTop{
+			CPU: topEntries(latest, func(m metrics.ExpositionSample) float64 { return m.CPU }),
+			Mem: topEntries(latest, func(m metrics.ExpositionSample) float64 { return float64(m.Mem) }),
+		},
+	}, nil
+}
+
+func windowLabel(window time.Duration) string {
+	switch window {
+	case 5 * time.Minute:
+		return "5m"
+	case time.Hour:
+		return "1h"
+	}
+	return "15m"
+}
+
+// topEntries returns the highest summaryTopN containers by value, ties
+// broken by container name so the order is stable.
+func topEntries(samples []metrics.ExpositionSample, value func(metrics.ExpositionSample) float64) []apitypes.TopEntry {
+	sorted := append([]metrics.ExpositionSample(nil), samples...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if vi, vj := value(sorted[i]), value(sorted[j]); vi != vj {
+			return vi > vj
+		}
+		return sorted[i].Container < sorted[j].Container
+	})
+	if len(sorted) > summaryTopN {
+		sorted = sorted[:summaryTopN]
+	}
+	out := make([]apitypes.TopEntry, 0, len(sorted))
+	for _, m := range sorted {
+		out = append(out, apitypes.TopEntry{Container: m.Container, Service: m.Service, Project: m.Project, Value: value(m)})
+	}
+	return out
+}

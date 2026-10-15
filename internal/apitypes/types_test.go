@@ -112,6 +112,11 @@ func TestJSONTagsMatchContract(t *testing.T) {
 		{"MetricsTokenStatus", populated[apitypes.MetricsTokenStatus](), "configured"},
 		{"MetricsToken", populated[apitypes.MetricsToken](), "token"},
 		{"Health", populated[apitypes.Health](), "ok"},
+		{"HostSnapshot", populated[apitypes.HostSnapshot](), "containers,cpu,disk,diskIO,hostname,memory,network,os,restarts24h,sampledAt,source,uptime,volumes"},
+		{"Alert", populated[apitypes.Alert](), "container,kind,message,service,severity,since,stack"},
+		{"MetricsSummary", populated[apitypes.MetricsSummary](), "from,stacks,step,to,top,window"},
+		{"ProjectSummary", populated[apitypes.ProjectSummary](), "cpu,cpuNow,mem,memNow,netRxBytesPerSec,netTxBytesPerSec"},
+		{"TopEntry", populated[apitypes.TopEntry](), "container,project,service,value"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -11,14 +11,17 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
+	"github.com/rcss-labs/stackstead/internal/alerts"
 	"github.com/rcss-labs/stackstead/internal/api"
 	"github.com/rcss-labs/stackstead/internal/auth"
 	"github.com/rcss-labs/stackstead/internal/composecli"
 	"github.com/rcss-labs/stackstead/internal/config"
 	"github.com/rcss-labs/stackstead/internal/engine"
+	"github.com/rcss-labs/stackstead/internal/host"
 	"github.com/rcss-labs/stackstead/internal/lockfile"
 	"github.com/rcss-labs/stackstead/internal/metrics"
 	"github.com/rcss-labs/stackstead/internal/stacks"
@@ -173,6 +176,15 @@ func serve(ctx context.Context, env *Env, args []string) error {
 		logger.Warn("stack sync reported problems", "err", err)
 	}
 
+	// The collector and alerts engine do nothing until a request arrives:
+	// both cache for 5 s and start no goroutines.
+	collector := host.New(host.Config{
+		ProcRoot: "/proc", SysRoot: "/sys", StacksDir: cfg.StacksDir,
+		Docker: dockerEngine, Sampler: sampler, Containers: cache,
+		Statfs: host.OSStatfs{}, Now: time.Now, Hostname: os.Hostname, GOOS: runtime.GOOS,
+	})
+	alertsEngine := alerts.NewEngine(stackSvc, cache, collector, cache, sampler, time.Now)
+
 	if !web.Built() {
 		logger.Warn("web UI not built; serving placeholder page (run make ui)")
 	}
@@ -194,6 +206,9 @@ func serve(ctx context.Context, env *Env, args []string) error {
 			MetricsRetention: cfg.MetricsRetention,
 			Closing:          closing,
 			Version:          version.Get().Version,
+			Host:             collector,
+			Alerts:           alertsEngine,
+			Summary:          api.SummarySources{Store: metricsStore, Sampler: sampler},
 			Observe: api.ObserveSources{
 				Cache: cache, Sampler: sampler, Store: metricsStore, Engine: dockerEngine,
 			},
