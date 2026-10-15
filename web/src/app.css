@@ -190,9 +190,9 @@ html {
 
 body {
   margin: 0;
-  background: var(--surface);
+  background: var(--bg);
   color: var(--text);
-  font: 16px/1.5 var(--sans);
+  font: 13px/1.45 var(--sans);
 }
 
 h1 {

@@ -83,9 +83,7 @@ describe('public logos', () => {
     expect(pngWidth('logo-art.png')).toBe(336);
   });
 
-  // KNOWN: sips cannot quantise, so the 336 px logo is ~109 kB. it.fails flips red once it is
-  // optimised under the cap; then change it to a plain `it`.
-  it.fails('logo-art.png stays within its 40 960 B cap', () => {
+  it('logo-art.png stays within its 40 960 B cap', () => {
     expect(statSync(pub('logo-art.png')).size).toBeLessThanOrEqual(40960);
   });
 });
