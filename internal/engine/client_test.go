@@ -128,6 +128,12 @@ func TestContainers(t *testing.T) {
 	if c.Project() != "demo" || c.ComposeService() != "postgres" {
 		t.Errorf("project/service: %q %q", c.Project(), c.ComposeService())
 	}
+	if want := time.Unix(1760000000, 0).UTC(); !c.Created.Equal(want) {
+		t.Errorf("Created = %v, want %v", c.Created, want)
+	}
+	if !cs[1].Created.IsZero() {
+		t.Errorf("missing Created should be zero, got %v", cs[1].Created)
+	}
 	if len(c.Ports) != 3 {
 		t.Fatalf("ports: %+v", c.Ports)
 	}

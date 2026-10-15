@@ -28,6 +28,7 @@ type Container struct {
 	Labels                         map[string]string
 	Ports                          []Port
 	Networks                       map[string]string // network name -> IPv4 address
+	Created                        time.Time         // zero when Docker reports none
 }
 
 // Project returns the compose project the container belongs to, or "".
@@ -103,6 +104,7 @@ type apiContainer struct {
 	ID              string `json:"Id"`
 	Names           []string
 	Image           string
+	Created         int64 // unix seconds
 	State           string
 	Status          string
 	Labels          map[string]string

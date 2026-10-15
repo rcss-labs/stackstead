@@ -435,3 +435,25 @@ type EventMessage struct {
 	ExitCode  *int      `json:"exitCode,omitempty"`
 	Health    string    `json:"health,omitempty"`
 }
+
+// ContainerRow is one row of GET /api/containers.
+type ContainerRow struct {
+	ID          string            `json:"id"` // first 12 hex
+	Name        string            `json:"name"`
+	Image       string            `json:"image"`
+	State       string            `json:"state"`
+	Status      string            `json:"status"`
+	Health      string            `json:"health"`
+	ExitCode    *int              `json:"exitCode"` // null unless exited with a parsed code
+	CreatedAt   time.Time         `json:"createdAt"`
+	Project     string            `json:"project"`
+	Service     string            `json:"service"`
+	Stack       string            `json:"stack"`
+	Managed     string            `json:"managed"`  // "stack" | "compose" | "none"
+	Ports       []string          `json:"ports"`    // published only, never null
+	Networks    map[string]string `json:"networks"` // never null
+	CPU         *float64          `json:"cpu"`      // null without a sampler reading
+	Mem         *uint64           `json:"mem"`
+	MemLimit    *uint64           `json:"memLimit"`
+	Restarts24h int               `json:"restarts24h"`
+}

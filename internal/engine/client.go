@@ -211,6 +211,9 @@ func (c *Client) Containers(ctx context.Context) ([]Container, error) {
 	out := make([]Container, 0, len(raw))
 	for _, r := range raw {
 		ct := Container{ID: r.ID, Image: r.Image, State: r.State, Status: r.Status, Labels: r.Labels}
+		if r.Created > 0 {
+			ct.Created = time.Unix(r.Created, 0).UTC()
+		}
 		if len(r.Names) > 0 {
 			ct.Name = strings.TrimPrefix(r.Names[0], "/")
 		}
