@@ -6,8 +6,10 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -587,5 +589,168 @@ func TestVolumesDiskUsageStillBoundedByCallerDeadline(t *testing.T) {
 	defer cancel()
 	if _, err := New(f.sock, 5*time.Second).VolumesDiskUsage(c); err == nil {
 		t.Fatal("want a timeout error")
+	}
+}
+
+func TestContainerActionMapsStatus(t *testing.T) {
+	cases := []struct {
+		name, action string
+		status       int
+		body         string
+		wantT        string // expected t query, "" for none
+		check        func(t *testing.T, err error)
+	}{
+		{"start ok", "start", 204, "", "", func(t *testing.T, err error) {
+			if err != nil {
+				t.Errorf("err = %v", err)
+			}
+		}},
+		{"stop already stopped", "stop", 304, "", "10", func(t *testing.T, err error) {
+			if err != nil {
+				t.Errorf("304 should be success, got %v", err)
+			}
+		}},
+		{"restart missing", "restart", 404, `{"message":"No such container: x"}`, "10", func(t *testing.T, err error) {
+			if !errors.Is(err, ErrNotFound) {
+				t.Errorf("err = %v", err)
+			}
+		}},
+		{"start refused", "start", 500, `{"message":"port is already allocated"}`, "", func(t *testing.T, err error) {
+			var ae *ActionError
+			if !errors.As(err, &ae) || ae.Status != 500 || ae.Message != "port is already allocated" {
+				t.Errorf("err = %#v", err)
+			}
+			if errors.Is(err, ErrUnavailable) {
+				t.Error("a refusal is not unavailability")
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var method, path string
+			var query url.Values
+			sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				method, path, query = r.Method, r.URL.Path, r.URL.Query()
+				w.WriteHeader(tc.status)
+				w.Write([]byte(tc.body))
+			}))
+			err := New(sock, 2*time.Second).ContainerAction(ctx(t), "abc", tc.action, 10)
+			tc.check(t, err)
+			if method != http.MethodPost || path != "/v1.41/containers/abc/"+tc.action {
+				t.Errorf("request = %s %s", method, path)
+			}
+			if got := query.Get("t"); got != tc.wantT {
+				t.Errorf("t = %q, want %q", got, tc.wantT)
+			}
+		})
+	}
+}
+
+func TestContainerActionUnavailable(t *testing.T) {
+	err := New(filepath.Join(t.TempDir(), "none.sock"), time.Second).ContainerAction(ctx(t), "abc", "start", 10)
+	if !errors.Is(err, ErrUnavailable) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestContainerActionRejectsUnknownAction(t *testing.T) {
+	f := serveVer(t, "1.41", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request %s", r.URL)
+	}))
+	err := New(f.sock, time.Second).ContainerAction(ctx(t), "abc", "kill", 10)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if n := len(f.seen()); n != 0 {
+		t.Errorf("%d requests made", n)
+	}
+}
+
+func inspectClient(t *testing.T) *Client {
+	sock := serve(t, fileHandler(t, map[string]string{"/v1.41/containers/abc/json": "inspect_container.json"}))
+	return New(sock, 2*time.Second)
+}
+
+func TestInspectContainerDecodes(t *testing.T) {
+	got, err := inspectClient(t).InspectContainer(ctx(t), "abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "abc123def456" || got.Name != "demo-postgres-1" || got.Image != "postgres:16.9" ||
+		got.State != "running" || got.Status != "running" || got.Health != "healthy" || !got.Running || got.ExitCode != 0 {
+		t.Errorf("scalars: %+v", got)
+	}
+	if want := time.Date(2026, 10, 14, 8, 30, 0, 123456789, time.UTC); !got.StartedAt.Equal(want) {
+		t.Errorf("StartedAt = %v", got.StartedAt)
+	}
+	if !got.FinishedAt.IsZero() {
+		t.Errorf("FinishedAt = %v, want zero", got.FinishedAt)
+	}
+	if got.RestartPolicy != "unless-stopped" {
+		t.Errorf("RestartPolicy = %q", got.RestartPolicy)
+	}
+	if got.Labels["com.docker.compose.project"] != "demo" || len(got.Labels) != 2 {
+		t.Errorf("labels: %+v", got.Labels)
+	}
+	if len(got.Ports) != 1 || got.Ports[0] != (Port{IP: "0.0.0.0", PrivatePort: 5432, PublicPort: 5432, Type: "tcp"}) {
+		t.Errorf("ports: %+v", got.Ports)
+	}
+	if len(got.Networks) != 2 || got.Networks["demo_default"] != "172.18.0.2" || got.Networks["demo_backend"] != "172.19.0.5" {
+		t.Errorf("networks: %+v", got.Networks)
+	}
+	wantMounts := []Mount{
+		{Type: "volume", Source: "/var/lib/docker/volumes/pgdata/_data", Destination: "/var/lib/postgresql/data"},
+		{Type: "bind", Source: "/etc/ssl", Destination: "/certs", ReadOnly: true},
+	}
+	if !reflect.DeepEqual(got.Mounts, wantMounts) {
+		t.Errorf("mounts: %+v", got.Mounts)
+	}
+}
+
+func TestInspectContainerDropsSecrets(t *testing.T) {
+	got, err := inspectClient(t).InspectContainer(ctx(t), "abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var walk func(v reflect.Value)
+	walk = func(v reflect.Value) {
+		switch v.Kind() {
+		case reflect.String:
+			for _, secret := range []string{"hunter2", "--token", "docker-entrypoint"} {
+				if strings.Contains(v.String(), secret) {
+					t.Errorf("secret %q leaked into %q", secret, v.String())
+				}
+			}
+		case reflect.Struct:
+			for i := 0; i < v.NumField(); i++ {
+				walk(v.Field(i))
+			}
+		case reflect.Slice, reflect.Array:
+			for i := 0; i < v.Len(); i++ {
+				walk(v.Index(i))
+			}
+		case reflect.Map:
+			for _, k := range v.MapKeys() {
+				walk(k)
+				walk(v.MapIndex(k))
+			}
+		}
+	}
+	walk(reflect.ValueOf(got))
+	for _, banned := range []string{"Env", "Cmd", "Entrypoint", "User"} {
+		if _, ok := reflect.TypeOf(got).FieldByName(banned); ok {
+			t.Errorf("ContainerInspect has field %s", banned)
+		}
+	}
+}
+
+func TestInspectContainerNotFound(t *testing.T) {
+	sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		w.Write([]byte(`{"message":"No such container: nope"}`))
+	}))
+	_, err := New(sock, time.Second).InspectContainer(ctx(t), "nope")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v", err)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +20,23 @@ import (
 
 // ErrUnavailable means the Docker engine could not be reached in time.
 var ErrUnavailable = errors.New("docker engine is unavailable")
+
+// ErrNotFound is wrapped by errors for HTTP 404 answers about a container.
+var ErrNotFound = errors.New("docker engine: no such container")
+
+// ActionError is a non-2xx answer from Docker, with the message from its
+// {"message": ...} body when it sent one.
+type ActionError struct {
+	Status  int
+	Message string
+}
+
+func (e *ActionError) Error() string {
+	if e.Message != "" {
+		return fmt.Sprintf("docker engine: %s (HTTP %d)", e.Message, e.Status)
+	}
+	return fmt.Sprintf("docker engine: HTTP %d", e.Status)
+}
 
 // The client negotiates an API version in [minAPIVersion, maxAPIVersion]: at
 // least v1.41 (Docker 20.10+) so field shapes are stable, capped at what we
@@ -259,7 +277,7 @@ func (c *Client) getWithin(caller context.Context, path string, timeout time.Dur
 	if err != nil {
 		return nil, err
 	}
-	r, err := c.request(caller, ctx, "/v"+v+path)
+	r, err := c.request(caller, ctx, http.MethodGet, "/v"+v+path)
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +333,7 @@ func (c *Client) negotiate(f *flight) {
 }
 
 func (c *Client) negotiateVersion(ctx context.Context) (string, error) {
-	resp, err := c.request(context.Background(), ctx, "/_ping")
+	resp, err := c.request(context.Background(), ctx, http.MethodGet, "/_ping")
 	if err != nil {
 		return "", err
 	}
@@ -370,17 +388,18 @@ func (c *Client) do(caller context.Context, path string) ([]byte, error) {
 	}
 	ctx, cancel := context.WithTimeout(caller, c.timeout)
 	defer cancel()
-	r, err := c.request(caller, ctx, path)
+	r, err := c.request(caller, ctx, http.MethodGet, path)
 	if err != nil {
 		return nil, err
 	}
 	return r.body, nil
 }
 
-// request issues one GET under ctx, which must already carry a deadline.
+// request issues one request under ctx, which must already carry a deadline.
 // caller is the original caller context, used only to classify failures.
-func (c *Client) request(caller, ctx context.Context, path string) (*response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker"+path, nil)
+// Non-2xx answers come back as *ActionError.
+func (c *Client) request(caller, ctx context.Context, method, path string) (*response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, "http://docker"+path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -398,10 +417,8 @@ func (c *Client) request(caller, ctx context.Context, path string) (*response, e
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		var e struct{ Message string }
-		if json.Unmarshal(body, &e) == nil && e.Message != "" {
-			return nil, fmt.Errorf("docker engine: %s (HTTP %d)", e.Message, resp.StatusCode)
-		}
-		return nil, fmt.Errorf("docker engine: HTTP %d", resp.StatusCode)
+		_ = json.Unmarshal(body, &e)
+		return nil, &ActionError{Status: resp.StatusCode, Message: e.Message}
 	}
 	return &response{header: resp.Header, body: body}, nil
 }
@@ -413,4 +430,63 @@ func (c *Client) classify(parent context.Context, err error) error {
 		return fmt.Errorf("docker engine request: %w", perr)
 	}
 	return fmt.Errorf("%w: %w", ErrUnavailable, err)
+}
+
+// ContainerAction starts, stops or restarts a container. stopTimeout is the
+// grace period in seconds for stop and restart. Docker's 304 (already in that
+// state) counts as success; the call is bounded by ctx's deadline, or the
+// client timeout when ctx has none.
+func (c *Client) ContainerAction(ctx context.Context, id, action string, stopTimeout int) error {
+	path := "/containers/" + url.PathEscape(id) + "/" + action
+	switch action {
+	case "start":
+	case "stop", "restart":
+		path += "?t=" + strconv.Itoa(stopTimeout)
+	default:
+		return fmt.Errorf("docker engine: unsupported container action %q", action)
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("docker engine request: %w", err)
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, c.callerBound(ctx))
+	defer cancel()
+	v, err := c.apiVersion(ctx, reqCtx)
+	if err != nil {
+		return err
+	}
+	_, err = c.request(ctx, reqCtx, http.MethodPost, "/v"+v+path)
+	return actionResult(err)
+}
+
+// actionResult maps Docker's 304 to success and 404 to ErrNotFound.
+func actionResult(err error) error {
+	var ae *ActionError
+	if !errors.As(err, &ae) {
+		return err
+	}
+	switch ae.Status {
+	case http.StatusNotModified:
+		return nil
+	case http.StatusNotFound:
+		return fmt.Errorf("%w: %w", ErrNotFound, ae)
+	}
+	return err
+}
+
+// InspectContainer returns the safe subset of GET /containers/{id}/json. It
+// never decodes Env, Cmd, Entrypoint or User, so they cannot leak.
+func (c *Client) InspectContainer(ctx context.Context, id string) (ContainerInspect, error) {
+	body, err := c.get(ctx, "/containers/"+url.PathEscape(id)+"/json")
+	if err != nil {
+		var ae *ActionError
+		if errors.As(err, &ae) && ae.Status == http.StatusNotFound {
+			return ContainerInspect{}, fmt.Errorf("%w: %w", ErrNotFound, ae)
+		}
+		return ContainerInspect{}, err
+	}
+	var raw apiInspect
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return ContainerInspect{}, fmt.Errorf("decode container: %w", err)
+	}
+	return raw.toInspect(), nil
 }
