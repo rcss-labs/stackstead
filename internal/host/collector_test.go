@@ -634,18 +634,18 @@ func TestDockerRatesHoldBetweenSamplerTicks(t *testing.T) {
 	r.sampler.set(tick1)
 	r.c.Snapshot(ctx) // t
 	r.clock.Advance(5 * time.Second)
-	s := r.c.Snapshot(ctx) // t+5: identical tuple, nothing held yet -> idle, 0 B/s (R10)
+	s := r.c.Snapshot(ctx) // t+5: identical tuple, nothing held yet -> explicit zeros (R10b)
 	near(t, "idle rx", s.Network.RxBytesPerSec, 0)
 	r.sampler.set(tick2)
 	r.clock.Advance(5 * time.Second)
-	s = r.c.Snapshot(ctx) // t+10: tick landed, 5 s since the t+5 baseline
-	near(t, "rx", s.Network.RxBytesPerSec, 200)
-	near(t, "read", s.DiskIO.ReadBytesPerSec, 400)
+	s = r.c.Snapshot(ctx) // t+10: tick landed, 10 s since the unadvanced baseline
+	near(t, "rx", s.Network.RxBytesPerSec, 100)
+	near(t, "read", s.DiskIO.ReadBytesPerSec, 200)
 
 	r.clock.Advance(5 * time.Second)
 	s = r.c.Snapshot(ctx) // t+15: no new tick, keep the last rate
-	near(t, "held rx", s.Network.RxBytesPerSec, 200)
-	near(t, "held read", s.DiskIO.ReadBytesPerSec, 400)
+	near(t, "held rx", s.Network.RxBytesPerSec, 100)
+	near(t, "held read", s.DiskIO.ReadBytesPerSec, 200)
 }
 
 func TestDockerRatesIdleContainersReportZeroNotNil(t *testing.T) {

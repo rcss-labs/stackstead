@@ -447,13 +447,20 @@ func (c *Collector) collectDocker(ctx context.Context, s *Snapshot, now time.Tim
 			d.blkRead += sub(cv.blkRead, pv.blkRead)
 			d.blkWrite += sub(cv.blkWrite, pv.blkWrite)
 		}
-		if shared > 0 && !changed && prev.last.rx != nil && now.Sub(prev.lastAt) <= dockerHoldMax {
+		if shared > 0 && !changed {
 			// The sampler has not ticked since prev (it runs less often than
-			// snapshots). Serve the last rates (while they exist and are at
-			// most dockerHoldMax old) and keep the baseline, so the next
-			// tick is divided by the whole interval it covers.
-			s.Network.RxBytesPerSec, s.Network.TxBytesPerSec = prev.last.rx, prev.last.tx
-			s.DiskIO.ReadBytesPerSec, s.DiskIO.WriteBytesPerSec = prev.last.blkRead, prev.last.blkWrite
+			// snapshots). Never advance the baseline, so the next tick is
+			// divided by the whole interval it covers. Serve the last rates
+			// while they exist and are at most dockerHoldMax old; otherwise
+			// the counters really did not move: explicit zeros.
+			if prev.last.rx != nil && now.Sub(prev.lastAt) <= dockerHoldMax {
+				s.Network.RxBytesPerSec, s.Network.TxBytesPerSec = prev.last.rx, prev.last.tx
+				s.DiskIO.ReadBytesPerSec, s.DiskIO.WriteBytesPerSec = prev.last.blkRead, prev.last.blkWrite
+			} else {
+				z := func() *float64 { v := 0.0; return &v }
+				s.Network.RxBytesPerSec, s.Network.TxBytesPerSec = z(), z()
+				s.DiskIO.ReadBytesPerSec, s.DiskIO.WriteBytesPerSec = z(), z()
+			}
 			return
 		}
 		s.Network.RxBytesPerSec = rate(0, d.rx, dt)
