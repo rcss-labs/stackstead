@@ -61,6 +61,9 @@ without a platform to maintain.
 - **A dashboard at a glance.** Host tiles for CPU, memory, disk and network,
   a sparkline per stack, alerts for what needs attention and a live feed of
   Docker events.
+- **Every container, not only stacks.** A host-wide Containers screen with
+  problems first, live CPU and memory, logs one click away, and start, stop
+  and restart for containers that are not in a stack.
 - **Forms instead of YAML.** Image or Dockerfile, ports, volumes, environment
   variables, networks and static IPs, CPU and memory limits, restart policy
   and healthcheck. Port and IP clashes are checked before anything is

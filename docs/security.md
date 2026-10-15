@@ -20,6 +20,11 @@ access is equivalent to root. Treat the Stackstead login like a root password.
   count and memory totals, free and total space of the stacks directory's
   filesystem and the name of one network interface. Nothing else from Docker's
   `/info` is exposed: no IP addresses, kernel version, mounts or environment.
+- Any signed-in user can read the logs of every container on the host and
+  start, stop or restart containers that are not in a registered stack. The
+  server refuses those actions on registered stacks' containers, whatever the
+  client sends. Container details never include environment variables or the
+  command line.
 - The optional Prometheus endpoint has its own bearer token. It is shown once,
   and only its SHA-256 is stored.
 

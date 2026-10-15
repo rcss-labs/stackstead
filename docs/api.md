@@ -28,6 +28,9 @@ All routes except health, setup and login need a session cookie. Errors are
 | `GET /api/host` | host tiles data: hostname, containers, CPU, memory, disk, network, disk I/O, volumes, uptime and restarts; see [Dashboard data](#dashboard-data) |
 | `GET /api/alerts` | active problems, most urgent first; see [Dashboard data](#dashboard-data) |
 | `GET /api/metrics/summary?window=15m` | per-project sparkline series and top consumers; see [Dashboard data](#dashboard-data) |
+| `GET /api/containers`, `GET /api/containers/{id}` | every container on the host (all states) and one container's details; see [Containers](#containers) |
+| `GET /api/containers/{id}/logs` | one container's logs (SSE), the same contract as the stack logs |
+| `POST /api/containers/{id}/{start\|stop\|restart}` | act on a container outside the registered stacks; returns its row (200) |
 | `GET /api/events` | container changes and Docker container events as they happen (SSE) |
 | `POST /api/password` | change the signed-in user's password (`{current, new}`; 204) |
 | `GET /api/settings/metrics-token` | whether a scrape token exists, `{configured}` (never the token) |
@@ -73,8 +76,8 @@ never stops containers.
 ## Observability
 
 Stackstead follows Docker's event stream to keep container status current, so
-the UI does not poll `docker ps`, and samples resource usage of running
-compose containers.
+the UI does not poll `docker ps`, and samples resource usage of every
+running container.
 
 - **Logs.** `GET /api/stacks/{name}/logs?follow=true&tail=200&since=10m&service=web`
   is server-sent events: `log` (`service`, `container`, `stream` as `stdout`
@@ -211,21 +214,63 @@ none of its containers has a rate.
 Units: `cpu`, `cpuNow` and `top.cpu` values are percent where 100 is one core;
 `mem`, `memNow` and `top.mem` values are bytes. Only `top` comes from the
 sampler's latest readings: `cpu` and `mem` each list the five heaviest
-containers as `{container, service, project, value}`.
+containers as `{container, service, project, value}`; containers outside
+compose are included, with empty `service` and `project`.
 Results are cached for 10 seconds per window.
+
+### Containers
+
+`GET /api/containers` returns one row per container Docker reports, in every
+state, sorted by name: `id` (12 hex), `name`, `image`, `state`, `status`,
+`health` (`healthy`, `unhealthy`, `starting`, `none`), `exitCode` (a number
+once exited, else `null`), `createdAt`, `project`, `service`, `stack`,
+`managed`, `ports` (`hostIP:hostPort->containerPort/proto`, duplicates
+collapsed, sorted by host port), `networks` (network to IP), `cpu` (percent
+of one core), `mem` and `memLimit` (bytes), and `restarts24h`. `cpu`, `mem` and
+`memLimit` are `null` while the container has no current sample (stopped, or
+not sampled yet). `managed` says who owns the container: `stack` when its
+compose project belongs to a registered stack (`stack` then holds that stack's
+name), `compose` when it has a compose project that no registered stack uses,
+and `none` for a plain container. `project`, `service` and `stack` are empty
+strings where they do not apply. The list is computed at most once every 2
+seconds however many clients ask, and answers `503` while the Docker event
+stream is disconnected.
+
+`GET /api/containers/{id}` adds `startedAt`, `finishedAt`, `restartPolicy`,
+`mounts` (`type`, `source`, `destination`, `readOnly`) and `labels`. It never
+includes environment variables, the command, the entrypoint, the user or other
+host configuration.
+
+`GET /api/containers/{id}/logs` takes the same query (`stream`, `tail`,
+`follow`, `since`) and sends the same `log`, `error` and `end` events, ids and
+`Last-Event-ID` resume as the stack logs.
+
+`POST /api/containers/{id}/start`, `stop` or `restart` takes a JSON body
+(`{}`), waits for Docker (at most 30 seconds; `stop` and `restart` give the
+container 10 seconds to exit) and returns the container's row, read fresh from
+Docker. Containers of a registered stack are refused: use the stack's actions.
+
+`{id}` is a container id, or an unambiguous prefix, of 12 to 64 hex
+characters; it is never a name (look the id up in the list). Errors: `404`
+for an unknown or ambiguous id, `409` for an action on a stack container,
+`502` when Docker refuses the action (its message is passed on), and `503`
+when Docker is unavailable.
 
 ### What is stored
 
-Every `metrics_interval` (default `10s`) one row per running compose
-container is written to the SQLite database in the data directory: CPU,
+Every `metrics_interval` (default `10s`) every running container is sampled,
+and one row per running compose container is written to the SQLite database in the data directory: CPU,
 memory and limit, and cumulative network and block I/O. Rows older than
 `metrics_retention` (default `72h`) are pruned hourly. At the default settings
-that is about 26,000 rows per container. If the database cannot be written,
+that is about 26,000 rows per container. Containers outside compose are
+sampled for live values only (the Containers screen, Top consumers and
+`/metrics`) and never stored. If the database cannot be written,
 `/api/status` reports `metricsDegraded` and live data keeps working.
 
 ### Prometheus
 
-`GET /metrics` serves the latest sample of every container
+`GET /metrics` serves the latest sample of every running container (those
+outside compose have empty `project` and `service` labels)
 (`stackstead_container_cpu_percent`, `..._memory_bytes`,
 `..._memory_limit_bytes`, `..._network_receive_bytes_total`,
 `..._network_transmit_bytes_total`, `..._blkio_read_bytes_total`,
