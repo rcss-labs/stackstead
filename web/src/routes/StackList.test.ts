@@ -374,7 +374,7 @@ describe('StackList', () => {
     expect(await screen.findByText('8/10')).toBeTruthy();
     expect(screen.getByText('18.0%')).toBeTruthy();
     expect(screen.getByText('8 cores')).toBeTruthy();
-    expect(screen.getByText('4.0 GiB / 16.0 GiB')).toBeTruthy();
+    expect(screen.getByText('4.0 GiB')).toBeTruthy();
     expect(screen.queryByText('Uptime')).toBeNull();
   });
 

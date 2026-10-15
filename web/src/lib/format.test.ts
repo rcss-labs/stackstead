@@ -75,20 +75,27 @@ describe('formatPercent', () => {
 });
 
 describe('sparklinePath', () => {
-  it('scales to the height with the max at the top', () => {
-    expect(sparklinePath([0, 5, 10], 60, 18)).toBe('M0,18L30,9L60,0');
+  it('pads one unit top and bottom so max and zero are not clipped', () => {
+    expect(sparklinePath([0, 5, 10], 60, 18)).toBe('M0,17L30,9L60,1');
   });
   it('breaks the path at nulls', () => {
-    expect(sparklinePath([0, 10, null, 10, 0], 60, 18)).toBe('M0,18L15,0M45,0L60,18');
+    expect(sparklinePath([0, 10, null, 10, 0], 60, 18)).toBe('M0,17L15,1M45,1L60,17');
   });
-  it('draws a single point as a flat line across the width', () => {
-    expect(sparklinePath([4], 60, 18)).toBe('M0,0L60,0');
+  it('draws a lone sample between nulls as a short horizontal segment', () => {
+    expect(sparklinePath([0, 10, null, 5, null, 10, 0], 60, 18)).toBe('M0,17L10,1M29,9L31,9M50,1L60,17');
+  });
+  it('draws a single point as a flat line across the width at its y', () => {
+    expect(sparklinePath([4], 60, 18)).toBe('M0,1L60,1');
+    expect(sparklinePath([null, 4, null], 60, 18)).toBe('M0,1L60,1');
+  });
+  it('puts a single zero point at mid-height', () => {
+    expect(sparklinePath([0], 60, 18)).toBe('M0,9L60,9');
   });
   it('is empty when every value is null or there are no values', () => {
     expect(sparklinePath([null, null])).toBe('');
     expect(sparklinePath([])).toBe('');
   });
   it('keeps an all-zero series flat on the baseline', () => {
-    expect(sparklinePath([0, 0], 60, 18)).toBe('M0,18L60,18');
+    expect(sparklinePath([0, 0], 60, 18)).toBe('M0,17L60,17');
   });
 });

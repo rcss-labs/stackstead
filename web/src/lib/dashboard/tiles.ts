@@ -41,11 +41,14 @@ export function hostTiles(h: HostSnapshot): TileModel[] {
   }
   if (h.memory) {
     const m = h.memory;
+    const sub = [`of ${formatBytes(m.total)}`];
+    if (docker) sub.push(CONTAINERS_ONLY);
+    else sub.push(m.swapTotal > 0 ? `swap ${formatBytes(m.swapUsed)}/${formatBytes(m.swapTotal)}` : 'no swap');
     tiles.push({
       id: 'memory',
       label: 'Memory',
-      value: `${formatBytes(m.used)} / ${formatBytes(m.total)}`,
-      sub: docker ? CONTAINERS_ONLY : `swap ${formatBytes(m.swapUsed)}`,
+      value: formatBytes(m.used),
+      sub: sub.join(' · '),
       ratio: m.total > 0 ? clamp01(m.used / m.total) : 0,
     });
   }
@@ -53,26 +56,33 @@ export function hostTiles(h: HostSnapshot): TileModel[] {
     tiles.push({
       id: 'disk',
       label: 'Disk',
-      value: `${formatBytes(h.disk.free)} free`,
-      sub: `of ${formatBytes(h.disk.total)}`,
+      value: formatBytes(h.disk.free),
+      sub: `free of ${formatBytes(h.disk.total)}`,
       ratio: h.disk.total > 0 ? clamp01((h.disk.total - h.disk.free) / h.disk.total) : 0,
     });
   }
+  // A rate pair never fits the 17 px value ("0 B/s / 0 B/s" is already 13 characters):
+  // the first rate is the value, the second leads the sub-line.
   if (h.network) {
     const { rxBytesPerSec: rx, txBytesPerSec: tx } = h.network;
+    const bothNull = rx === null && tx === null;
     tiles.push({
       id: 'network',
       label: 'Network',
-      value: rx === null && tx === null ? '—' : `${rate(rx)} / ${rate(tx)}`,
-      sub: h.network.interface,
+      value: bothNull ? '—' : rate(rx),
+      sub: bothNull ? h.network.interface : `↑ ${rate(tx)} · ${h.network.interface}`,
     });
   }
   if (h.diskIO) {
     const { readBytesPerSec: r, writeBytesPerSec: w } = h.diskIO;
+    const bothNull = r === null && w === null;
+    const parts = bothNull ? [] : [`w ${rate(w)}`];
+    if (docker) parts.push(CONTAINERS_ONLY);
     tiles.push({
       id: 'diskio',
       label: 'Disk I/O',
-      value: r === null && w === null ? '—' : `${rate(r)} / ${rate(w)}`,
+      value: bothNull ? '—' : rate(r),
+      ...(parts.length > 0 ? { sub: parts.join(' · ') } : {}),
     });
   }
   if (h.volumes) {
@@ -80,8 +90,9 @@ export function hostTiles(h: HostSnapshot): TileModel[] {
     tiles.push({
       id: 'volumes',
       label: 'Volumes',
-      value: `${v.count} · ${formatBytes(v.size)}`,
-      ...(v.dangling > 0 ? { sub: `${v.dangling} dangling`, subTone: 'warning' as const } : {}),
+      value: formatBytes(v.size),
+      sub: v.dangling > 0 ? `${v.count} · ${v.dangling} dangling` : `${v.count} volumes`,
+      ...(v.dangling > 0 ? { subTone: 'warning' as const } : {}),
     });
   }
   if (h.uptime) {
@@ -99,7 +110,7 @@ export function hostTiles(h: HostSnapshot): TileModel[] {
       id: 'restarts',
       label: 'Restarts · 24h',
       value: String(r.total),
-      ...(r.top.length > 0 ? { sub: r.top.map((t) => t.container).join(', '), subTone: 'danger' as const } : {}),
+      ...(r.top.length > 0 ? { sub: r.top.map((t) => `${t.container} ×${t.count}`).join(', '), subTone: 'warning' as const } : {}),
     });
   }
   return tiles;

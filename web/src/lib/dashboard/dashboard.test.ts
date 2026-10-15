@@ -31,7 +31,7 @@ describe('dashboard components', () => {
     expect(svg.getAttribute('viewBox')).toBe('0 0 60 18');
     const path = svg.querySelector('path')!;
     expect(path.getAttribute('stroke')).toBe('var(--info)');
-    expect(path.getAttribute('d')).toBe('M0,12L30,6L60,0');
+    expect(path.getAttribute('d')).toBe('M0,11.7L30,6.3L60,1');
   });
 
   it('Sparkline draws a flat line when there are no samples', () => {

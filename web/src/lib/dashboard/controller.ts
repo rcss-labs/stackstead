@@ -35,12 +35,26 @@ export function createDashboard(deps: DashboardDeps) {
   let timers: ReturnType<typeof setInterval>[] = [];
   let unsubscribeChanges: (() => void) | undefined;
 
+  // Per-key generation: bumped when a fetch starts and on stop/hide, so a response that
+  // arrives after stop, after the tab went hidden, or after a newer fetch of the same key
+  // started is dropped (value and error alike).
+  const generation: Record<keyof DashboardErrors, number> = { host: 0, alerts: 0, summary: 0 };
+  const invalidateInFlight = () => {
+    generation.host++;
+    generation.alerts++;
+    generation.summary++;
+  };
+
   // A failed fetch keeps the previous value; the next tick retries.
   async function load<T>(key: keyof DashboardErrors, fetcher: () => Promise<T>, target: { set(v: T): void }) {
+    const mine = ++generation[key];
     try {
-      target.set(await fetcher());
+      const value = await fetcher();
+      if (mine !== generation[key]) return;
+      target.set(value);
       errorStore.update((e) => ({ ...e, [key]: undefined }));
     } catch (err) {
+      if (mine !== generation[key]) return;
       const message = err instanceof Error ? err.message : String(err);
       errorStore.update((e) => ({ ...e, [key]: message }));
     }
@@ -60,6 +74,7 @@ export function createDashboard(deps: DashboardDeps) {
   }
 
   function stopTimers() {
+    invalidateInFlight();
     timers.forEach(clearInterval);
     timers = [];
     alertsOnChange.cancel();

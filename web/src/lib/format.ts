@@ -50,17 +50,24 @@ export function formatPercent(x: number): string {
 
 const trim = (n: number) => String(Number(n.toFixed(1)));
 
+const PAD = 1;
+
 /**
- * SVG path for a sparkline in a w x h box, scaled so the largest value touches the top.
- * Null samples break the line ("M…L…M…"); a lone point is drawn flat across the width;
- * "" when there is nothing to draw.
+ * SVG path for a sparkline in a w x h box with 1 unit of padding top and bottom, scaled so
+ * the largest value touches the top padding line and zero sits on the bottom one.
+ * Null samples break the line ("M…L…M…"); a lone sample between nulls is a short horizontal
+ * segment; a single sample in the whole series is a flat line across the width (mid-height
+ * when it is 0); "" when there is nothing to draw.
  */
 export function sparklinePath(values: (number | null)[], w = 60, h = 18): string {
   const present = values.filter((v): v is number => v !== null);
   if (present.length === 0) return '';
   const max = Math.max(...present);
-  const y = (v: number) => (max > 0 ? h - (v / max) * h : h);
-  if (present.length === 1) return `M0,${trim(y(present[0]))}L${trim(w)},${trim(y(present[0]))}`;
+  const y = (v: number) => (max > 0 ? PAD + (1 - v / max) * (h - 2 * PAD) : h - PAD);
+  if (present.length === 1) {
+    const flat = max > 0 ? y(present[0]) : h / 2;
+    return `M0,${trim(flat)}L${trim(w)},${trim(flat)}`;
+  }
   const stepX = values.length > 1 ? w / (values.length - 1) : 0;
   let path = '';
   let open = false;
@@ -69,7 +76,13 @@ export function sparklinePath(values: (number | null)[], w = 60, h = 18): string
       open = false;
       return;
     }
-    path += `${open ? 'L' : 'M'}${trim(i * stepX)},${trim(y(v))}`;
+    const x = i * stepX;
+    const lone = values[i - 1] == null && values[i + 1] == null;
+    if (lone) {
+      path += `M${trim(Math.max(0, x - 1))},${trim(y(v))}L${trim(Math.min(w, x + 1))},${trim(y(v))}`;
+      return;
+    }
+    path += `${open ? 'L' : 'M'}${trim(x)},${trim(y(v))}`;
     open = true;
   });
   return path;

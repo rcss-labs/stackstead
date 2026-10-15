@@ -361,7 +361,7 @@
   .name a { font-weight: 500; text-decoration: none; color: var(--text); }
   .name a:hover { color: var(--accent); }
   .services { display: inline-flex; }
-  td.num .mono { font-size: 12px; }
+  td.num .mono:not(.net) { font-size: 12px; }
   .cells { display: inline-flex; gap: 2px; margin-left: var(--space-2); vertical-align: middle; }
   .cell { width: 10px; height: 6px; border-radius: 1px; background: var(--border-strong); }
   .cell.on { background: var(--success); }

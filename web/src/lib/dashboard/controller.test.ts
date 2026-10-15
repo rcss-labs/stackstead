@@ -149,4 +149,83 @@ describe('dashboard controller', () => {
     expect(fetchHost).toHaveBeenCalledTimes(1);
     expect(fetchAlerts).toHaveBeenCalledTimes(1);
   });
+
+  describe('stale responses', () => {
+    function deferred<T>() {
+      let resolve!: (v: T) => void;
+      let reject!: (e: Error) => void;
+      const promise = new Promise<T>((res, rej) => ((resolve = res), (reject = rej)));
+      return { promise, resolve, reject };
+    }
+    const hostA = { hostname: 'a' } as HostSnapshot;
+    const hostB = { hostname: 'b' } as HostSnapshot;
+
+    it('a response that lands after stop() is ignored', async () => {
+      const slow = deferred<HostSnapshot>();
+      fetchHost.mockReturnValueOnce(slow.promise);
+      const d = make();
+      d.start();
+      await tick();
+      d.stop();
+      slow.resolve(hostA);
+      await tick();
+      expect(get(d.host)).toBeUndefined();
+    });
+
+    it('a failure after stop() records no error', async () => {
+      const slow = deferred<HostSnapshot>();
+      fetchHost.mockReturnValueOnce(slow.promise);
+      const d = make();
+      d.start();
+      await tick();
+      d.stop();
+      slow.reject(new Error('late'));
+      await tick();
+      expect(get(d.errors).host).toBeUndefined();
+    });
+
+    it('a response that lands while the tab is hidden is ignored', async () => {
+      const slow = deferred<HostSnapshot>();
+      fetchHost.mockReturnValueOnce(slow.promise);
+      const d = make();
+      d.start();
+      await tick();
+      doc.setVisibility('hidden');
+      slow.resolve(hostA);
+      await tick();
+      expect(get(d.host)).toBeUndefined();
+      d.stop();
+    });
+
+    it('an older slow response does not overwrite a newer one', async () => {
+      const older = deferred<HostSnapshot>();
+      const newer = deferred<HostSnapshot>();
+      fetchHost.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+      const d = make();
+      d.start();
+      await tick(10_000); // second host fetch starts
+      newer.resolve(hostB);
+      await tick();
+      older.resolve(hostA);
+      await tick();
+      expect(get(d.host)).toBe(hostB);
+      d.stop();
+    });
+
+    it('a late failure does not re-record an error after a newer success', async () => {
+      const older = deferred<HostSnapshot>();
+      const newer = deferred<HostSnapshot>();
+      fetchHost.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+      const d = make();
+      d.start();
+      await tick(10_000);
+      newer.resolve(hostB);
+      await tick();
+      older.reject(new Error('late'));
+      await tick();
+      expect(get(d.errors).host).toBeUndefined();
+      expect(get(d.host)).toBe(hostB);
+      d.stop();
+    });
+  });
 });
