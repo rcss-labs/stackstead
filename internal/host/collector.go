@@ -168,12 +168,22 @@ type procPrev struct {
 	diskRead, diskWritten uint64
 }
 
-type containerCounters struct{ rx, tx, blkRead, blkWrite uint64 }
+// containerCounters are one container's cumulative counters. cpu and mem are
+// not used for rates; they only reveal whether the sampler ticked, because a
+// container with idle counters would otherwise look like "no new tick".
+type containerCounters struct {
+	rx, tx, blkRead, blkWrite uint64
+	cpu                       float64
+	mem                       uint64
+}
+
+type dockerRates struct{ rx, tx, blkRead, blkWrite *float64 }
 
 type dockerPrev struct {
 	has        bool
 	at         time.Time
 	containers map[string]containerCounters
+	last       dockerRates // rates computed from the last advance, served between sampler ticks
 }
 
 func New(cfg Config) *Collector {
@@ -230,7 +240,7 @@ func (c *Collector) RestartCounts() map[string]int {
 func (c *Collector) identity() Snapshot {
 	host, _ := c.cfg.Hostname()
 	source := "docker"
-	if _, err := os.Stat(filepath.Join(c.cfg.ProcRoot, "stat")); err == nil {
+	if _, err := os.ReadFile(filepath.Join(c.cfg.ProcRoot, "stat")); err == nil { // must be readable, not just present
 		source = "proc"
 	}
 	return Snapshot{Hostname: host, OS: c.cfg.GOOS, Source: source, SampledAt: c.cfg.Now()}
@@ -400,7 +410,7 @@ func (c *Collector) collectDocker(ctx context.Context, s *Snapshot, now time.Tim
 	for _, sm := range samples {
 		cpuSum += sm.CPU
 		memSum += sm.Mem
-		cur.containers[sm.Container] = containerCounters{sm.NetRx, sm.NetTx, sm.BlkRead, sm.BlkWrite}
+		cur.containers[sm.Container] = containerCounters{sm.NetRx, sm.NetTx, sm.BlkRead, sm.BlkWrite, sm.CPU, sm.Mem}
 	}
 
 	s.CPU = &CPU{Cores: info.NCPU}
@@ -418,20 +428,32 @@ func (c *Collector) collectDocker(ctx context.Context, s *Snapshot, now time.Tim
 		// Per-container deltas over containers present in both readings, so a
 		// container starting or being removed cannot spike or dip the rate.
 		var d containerCounters
+		shared, changed := 0, false
 		for name, cv := range cur.containers {
 			pv, ok := prev.containers[name]
 			if !ok {
 				continue
 			}
+			shared++
+			changed = changed || cv != pv
 			d.rx += sub(cv.rx, pv.rx)
 			d.tx += sub(cv.tx, pv.tx)
 			d.blkRead += sub(cv.blkRead, pv.blkRead)
 			d.blkWrite += sub(cv.blkWrite, pv.blkWrite)
 		}
+		if shared > 0 && !changed {
+			// The sampler has not ticked since prev (it runs less often than
+			// snapshots). Serve the last rates and keep the baseline, so the
+			// next tick is divided by the whole interval it covers.
+			s.Network.RxBytesPerSec, s.Network.TxBytesPerSec = prev.last.rx, prev.last.tx
+			s.DiskIO.ReadBytesPerSec, s.DiskIO.WriteBytesPerSec = prev.last.blkRead, prev.last.blkWrite
+			return
+		}
 		s.Network.RxBytesPerSec = rate(0, d.rx, dt)
 		s.Network.TxBytesPerSec = rate(0, d.tx, dt)
 		s.DiskIO.ReadBytesPerSec = rate(0, d.blkRead, dt)
 		s.DiskIO.WriteBytesPerSec = rate(0, d.blkWrite, dt)
+		cur.last = dockerRates{s.Network.RxBytesPerSec, s.Network.TxBytesPerSec, s.DiskIO.ReadBytesPerSec, s.DiskIO.WriteBytesPerSec}
 	}
 	if !prev.has || dt >= time.Second {
 		c.prevDocker = cur

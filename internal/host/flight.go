@@ -2,9 +2,13 @@ package host
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 )
+
+// retryBeforeFirstValue is how soon GetStale retries while it has no value yet.
+const retryBeforeFirstValue = 5 * time.Second
 
 // cached holds one value with single-flight loading. At most one load runs at
 // a time, whether it was started by Get (synchronous) or GetStale (background).
@@ -75,18 +79,24 @@ func (c *cached[T]) GetStale(maxAge time.Duration, load func() (T, error)) (v T,
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	v, ok = c.val, c.has
+	if !c.has && maxAge > retryBeforeFirstValue {
+		maxAge = retryBeforeFirstValue // keep trying soon until there is something to show
+	}
 	if c.inflight == nil && (!c.checkedOK || c.now().Sub(c.checked) >= maxAge) {
 		f := &flight[T]{done: make(chan struct{})}
 		c.inflight = f
 		go func() {
-			finished := false
-			defer func() {
-				if !finished {
-					c.finish(f, f.val, context.Canceled, true)
-				}
+			var nv T
+			var err error
+			func() {
+				// A panicking loader is a failed refresh, never a crash.
+				defer func() {
+					if r := recover(); r != nil {
+						err = fmt.Errorf("refresh panicked: %v", r)
+					}
+				}()
+				nv, err = load()
 			}()
-			nv, err := load()
-			finished = true
 			c.finish(f, nv, err, true)
 		}()
 	}

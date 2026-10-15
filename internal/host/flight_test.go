@@ -146,3 +146,50 @@ func TestGetStaleRefreshFailureKeepsOld(t *testing.T) {
 		t.Fatalf("failed refresh retried immediately: %d calls, want 2", got)
 	}
 }
+
+func TestGetStaleRetriesSoonBeforeFirstValue(t *testing.T) {
+	clock := newFakeClock()
+	c := newCached[int](clock.Now)
+	var calls atomic.Int32
+	load := func() (int, error) {
+		if calls.Add(1) == 1 {
+			return 0, errors.New("down")
+		}
+		return 9, nil
+	}
+	c.GetStale(time.Minute, load)
+	c.wait()
+	clock.Advance(2 * time.Second)
+	c.GetStale(time.Minute, load)
+	c.wait()
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("retried after 2s: %d calls", got)
+	}
+	clock.Advance(3 * time.Second)
+	c.GetStale(time.Minute, load)
+	c.wait()
+	if v, ok := c.GetStale(time.Minute, load); !ok || v != 9 {
+		t.Fatalf("got (%d,%v), want (9,true)", v, ok)
+	}
+}
+
+func TestGetStalePanicKeepsOld(t *testing.T) {
+	clock := newFakeClock()
+	c := newCached[int](clock.Now)
+	boom := false
+	load := func() (int, error) {
+		if boom {
+			panic("loader exploded")
+		}
+		return 1, nil
+	}
+	c.GetStale(time.Minute, load)
+	c.wait()
+	boom = true
+	clock.Advance(2 * time.Minute)
+	c.GetStale(time.Minute, load)
+	c.wait()
+	if v, ok := c.GetStale(time.Minute, load); !ok || v != 1 {
+		t.Fatalf("got (%d,%v), want old value (1,true)", v, ok)
+	}
+}

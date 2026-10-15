@@ -614,3 +614,38 @@ func TestSnapshotNeverErrors(t *testing.T) {
 		t.Fatalf("expected all sections nil: %+v", s)
 	}
 }
+
+func TestSourceNeedsReadableProcStat(t *testing.T) {
+	r := newRig(t, "")
+	if err := os.MkdirAll(filepath.Join(r.proc, "stat"), 0o755); err != nil { // exists but cannot be read as a file
+		t.Fatal(err)
+	}
+	if s := r.c.Snapshot(context.Background()); s.Source != "docker" {
+		t.Fatalf("source = %q, want docker for unreadable stat", s.Source)
+	}
+}
+
+func TestDockerRatesHoldBetweenSamplerTicks(t *testing.T) {
+	r := newRig(t, "")
+	ctx := context.Background()
+	tick1 := metrics.ExpositionSample{Container: "a", CPU: 1, Mem: 1, NetRx: 1000, BlkRead: 1000}
+	tick2 := metrics.ExpositionSample{Container: "a", CPU: 2, Mem: 2, NetRx: 2000, BlkRead: 3000}
+
+	r.sampler.set(tick1)
+	r.c.Snapshot(ctx) // t
+	r.clock.Advance(5 * time.Second)
+	s := r.c.Snapshot(ctx) // t+5: no new sampler tick
+	if s.Network.RxBytesPerSec != nil || s.DiskIO.ReadBytesPerSec != nil {
+		t.Fatalf("rates without a baseline tick = %v %v, want nil", s.Network.RxBytesPerSec, s.DiskIO.ReadBytesPerSec)
+	}
+	r.sampler.set(tick2)
+	r.clock.Advance(5 * time.Second)
+	s = r.c.Snapshot(ctx) // t+10: tick landed, 10 s since baseline
+	near(t, "rx", s.Network.RxBytesPerSec, 100)
+	near(t, "read", s.DiskIO.ReadBytesPerSec, 200)
+
+	r.clock.Advance(5 * time.Second)
+	s = r.c.Snapshot(ctx) // t+15: no new tick, keep the last rate
+	near(t, "held rx", s.Network.RxBytesPerSec, 100)
+	near(t, "held read", s.DiskIO.ReadBytesPerSec, 200)
+}
