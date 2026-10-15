@@ -176,26 +176,62 @@ describe('createMetricsController publishing', () => {
 });
 
 describe('createMetricsController with a shared live source', () => {
-  it('controller with a shared live source does not open its own stream', async () => {
-    const opens: SSEOptions[] = [];
+  function shared() {
+    const opens: { opts: SSEOptions; close: ReturnType<typeof vi.fn> }[] = [];
     const open = vi.fn((opts: SSEOptions) => {
-      opens.push(opts);
-      return { close: vi.fn(), status: 'open' as const };
+      const close = vi.fn();
+      opens.push({ opts, close });
+      return { close, status: 'open' as const };
     });
     const live = createStackLiveMetrics('web', { open });
+    const send = (s: Sample) => opens[0].opts.onMessage({ event: 'sample', data: JSON.stringify(s) });
+    return { open, opens, live, send };
+  }
+
+  it('controller with a shared live source does not open its own stream', async () => {
+    const s = shared();
     const history = vi.fn(async () => ({ points: [hp('web', 0, 1)] }));
-    const ctl = createMetricsController('web', { history, live, open: vi.fn(), now: () => NOW });
+    const ctl = createMetricsController('web', { history, live: s.live, open: vi.fn(), now: () => NOW });
     await ctl.reload();
-    expect(open).toHaveBeenCalledTimes(1); // the shared source's own stream, nothing from the controller
-    const send = (s: Sample) => opens[0].onMessage({ event: 'sample', data: JSON.stringify(s) });
-    send(sample('web', 'c1', 10, { cpu: 50 }));
-    send(sample('web', 'c1', 12, { cpu: 60 }));
+    expect(s.open).toHaveBeenCalledTimes(1);
+    s.send(sample('web', 'c1', 10, { cpu: 50 }));
+    s.send(sample('web', 'c1', 12, { cpu: 60 }));
     expect(get(ctl.series).get('web')!.map((p) => p.cpu)).toEqual([1, 50]);
+  });
+
+  it('closing the controller leaves the shared stream open while another holder exists', async () => {
+    const s = shared();
+    const other = s.live.acquire();
+    const ctl = createMetricsController('web', { history: async () => ({ points: [] }), live: s.live, now: () => NOW });
+    await ctl.reload();
     ctl.close();
-    expect(opens).toHaveLength(1);
-    // another holder keeps the stream alive after the controller releases it
-    const release = live.acquire();
+    expect(s.opens[0].close).not.toHaveBeenCalled();
+    other();
+    expect(s.opens[0].close).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores live points until the new history has landed and drops the previous range', async () => {
+    const s = shared();
+    let release!: () => void;
+    const history = vi
+      .fn<(q: { from: string; to: string; step: string }, sig?: AbortSignal) => Promise<{ points: MetricPoint[] }>>()
+      .mockResolvedValueOnce({ points: [hp('web', 0, 1)] })
+      .mockImplementationOnce(() => new Promise((res) => (release = () => res({ points: [hp('web', 0, 2)] }))));
+    const ctl = createMetricsController('web', { history, live: s.live, now: () => NOW });
+    await ctl.reload();
+    s.send(sample('web', 'c1', 10, { cpu: 50 }));
+    s.send(sample('web', 'c1', 12, { cpu: 60 })); // finalises the +10s tick
+    expect(get(ctl.series).get('web')!.map((p) => p.cpu)).toEqual([1, 50]);
+
+    ctl.range.set('6h'); // reload with a pending history request
+    s.send(sample('web', 'c1', 20, { cpu: 70 })); // finalises +12s tick while loading
+    s.send(sample('web', 'c1', 25, { cpu: 80 })); // finalises +20s tick while loading
     release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(get(ctl.series).get('web')!.map((p) => p.cpu)).toEqual([2]); // old live points and in-flight ticks are gone
+
+    s.send(sample('web', 'c1', 30, { cpu: 90 })); // finalises the +25s tick, accepted now
+    expect(get(ctl.series).get('web')!.map((p) => p.cpu)).toEqual([2, 80]);
   });
 });
 

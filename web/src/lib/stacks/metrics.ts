@@ -65,7 +65,7 @@ export function createMetricsController(stackName: string, deps: MetricsDeps): M
   let abort: AbortController | undefined;
   let generation = 0;
   let closed = false;
-  // Points that arrive while a history load is in flight are dropped: history covers them.
+  // Points that arrive while a history load is in flight are dropped (they would be older than, or overlap, the history being fetched; a short gap remains).
   let accepting = false;
   let dirty = false;
 

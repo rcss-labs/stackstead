@@ -110,6 +110,18 @@ describe('createStackLiveMetrics', () => {
     expect(h.opens).toHaveLength(1);
   });
 
+  it('close() is terminal and leaves outstanding releases inert', () => {
+    const h = harness();
+    const a = h.live.acquire();
+    const b = h.live.acquire();
+    h.live.close();
+    a();
+    b();
+    const c = h.live.acquire();
+    c();
+    expect(h.open).toHaveBeenCalledTimes(1);
+  });
+
   it('mirrors the stream status and close() ends everything', () => {
     const h = harness();
     h.live.acquire();

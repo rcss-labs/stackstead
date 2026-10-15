@@ -30,6 +30,8 @@ export function createStackLiveMetrics(stackName: string, deps: { open?: typeof 
   let aggregators = new Map<string, ReturnType<typeof createLiveAggregator>>();
   let newest = new Map<string, SeriesPoint>();
   let holders = 0;
+  // close() is terminal: later acquires are no-ops and outstanding releases are inert.
+  let closed = false;
   let handle: SSEHandle | undefined;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -112,17 +114,19 @@ export function createStackLiveMetrics(stackName: string, deps: { open?: typeof 
       return () => listeners.delete(fn);
     },
     acquire() {
+      if (closed) return () => {};
       holders++;
       if (holders === 1) connect();
       let released = false;
       return () => {
-        if (released) return;
+        if (released || closed) return;
         released = true;
         holders--;
         if (holders === 0) stop();
       };
     },
     close() {
+      closed = true;
       holders = 0;
       stop();
     },
