@@ -82,3 +82,24 @@ func TestBusiest(t *testing.T) {
 		t.Errorf("busiest without previous = %q, want empty", got)
 	}
 }
+
+// guest and guest_nice are already counted inside user and nice by the kernel,
+// so total only sums the first eight fields.
+//
+//	a: 1000+100+400+8000+500 = 10000 total, idle 8500
+//	b: 1800+100+400+9200+500 = 12000 total, idle 9700 (guest 600 ignored)
+//	Δtotal 2000, Δidle 1200, busy 800 -> 40 % (double counting guest would give 50 %)
+func TestCPUPercentIgnoresGuestDoubleCount(t *testing.T) {
+	a, _, err := readStat("testdata/proc/guest-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _, err := readStat("testdata/proc/guest-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := cpuPercent(a, b)
+	if got == nil || math.Abs(*got-40) > 1e-9 {
+		t.Fatalf("cpuPercent = %v, want 40", got)
+	}
+}

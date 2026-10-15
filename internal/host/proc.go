@@ -14,6 +14,8 @@ import (
 )
 
 // cpuTimes is the aggregate jiffy counters from the first line of /proc/stat.
+// total sums user, nice, system, idle, iowait, irq, softirq and steal only:
+// guest and guest_nice are already included in user and nice by the kernel.
 type cpuTimes struct{ total, idle uint64 } // idle includes iowait
 
 // reading is one snapshot of the cumulative counters.
@@ -66,7 +68,7 @@ func readStat(procRoot string) (cpuTimes, int, error) {
 				return cpuTimes{}, 0, fmt.Errorf("%s: short cpu line", file)
 			}
 			var total uint64
-			for i, field := range f[1:] {
+			for i, field := range f[1:min(len(f), 9)] {
 				v, err := parseUint(file, "cpu field", field)
 				if err != nil {
 					return cpuTimes{}, 0, err
