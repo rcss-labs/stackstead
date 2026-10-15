@@ -168,6 +168,7 @@ export function openSSE(o: SSEOptions): SSEHandle {
   }
 
   function terminal(s: 'unauthorized' | 'gone') {
+    handles.delete(pausable); // finished for good: a bfcache restore must not reconnect it
     stopHeartbeat();
     controller?.abort();
     setStatus(s);

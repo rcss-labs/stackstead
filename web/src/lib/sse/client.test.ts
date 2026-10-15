@@ -363,13 +363,32 @@ describe('openSSE', () => {
     h.close();
   });
 
-  it('a closed handle ignores pageshow', async () => {
-    fake = installFakeStream({ '/p': [] });
+  it('a closed handle ignores a pagehide/pageshow cycle', async () => {
+    fake = installFakeStream({ '/p': { responses: [{ chunks: ['data: a\n\n'] }, { chunks: ['data: b\n\n'] }] } });
     const h = openSSE({ url: '/p', onMessage() {} });
     await tick();
     h.close();
+    window.dispatchEvent(new Event('pagehide'));
     window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }));
     await tick(10);
     expect(fake.requests).toHaveLength(1);
+    expect(h.status).toBe('closed');
+  });
+
+  it.each([
+    [401, 'unauthorized'],
+    [404, 'gone'],
+  ] as const)('a %i-terminated stream stays finished across pagehide and a persisted pageshow', async (status, expected) => {
+    fake = installFakeStream({ '/t': { responses: [{ status, body: { error: 'no' } }, { chunks: ['data: x\n\n'] }] } });
+    const c = collect();
+    const h = openSSE({ url: '/t', ...c });
+    await tick();
+    expect(h.status).toBe(expected);
+    window.dispatchEvent(new Event('pagehide'));
+    window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }));
+    await tick(10);
+    expect(fake.requests).toHaveLength(1);
+    expect(h.status).toBe(expected);
+    expect(c.statuses.at(-1)).toBe(expected);
   });
 });
