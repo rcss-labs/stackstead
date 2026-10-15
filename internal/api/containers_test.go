@@ -279,6 +279,7 @@ type fakeContainerEngine struct {
 	actions    []string // "id action timeout"
 	actionCtx  context.Context
 	onAction   func(id, action string)
+	aliases    map[string]string // a name Docker would resolve -> full id
 }
 
 func (f *fakeContainerEngine) InspectContainer(_ context.Context, id string) (engine.ContainerInspect, error) {
@@ -286,6 +287,9 @@ func (f *fakeContainerEngine) InspectContainer(_ context.Context, id string) (en
 	defer f.mu.Unlock()
 	if f.inspectErr != nil {
 		return engine.ContainerInspect{}, f.inspectErr
+	}
+	if full, ok := f.aliases[id]; ok {
+		return f.inspect[full], nil
 	}
 	for full, in := range f.inspect {
 		if strings.HasPrefix(full, id) {
@@ -457,10 +461,12 @@ func TestDetailsUnavailableIs503(t *testing.T) {
 func TestActionRefusesRegisteredStackContainer(t *testing.T) {
 	eng := newFakeEngine()
 	env, cookie := actionsEnv(t, eng, nil)
-	for _, action := range []string{"start", "stop", "restart"} {
-		rec := env.post(t, cookie, "/api/containers/"+idWeb+"/"+action)
-		if rec.Code != 409 || errorBody(t, rec) != "web-web-1 belongs to stack web; use the stack's actions" {
-			t.Errorf("%s = %d %s, want 409 with stack message", action, rec.Code, rec.Body)
+	for _, id := range []string{idWeb[:12], idWeb} {
+		for _, action := range []string{"start", "stop", "restart"} {
+			rec := env.post(t, cookie, "/api/containers/"+id+"/"+action)
+			if rec.Code != 409 || errorBody(t, rec) != "web-web-1 belongs to stack web; use the stack's actions" {
+				t.Errorf("%s %s = %d %s, want 409 with stack message", id, action, rec.Code, rec.Body)
+			}
 		}
 	}
 	if got := eng.recorded(); len(got) != 0 {
@@ -619,5 +625,135 @@ func TestContainerActionRoutesAbsentWithoutEngine(t *testing.T) {
 	}
 	if rec := env.post(t, env.login(t), "/api/containers/"+idWeb+"/stop"); rec.Code != 404 {
 		t.Errorf("action = %d, want 404", rec.Code)
+	}
+}
+
+func TestContainerRoutesNeverResolveByName(t *testing.T) {
+	eng := newFakeEngine()
+	// Docker would resolve a container literally named like a short id.
+	eng.aliases = map[string]string{"deadbeefcafe": idCron}
+	env, cookie := actionsEnv(t, eng, nil)
+	if rec := env.do(t, "GET", "/api/containers/deadbeefcafe", "", withCookie(cookie)); rec.Code != 404 {
+		t.Errorf("details by name = %d %s, want 404", rec.Code, rec.Body)
+	}
+	if rec := env.post(t, cookie, "/api/containers/deadbeefcafe/stop"); rec.Code != 404 {
+		t.Errorf("action by name = %d %s, want 404", rec.Code, rec.Body)
+	}
+	if got := eng.recorded(); len(got) != 0 {
+		t.Errorf("engine actions = %v, want none", got)
+	}
+}
+
+func TestContainerAmbiguousPrefixIs404(t *testing.T) {
+	eng := newFakeEngine()
+	eng.inspectErr = fmt.Errorf("inspect: %w", &engine.ActionError{Status: 400, Message: "multiple IDs found with provided prefix"})
+	env, cookie := actionsEnv(t, eng, nil)
+	if rec := env.do(t, "GET", "/api/containers/"+idWeb[:12], "", withCookie(cookie)); rec.Code != 404 {
+		t.Errorf("details = %d %s, want 404", rec.Code, rec.Body)
+	}
+	if rec := env.post(t, cookie, "/api/containers/"+idWeb[:12]+"/stop"); rec.Code != 404 {
+		t.Errorf("action = %d %s, want 404", rec.Code, rec.Body)
+	}
+}
+
+func TestActionOutcomesAreLogged(t *testing.T) {
+	var logs bytes.Buffer
+	eng := newFakeEngine()
+	eng.actionErr = fmt.Errorf("start: %w", &engine.ActionError{Status: 500, Message: "port is already allocated"})
+	env, cookie := actionsEnv(t, eng, func(o *api.Options) { o.Logger = slog.New(slog.NewTextHandler(&logs, nil)) })
+	env.post(t, cookie, "/api/containers/"+idWeb+"/stop") // refused: stack container
+	env.post(t, cookie, "/api/containers/"+idDB+"/start") // failed: Docker refusal
+	out := logs.String()
+	for _, want := range []string{"container=web-web-1", "action=stop", "outcome=refused", "container=adhoc-db", "action=start", "outcome=failed"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log missing %q: %s", want, out)
+		}
+	}
+	if strings.Contains(out, "com.docker.compose") {
+		t.Errorf("log must not include labels: %s", out)
+	}
+}
+
+func containerLogsObserve() *fakeObserve {
+	obs := containerObserve()
+	obs.logs[idWeb] = fakeLogSpec{lines: []engine.LogLine{
+		{Stream: "stdout", Time: t0, Text: "web one"}, {Stream: "stdout", Time: t0.Add(time.Second), Text: "web two"}}}
+	obs.logs[idDB] = fakeLogSpec{lines: []engine.LogLine{{Stream: "stdout", Time: t0, Text: "db one"}}}
+	return obs
+}
+
+func TestContainerLogsStreamsOneContainer(t *testing.T) {
+	env, _ := containersEnv(t, containerLogsObserve(), nil)
+	_, ch := openSSE(t, env, env.login(t), context.Background(), "/api/containers/"+idWeb[:12]+"/logs")
+	evs := drain(t, ch)
+	if names := eventNames(evs); len(names) == 0 || names[len(names)-1] != "end" {
+		t.Fatalf("events = %v, want a trailing end", names)
+	}
+	var texts []string
+	for _, le := range logsOf(t, evs) {
+		if le.Container != "web-web-1" {
+			t.Errorf("line from %q, want only web-web-1", le.Container)
+		}
+		texts = append(texts, le.Text)
+	}
+	if !reflect.DeepEqual(texts, []string{"web one", "web two"}) {
+		t.Errorf("texts = %v", texts)
+	}
+	for _, ev := range evs {
+		if ev.name == "log" && !strings.HasPrefix(ev.id, idWeb[:12]+":") {
+			t.Errorf("log id = %q, want a cursor for the container", ev.id)
+		}
+	}
+}
+
+func TestContainerLogsResumeFromCursor(t *testing.T) {
+	env, _ := containersEnv(t, containerLogsObserve(), nil)
+	cursor := fmt.Sprintf("%s:%d:1", idWeb[:12], t0.UnixNano())
+	_, ch := openSSEResume(t, env, env.login(t), context.Background(), "/api/containers/"+idWeb+"/logs", cursor)
+	var texts []string
+	for _, le := range logsOf(t, drain(t, ch)) {
+		texts = append(texts, le.Text)
+	}
+	if !reflect.DeepEqual(texts, []string{"web two"}) {
+		t.Errorf("texts = %v, want only the line after the cursor", texts)
+	}
+}
+
+func TestContainerLogsUnknownIs404(t *testing.T) {
+	obs := containerLogsObserve()
+	env, _ := containersEnv(t, obs, nil)
+	cookie := env.login(t)
+	for _, id := range []string{strings.Repeat("d", 12), "web-web-1", "abc"} {
+		if rec := env.do(t, "GET", "/api/containers/"+id+"/logs", "", withCookie(cookie)); rec.Code != 404 {
+			t.Errorf("GET %q = %d, want 404", id, rec.Code)
+		}
+	}
+	if n := obs.logCalls(); n != 0 {
+		t.Errorf("Docker logs were opened %d times for unknown ids", n)
+	}
+}
+
+func TestContainerLogsAmbiguousPrefixIs404(t *testing.T) {
+	obs := containerLogsObserve()
+	obs.containers = append(obs.containers, engine.Container{ID: idWeb[:12] + strings.Repeat("9", 52), Name: "twin", State: "running"})
+	env, _ := containersEnv(t, obs, nil)
+	if rec := env.do(t, "GET", "/api/containers/"+idWeb[:12]+"/logs", "", withCookie(env.login(t))); rec.Code != 404 {
+		t.Errorf("ambiguous prefix = %d, want 404", rec.Code)
+	}
+}
+
+func TestContainerLogsCacheErrorIs503(t *testing.T) {
+	obs := containerLogsObserve()
+	obs.containersErr = fmt.Errorf("state: %w", engine.ErrUnavailable)
+	env, _ := containersEnv(t, obs, nil)
+	if rec := env.do(t, "GET", "/api/containers/"+idWeb+"/logs", "", withCookie(env.login(t))); rec.Code != 503 {
+		t.Errorf("= %d, want 503", rec.Code)
+	}
+}
+
+func TestContainerLogsRequiresSession(t *testing.T) {
+	env, _ := containersEnv(t, containerLogsObserve(), nil)
+	if rec := env.do(t, "GET", "/api/containers/"+idWeb+"/logs", ""); rec.Code != 401 {
+		t.Errorf("without cookie = %d, want 401", rec.Code)
 	}
 }

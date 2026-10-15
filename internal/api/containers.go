@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -62,6 +63,7 @@ type containerFlight struct {
 
 func (s *server) registerContainerRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/containers", s.requireSession(s.handleContainerList))
+	mux.Handle("GET /api/containers/{id}/logs", s.requireSession(s.handleContainerLogs))
 }
 
 func (s *server) handleContainerList(w http.ResponseWriter, r *http.Request) {
@@ -281,8 +283,19 @@ func (s *server) inspectContainer(w http.ResponseWriter, r *http.Request) (engin
 		return engine.ContainerInspect{}, false
 	}
 	insp, err := s.opts.ContainerEngine.InspectContainer(r.Context(), id)
+	var actionErr *engine.ActionError
+	if errors.As(err, &actionErr) && actionErr.Status == http.StatusBadRequest {
+		// Docker's answer for an ambiguous id prefix: nothing is addressable by it.
+		writeError(w, http.StatusNotFound, "container not found")
+		return engine.ContainerInspect{}, false
+	}
 	if err != nil {
 		s.writeEngineError(w, r, err)
+		return engine.ContainerInspect{}, false
+	}
+	// Docker also resolves names; the API is only ever addressed by id.
+	if !strings.HasPrefix(insp.ID, id) {
+		writeError(w, http.StatusNotFound, "container not found")
 		return engine.ContainerInspect{}, false
 	}
 	return insp, true
@@ -400,6 +413,7 @@ func (s *server) handleContainerAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if managed, stack := containerManaged(engine.Container{Labels: insp.Labels}, projects); managed == managedStack {
+		s.opts.Logger.Info("container action refused", "container", insp.Name, "action", action, "outcome", "refused")
 		writeError(w, http.StatusConflict, fmt.Sprintf("%s belongs to stack %s; use the stack's actions", insp.Name, stack))
 		return
 	}
@@ -407,6 +421,7 @@ func (s *server) handleContainerAction(w http.ResponseWriter, r *http.Request) {
 	actx, cancel := context.WithTimeout(r.Context(), containerActionTimeout)
 	defer cancel()
 	if err := s.opts.ContainerEngine.ContainerAction(actx, insp.ID, action, containerStopGrace); err != nil {
+		s.opts.Logger.Info("container action failed", "container", insp.Name, "action", action, "outcome", "failed", "err", err)
 		s.writeEngineError(w, r, err)
 		return
 	}
@@ -451,4 +466,36 @@ func (s *server) actionRow(ctx context.Context, insp engine.ContainerInspect) ap
 		}
 	}
 	return row
+}
+
+// handleContainerLogs streams one container's logs with the same events,
+// cursors and resume rules as the stack route (see handleLogs). The container
+// is found in the state cache by id prefix; an id matching none or several is
+// a 404.
+func (s *server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !containerIDPattern.MatchString(id) {
+		writeError(w, http.StatusNotFound, "container not found")
+		return
+	}
+	opts, ok := parseLogOptions(w, r)
+	if !ok {
+		return
+	}
+	all, err := s.opts.Observe.Containers(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "docker engine is unavailable")
+		return
+	}
+	var matches []engine.Container
+	for _, c := range all {
+		if strings.HasPrefix(c.ID, id) {
+			matches = append(matches, c)
+		}
+	}
+	if len(matches) != 1 {
+		writeError(w, http.StatusNotFound, "container not found")
+		return
+	}
+	s.streamContainerLogs(w, r, matches, opts)
 }
