@@ -35,7 +35,7 @@ var (
 var extraCleanups []func()
 
 func TestMain(m *testing.M) {
-	code := m.Run()
+	code := guardRealHomes(m.Run)
 	for _, f := range extraCleanups {
 		f()
 	}
@@ -474,6 +474,34 @@ func TestReinstallSameVersionIsCleanInContainer(t *testing.T) {
 			expectEqual(t, "docker membership entries", s.shOK("id -nG stackstead | tr ' ' '\\n' | grep -cx docker"), "1")
 			checkLocalStateKept(t, s, sum)
 			checkPackageLayout(t, s, pkgV1)
+		})
+	}
+}
+
+// Upgrades and reinstalls never touch the stacks dir: an admin's owner and
+// mode for /opt/stacks survive both.
+func TestAdminStacksDirKeptAcrossUpgradeAndReinstallInContainer(t *testing.T) {
+	for _, distro := range []string{"debian", "rocky"} {
+		t.Run(distro, func(t *testing.T) {
+			t.Parallel()
+			s := pkgScenario(t, distro, true)
+			s.pkgInstall(distro, pkgV1)
+			// GNU chmod keeps a directory's setgid bit on a numeric mode, hence g-s
+			s.shOK("chown root:root /opt/stacks && chmod 750 /opt/stacks && chmod g-s /opt/stacks")
+			s.pkgInstall(distro, pkgV2)
+			expectEqual(t, "/opt/stacks after upgrade", s.shOK("stat -c '%a %U:%G' /opt/stacks"), "750 root:root")
+			var out string
+			var code int
+			if distro == "rocky" {
+				out, code = installPackage(t, s.r, s.container, "--replacepkgs "+pkgPath(distro, pkgV2))
+			} else {
+				stdout, stderr, c := dockerExec(s.container, nil, "sh", "-c", "DEBIAN_FRONTEND=noninteractive apt-get install --reinstall -y "+pkgPath(distro, pkgV2)+" 2>&1")
+				out, code = stdout+stderr, c
+			}
+			if code != 0 {
+				t.Fatalf("reinstall: exit %d\n%s", code, out)
+			}
+			expectEqual(t, "/opt/stacks after reinstall", s.shOK("stat -c '%a %U:%G' /opt/stacks"), "750 root:root")
 		})
 	}
 }

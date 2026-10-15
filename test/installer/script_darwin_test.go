@@ -464,26 +464,54 @@ exec ` + real + ` "$@"`
 	})
 }
 
+// hermeticUser is the account name real-mode tests run as; no such account exists.
+const hermeticUser = "stackstead-itest-nosuchuser"
+
+// realModeFixture prepares a run without --root as the test's own, non-root
+// uid: a throwaway home (from the dscl stub) and prefix, stubbed sudo,
+// launchctl and docker.
+func realModeFixture(t *testing.T) (f *fixture, home, prefix string, env map[string]string) {
+	t.Helper()
+	requireNonRoot(t)
+	r := newRun(t)
+	dist := publishRelease(t, r, "1.0.0", "darwin", nil, nil)
+	f = fixtureFromDist(t, r, dist, "1.0.0", darwinStubs(false))
+	// The test's real uid (launchctl's gui/<uid> domain) under an account name
+	// that does not exist, so nothing in install.sh (`~name`, the real dscl)
+	// can map it to the developer's home: the home only comes from the dscl stub.
+	uid := fmt.Sprint(os.Getuid())
+	f.stubs["id"] = `case "$*" in -u) echo ` + uid + ` ;; -un) echo ` + hermeticUser + ` ;; "-u ` + hermeticUser + `") echo ` + uid + ` ;; "-gn "*) echo staff ;; *) exit 1 ;; esac`
+	home = filepath.Join(r.Dir, "home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prefix = filepath.Join(r.Dir, "prefix")
+	env = map[string]string{"FAKE_HOME": home, "FAKE_STACKSTEAD_LOG": filepath.Join(r.Dir, "stackstead.log")}
+	f.stubD = stubPath(t, f.stubs)
+	return f, home, prefix, env
+}
+
+// A real-mode test must never be able to resolve the developer's own home:
+// if the dscl stub is missing or its output cannot be parsed, the script's
+// `~user` fallback must not find a real account. --print-paths resolves the
+// paths and exits before writing anything, so this cannot leave files behind.
+func TestDarwinRealModeNeverResolvesTheRealHome(t *testing.T) {
+	f, _, prefix, env := realModeFixture(t)
+	f.stubs["dscl"] = `exit 1`
+	f.stubD = stubPath(t, f.stubs)
+	env["STUBS_DIR"] = f.stubD
+	out, errOut, _ := runScript(t, []string{"--print-paths", "--prefix", prefix}, env, nil)
+	for _, home := range realHomes() {
+		notContains(t, "paths", out+errOut, home+"/Library")
+	}
+}
+
 // TestDarwinRealMode runs without --root against a throwaway home and prefix:
 // sudo, launchctl and docker are stubs, the home comes from the dscl stub, and
 // the service answers on a port of the test's own (never the demo's 8420).
 func TestDarwinRealMode(t *testing.T) {
 	requireNonRoot(t)
-	setup := func(t *testing.T) (f *fixture, home, prefix string, env map[string]string) {
-		t.Helper()
-		r := newRun(t)
-		dist := publishRelease(t, r, "1.0.0", "darwin", nil, nil)
-		f = fixtureFromDist(t, r, dist, "1.0.0", darwinStubs(false))
-		delete(f.stubs, "id") // the real id: this test runs as the real, non-root user
-		home = filepath.Join(r.Dir, "home")
-		if err := os.MkdirAll(home, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		prefix = filepath.Join(r.Dir, "prefix")
-		env = map[string]string{"FAKE_HOME": home, "FAKE_STACKSTEAD_LOG": filepath.Join(r.Dir, "stackstead.log")}
-		f.stubD = stubPath(t, f.stubs)
-		return f, home, prefix, env
-	}
+	setup := realModeFixture
 	runReal := func(f *fixture, env map[string]string, args ...string) (string, string, int) {
 		e := map[string]string{"STUBS_DIR": f.stubD, "TMPDIR": f.tmpDir}
 		for k, v := range env {
@@ -576,6 +604,40 @@ func TestScriptHardening(t *testing.T) {
 			mustExit(t, code, 2, out, errOut)
 			contains(t, "stderr", errOut, "@")
 		}
+	})
+
+	t.Run("WgetPinsHTTPSForHTTPSURLs", func(t *testing.T) {
+		// curl gets --proto =https; wget must not follow a redirect to plain http either
+		f := newFixture(t, "1.0.0")
+		f.path = minimalPath(t, "curl", "wget")
+		f.stubs["wget"] = `[ "$1" != --help ] || { echo "       --https-only                only follow secure HTTPS links"; exit 0; }
+exit 4`
+		out, errOut, code := f.run("--base-url", "https://releases.invalid/stackstead", "--version", "v1.0.0")
+		mustExit(t, code, 5, out, errOut)
+		var fetches int
+		for _, l := range strings.Split(stubLog(f.stubD, "wget"), "\n") {
+			if strings.Contains(l, "https://") {
+				fetches++
+				if !strings.Contains(l, "--https-only") {
+					t.Errorf("wget fetched an https URL without --https-only: %q", l)
+				}
+			}
+		}
+		if fetches == 0 {
+			t.Fatalf("wget was not used: %q", stubLog(f.stubD, "wget"))
+		}
+		notContains(t, "stderr", errOut, "--https-only")
+
+		// BusyBox wget has no such option: it is not passed (that would fail every
+		// download), and the user is told the redirect cannot be pinned
+		f = newFixture(t, "1.0.0")
+		f.path = minimalPath(t, "curl", "wget")
+		f.stubs["wget"] = `[ "$1" != --help ] || { echo "BusyBox v1.36.1 multi-call binary."; exit 0; }
+exit 4`
+		out, errOut, code = f.run("--base-url", "https://releases.invalid/stackstead", "--version", "v1.0.0")
+		mustExit(t, code, 5, out, errOut)
+		notContains(t, "wget calls", stubLog(f.stubD, "wget"), "--https-only")
+		contains(t, "stderr", errOut, "warning:", "https", "curl")
 	})
 
 	t.Run("UninstallIgnoresTheBaseURL", func(t *testing.T) {
@@ -699,7 +761,10 @@ func TestDarwinRootNeverActsInTheUsersHome(t *testing.T) {
 		writeFile(t, victim, []byte("secret"), 0o600)
 		agents := filepath.Join(home, "Library", "LaunchAgents")
 		support := filepath.Join(home, "Library", "Application Support", "Stackstead")
-		for _, p := range []string{filepath.Join(agents, darwinLabel+".plist.new"), filepath.Join(support, "config.yaml.new")} {
+		// the prefix too: root writes there itself, and /usr/local may be user-writable
+		planted := []string{filepath.Join(agents, darwinLabel+".plist.new"), filepath.Join(support, "config.yaml.new"),
+			filepath.Join(prefix, "bin", "stackstead.new"), filepath.Join(prefix, "share", "stackstead", "install.sh.new")}
+		for _, p := range planted {
 			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -713,8 +778,10 @@ func TestDarwinRootNeverActsInTheUsersHome(t *testing.T) {
 			t.Error("a planted .new symlink was followed: the victim file was overwritten")
 		}
 		assertMode(t, victim, 0o600)
-		if fi, err := os.Lstat(filepath.Join(agents, darwinLabel+".plist")); err != nil || !fi.Mode().IsRegular() {
-			t.Errorf("plist is not a regular file: %v", err)
+		for _, p := range []string{filepath.Join(agents, darwinLabel+".plist"), filepath.Join(prefix, "bin", "stackstead"), filepath.Join(prefix, "share", "stackstead", "install.sh")} {
+			if fi, err := os.Lstat(p); err != nil || !fi.Mode().IsRegular() {
+				t.Errorf("%s is not a regular file: %v", p, err)
+			}
 		}
 	})
 
@@ -848,6 +915,33 @@ func TestDarwinRootSimRunsUserWorkAsTheUser(t *testing.T) {
 		}
 	})
 
+	t.Run("InstalledVersionProbeRunsAsTheUser", func(t *testing.T) {
+		// the binary under the prefix may be user-writable (Homebrew's /usr/local on
+		// Intel): root must not execute it, not even for --help or version
+		f, _, prefix, env := rootSim(t)
+		for i := 0; i < 2; i++ { // the second run finds an installed binary to probe
+			out, errOut, code := runRootSim(t, f, env, prefix)
+			mustExit(t, code, 0, out, errOut)
+		}
+		bin := filepath.Join(prefix, "bin", "stackstead")
+		for _, probe := range []string{"--help", "version --short"} {
+			var direct, asUser int
+			for _, l := range strings.Split(string(readFile(t, env["FAKE_STACKSTEAD_LOG"])), "\n") {
+				if l == probe {
+					direct++
+				}
+			}
+			for _, l := range sudoLines(f) {
+				if strings.HasPrefix(l, "-H -u alice env PATH=") && strings.HasSuffix(l, " "+bin+" "+probe) {
+					asUser++
+				}
+			}
+			if direct == 0 || asUser != direct {
+				t.Errorf("stackstead %s ran %d times, only %d of them as 'sudo -H -u alice env PATH=...':\n%s", probe, direct, asUser, stubLog(f.stubD, "sudo"))
+			}
+		}
+	})
+
 	t.Run("UninstallAndPurgeRemoveThroughTheUser", func(t *testing.T) {
 		f, home, prefix, env := rootSim(t)
 		out, errOut, code := runRootSim(t, f, env, prefix)
@@ -900,19 +994,13 @@ func TestDarwinHomeWithASpaceFromDscl(t *testing.T) {
 
 // Something else already answering on the listen address must not be reported as our service.
 func TestDarwinWarnsWhenAnotherProcessHoldsThePort(t *testing.T) {
-	requireNonRoot(t)
-	r := newRun(t)
-	dist := publishRelease(t, r, "1.0.0", "darwin", nil, nil)
-	f := fixtureFromDist(t, r, dist, "1.0.0", darwinStubs(false))
-	delete(f.stubs, "id")
-	home := filepath.Join(r.Dir, "home")
+	f, home, prefix, env := realModeFixture(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { _, _ = io.WriteString(w, `{"ok":true}`) }))
 	t.Cleanup(srv.Close)
 	u, _ := url.Parse(srv.URL)
 	writeFile(t, filepath.Join(home, "Library", "Application Support", "Stackstead", "config.yaml"), []byte("listen: "+u.Host+"\n"), 0o600)
-	f.stubD = stubPath(t, f.stubs)
-	env := map[string]string{"STUBS_DIR": f.stubD, "TMPDIR": f.tmpDir, "FAKE_HOME": home, "FAKE_STACKSTEAD_LOG": filepath.Join(r.Dir, "ss.log")}
-	out, errOut, code := runScript(t, []string{"--base-url", f.base, "--prefix", filepath.Join(r.Dir, "prefix")}, env, nil)
+	env["STUBS_DIR"], env["TMPDIR"] = f.stubD, f.tmpDir
+	out, errOut, code := runScript(t, []string{"--base-url", f.base, "--prefix", prefix}, env, nil)
 	mustExit(t, code, 0, out, errOut)
 	contains(t, "stderr", errOut, "already answering on "+u.Host)
 	notContains(t, "stdout", out, "Stackstead is running")

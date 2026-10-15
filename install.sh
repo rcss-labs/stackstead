@@ -298,12 +298,19 @@ nologin_shell() {
 # ---------------------------------------------------------------- download tools
 
 DOWNLOADER=
+WGET_HTTPS_ONLY=
 
 detect_downloader() {
 	if have curl; then
 		DOWNLOADER=curl
 	elif have wget; then
 		DOWNLOADER=wget
+		# GNU wget can refuse to follow https to http; BusyBox wget cannot
+		if wget --help 2>&1 | grep -q -- '--https-only'; then
+			WGET_HTTPS_ONLY=1
+		else
+			warn "this wget cannot refuse a redirect from https to http; install curl for pinned https downloads"
+		fi
 	else
 		die 4 "need curl or wget (apt install curl | dnf install curl | apk add curl)"
 	fi
@@ -317,7 +324,14 @@ try_fetch() {
 		*) curl -fsSL --retry 2 --connect-timeout 15 --max-time 300 -o "$2" "$1" ;;
 		esac
 	else
-		wget -q -O "$2" -T 30 "$1"
+		case $1 in
+		https://*) if [ -n "$WGET_HTTPS_ONLY" ]; then
+			wget -q --https-only -O "$2" -T 30 "$1"
+		else
+			wget -q -O "$2" -T 30 "$1"
+		fi ;;
+		*) wget -q -O "$2" -T 30 "$1" ;;
+		esac
 	fi
 }
 
@@ -509,19 +523,21 @@ limited() {
 # Older binaries ignore unknown arguments and start the server, so nothing but
 # --help (which never serves) is run until the help text shows a `version`
 # command; then `version --short`, then `version -o json`.
+# A macOS root run probes as the target user: the prefix binary may be
+# user-writable (Intel Homebrew owns /usr/local), so root never executes it.
 installed_version() {
 	bin=$(rp "$BIN")
 	[ -x "$bin" ] || return 0
 	probe=$TMP/probe.out
-	limited 5 "$probe" "$bin" --help || true
+	limited_as_user 5 "$probe" "$bin" --help || true
 	grep -qw version "$probe" 2>/dev/null || return 0
-	limited 5 "$probe" "$bin" version --short || true
+	limited_as_user 5 "$probe" "$bin" version --short || true
 	v=$(head -n 1 "$probe")
 	if valid_version "$v"; then
 		printf '%s' "$v"
 		return 0
 	fi
-	limited 5 "$probe" "$bin" version -o json || true
+	limited_as_user 5 "$probe" "$bin" version -o json || true
 	v=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$probe" | head -n 1)
 	if valid_version "$v"; then
 		printf '%s' "$v"
@@ -730,12 +746,17 @@ make_dir() {
 	[ -z "$3" ] || own "$3" "$d"
 }
 
-# put_file SRC DEST MODE: copy via a temp name in the same directory, then rename.
+# put_file SRC DEST MODE: copy via an unpredictable temp name in the same
+# directory (mktemp creates it exclusively, so nothing planted there is
+# followed), then rename.
 put_file() {
-	mkdir -p "$(dirname "$2")"
-	cp "$1" "$2.new"
-	chmod "$3" "$2.new"
-	mv -f "$2.new" "$2"
+	pf_dir=$(dirname "$2")
+	mkdir -p "$pf_dir"
+	pf_tmp=$(mktemp "$pf_dir/.stackstead.XXXXXX") || die 7 "cannot create a temporary file in $pf_dir"
+	if ! cp "$1" "$pf_tmp" || ! chmod "$3" "$pf_tmp" || ! mv -f "$pf_tmp" "$2"; then
+		rm -f "$pf_tmp" || true
+		die 7 "cannot write $2"
+	fi
 }
 
 # check_stacks_dir: an existing stacks dir is never chown'ed or chmod'ed; warn
@@ -1084,10 +1105,11 @@ platform_setup() {
 }
 
 # priv CMD...: a write under the prefix. Root and staged runs write directly;
-# otherwise sudo is used, and only for these commands.
+# otherwise sudo is used, and only for these commands. A staged run's note
+# goes to stderr: priv's stdout may be captured (priv mktemp).
 priv() {
 	if [ -n "$ROOT" ]; then
-		[ -n "$AS_ROOT" ] || note "would use sudo: $*"
+		[ -n "$AS_ROOT" ] || note "would use sudo: $*" >&2
 		"$@"
 	elif [ -n "$AS_ROOT" ]; then
 		"$@"
@@ -1111,10 +1133,13 @@ priv_svc() {
 
 # priv_put_file SRC DEST MODE: put_file under priv.
 priv_put_file() {
-	priv mkdir -p "$(dirname "$2")"
-	priv cp "$1" "$2.new"
-	priv chmod "$3" "$2.new"
-	priv mv -f "$2.new" "$2"
+	ppf_dir=$(dirname "$2")
+	priv mkdir -p "$ppf_dir"
+	ppf_tmp=$(priv mktemp "$ppf_dir/.stackstead.XXXXXX") || die 7 "cannot create a temporary file in $ppf_dir"
+	if ! priv cp "$1" "$ppf_tmp" || ! priv chmod "$3" "$ppf_tmp" || ! priv mv -f "$ppf_tmp" "$2"; then
+		priv rm -f "$ppf_tmp" || true
+		die 7 "cannot write $2"
+	fi
 }
 
 # as_user CMD...: run as the target user (a sudo run is root); a shell function
@@ -1148,12 +1173,13 @@ agent_cmd() {
 	fi
 }
 
-# limited_as_user SECONDS OUTFILE CMD...: limited(), as the target user.
+# limited_as_user SECONDS OUTFILE CMD...: limited(), as the target user (like
+# as_user, a staged --root run acts directly on its own tree).
 limited_as_user() {
 	lau_secs=$1
 	lau_out=$2
 	shift 2
-	if [ "$OS" = darwin ] && [ -n "$AS_ROOT" ]; then
+	if [ "$OS" = darwin ] && [ -n "$AS_ROOT" ] && [ -z "$ROOT" ]; then
 		limited "$lau_secs" "$lau_out" sudo -H -u "$TARGET_USER" env "PATH=$USER_PATH" "$@"
 	else
 		limited "$lau_secs" "$lau_out" "$@"

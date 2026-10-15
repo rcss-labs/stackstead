@@ -19,9 +19,13 @@ svc() {
 }
 
 ensure_dirs() {
-    mkdir -p "$R/opt/stacks"
-    chown stackstead:docker "$R/opt/stacks"
-    chmod 2775 "$R/opt/stacks"
+    # the stacks dir is set up only when it is created: upgrades and reinstalls
+    # never change an existing one (the admin may have chosen its owner and mode)
+    if [ ! -d "$R/opt/stacks" ]; then
+        mkdir -p "$R/opt/stacks"
+        chown stackstead:docker "$R/opt/stacks"
+        chmod 2775 "$R/opt/stacks"
+    fi
     mkdir -p "$R/var/lib/stackstead"
     chown stackstead:stackstead "$R/var/lib/stackstead"
     chmod 0700 "$R/var/lib/stackstead"

@@ -88,7 +88,7 @@ database of its own.
 One command on a Linux server (systemd) or a Mac:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rcss-labs/stackstead/main/install.sh | sudo sh
+curl -fsSL https://github.com/rcss-labs/stackstead/releases/latest/download/install.sh | sudo sh
 ```
 
 The script downloads the latest release, verifies it against the release's `SHA256SUMS`

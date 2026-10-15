@@ -712,6 +712,34 @@ func TestScript(t *testing.T) {
 		notContains(t, "stderr", errOut, "chgrp docker")
 	})
 
+	t.Run("PlantedTempSymlinksAreNotFollowed", func(t *testing.T) {
+		// a DEST.new symlink planted next to a destination must not redirect the write
+		f := newFixture(t, "1.0.0")
+		victim := filepath.Join(t.TempDir(), "victim")
+		writeFile(t, victim, []byte("secret"), 0o600)
+		dests := []string{"usr/local/bin/stackstead", "usr/local/share/stackstead/install.sh",
+			"etc/systemd/system/stackstead.service", "etc/stackstead/config.yaml"}
+		for _, d := range dests {
+			if err := os.MkdirAll(filepath.Dir(f.p(d)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(victim, f.p(d)+".new"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		out, errOut, code := f.run()
+		mustExit(t, code, 0, out, errOut)
+		if string(readFile(t, victim)) != "secret" {
+			t.Error("a planted .new symlink was followed: the victim file was overwritten")
+		}
+		assertMode(t, victim, 0o600)
+		for _, d := range dests {
+			if fi, err := os.Lstat(f.p(d)); err != nil || !fi.Mode().IsRegular() {
+				t.Errorf("%s is not a regular file: %v", d, err)
+			}
+		}
+	})
+
 	t.Run("ServiceUserJoinsDockerGroup", func(t *testing.T) {
 		f := newFixture(t, "1.0.0")
 		out, errOut, code := f.run()
