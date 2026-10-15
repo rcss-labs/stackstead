@@ -103,6 +103,9 @@ type Detail struct {
 	Hash       string
 	Services   []ServiceDetail
 	ParseError string
+	// Overrides lists override files next to the compose file; filled by
+	// Details only.
+	Overrides []string
 }
 
 // Service orchestrates stacks: registry, compose files, compose CLI, engine
@@ -362,6 +365,27 @@ func (s *Service) Get(ctx context.Context, name string) (Detail, error) {
 		return Detail{}, ctx.Err()
 	}
 	return s.describe(e, containers, engErr), nil
+}
+
+// Details describes every registered stack from one registry read and one
+// container listing. Errors follow List: a registry failure fails the call, an
+// unreachable engine leaves statuses unknown.
+func (s *Service) Details(ctx context.Context) ([]Detail, error) {
+	entries, err := s.reg.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	containers, engErr := s.source.Containers(ctx)
+	if engErr != nil && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	out := make([]Detail, 0, len(entries))
+	for _, e := range entries {
+		d := s.describe(e, containers, engErr)
+		d.Overrides = overrideFiles(e.ComposePath)
+		out = append(out, d)
+	}
+	return out, nil
 }
 
 // describe builds the full detail of a stack from its file and the engine's

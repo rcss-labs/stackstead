@@ -1804,3 +1804,60 @@ func TestListAndGetAgreeOnHealthAndPorts(t *testing.T) {
 		t.Errorf("list %+v %v != get %+v %v", s.Health, s.Ports, d.Health, d.Ports)
 	}
 }
+
+func TestDetailsListsAllStacksWithOneContainerListing(t *testing.T) {
+	h := newHarness(t)
+	h.create(t, "a", webCfg("8080:80"))
+	h.create(t, "b", webCfg("8081:80"))
+	os.Remove(h.path("b")) // a broken stack must not stop the rest
+	calls := 0
+	h.eng.onContainers = func() { calls++ }
+
+	details, err := h.svc.Details(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Errorf("Containers called %d times, want 1", calls)
+	}
+	if len(details) != 2 {
+		t.Fatalf("details = %d, want 2", len(details))
+	}
+	byName := map[string]stacks.Detail{}
+	for _, d := range details {
+		byName[d.Name] = d
+	}
+	if byName["a"].Hash == "" || len(byName["a"].Services) != 1 {
+		t.Errorf("a = %+v", byName["a"])
+	}
+	if byName["b"].Status != stacks.StatusUnavailable || byName["b"].ParseError == "" {
+		t.Errorf("b = %+v", byName["b"])
+	}
+
+	h.eng.err = engine.ErrUnavailable
+	details, err = h.svc.Details(context.Background())
+	if err != nil {
+		t.Fatalf("engine error must not fail Details: %v", err)
+	}
+	for _, d := range details {
+		if d.Name == "a" && d.Status != stacks.StatusUnknown {
+			t.Errorf("a status = %v, want unknown", d.Status)
+		}
+	}
+}
+
+func TestDetailsOverrides(t *testing.T) {
+	h := newHarness(t)
+	h.create(t, "web", webCfg("8080:80"))
+	name := "compose.override.yaml"
+	if err := os.WriteFile(filepath.Join(h.dir, "web", name), []byte("services: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	details, err := h.svc.Details(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(details) != 1 || !reflect.DeepEqual(details[0].Overrides, []string{name}) {
+		t.Errorf("details = %+v", details)
+	}
+}
