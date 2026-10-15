@@ -38,8 +38,8 @@ function baseExtensions(ariaLabel: string): Extension[] {
     EditorView.contentAttributes.of({ 'aria-label': ariaLabel }),
     EditorView.theme({
       '&': { border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--surface)', color: 'var(--text)' },
-      '.cm-content': { fontFamily: 'var(--font-mono)' },
-      '.cm-gutters': { background: 'var(--surface-raised)', color: 'var(--muted)', border: 'none' },
+      '.cm-content': { fontFamily: 'var(--mono)' },
+      '.cm-gutters': { background: 'var(--raised)', color: 'var(--muted)', border: 'none' },
       '&.cm-focused': { outline: '2px solid var(--accent)' },
     }),
   ];

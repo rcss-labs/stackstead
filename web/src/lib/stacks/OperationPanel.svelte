@@ -138,7 +138,7 @@
     padding: var(--space-2);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
-    background: var(--surface-raised);
+    background: var(--raised);
   }
   .line { white-space: pre-wrap; overflow-wrap: anywhere; }
   .note, .gap { opacity: 0.6; font-style: italic; }

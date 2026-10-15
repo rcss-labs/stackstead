@@ -44,7 +44,7 @@
     padding: var(--space-3);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
-    font-family: var(--font-mono);
+    font-family: var(--mono);
     font-size: 0.875rem;
     overflow: auto;
     max-height: 70vh;

@@ -173,7 +173,7 @@
     margin: var(--space-2) 0 0;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    font-family: var(--font-mono);
+    font-family: var(--mono);
     font-size: 0.875rem;
   }
   .error { padding: var(--space-3); border: 1px solid var(--danger); border-radius: var(--radius-md); }

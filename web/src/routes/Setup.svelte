@@ -126,7 +126,7 @@
     width: 100%;
     max-width: 26rem;
     padding: var(--space-5, 1.5rem);
-    background: var(--surface-raised);
+    background: var(--raised);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
   }

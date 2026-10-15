@@ -34,7 +34,7 @@
     border: 1px solid var(--tone);
     border-left-width: 4px;
     border-radius: var(--radius-md);
-    background: var(--surface-raised);
+    background: var(--raised);
   }
   .info { --tone: var(--info); }
   .warning { --tone: var(--warning); }

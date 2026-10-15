@@ -159,7 +159,7 @@
   th, td { text-align: left; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); }
   .name { display: inline-flex; align-items: center; gap: var(--space-2); }
   .path { max-width: 22rem; }
-  .path span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 0.875rem; }
+  .path span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 0.875rem; }
   .none { color: var(--muted); }
 
   @media (max-width: 640px) {

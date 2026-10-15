@@ -222,7 +222,7 @@
     --series-8: #e34948;
     margin: 0;
     padding: var(--space-3);
-    background: var(--surface-raised);
+    background: var(--raised);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
   }

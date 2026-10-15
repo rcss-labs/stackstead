@@ -217,8 +217,8 @@
   .note.warn { color: var(--warning); }
   .err { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; color: var(--danger); }
   .scroller {
-    height: 60vh; overflow: auto; background: var(--surface-raised); border: 1px solid var(--border);
-    border-radius: var(--radius-md); padding: var(--space-2); font-family: var(--font-mono); font-size: 0.8rem;
+    height: 60vh; overflow: auto; background: var(--raised); border: 1px solid var(--border);
+    border-radius: var(--radius-md); padding: var(--space-2); font-family: var(--mono); font-size: 0.8rem;
   }
   .row { display: flex; gap: var(--space-2); align-items: baseline; }
   .row time, .row small { flex: none; color: var(--muted); }

@@ -80,7 +80,7 @@
   .fallback {
     width: 100%;
     box-sizing: border-box;
-    font-family: var(--font-mono);
+    font-family: var(--mono);
     font-size: 0.875rem;
     padding: var(--space-3);
     border: 1px solid var(--border);

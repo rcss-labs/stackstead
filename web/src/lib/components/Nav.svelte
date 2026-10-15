@@ -44,11 +44,11 @@
     gap: var(--space-3);
     padding: var(--space-2) var(--space-4);
     border-bottom: 1px solid var(--border);
-    background: var(--surface-raised);
+    background: var(--raised);
   }
   .links { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
   a { color: var(--text); text-decoration: none; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); display: inline-block; }
-  a[aria-current='page'] { background: var(--accent); color: var(--accent-contrast); }
+  a[aria-current='page'] { background: var(--accent); color: var(--accent-ink); }
   a:not([aria-current]):hover { background: var(--border); }
   .ops { color: var(--info); }
   .user { color: var(--muted); }

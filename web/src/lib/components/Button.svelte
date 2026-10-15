@@ -60,10 +60,10 @@
     min-height: 2.25rem;
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
-    background: var(--surface-raised);
+    background: var(--raised);
     cursor: pointer;
   }
-  .primary { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
+  .primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
   .danger { background: var(--danger); border-color: var(--danger); color: var(--surface); }
   .ghost { background: transparent; border-color: transparent; }
   .btn:disabled,

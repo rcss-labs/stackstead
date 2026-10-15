@@ -60,7 +60,7 @@
 <style>
   .copy {
     padding: var(--space-1) var(--space-3);
-    background: var(--surface-raised);
+    background: var(--raised);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     cursor: pointer;

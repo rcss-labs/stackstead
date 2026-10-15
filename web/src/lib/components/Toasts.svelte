@@ -39,7 +39,7 @@
     align-items: center;
     max-width: min(28rem, 100%);
     padding: var(--space-3) var(--space-4);
-    background: var(--surface-raised);
+    background: var(--raised);
     border: 1px solid var(--tone);
     border-radius: var(--radius-md);
     box-shadow: 0 4px 16px rgb(0 0 0 / 0.2);

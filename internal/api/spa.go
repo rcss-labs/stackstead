@@ -2,10 +2,17 @@ package api
 
 import (
 	"io/fs"
+	"mime"
 	"net/http"
 	"path"
 	"strings"
 )
+
+// Go's built-in MIME table lacks .woff2 and nosniff is set globally, so a font
+// served without a type would be refused by browsers.
+func init() {
+	_ = mime.AddExtensionType(".woff2", "font/woff2")
+}
 
 const contentSecurityPolicy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
 	"img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"

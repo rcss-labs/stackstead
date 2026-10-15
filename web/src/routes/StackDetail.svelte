@@ -464,7 +464,7 @@
   .card {
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
-    background: var(--surface-raised);
+    background: var(--raised);
     padding: var(--space-3) var(--space-4);
   }
   .card h2 { margin: 0; font-size: 1.1rem; }
