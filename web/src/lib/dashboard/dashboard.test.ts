@@ -19,6 +19,14 @@ describe('dashboard components', () => {
     expect(fill.style.width).toBe('18%');
   });
 
+  it('HostTile is a link only when href is set', () => {
+    const { unmount } = render(HostTile, { tile: { id: 'containers', label: 'Containers', value: '8/10', href: '/containers' } });
+    expect(screen.getByRole('link', { name: /Containers\s*8\/10/ }).getAttribute('href')).toBe('/containers');
+    unmount();
+    render(HostTile, { tile: { id: 'cpu', label: 'CPU', value: '1%' } });
+    expect(screen.queryByRole('link')).toBeNull();
+  });
+
   it('HostTile has no bar without a ratio', () => {
     const { container } = render(HostTile, { tile: { id: 'x', label: 'Uptime', value: '1d' } });
     expect(container.querySelector('.bar')).toBeNull();
@@ -59,6 +67,11 @@ describe('AlertsCard', () => {
     render(AlertsCard, { alerts: [alert({ kind: 'docker_disconnected', stack: undefined, message: 'Docker is unreachable' })] });
     expect(screen.queryByRole('link')).toBeNull();
     expect(screen.getByText('Docker is unreachable')).toBeTruthy();
+  });
+
+  it('alert with a container but no stack links to the container page', () => {
+    render(AlertsCard, { alerts: [alert({ stack: undefined, container: 'lone one', message: 'oom' })] });
+    expect(screen.getByRole('link', { name: 'lone one' }).getAttribute('href')).toBe('/containers/lone%20one');
   });
 
   it('alert severity is available as text', () => {
@@ -107,6 +120,11 @@ describe('TopConsumersCard', () => {
     expect(screen.getByText('web-1 · alpha')).toBeTruthy();
     expect(screen.getByText('x-1 · other')).toBeTruthy();
     expect(screen.getByText('lone')).toBeTruthy();
+  });
+
+  it('top consumer rows link to the container page', () => {
+    render(TopConsumersCard, { top });
+    expect(screen.getByRole('link', { name: 'web-1 · web' }).getAttribute('href')).toBe('/containers/web-1');
   });
 
   it('top consumers not loaded shows no empty text', () => {
@@ -164,6 +182,12 @@ describe('EventsFeed', () => {
   it('action cell has a title with the full text', () => {
     render(EventsFeed, { props: { events: [ev('health_status', 'a', { health: 'unhealthy' })], connection: 'open' } });
     expect(screen.getByText('unhealthy').getAttribute('title')).toBe('unhealthy');
+  });
+
+  it('event subject links to the container page, also without a compose project', () => {
+    render(EventsFeed, { props: { events: [ev('start', 'web-1'), ev('start', 'lone', { project: '' })], connection: 'open' } });
+    expect(screen.getByRole('link', { name: 'web-1' }).getAttribute('href')).toBe('/containers/web-1');
+    expect(screen.getByRole('link', { name: 'lone' }).getAttribute('href')).toBe('/containers/lone');
   });
 
   it('die shows exit code', () => {

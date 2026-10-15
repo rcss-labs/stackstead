@@ -73,7 +73,7 @@
   {#if service.containers.length > 0}
     <ul class="containers">
       {#each service.containers as c (c.id)}
-        <li><span class="dot {containerTone(c)}" aria-hidden="true"></span><span class="mono">{c.name}</span> <span class="muted">{c.state}</span> <span class="muted">{c.status}</span></li>
+        <li><span class="dot {containerTone(c)}" aria-hidden="true"></span><a class="mono name" href={`/containers/${encodeURIComponent(c.name)}`} use:link>{c.name}</a> <span class="muted">{c.state}</span> <span class="muted">{c.status}</span></li>
       {/each}
     </ul>
   {/if}
@@ -102,6 +102,8 @@
   p.muted { margin: 10px 0 0; font-size: 12.5px; }
   .containers { list-style: none; padding: 10px 0 0; margin: 10px 0 0; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
   .mono { font-family: var(--mono); }
+  .name { color: inherit; text-decoration: none; overflow-wrap: anywhere; }
+  .name:hover { color: var(--accent); }
   .containers li { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .containers .dot { width: 7px; height: 7px; }
   .chips { display: flex; flex-wrap: wrap; gap: 4px; }

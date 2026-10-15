@@ -1,20 +1,30 @@
 <script lang="ts">
+  import { link } from '$lib/router';
   import type { TileModel } from './tiles';
 
   let { tile }: { tile: TileModel } = $props();
 </script>
 
-<div class="tile">
+{#snippet content()}
   <div class="label" title={tile.label}>{tile.label}</div>
   <div class="value">{tile.value}</div>
   {#if tile.sub}<div class="sub {tile.subTone ?? 'muted'}" title={tile.sub}>{tile.sub}</div>{/if}
   {#if tile.ratio !== undefined}
     <div class="bar" aria-hidden="true"><span style={`width:${Math.round(tile.ratio * 100)}%`}></span></div>
   {/if}
-</div>
+{/snippet}
+
+{#if tile.href}
+  <a class="tile link" href={tile.href} use:link>{@render content()}</a>
+{:else}
+  <div class="tile">{@render content()}</div>
+{/if}
 
 <style>
   .tile { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 10px 12px; min-width: 0; }
+  a.tile { display: block; color: inherit; text-decoration: none; }
+  a.tile:hover { background: var(--hover); }
+  a.tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .label { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .value { font-family: var(--mono); font-size: 17px; font-weight: 600; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sub { font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere; }

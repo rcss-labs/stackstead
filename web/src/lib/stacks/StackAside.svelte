@@ -44,7 +44,7 @@
     {:else}
       <ul class="containers">
         {#each containers as c (c.id)}
-          <li><span class="dot {c.tone}" aria-hidden="true"></span><span class="mono">{c.name}</span><span class="muted status">{c.status}</span></li>
+          <li><span class="dot {c.tone}" aria-hidden="true"></span><a class="mono name" href={`/containers/${encodeURIComponent(c.name)}`} use:link>{c.name}</a><span class="muted status">{c.status}</span></li>
         {/each}
       </ul>
     {/if}
@@ -94,6 +94,8 @@
   ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
   li { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .mono { font-family: var(--mono); overflow-wrap: anywhere; }
+  .name { color: inherit; text-decoration: none; }
+  .name:hover { color: var(--accent); }
   .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--faint); }
   .dot.success { background: var(--success); }
   .dot.warning { background: var(--warning); }

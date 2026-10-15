@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { TopEntry } from '$lib/api/types';
+  import { link } from '$lib/router';
   import { formatBytes, formatPercent } from '$lib/format';
 
   let { top, stackNames = {} }: { top: { cpu: TopEntry[]; mem: TopEntry[] } | undefined; stackNames?: Record<string, string> } = $props();
@@ -37,7 +38,7 @@
       {#each rows as r (`${r.project}|${r.container}`)}
         <li>
           <div class="line">
-            <span class="name mono" title={label(r)}>{label(r)}</span>
+            <a class="name mono" href={`/containers/${encodeURIComponent(r.container)}`} title={label(r)} use:link>{label(r)}</a>
             <span class="value mono">{metric === 'cpu' ? formatPercent(r.value) : formatBytes(r.value)}</span>
           </div>
           <div class="bar" aria-hidden="true"><span class={metric} style={`width:${ratio(r.value)}%`}></span></div>
@@ -63,7 +64,8 @@
   .segmented button[aria-pressed='true'] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); position: relative; font-weight: 600; }
   ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
   .line { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
-  .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .name { color: inherit; text-decoration: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .name:hover { color: var(--accent); }
   .value { flex: none; }
   .bar { height: 4px; margin-top: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
   .bar > span { display: block; height: 100%; }

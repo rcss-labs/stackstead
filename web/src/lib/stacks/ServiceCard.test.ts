@@ -21,6 +21,11 @@ describe('ServiceCard', () => {
     expect(within(volumes).getByText('—')).toBeTruthy();
   });
 
+  it('links the container name to its container page', () => {
+    render(ServiceCard, { ...props, service: svc() });
+    expect(screen.getByRole('link', { name: 'web-app-1' }).getAttribute('href')).toBe('/containers/web-app-1');
+  });
+
   it('links Logs to the preselected service', () => {
     render(ServiceCard, { ...props, service: svc() });
     expect(screen.getByRole('link', { name: 'Logs' }).getAttribute('href')).toBe('/stacks/web?tab=logs&service=app');

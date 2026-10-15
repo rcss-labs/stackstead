@@ -26,6 +26,11 @@ describe('hostTiles', () => {
     expect(ids).toEqual(['cpu', 'memory', 'disk', 'network', 'diskio', 'uptime']);
   });
 
+  it('only the containers tile links, to /containers', () => {
+    const tiles = hostTiles(host());
+    expect(tiles.filter((t) => t.href).map((t) => [t.id, t.href])).toEqual([['containers', '/containers']]);
+  });
+
   it('docker source shows containers only sub-line', () => {
     const h = host({ source: 'docker' });
     expect(byId(h, 'cpu')?.sub).toBe('containers only');
