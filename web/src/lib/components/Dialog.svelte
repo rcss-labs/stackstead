@@ -124,20 +124,22 @@
     display: grid;
     place-items: center;
     padding: var(--space-4);
-    background: rgb(0 0 0 / 0.5);
+    background: rgba(0, 0, 0, 0.5);
     z-index: 200;
   }
   .dialog {
     width: min(32rem, 100%);
     max-height: 100%;
     overflow: auto;
-    padding: var(--space-5);
+    padding: 20px;
     background: var(--surface);
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-pop);
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
   }
+  .dialog :global(h2) { font-size: 14px; font-weight: 600; }
 </style>

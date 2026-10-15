@@ -36,11 +36,12 @@
 
 <div class="cluster" role="group" aria-label="Actions for {stack.name}">
   {#each ACTIONS as action (action)}
-    <Button variant={action === 'up' ? 'primary' : 'secondary'} disabledReason={reason} onclick={() => onact(action)}>
+    <Button variant={action === 'up' ? 'primary' : 'secondary'} size="sm" disabledReason={reason} onclick={() => onact(action)}>
+      {#if action === 'up'}<span aria-hidden="true">▶</span>{/if}
       {label(action)}
     </Button>
   {/each}
-  <Button variant="danger" disabledReason={busy ? 'an operation is already running' : undefined} onclick={openConfirm}>Remove</Button>
+  <Button variant="danger" size="sm" disabledReason={busy ? 'an operation is already running' : undefined} onclick={openConfirm}>Remove</Button>
 </div>
 
 <ConfirmDialog

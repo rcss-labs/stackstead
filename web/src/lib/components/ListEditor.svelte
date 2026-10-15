@@ -92,10 +92,15 @@
   .cell :global(input) { flex: 1; min-width: 0; }
   .error { color: var(--danger); font-size: 0.875rem; overflow-wrap: anywhere; }
   button {
-    padding: var(--space-1) var(--space-3);
-    background: var(--raised);
+    background: transparent;
+    color: var(--muted);
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius);
+    font: inherit;
+    font-size: 12px;
     cursor: pointer;
   }
+  button:hover { background: var(--hover); color: var(--text); }
+  button[data-remove] { flex: none; width: 30px; height: 30px; font-size: 16px; line-height: 1; }
+  .add { height: 24px; padding: 0 8px; }
 </style>

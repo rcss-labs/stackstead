@@ -33,7 +33,7 @@
   <div class="cluster actions">
     <!-- Cancel comes first so initial focus never lands on the destructive action. -->
     <Button variant="secondary" onclick={oncancel}>Cancel</Button>
-    <Button variant={danger ? 'danger' : 'primary'} onclick={onconfirm}>{confirmLabel}</Button>
+    <Button variant={danger ? 'danger' : 'primary'} confirm={danger} onclick={onconfirm}>{confirmLabel}</Button>
   </div>
 </Dialog>
 

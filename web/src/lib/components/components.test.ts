@@ -271,6 +271,14 @@ describe('Field', () => {
     expect(describedText(el)).toContain('Set by an anchor');
   });
 
+  it('mono applies to the control through the wrapper class', async () => {
+    const { rerender } = render(FieldFixture, { reveal: true });
+    const wrapper = (await screen.findByLabelText('Name')).closest('.field')!;
+    expect(wrapper.classList.contains('mono')).toBe(false);
+    await rerender({ mono: true });
+    expect(wrapper.classList.contains('mono')).toBe(true);
+  });
+
   it('never clears a read-only control the caller made read-only itself', () => {
     render(Field, { label: 'Fixed', id: 'name', children: fixedReadonly });
     expect((screen.getByLabelText('Fixed') as HTMLInputElement).readOnly).toBe(true);
@@ -325,23 +333,71 @@ describe('Button', () => {
   });
 });
 
+describe('Button v2', () => {
+  it('applies size classes and defaults to md', () => {
+    render(Button, { variant: 'secondary', size: 'sm', children: html('<span>Small</span>') });
+    expect(screen.getByRole('button', { name: 'Small' }).classList.contains('sm')).toBe(true);
+    render(Button, { variant: 'secondary', children: html('<span>Default</span>') });
+    expect(screen.getByRole('button', { name: 'Default' }).classList.contains('md')).toBe(true);
+  });
+
+  it('icon button keeps aria-label as its name', () => {
+    render(Button, { variant: 'ghost', icon: true, 'aria-label': 'Refresh', children: html('<span aria-hidden="true">↻</span>') });
+    const btn = screen.getByRole('button', { name: 'Refresh' });
+    expect(btn.classList.contains('icon')).toBe(true);
+  });
+
+  it('danger is outlined by default and filled inside ConfirmDialog', () => {
+    render(Button, { variant: 'danger', children: html('<span>Delete</span>') });
+    expect(screen.getByRole('button', { name: 'Delete' }).classList.contains('confirm')).toBe(false);
+    render(ConfirmDialog, { open: true, title: 'Sure?', message: 'm', confirmLabel: 'Remove it', danger: true, onconfirm: () => {}, oncancel: () => {} });
+    expect(screen.getByRole('button', { name: 'Remove it' }).classList.contains('confirm')).toBe(true);
+  });
+});
+
 describe('StatusBadge', () => {
   it.each([
-    ['running', 'running'],
-    ['partial', 'partial'],
-    ['stopped', 'stopped'],
-    ['unavailable', 'unavailable'],
-    ['unknown', 'unknown'],
-    ['succeeded', 'succeeded'],
-    ['failed', 'failed'],
-    ['cancelled', 'cancelled'],
-    ['timed_out', 'timed out'],
-  ] as const)('renders text for %s', (status, text) => {
+    ['running', 'running', 'success'],
+    ['succeeded', 'succeeded', 'success'],
+    ['healthy', 'healthy', 'success'],
+    ['partial', 'partial', 'warning'],
+    ['timed_out', 'timed out', 'warning'],
+    ['starting', 'starting', 'warning'],
+    ['restarting', 'restarting', 'warning'],
+    ['stopped', 'stopped', 'muted'],
+    ['cancelled', 'cancelled', 'muted'],
+    ['unknown', 'unknown', 'muted'],
+    ['exited', 'exited', 'muted'],
+    ['none', 'none', 'muted'],
+    ['unavailable', 'unavailable', 'danger'],
+    ['failed', 'failed', 'danger'],
+    ['unhealthy', 'unhealthy', 'danger'],
+  ] as const)('%s renders %s in the %s tone', (status, text, tone) => {
     render(StatusBadge, { status });
     const badge = screen.getByText(text);
-    expect(badge).toBeTruthy();
-    // an icon glyph accompanies the text and is hidden from AT
-    expect(badge.parentElement?.querySelector('[aria-hidden="true"]')?.textContent?.length).toBeGreaterThan(0);
+    expect(badge.classList.contains(tone)).toBe(true);
+  });
+
+  it('renders no decorative glyph', () => {
+    const { container } = render(StatusBadge, { status: 'running' });
+    expect(container.querySelector('[aria-hidden]')).toBeNull();
+    expect(container.textContent).toBe('running');
+  });
+});
+
+describe('Tabs badges', () => {
+  it('renders badges after the label and keeps roving tabindex', () => {
+    render(Tabs, {
+      tabs: [{ id: 'a', label: 'Alpha', badge: 3 }, { id: 'b', label: 'Beta' }],
+      selected: 'a',
+      onselect: () => {},
+    });
+    const alpha = screen.getByRole('tab', { name: /^Alpha/ });
+    expect(alpha.textContent).toMatch(/Alpha\s*3/);
+    expect(alpha.querySelector('.badge')?.textContent).toBe('3');
+    expect(alpha.querySelector('[aria-hidden]')).toBeNull();
+    expect(alpha.getAttribute('tabindex')).toBe('0');
+    expect(screen.getByRole('tab', { name: 'Beta' }).getAttribute('tabindex')).toBe('-1');
   });
 });
 
