@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, type Snippet } from 'svelte';
   import { api, ApiError } from '../api/client';
   import Banner from '../components/Banner.svelte';
   import Button from '../components/Button.svelte';
   import Field from '../components/Field.svelte';
   import { toasts } from '../stores/toasts';
+
+  let { actions }: { actions?: Snippet } = $props();
 
   const MIN_LENGTH = 12;
 
@@ -79,6 +81,7 @@
     </Banner>
     <div><Button variant="secondary" onclick={unlock}>Try again</Button></div>
   {/if}
+  <div class="fields">
   <Field label="Current password" id="pw-current" error={currentError}>
     {#snippet children(c)}
       <input type="password" autocomplete="current-password" bind:value={current} bind:this={currentInput} disabled={Boolean(rateLimited)} {...c} />
@@ -94,7 +97,13 @@
       <input type="password" autocomplete="new-password" bind:value={confirm} disabled={Boolean(rateLimited)} {...c} />
     {/snippet}
   </Field>
-  <div>
+  </div>
+  <div class="cluster">
     <Button variant="primary" type="submit" loading={busy} disabled={!ready || Boolean(rateLimited)}>Change password</Button>
+    {@render actions?.()}
   </div>
 </form>
+
+<style>
+  .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-3); align-items: start; }
+</style>

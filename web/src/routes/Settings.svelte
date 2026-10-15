@@ -8,6 +8,7 @@
   import CopyButton from '../lib/components/CopyButton.svelte';
   import Spinner from '../lib/components/Spinner.svelte';
   import PasswordForm from '../lib/settings/PasswordForm.svelte';
+  import { density, setDensity, setTheme, theme, type Density, type ThemeChoice } from '../lib/stores/appearance';
   import { live, refreshStatus } from '../lib/stores/live';
   import { toasts } from '../lib/stores/toasts';
 
@@ -84,6 +85,30 @@
     if (!ok) toasts.push({ kind: 'warning', message: 'Logout may not have completed on the server.' });
   }
 
+  const themeOptions: { value: ThemeChoice; label: string }[] = [
+    { value: 'dark', label: 'Dark' },
+    { value: 'light', label: 'Light' },
+    { value: 'system', label: 'System' },
+  ];
+  const densityOptions: { value: Density; label: string }[] = [
+    { value: 'compact', label: 'Compact' },
+    { value: 'comfortable', label: 'Comfortable' },
+  ];
+
+  const dockerText = $derived(
+    $live.docker === 'ok' ? ($live.dockerVersion ? `${$live.dockerVersion} · ok` : 'ok') : 'unavailable',
+  );
+  const dockerTone = $derived($live.docker === 'ok' ? 'success' : 'danger');
+  const composeTone = $derived($live.compose === 'unknown' || $live.compose === 'unavailable' ? 'muted' : 'success');
+  const eventsTone = $derived($live.events === 'connected' ? 'success' : $live.events === 'disconnected' ? 'danger' : 'muted');
+  const metricsText = $derived(
+    $live.metricsDegraded
+      ? 'degraded'
+      : $live.metricsIntervalSeconds
+        ? `ok · ${$live.metricsIntervalSeconds} s`
+        : 'ok',
+  );
+
   $effect(() => {
     void loadStatus();
     return () => {
@@ -92,11 +117,30 @@
   });
 </script>
 
-<section class="stack">
+<section class="page">
   <h1>Settings</h1>
 
-  <section class="stack" aria-labelledby="metrics-h">
-    <h2 id="metrics-h">Prometheus token</h2>
+  <section class="card" aria-labelledby="status-h">
+    <header><h2 id="status-h">System status</h2></header>
+    <div class="body stack">
+      <dl class="grid status">
+        <div><dt>Docker</dt><dd data-testid="status-docker" class="mono {dockerTone}"><span class="dot"></span>{dockerText}</dd></div>
+        <div><dt>Compose</dt><dd data-testid="status-compose" class="mono {composeTone}"><span class="dot"></span>{$live.compose}</dd></div>
+        <div><dt>Events</dt><dd data-testid="status-events" class="mono {eventsTone}"><span class="dot"></span>{$live.events}</dd></div>
+        <div><dt>Metrics</dt><dd data-testid="status-metrics" class="mono {$live.metricsDegraded ? 'warning' : 'success'}"><span class="dot"></span>{metricsText}</dd></div>
+      </dl>
+      <div><Button variant="secondary" size="sm" onclick={() => void refreshStatus()}>Refresh</Button></div>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="metrics-h">
+    <header>
+      <h2 id="metrics-h">Prometheus token</h2>
+      {#if status.state === 'ready'}
+        <span class="pill" class:on={status.configured}>{status.configured ? 'configured' : 'not configured'}</span>
+      {/if}
+    </header>
+    <div class="body stack">
     {#if status.state === 'loading'}
       <Spinner />
     {:else if status.state === 'error'}
@@ -129,33 +173,43 @@
         <div><Button variant="primary" loading={busy} onclick={createToken}>Create token</Button></div>
       {/if}
     {/if}
+    </div>
+    <footer>Scraping setup: docs/api.md (section “Prometheus”).</footer>
   </section>
 
-  <section class="stack" aria-labelledby="status-h">
-    <h2 id="status-h">System status</h2>
-    <dl>
-      <dt>Docker</dt><dd data-testid="status-docker">{$live.docker}</dd>
-      <dt>Compose</dt><dd data-testid="status-compose">{$live.compose}</dd>
-      <dt>Events</dt><dd data-testid="status-events">{$live.events}</dd>
-      <dt>Metrics</dt><dd data-testid="status-metrics">{$live.metricsDegraded ? 'degraded' : 'ok'}</dd>
-    </dl>
-    <div><Button variant="secondary" onclick={() => void refreshStatus()}>Refresh</Button></div>
+  <section class="card" aria-labelledby="appearance-h">
+    <header><h2 id="appearance-h">Appearance</h2></header>
+    <div class="body grid appearance">
+      <div class="stack">
+        <span class="label" id="theme-label">Theme</span>
+        <div class="segmented" role="group" aria-labelledby="theme-label">
+          {#each themeOptions as o (o.value)}
+            <button type="button" aria-pressed={$theme === o.value} onclick={() => setTheme(o.value)}>{o.label}</button>
+          {/each}
+        </div>
+      </div>
+      <div class="stack">
+        <span class="label" id="density-label">Density</span>
+        <div class="segmented" role="group" aria-labelledby="density-label">
+          {#each densityOptions as o (o.value)}
+            <button type="button" aria-pressed={$density === o.value} onclick={() => setDensity(o.value)}>{o.label}</button>
+          {/each}
+        </div>
+      </div>
+    </div>
   </section>
 
-  <section class="stack" aria-labelledby="account-h">
-    <h2 id="account-h">Account</h2>
-    <p>Signed in as <strong>{$session.username ?? 'unknown'}</strong></p>
-    <div><Button variant="secondary" onclick={doLogout}>Log out</Button></div>
-    <h3>Change password</h3>
-    <PasswordForm />
-  </section>
-
-  <section class="stack" aria-labelledby="about-h">
-    <h2 id="about-h">About</h2>
-    <p>
-      See docs/api.md (section “Prometheus”) for scraping setup, and docs/security.md for remote access through a
-      reverse proxy and how Stackstead protects access.
-    </p>
+  <section class="card" aria-labelledby="account-h">
+    <header><h2 id="account-h">Account</h2></header>
+    <div class="body stack">
+      <p>Signed in as <strong>{$session.username ?? 'unknown'}</strong>. Changing the password signs out other sessions.</p>
+      <PasswordForm>
+        {#snippet actions()}
+          <Button variant="secondary" onclick={doLogout}>Log out</Button>
+        {/snippet}
+      </PasswordForm>
+    </div>
+    <footer>Remote access and hardening: docs/security.md.</footer>
   </section>
 </section>
 
@@ -179,9 +233,35 @@
 />
 
 <style>
+  .page { display: flex; flex-direction: column; gap: var(--space-4); max-width: 720px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow); }
+  .card header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .card h2 { margin: 0; font-size: 13px; font-weight: 600; }
+  .body { padding: 12px 14px; font-size: 12.5px; }
+  .body p { margin: 0; }
+  .card footer { padding: 8px 14px; border-top: 1px solid var(--border); color: var(--faint); font-size: 12px; }
+  .pill { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em; color: var(--muted); }
+  .pill.on { color: var(--success); }
+  .grid { display: grid; gap: var(--space-3) var(--space-4); }
+  .status { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: 0; }
+  .appearance { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+  dt, .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.02em; }
+  dd { margin: 2px 0 0; min-width: 0; overflow-wrap: anywhere; display: flex; align-items: center; gap: 7px; }
+  .mono { font-family: var(--mono); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--tone, var(--muted)); flex: none; }
+  .success { --tone: var(--success); }
+  .warning { --tone: var(--warning); }
+  .danger { --tone: var(--danger); }
+  .muted { --tone: var(--muted); }
+  .segmented { display: inline-flex; }
+  .segmented button {
+    height: 26px; padding: 0 12px; font: inherit; font-size: 12px; color: var(--text);
+    background: var(--surface); border: 1px solid var(--border-strong); margin-left: -1px; cursor: pointer;
+  }
+  .segmented button:first-child { margin-left: 0; border-radius: var(--radius) 0 0 var(--radius); }
+  .segmented button:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+  .segmented button:hover { background: var(--hover); }
+  .segmented button[aria-pressed='true'] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); position: relative; font-weight: 600; }
   input[readonly] { flex: 1; min-width: 0; font-family: var(--mono, monospace); }
-  pre { overflow-x: auto; padding: var(--space-3); background: var(--raised); border-radius: var(--radius-md); }
-  dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-1) var(--space-4); }
-  dt { font-weight: 600; }
-  dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+  pre { overflow-x: auto; margin: 0; padding: var(--space-3); background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-md); }
 </style>
