@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { StackSummary } from '$lib/api/types';
-import { chipCounts, filterStacks, healthCell, portChips } from './summary';
+import type { ContainerInfo, ServiceDetail, StackSummary } from '$lib/api/types';
+import { chipCounts, filterStacks, healthCell, portChips, serviceState } from './summary';
 
 const zero = { healthy: 0, unhealthy: 0, starting: 0, none: 0, failed: 0 };
 const stack = (name: string, over: Partial<StackSummary> = {}): StackSummary => ({
@@ -63,5 +63,32 @@ describe('chipCounts', () => {
       unavailable: 0,
       unknown: 0,
     });
+  });
+});
+
+describe('serviceState', () => {
+  const ctr = (over: Partial<ContainerInfo> = {}): ContainerInfo => ({
+    id: 'c1',
+    name: 'web-app-1',
+    service: 'app',
+    state: 'running',
+    status: 'Up 2 minutes',
+    health: 'none',
+    ...over,
+  });
+  const svc = (containers: ContainerInfo[]): ServiceDetail => ({ name: 'app', config: { limits: {} }, readOnly: [], containers });
+
+  it.each([
+    ['running healthy', [ctr({ health: 'healthy', status: 'Up 2 minutes (healthy)' })], 'success', 'healthy · Up 2 minutes (healthy)'],
+    ['running without healthcheck', [ctr()], 'success', 'Up 2 minutes'],
+    ['one unhealthy', [ctr(), ctr({ id: 'c2', health: 'unhealthy', status: 'Up 1m (unhealthy)' })], 'danger', 'Up 2 minutes'],
+    ['restarting', [ctr({ state: 'restarting', status: 'Restarting (1) 5s ago' })], 'danger', 'Restarting (1) 5s ago'],
+    ['dead', [ctr({ state: 'dead', status: 'Dead' })], 'danger', 'Dead'],
+    ['exited(1)', [ctr({ state: 'exited', status: 'Exited (1) 3 minutes ago' })], 'danger', 'Exited (1) 3 minutes ago'],
+    ['all exited(0)', [ctr({ state: 'exited', status: 'Exited (0) 3 minutes ago' })], 'muted', 'Exited (0) 3 minutes ago'],
+    ['starting', [ctr({ health: 'starting', status: 'Up 3s (health: starting)' })], 'warning', 'starting · Up 3s (health: starting)'],
+    ['no containers', [], 'muted', 'No containers'],
+  ] as const)('%s', (_, containers, tone, text) => {
+    expect(serviceState(svc([...containers]))).toEqual({ tone, text });
   });
 });

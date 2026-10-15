@@ -99,9 +99,9 @@ describe('StackDetail', () => {
     expect(await screen.findByRole('heading', { name: 'web' })).toBeTruthy();
     expect(screen.getByText('managed')).toBeTruthy();
     expect(screen.getByText('/srv/stacks/web/compose.yaml')).toBeTruthy();
-    const tabs = screen.getAllByRole('tab').map((t) => t.textContent);
+    const tabs = screen.getAllByRole('tab').map((t) => t.textContent?.replace(/\d+$/, ''));
     expect(tabs).toEqual(['Services', 'Compose', 'Logs', 'Metrics', 'Operations']);
-    expect(screen.getByRole('tab', { name: 'Services' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: /^Services/ }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByText('web-app-1')).toBeTruthy();
     expect(screen.getByText('nginx:1')).toBeTruthy();
   });
@@ -121,7 +121,7 @@ describe('StackDetail', () => {
     render(StackDetail, { name: 'web' });
     await waitFor(() => expect(streamed('/api/stacks/web/logs')).toBe(true));
     const signal = stream.requests.find((r) => r.path.startsWith('/api/stacks/web/logs'))!.signal!;
-    await user().click(screen.getByRole('tab', { name: 'Services' }));
+    await user().click(screen.getByRole('tab', { name: /^Services/ }));
     expect(await screen.findByText('web-app-1')).toBeTruthy();
     expect(get(route).query.get('tab')).toBe('services');
     await waitFor(() => expect(signal.aborted).toBe(true));
@@ -167,7 +167,7 @@ describe('StackDetail', () => {
     stackRes = { body: detail({ status: 'unavailable', parseError: 'yaml: line 3: mapping values are not allowed', services: [] }) };
     render(StackDetail, { name: 'web' });
     await screen.findByRole('heading', { name: 'web' });
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Compose', 'Operations']);
+    expect(screen.getAllByRole('tab').map((t) => t.textContent?.replace(/\d+$/, ''))).toEqual(['Compose', 'Operations']);
     expect(screen.getByRole('tab', { name: 'Compose' }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getAllByText(/mapping values are not allowed/).length).toBeGreaterThan(0);
     expect(await screen.findByRole('textbox', { name: /compose file/i })).toBeTruthy();
@@ -316,5 +316,99 @@ describe('StackDetail', () => {
     startLive({ fetchStatus: () => fetch('/api/status').then((r) => r.json()) });
     await waitFor(() => expect(get(route).path).toBe('/'));
     expect(get(toasts).filter((t) => t.kind === 'success')).toHaveLength(1);
+  });
+
+  describe('v2 layout', () => {
+    const liveRequests = () => stream.requests.filter((r) => r.path.startsWith('/api/stacks/web/metrics/live'));
+    const wide = () => vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    afterEach(() => vi.unstubAllGlobals());
+
+    it('aside hidden below 1100 px', async () => {
+      render(StackDetail, { name: 'web' });
+      await screen.findByRole('heading', { name: 'web' });
+      expect(screen.queryByRole('complementary', { name: 'Stack summary' })).toBeNull();
+    });
+
+    it('aside shown at 1100 px and wider', async () => {
+      wide();
+      render(StackDetail, { name: 'web' });
+      expect(await screen.findByRole('complementary', { name: 'Stack summary' })).toBeTruthy();
+    });
+
+    it('no live stream when narrow and not on Metrics', async () => {
+      render(StackDetail, { name: 'web' });
+      await screen.findByRole('heading', { name: 'web' });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(liveRequests()).toHaveLength(0);
+    });
+
+    it('one stream shared by aside and Metrics tab', async () => {
+      wide();
+      render(StackDetail, { name: 'web' });
+      await screen.findByRole('complementary', { name: 'Stack summary' });
+      await waitFor(() => expect(liveRequests()).toHaveLength(1));
+      await user().click(screen.getByRole('tab', { name: 'Metrics' }));
+      expect(await screen.findByRole('region', { name: 'Resource metrics' })).toBeTruthy();
+      await new Promise((r) => setTimeout(r, 30));
+      expect(liveRequests()).toHaveLength(1);
+      expect(liveRequests()[0].signal!.aborted).toBe(false);
+    });
+
+    it('stream closes when leaving both', async () => {
+      navigate('/stacks/web?tab=metrics');
+      render(StackDetail, { name: 'web' });
+      await waitFor(() => expect(liveRequests()).toHaveLength(1));
+      const signal = liveRequests()[0].signal!;
+      await user().click(await screen.findByRole('tab', { name: /^Services/ }));
+      await waitFor(() => expect(signal.aborted).toBe(true));
+    });
+
+    it('stream closes when the page is destroyed', async () => {
+      wide();
+      const { unmount } = render(StackDetail, { name: 'web' });
+      await waitFor(() => expect(liveRequests()).toHaveLength(1));
+      const signal = liveRequests()[0].signal!;
+      unmount();
+      await waitFor(() => expect(signal.aborted).toBe(true));
+    });
+
+    it('Logs button preselects the service', async () => {
+      render(StackDetail, { name: 'web' });
+      await user().click(await screen.findByRole('link', { name: 'Logs' }));
+      expect(get(route).query.get('tab')).toBe('logs');
+      expect(get(route).query.get('service')).toBe('app');
+      expect(((await screen.findByLabelText('Service')) as HTMLSelectElement).value).toBe('app');
+    });
+
+    it('the Logs button asks before discarding an open service editor', async () => {
+      stackRes = {
+        body: detail({
+          serviceCount: 2,
+          services: [
+            ...detail().services,
+            { name: 'db', config: { image: 'pg:1', limits: {} }, readOnly: [], containers: [] },
+          ],
+        }),
+      };
+      render(StackDetail, { name: 'web' });
+      await user().click(await screen.findByRole('button', { name: 'Edit app' }));
+      const image = (await screen.findByLabelText('Image')) as HTMLInputElement;
+      await user().type(image, 'x');
+      await user().click(screen.getByRole('link', { name: 'Logs' }));
+      expect(await screen.findByRole('alertdialog')).toBeTruthy();
+      expect(get(route).query.get('tab')).toBeNull();
+    });
+
+    it('tab badges show service and operation counts', async () => {
+      opsRes = [op({ state: 'succeeded' }), op({ id: 'op0', state: 'failed' })];
+      render(StackDetail, { name: 'web' });
+      expect(await screen.findByRole('tab', { name: /^Services\s?1$/ })).toBeTruthy();
+      expect(await screen.findByRole('tab', { name: /^Operations\s?2$/ })).toBeTruthy();
+    });
+
+    it('copy path button', async () => {
+      render(StackDetail, { name: 'web' });
+      expect(await screen.findByRole('button', { name: 'Copy path' })).toBeTruthy();
+    });
   });
 });

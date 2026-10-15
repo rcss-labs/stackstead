@@ -282,7 +282,7 @@
   {/if}
 
   <!-- Kept mounted (hidden) while previewing so focus, scroll and the form values survive. -->
-  <div hidden={$phase === 'previewing' || $phase === 'saving'} inert={$phase === 'busy'}>
+  <div class="form-card" hidden={$phase === 'previewing' || $phase === 'saving'} inert={$phase === 'busy'}>
     <ServiceForm
       bind:this={serviceForm}
       bind:form
@@ -344,4 +344,6 @@
   .msg { overflow-wrap: anywhere; white-space: pre-wrap; }
   h3 { margin: 0; }
   [hidden] { display: none; }
+  /* ServiceForm pads and separates its sections itself and expects a card around it (as on New stack). */
+  .form-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
 </style>

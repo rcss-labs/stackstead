@@ -1,6 +1,9 @@
 import type { StackStatus } from '$lib/api/types';
 import type { LiveState } from '$lib/stores/live';
 
+/** Shown while another operation holds the stack. */
+export const BUSY_REASON = 'an operation is already running';
+
 export interface LifecycleInput {
   live: Pick<LiveState, 'compose' | 'docker' | 'events'>;
   status?: StackStatus;
@@ -14,6 +17,6 @@ export function lifecycleDisabledReason(input: LifecycleInput): string | undefin
   if (live.compose === 'unavailable') return 'docker compose plugin not found';
   if (live.docker === 'unavailable' || live.events === 'disconnected') return 'Docker is unreachable';
   if (parseError || status === 'unavailable') return 'the compose file cannot be parsed';
-  if (busy) return 'an operation is already running';
+  if (busy) return BUSY_REASON;
   return undefined;
 }
