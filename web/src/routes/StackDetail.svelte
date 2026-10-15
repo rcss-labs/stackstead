@@ -6,17 +6,24 @@
   import Button from '$lib/components/Button.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import RelativeTime from '$lib/components/RelativeTime.svelte';
+  import CopyButton from '$lib/components/CopyButton.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import Tabs from '$lib/components/Tabs.svelte';
   import { link, navigate, route } from '$lib/router';
+  import { ICONS } from '$lib/shell/icons';
   import ActionsBar from '$lib/stacks/ActionsBar.svelte';
+  import { lifecycleDisabledReason } from '$lib/stacks/lifecycle';
+  import { createStackLiveMetrics } from '$lib/stacks/liveMetrics';
   import LogsViewer from '$lib/stacks/LogsViewer.svelte';
   import OperationPanel from '$lib/stacks/OperationPanel.svelte';
+  import OperationsList from '$lib/stacks/OperationsList.svelte';
+  import ServiceCard from '$lib/stacks/ServiceCard.svelte';
+  import StackAside from '$lib/stacks/StackAside.svelte';
   import { debounce } from '$lib/stores/debounce';
   import { changes, live, refreshStatus } from '$lib/stores/live';
   import { setUnsavedChanges } from '$lib/stores/guard';
+  import { mediaQuery } from '$lib/stores/media';
   import { operationsRefresh, refreshRunningOps, refreshStacks } from '$lib/stores/stacks';
   import { toasts } from '$lib/stores/toasts';
 
@@ -52,8 +59,13 @@
   // A parse error means the structured views are meaningless: raw editor only.
   const missingFile = $derived(!!parseError && /no such file|not exist|not found|cannot find/i.test(parseError));
   const tabs = $derived.by(() => {
-    if (!parseError) return ALL_TABS;
-    return ALL_TABS.filter((t) => (t.id === 'compose' && !missingFile) || t.id === 'operations');
+    const visible = parseError
+      ? ALL_TABS.filter((t) => (t.id === 'compose' && !missingFile) || t.id === 'operations')
+      : ALL_TABS;
+    return visible.map((t) => ({
+      ...t,
+      badge: t.id === 'services' ? detail?.serviceCount : t.id === 'operations' ? operations.length : undefined,
+    }));
   });
   const requested = $derived($route.query.get('tab'));
   const activeTab = $derived<TabId>(
@@ -77,11 +89,19 @@
   });
 
   const hasRunning = $derived(operations.some((o) => o.state === 'running'));
-  const lifecycleReason = $derived.by(() => {
-    if ($live.compose === 'unavailable') return 'docker compose plugin not found';
-    if ($live.docker === 'unavailable' || $live.events === 'disconnected') return 'Docker is unreachable';
-    if (parseError) return 'the compose file cannot be parsed';
-    return undefined;
+  const lifecycleReason = $derived(lifecycleDisabledReason({ live: $live, parseError }));
+
+  // One live-metrics stream for the whole page, shared by the aside and the Metrics tab; it is open only
+  // while one of them is showing. The page is keyed by stack name, so the name is read once on purpose.
+  /* svelte-ignore state_referenced_locally */
+  const liveMetrics = createStackLiveMetrics(name);
+  onDestroy(() => liveMetrics.close());
+  const wide = mediaQuery('(min-width: 1100px)');
+  const asideShown = $derived($wide && !!detail && !parseError);
+  const needsLive = $derived(asideShown || activeTab === 'metrics');
+  $effect(() => {
+    if (!needsLive) return;
+    return liveMetrics.acquire();
   });
 
   $effect(() => {
@@ -273,8 +293,13 @@
     });
   }
 
-  const summary = (s: ServiceDetail) =>
-    [s.config.image ?? (s.config.build ? `build: ${s.config.build.context}` : ''), ...(s.config.ports ?? [])].filter(Boolean);
+  const serviceLogsHref = (service: string) => stackUrl({ tab: 'logs', service });
+  function openLogs(service: string) {
+    guarded(() => {
+      editingService = undefined;
+      navigate(serviceLogsHref(service));
+    });
+  }
 </script>
 
 {#snippet notFoundView()}
@@ -296,22 +321,27 @@
   {@const d = detail}
   <section class="detail">
     <header class="head">
-      <div class="title">
+      <div class="row1">
         <h1>{d.name}</h1>
         <StatusBadge status={d.status} />
+        <p class="meta">
+          {d.running}/{d.serviceCount} services up · <span>{d.origin}</span> · project <span class="mono">{d.project}</span>
+        </p>
+        <div class="actions">
+          <ActionsBar
+            stack={d}
+            lifecycleDisabledReason={lifecycleReason}
+            busy={hasRunning || acting}
+            onact={(a) => guarded(() => void startAction(a))}
+            onremove={(v) => guarded(() => void removeStack(v))}
+          />
+        </div>
       </div>
-      <dl class="meta">
-        <div><dt>Origin</dt><dd>{d.origin}</dd></div>
-        <div><dt>Project</dt><dd>{d.project}</dd></div>
-        <div><dt>Path</dt><dd class="path">{d.path}</dd></div>
-      </dl>
-      <ActionsBar
-        stack={d}
-        lifecycleDisabledReason={lifecycleReason}
-        busy={hasRunning || acting}
-        onact={(a) => guarded(() => void startAction(a))}
-        onremove={(v) => guarded(() => void removeStack(v))}
-      />
+      <div class="row2">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={ICONS.file}></path></svg>
+        <span class="mono path">{d.path}</span>
+        <CopyButton text={d.path} variant="icon" label="Copy path" />
+      </div>
     </header>
 
     {#if loadError}
@@ -326,6 +356,8 @@
       </Banner>
     {/if}
 
+    <div class="cols" class:with-aside={asideShown}>
+    <div class="main">
     <Tabs {tabs} selected={activeTab} onselect={selectTab} ariaLabel="Stack sections">
       {#snippet children(tab)}
         {#if tab === 'services'}
@@ -354,30 +386,13 @@
                   <Button variant="ghost" onclick={() => guarded(() => (editingService = undefined))}>Close editor</Button>
                 </p>
               {:else}
-                <article class="card" aria-label={svc.name}>
-                  <header class="cluster">
-                    <h2>{svc.name}</h2>
-                    <Button variant="secondary" aria-label="Edit {svc.name}" onclick={() => editService(svc)}>Edit</Button>
-                  </header>
-                  <ul class="summary">
-                    {#each summary(svc) as item (item)}<li><code>{item}</code></li>{/each}
-                    {#if svc.config.restart}<li>restart: <code>{svc.config.restart}</code></li>{/if}
-                  </ul>
-                  {#if svc.readOnly.length > 0}
-                    <p class="muted">
-                      Read-only in the form: {svc.readOnly.join(', ')}. Change these in the Compose tab.
-                    </p>
-                  {/if}
-                  {#if svc.containers.length === 0}
-                    <p class="muted">No containers.</p>
-                  {:else}
-                    <ul class="containers">
-                      {#each svc.containers as c (c.id)}
-                        <li><span>{c.name}</span> <span class="muted">{c.state}</span> <span class="muted">{c.status}</span></li>
-                      {/each}
-                    </ul>
-                  {/if}
-                </article>
+                <ServiceCard
+                  stack={d.name}
+                  service={svc}
+                  onedit={() => editService(svc)}
+                  logsHref={serviceLogsHref(svc.name)}
+                  onlogs={() => openLogs(svc.name)}
+                />
               {/if}
             {:else}
               <EmptyState title="No services" description="This compose file defines no services." />
@@ -400,35 +415,22 @@
           {/key}
         {:else if tab === 'logs'}
           {#key d.name}
-            <LogsViewer stackName={d.name} services={d.services.map((s) => s.name)} />
+            <LogsViewer stackName={d.name} services={d.services.map((s) => s.name)} service={$route.query.get('service') ?? undefined} />
           {/key}
         {:else if tab === 'metrics'}
           {#key d.name}
             {#await loadMetricsPanel()}
               <Spinner />
             {:then m}
-              <m.default stackName={d.name} metricsDegraded={$live.metricsDegraded} />
+              <m.default stackName={d.name} metricsDegraded={$live.metricsDegraded} live={liveMetrics}
+                metricsIntervalSeconds={$live.metricsIntervalSeconds}
+                metricsRetentionSeconds={$live.metricsRetentionSeconds}
+              />
             {/await}
           {/key}
         {:else if tab === 'operations'}
           <div class="ops">
-            {#if operations.length === 0}
-              <p class="muted">No operations yet.</p>
-            {:else}
-              <ul class="oplist">
-                {#each operations as o (o.id)}
-                  <li>
-                    <a
-                      href={stackUrl({ tab: 'operations', op: o.id })}
-                      use:link
-                      aria-current={o.id === selectedOp ? 'true' : undefined}>{o.action}</a
-                    >
-                    <StatusBadge status={o.state} />
-                    <RelativeTime iso={o.startedAt} />
-                  </li>
-                {/each}
-              </ul>
-            {/if}
+            <OperationsList {operations} selected={selectedOp} href={(id) => stackUrl({ tab: 'operations', op: id })} />
             {#if selectedOp}
               {#key selectedOp}
                 <OperationPanel operationId={selectedOp} oncancel={cancelOperation} onfinished={operationFinished} />
@@ -438,6 +440,17 @@
         {/if}
       {/snippet}
     </Tabs>
+    </div>
+    {#if asideShown}
+      <StackAside
+        detail={d}
+        {operations}
+        live={liveMetrics}
+        opsHref={stackUrl({ tab: 'operations' })}
+        opHref={(id) => stackUrl({ tab: 'operations', op: id })}
+      />
+    {/if}
+    </div>
   </section>
 {/if}
 
@@ -453,26 +466,19 @@
 
 <style>
   .detail { display: flex; flex-direction: column; gap: var(--space-4); }
-  .head { display: flex; flex-direction: column; gap: var(--space-3); }
-  .title { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
-  h1 { margin: 0; overflow-wrap: anywhere; }
-  .meta { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); margin: 0; }
-  .meta div { display: flex; gap: var(--space-2); min-width: 0; }
-  dt { color: var(--muted); }
-  dd { margin: 0; overflow-wrap: anywhere; }
-  .services { display: flex; flex-direction: column; gap: var(--space-4); }
-  .card {
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--surface-raised);
-    padding: var(--space-3) var(--space-4);
-  }
-  .card h2 { margin: 0; font-size: 1.1rem; }
-  .summary, .containers, .oplist { list-style: none; padding: 0; margin: var(--space-2) 0; display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
-  .containers { flex-direction: column; }
-  .oplist li { display: flex; align-items: center; gap: var(--space-3); }
-  .oplist { flex-direction: column; }
-  .ops { display: flex; flex-direction: column; gap: var(--space-4); }
-  .muted { color: var(--muted); }
+  .head { display: flex; flex-direction: column; gap: 10px; }
+  .row1 { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  h1 { margin: 0; font-family: var(--mono); font-size: 20px; font-weight: 600; overflow-wrap: anywhere; }
+  .meta { margin: 0; color: var(--muted); font-size: 12.5px; }
+  .actions { margin-inline-start: auto; }
+  .row2 { display: flex; align-items: flex-start; gap: 8px; color: var(--muted); font-size: 12.5px; min-width: 0; }
+  .row2 svg { flex: none; margin-top: 2px; }
+  .mono { font-family: var(--mono); }
+  .path { overflow-wrap: anywhere; min-width: 0; }
+  .cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+  .cols.with-aside { grid-template-columns: minmax(0, 1fr) 300px; }
+  .main { min-width: 0; }
+  .services { display: flex; flex-direction: column; gap: var(--space-3); padding-top: var(--space-3); }
+  .ops { display: flex; flex-direction: column; gap: var(--space-4); padding-top: var(--space-3); }
   .perr { white-space: pre-wrap; overflow-wrap: anywhere; margin: var(--space-2) 0; }
 </style>

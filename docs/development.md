@@ -19,12 +19,36 @@ not built, and logs a warning.
 
 | Command | Needs | What it does |
 | --- | --- | --- |
-| `make ui` | Node >= 22 | build the web UI into `web/dist` |
+| `make ui` | Node >= 22 | build the web UI into `web/dist` and enforce the bundle budgets (entry JS <= 120 kB gzipped, total JS <= 400 kB gzipped, fonts <= 200 kB) |
 | `make build` | Node >= 22, Go | UI, then the static binary in `bin/` |
 | `make test` | Go only | Go tests with the race detector; no Node |
 | `make check` | Node, Go | `go vet`, gofmt, UI type-check and unit tests, Go tests |
 | `make build-go` | Go only | the host binary without building the UI |
 | `make e2e` | Go (UI for the web part) | smoke tests against the real binary (see below) |
+
+## Fonts and theme
+
+The UI uses IBM Plex Sans (Regular, Medium, SemiBold) and Geist Mono (Regular,
+Medium), self-hosted as Latin-subset woff2 files in `web/src/assets/fonts/`.
+Nothing is loaded from a third-party origin. Both families are under the SIL
+Open Font License 1.1; the licence texts sit next to the fonts and are served
+at `/licenses/IBMPlexSans-OFL.txt` and `/licenses/GeistMono-OFL.txt` (from
+`web/public/licenses/`). The files come from the Fontsource npm packages: fetch
+them with `npm pack` (for example `npm pack @fontsource/ibm-plex-sans`) and copy
+the `latin` woff2 files, so no npm dependency is added. `make ui` fails when the
+built `dist/assets/*.woff2` files exceed `FONT_BUDGET` (200 kB, in
+`web/scripts/check-bundle.mjs`).
+
+`web/public/` holds the files served as they are, at the site root:
+
+- `theme.js`: a classic script loaded first in `<head>` that sets
+  `data-theme` and `data-density` on `<html>` from `localStorage` before the
+  first paint. It is served with `Cache-Control: no-cache`. A `?theme=dark` or
+  `?theme=light` query overrides the theme for that page load only and is never
+  saved; the e2e render uses it.
+- `favicon.svg`, `logo-art.png` and `containers.png`: the favicon, the artwork
+  of the login and setup pages, and the logo in the navigation rail.
+- `licenses/`: the two font licences.
 
 ## Dev loop
 
@@ -50,7 +74,11 @@ change. It also creates, starts, observes (logs ids, metrics history) and
 removes a throwaway `e2e-smoke-*` stack when Docker is available, and renders
 the login page in headless Chrome when a Chrome/Chromium is found (set
 `STACKSTEAD_E2E_CHROME` to choose one). Those two parts skip cleanly when
-Docker or Chrome is missing.
+Docker or Chrome is missing. The render covers both themes (`?theme=dark` and
+`?theme=light`) at 375x812 and 1280x800: it takes a screenshot of each, checks
+`data-theme` in the DOM dump and that the page background pixel equals `--bg`
+of the theme. The e2e also checks that `/theme.js` is served as JavaScript with
+`no-cache` and that a font preloaded by `index.html` is served as `font/woff2`.
 
 The same target runs the CLI end to end (`cmd/stackstead/cli_e2e_test.go`):
 it builds the binary with a version stamp and drives it as separate processes

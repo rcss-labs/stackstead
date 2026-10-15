@@ -9,7 +9,7 @@
     ariaLabel,
     activation = 'manual',
   }: {
-    tabs: { id: string; label: string }[];
+    tabs: { id: string; label: string; badge?: string | number }[];
     selected: string;
     /** Return false to refuse the change (focus then stays put in automatic mode). */
     onselect: (id: string) => void | boolean;
@@ -59,13 +59,15 @@
       bind:this={buttons[tab.id]}
       type="button"
       role="tab"
+      aria-label={tab.badge === undefined ? undefined : `${tab.label}, ${tab.badge}`}
       id="{uid}-tab-{tab.id}"
       aria-selected={tab.id === selected}
       aria-controls="{uid}-panel"
       tabindex={tab.id === stop ? 0 : -1}
       onfocus={() => (focused = tab.id)}
       onclick={() => onselect(tab.id)}
-      onkeydown={(e) => onkeydown(e, i)}>{tab.label}</button
+      onkeydown={(e) => onkeydown(e, i)}
+      >{tab.label}{#if tab.badge !== undefined}<span class="badge">{tab.badge}</span>{/if}</button
     >
   {/each}
 </div>
@@ -78,16 +80,36 @@
     display: flex;
     gap: var(--space-1);
     overflow-x: auto;
+    overflow-y: hidden;
     border-bottom: 1px solid var(--border);
   }
   [role='tab'] {
-    padding: var(--space-2) var(--space-4);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 34px;
+    padding: 0 12px;
+    margin-bottom: -1px;
     background: none;
     border: 0;
-    border-bottom: 3px solid transparent;
+    border-bottom: 2px solid transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
     cursor: pointer;
     white-space: nowrap;
   }
-  [role='tab'][aria-selected='true'] { border-bottom-color: var(--accent); font-weight: 600; }
+  [role='tab']:hover { color: var(--text); }
+  [role='tab'][aria-selected='true'] { border-bottom-color: var(--accent); color: var(--text); }
+  .badge {
+    padding: 0 6px;
+    border-radius: var(--radius-sm);
+    background: var(--raised);
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+  }
   [role='tabpanel'] { padding-block: var(--space-4); }
 </style>

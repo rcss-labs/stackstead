@@ -6,14 +6,12 @@
     document.body.appendChild(node);
     return { destroy: () => node.remove() };
   }
-
-  const icon = { info: 'ℹ', success: '✔', warning: '⚠', danger: '✖' } as const;
 </script>
 
 <section class="toasts" aria-label="Notifications" aria-live="polite" use:portal>
   {#each $toasts as toast (toast.id)}
     <div class="toast {toast.kind}" role={toast.kind === 'danger' ? 'alert' : undefined}>
-      <span class="icon" aria-hidden="true">{icon[toast.kind]}</span>
+      <span class="dot" aria-hidden="true"></span>
       <span class="message">{toast.message}</span>
       <button type="button" aria-label="Dismiss notification" onclick={() => toasts.dismiss(toast.id)}>×</button>
     </div>
@@ -23,8 +21,8 @@
 <style>
   .toasts {
     position: fixed;
-    inset-block-end: var(--space-4);
-    inset-inline: var(--space-4);
+    inset-block-end: 16px;
+    inset-inline: 16px;
     display: flex;
     flex-direction: column;
     align-items: flex-end;
@@ -38,20 +36,23 @@
     gap: var(--space-3);
     align-items: center;
     max-width: min(28rem, 100%);
-    padding: var(--space-3) var(--space-4);
-    background: var(--surface-raised);
-    border: 1px solid var(--tone);
+    padding: 10px 14px;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
     border-radius: var(--radius-md);
-    box-shadow: 0 4px 16px rgb(0 0 0 / 0.2);
+    box-shadow: var(--shadow-pop);
+    font-size: 12.5px;
   }
   .info { --tone: var(--info); }
   .success { --tone: var(--success); }
   .warning { --tone: var(--warning); }
   .danger { --tone: var(--danger); }
-  .icon { color: var(--tone); }
+  .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--tone); }
   .message { overflow-wrap: anywhere; }
   button {
     background: none;
+    color: var(--muted);
     border: 0;
     cursor: pointer;
     font-size: 1.25rem;

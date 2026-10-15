@@ -1,10 +1,10 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error plain .mjs script without types
-import { ENTRY_BUDGET, measure, verdict } from '../scripts/check-bundle.mjs';
+import { ENTRY_BUDGET, FONT_BUDGET, measure, verdict } from '../scripts/check-bundle.mjs';
 
 function fakeDist(files: Record<string, number>, manifest: Record<string, unknown>) {
   const dir = mkdtempSync(join(tmpdir(), 'bundle-'));
@@ -49,5 +49,41 @@ describe('bundle budget', () => {
     };
     const dir = fakeDist({ 'assets/index.js': 100, 'assets/cm-abc.js': 100 }, eager);
     expect(verdict(measure(dir)).join()).toMatch(/lazy/);
+  });
+});
+
+describe('font budget', () => {
+  const manifest = { 'index.html': { file: 'assets/index.js', isEntry: true } };
+
+  it('counts woff2 bytes against FONT_BUDGET and keeps them out of entry/total', () => {
+    const dir = fakeDist({ 'assets/index.js': 1000, 'assets/a.woff2': 30000, 'assets/b.woff2': 20000 }, manifest);
+    const s = measure(dir);
+    expect(s.fonts).toBe(50000);
+    expect(s.entry).toBeLessThan(1200);
+    expect(s.total).toBeLessThan(1200);
+    expect(verdict(s)).toEqual([]);
+  });
+
+  it('fails when fonts exceed the budget', () => {
+    const dir = fakeDist({ 'assets/index.js': 100, 'assets/a.woff2': FONT_BUDGET + 1 }, manifest);
+    expect(verdict(measure(dir)).join()).toMatch(/fonts \d+ B exceeds \d+ B/);
+  });
+});
+
+describe('public logos', () => {
+  const pub = (name: string) => join(process.cwd(), 'public', name);
+  const pngWidth = (name: string) => readFileSync(pub(name)).readUInt32BE(16); // IHDR width
+
+  it('containers.png stays within its size cap at 68 px', () => {
+    expect(statSync(pub('containers.png')).size).toBeLessThanOrEqual(8192);
+    expect(pngWidth('containers.png')).toBe(68);
+  });
+
+  it('logo-art.png is 336 px wide', () => {
+    expect(pngWidth('logo-art.png')).toBe(336);
+  });
+
+  it('logo-art.png stays within its 40 960 B cap', () => {
+    expect(statSync(pub('logo-art.png')).size).toBeLessThanOrEqual(40960);
   });
 });

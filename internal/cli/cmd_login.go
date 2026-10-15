@@ -484,14 +484,17 @@ func statusCommand() *Command {
 				if serverVersion == "" {
 					serverVersion = "unknown"
 				}
-				for _, kv := range [][2]string{
-					{"docker", p.Status(cleanText(st.Docker))},
+				rows := [][2]string{{"docker", p.Status(cleanText(st.Docker))}}
+				if st.DockerVersion != "" {
+					rows = append(rows, [2]string{"docker version", cleanText(st.DockerVersion)})
+				}
+				for _, kv := range append(rows, [][2]string{
 					{"compose", p.Status(cleanText(st.Compose))},
 					{"events", p.Status(cleanText(st.Events))},
 					{"metrics", p.Status(metrics)},
 					{"server version", serverVersion},
 					{"client version", clientVersion},
-				} {
+				}...) {
 					fmt.Fprintf(env.Stdout, "%-16s %s\n", kv[0], kv[1])
 				}
 				return nil

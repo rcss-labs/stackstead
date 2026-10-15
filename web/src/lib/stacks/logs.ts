@@ -165,3 +165,10 @@ export function createLogStream(stackName: string, initial: LogStreamOptions, de
     },
   };
 }
+
+/** Display-only severity of a log line, from the markers Compose services commonly print. */
+export function lineTone(text: string): 'danger' | 'warning' | undefined {
+  if (text.includes('[Error]') || text.includes('ERROR')) return 'danger';
+  if (text.includes('[Warn]') || text.includes('WARN')) return 'warning';
+  return undefined;
+}

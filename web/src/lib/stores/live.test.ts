@@ -5,7 +5,15 @@ import { installFakeStream, type FakeStream } from '../../vitest-setup';
 import { changes, live, refreshStatus, startLive, stopLive } from './live';
 
 let fake: FakeStream;
-const status: Status = { docker: 'ok', compose: '2.29.0', events: 'connected', metricsDegraded: false };
+const status: Status = {
+  docker: 'ok',
+  dockerVersion: '27.1.1',
+  compose: '2.29.0',
+  events: 'connected',
+  metricsDegraded: false,
+  metricsIntervalSeconds: 10,
+  metricsRetentionSeconds: 259200,
+};
 let fetchStatus: ReturnType<typeof vi.fn<() => Promise<Status>>>;
 const tick = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
 
@@ -142,6 +150,25 @@ describe('live store', () => {
     await tick();
     await refreshStatus();
     expect(fetchStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it('refreshStatus fills dockerVersion and metrics settings', async () => {
+    fake = installFakeStream({ '/api/events': [] });
+    expect(get(live).dockerVersion).toBe('');
+    startLive({ fetchStatus });
+    await tick();
+    expect(get(live).dockerVersion).toBe('27.1.1');
+    expect(get(live).metricsIntervalSeconds).toBe(10);
+    expect(get(live).metricsRetentionSeconds).toBe(259200);
+  });
+
+  it('stopLive clears dockerVersion', async () => {
+    fake = installFakeStream({ '/api/events': [] });
+    startLive({ fetchStatus });
+    await tick();
+    stopLive();
+    expect(get(live).dockerVersion).toBe('');
+    expect(get(live).metricsIntervalSeconds).toBeUndefined();
   });
 
   it('a dropped right after open reconnects via backoff, not immediately', async () => {

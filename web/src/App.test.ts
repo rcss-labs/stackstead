@@ -161,7 +161,7 @@ describe('App routing and session', () => {
     await waitFor(() => expect(stream.requests).toHaveLength(1));
     await waitFor(() => expect(fake.calls.some((c) => c.path === '/api/status')).toBe(true));
     expect(screen.getByRole('navigation', { name: 'Main' })).toBeTruthy();
-    expect(screen.getByText('admin')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Log out' }).getAttribute('title')).toBe('admin · Log out');
   });
 
   it('shows a not-found view with a link home for unknown paths', async () => {

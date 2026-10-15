@@ -42,6 +42,16 @@ async function loaded(props: Record<string, unknown> = {}) {
 const edit = (ta: HTMLTextAreaElement, v: string) => fireEvent.input(ta, { target: { value: v } });
 
 describe('ComposeEditor', () => {
+  it('toolbar shows the file name and modified state', async () => {
+    const { ta } = await loaded({ composePath: '/srv/stacks/web/compose.yaml' });
+    expect(screen.getByText('compose.yaml')).toBeTruthy();
+    expect(screen.queryByText('· modified')).toBeNull();
+    expect(screen.getByText('⌘S / Ctrl+S to save')).toBeTruthy();
+    await edit(ta, 'a: 2\n');
+    expect(screen.getByText('· modified')).toBeTruthy();
+    expect(screen.getByText(/previous version as/).textContent).toContain('compose.yaml.bak');
+  });
+
   it('a failed initial load shows the error with Retry, not a spinner', async () => {
     getResponses = [{ status: 500, body: { error: 'disk on fire' } }];
     render(ComposeEditor, { stackName: 'web' });

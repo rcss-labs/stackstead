@@ -2,6 +2,8 @@
   import Button from '$lib/components/Button.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import { ACTIONS, type StackSummary } from '$lib/api/types';
+  import { ICONS } from '$lib/shell/icons';
+  import { BUSY_REASON } from './lifecycle';
 
   let {
     stack,
@@ -21,7 +23,7 @@
   let confirmOpen = $state(false);
   let withVolumes = $state(false);
 
-  const reason = $derived(lifecycleDisabledReason || (busy ? 'an operation is already running' : undefined));
+  const reason = $derived(lifecycleDisabledReason || (busy ? BUSY_REASON : undefined));
   const label = (a: string) => a.charAt(0).toUpperCase() + a.slice(1);
 
   function openConfirm() {
@@ -37,10 +39,11 @@
 <div class="cluster" role="group" aria-label="Actions for {stack.name}">
   {#each ACTIONS as action (action)}
     <Button variant={action === 'up' ? 'primary' : 'secondary'} disabledReason={reason} onclick={() => onact(action)}>
+      {#if action === 'up'}<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d={ICONS.play}></path></svg>{/if}
       {label(action)}
     </Button>
   {/each}
-  <Button variant="danger" disabledReason={busy ? 'an operation is already running' : undefined} onclick={openConfirm}>Remove</Button>
+  <Button variant="danger" disabledReason={busy ? BUSY_REASON : undefined} onclick={openConfirm}>Remove</Button>
 </div>
 
 <ConfirmDialog

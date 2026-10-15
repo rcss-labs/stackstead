@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as session from '../lib/api/session';
+import { initAppearance, setDensity, setTheme } from '../lib/stores/appearance';
 import { toasts } from '../lib/stores/toasts';
 import { installFakeFetch, type FakeFetch } from '../vitest-setup';
 import Settings from './Settings.svelte';
@@ -29,6 +30,7 @@ describe('Settings metrics token', () => {
     render(Settings);
     expect(await screen.findByRole('button', { name: 'Create token' })).toBeTruthy();
     expect(screen.getByText(/404/)).toBeTruthy();
+    expect(screen.getByText(/scrapes/).textContent).toContain('Prometheus scrapes /metrics with this bearer token.');
     expect(screen.queryByRole('button', { name: 'Rotate token' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Disable' })).toBeNull();
   });
@@ -170,5 +172,66 @@ describe('Settings status and account', () => {
     await user.click(await screen.findByRole('button', { name: 'Log out' }));
     expect(session.logout).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(get(toasts).some((t) => /logout may not have completed/i.test(t.message))).toBe(true));
+  });
+});
+
+describe('Settings v2 cards', () => {
+  it('docker reads unknown, not unavailable, before any status arrives', async () => {
+    fake = installFakeFetch({ [`GET ${STATUS}`]: { body: { configured: false } } });
+    render(Settings);
+    expect(screen.getByTestId('status-docker').textContent).toContain('unknown');
+    expect(screen.getByTestId('status-docker').textContent).not.toContain('unavailable');
+  });
+
+  it('appearance buttons reflect and set the theme and density', async () => {
+    fake = installFakeFetch({ [`GET ${STATUS}`]: { body: { configured: false } } });
+    const dispose = initAppearance({ root: document.createElement('html'), storage: () => null });
+    try {
+      setTheme('dark');
+      setDensity('compact');
+      const user = userEvent.setup();
+      render(Settings);
+      const pressed = (name: string) => screen.getByRole('button', { name }).getAttribute('aria-pressed');
+      expect(pressed('Dark')).toBe('true');
+      expect(pressed('Light')).toBe('false');
+      expect(pressed('Compact')).toBe('true');
+      await user.click(screen.getByRole('button', { name: 'Light' }));
+      expect(pressed('Light')).toBe('true');
+      expect(pressed('Dark')).toBe('false');
+      await user.click(screen.getByRole('button', { name: 'System' }));
+      expect(pressed('System')).toBe('true');
+      await user.click(screen.getByRole('button', { name: 'Comfortable' }));
+      expect(pressed('Comfortable')).toBe('true');
+      expect(pressed('Compact')).toBe('false');
+    } finally {
+      dispose();
+    }
+  });
+
+  it('system status shows docker version and metrics interval', async () => {
+    fake = installFakeFetch({ [`GET ${STATUS}`]: { body: { configured: false } } });
+    const liveMod = await import('../lib/stores/live');
+    const fetchStatus = vi.fn().mockResolvedValue({
+      docker: 'ok',
+      dockerVersion: '27.1.1',
+      compose: 'v2.29.1',
+      events: 'connected',
+      metricsDegraded: false,
+      metricsIntervalSeconds: 15,
+    });
+    const open = vi.fn((o: { onStatus: (s: string) => void }) => {
+      o.onStatus('closed');
+      return { close() {}, status: 'closed', lastEventId: '' };
+    });
+    liveMod.startLive({ fetchStatus, open: open as never });
+    try {
+      const user = userEvent.setup();
+      render(Settings);
+      await user.click(await screen.findByRole('button', { name: 'Refresh' }));
+      await waitFor(() => expect(screen.getByTestId('status-docker').textContent).toContain('27.1.1 · ok'));
+      expect(screen.getByTestId('status-metrics').textContent).toContain('ok · 15 s');
+    } finally {
+      liveMod.stopLive();
+    }
   });
 });

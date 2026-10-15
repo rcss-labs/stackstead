@@ -133,21 +133,14 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	runner := stacks.NewVersionCache(buildRunner(cfg), versionCacheTTL, time.Now)
 	// Docker or compose being unavailable is not fatal: the service starts
 	// and lifecycle endpoints answer 503 until they come back.
-	dockerStatus := func(ctx context.Context) (docker, compose string) {
+	dockerStatus := func(ctx context.Context) api.StatusReport {
 		ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 		defer cancel()
-		docker, compose = "unavailable", "unavailable"
-		if dockerEngine.Ping(ctx) == nil {
-			docker = "ok"
-		}
-		if v, err := runner.Version(ctx); err == nil && v != "" {
-			compose = v
-		}
-		return docker, compose
+		return probeStatus(ctx, dockerEngine, runner)
 	}
-	if docker, compose := dockerStatus(ctx); docker != "ok" || compose == "unavailable" {
+	if report := dockerStatus(ctx); report.Docker != "ok" || report.Compose == "unavailable" {
 		logger.Warn("docker or compose is unavailable; stack lifecycle actions will fail until it is",
-			"docker", docker, "compose", compose, "socket", cfg.DockerSocket)
+			"docker", report.Docker, "compose", report.Compose, "socket", cfg.DockerSocket)
 	}
 
 	if err := os.MkdirAll(cfg.StacksDir, 0o755); err != nil {
@@ -188,17 +181,19 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	srv := &http.Server{
 		Addr: cfg.Listen,
 		Handler: api.New(api.Options{
-			Auth:       authSvc,
-			Limiter:    auth.NewLoginLimiter(5, 15*time.Minute, time.Now),
-			SetupToken: setupToken,
-			Static:     web.Dist(),
-			Logger:     logger,
-			Stacks:     stackSvc,
-			Operations: ops,
-			FSRoots:    cfg.AllowedRoots,
-			Status:     dockerStatus,
-			Closing:    closing,
-			Version:    version.Get().Version,
+			Auth:             authSvc,
+			Limiter:          auth.NewLoginLimiter(5, 15*time.Minute, time.Now),
+			SetupToken:       setupToken,
+			Static:           web.Dist(),
+			Logger:           logger,
+			Stacks:           stackSvc,
+			Operations:       ops,
+			FSRoots:          cfg.AllowedRoots,
+			Status:           dockerStatus,
+			MetricsInterval:  cfg.MetricsInterval,
+			MetricsRetention: cfg.MetricsRetention,
+			Closing:          closing,
+			Version:          version.Get().Version,
 			Observe: api.ObserveSources{
 				Cache: cache, Sampler: sampler, Store: metricsStore, Engine: dockerEngine,
 			},
@@ -304,4 +299,28 @@ func buildRunner(cfg config.Config) *composecli.Runner {
 		Env:   []string{"DOCKER_HOST=unix://" + cfg.DockerSocket},
 		Grace: grace,
 	}
+}
+
+type dockerProber interface {
+	Version(ctx context.Context) (string, error)
+	Ping(ctx context.Context) error
+}
+
+type composeVersioner interface {
+	Version(ctx context.Context) (string, error)
+}
+
+// probeStatus reports engine and compose health. A failing /version must not
+// mark Docker down, so it falls back to a ping and then reports no version.
+func probeStatus(ctx context.Context, docker dockerProber, compose composeVersioner) api.StatusReport {
+	report := api.StatusReport{Docker: "unavailable", Compose: "unavailable"}
+	if v, err := docker.Version(ctx); err == nil {
+		report.Docker, report.DockerVersion = "ok", v
+	} else if docker.Ping(ctx) == nil {
+		report.Docker = "ok"
+	}
+	if v, err := compose.Version(ctx); err == nil && v != "" {
+		report.Compose = v
+	}
+	return report
 }

@@ -71,15 +71,17 @@ func TestClientAgainstRealRouter(t *testing.T) {
 	if me, err := c.Me(ctx); err != nil || me.Username != "admin" {
 		t.Fatalf("Me = %+v %v", me, err)
 	}
-	if status, err := c.Status(ctx); err != nil || status.Docker != "ok" || status.Events != "connected" {
+	if status, err := c.Status(ctx); err != nil || status.Docker != "ok" || status.DockerVersion != "27.1.1" || status.Events != "connected" {
 		t.Fatalf("Status = %+v %v", status, err)
 	}
 	list, err := c.Stacks(ctx)
-	if err != nil || len(list) != 1 || list[0].Name != "web" || list[0].ServiceCount != 2 {
+	if err != nil || len(list) != 1 || list[0].Name != "web" || list[0].ServiceCount != 2 ||
+		list[0].Health.Healthy != 1 || list[0].Health.None != 1 || len(list[0].Ports) != 1 || list[0].Ports[0] != "8080" {
 		t.Fatalf("Stacks = %+v %v", list, err)
 	}
 	detail, err := c.Stack(ctx, "web")
-	if err != nil || detail.Hash != "h1" || len(detail.Services) != 1 || detail.Services[0].Containers[0].Name != "web-app-1" {
+	if err != nil || detail.Hash != "h1" || len(detail.Services) != 1 || detail.Services[0].Containers[0].Name != "web-app-1" ||
+		detail.Services[0].Containers[0].Health != "none" || detail.Health.Healthy != 1 || len(detail.Ports) != 1 {
 		t.Fatalf("Stack = %+v %v", detail, err)
 	}
 	raw, err := c.Compose(ctx, "web")

@@ -152,6 +152,28 @@ describe('MetricsChart', () => {
     expect(opts.series.map((x) => x.label)).toEqual([expect.anything(), 'api', 'db', 'api limit', 'db limit']);
   });
 
+  it('series colours come from the tokens', async () => {
+    document.documentElement.style.setProperty('--series-1', '#123456');
+    document.documentElement.style.setProperty('--series-2', '#654321');
+    try {
+      const { createPlot } = fakePlot();
+      render(MetricsChart, { title: 'CPU', series, metric: 'cpu', unit: 'percent', services: ['api', 'db'], createPlot });
+      await flush();
+      const [opts] = createPlot.mock.calls[0] as unknown as [{ series: { stroke?: string }[] }];
+      expect(opts.series[1].stroke).toBe('#123456');
+      expect(opts.series[2].stroke).toBe('#654321');
+    } finally {
+      document.documentElement.style.removeProperty('--series-1');
+      document.documentElement.style.removeProperty('--series-2');
+    }
+  });
+
+  it('shows the stack total in the caption', async () => {
+    const { createPlot } = fakePlot();
+    render(MetricsChart, { title: 'CPU (avg %)', series, metric: 'cpu', unit: 'percent', services: ['api', 'db'], createPlot });
+    expect(screen.getByTestId('chart-total').textContent).toBe('52.3%');
+  });
+
   it('rebuilds the plot with new colours when the colour scheme changes', async () => {
     const { plot, createPlot } = fakePlot();
     let listener: () => void = () => {};

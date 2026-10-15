@@ -5,7 +5,6 @@
   import Banner from '$lib/components/Banner.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import Nav from '$lib/components/Nav.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
   import Toasts from '$lib/components/Toasts.svelte';
   import { link, matchRoute, navigate, route, startRouter } from '$lib/router';
@@ -14,6 +13,8 @@
   import { unsavedChanges, setUnsavedChanges } from '$lib/stores/guard';
   import { operationsRefresh, startStacks } from '$lib/stores/stacks';
   import { toasts } from '$lib/stores/toasts';
+  import Rail from '$lib/shell/Rail.svelte';
+  import TopBar from '$lib/shell/TopBar.svelte';
   import Login, { safeNext } from './routes/Login.svelte';
   import Settings from './routes/Settings.svelte';
   import Setup from './routes/Setup.svelte';
@@ -195,14 +196,16 @@
 {#if !booted || $session.state === 'unknown'}
   <main class="container"><Spinner label="Loading Stackstead" /></main>
 {:else if $session.state === 'needs-setup'}
-  <main class="container"><Setup /></main>
+  <main class="bare"><Setup /></main>
 {:else if $session.state === 'anonymous'}
-  <main class="container"><Login /></main>
+  <main class="bare"><Login /></main>
 {:else}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="layout" onclickcapture={guardLinks}>
-    <Nav username={$session.username} onlogout={requestLogout} {runningOps} current={path} />
-    <div class="banners container">
+    <Rail username={$session.username} onlogout={requestLogout} current={path} />
+    <div class="column">
+    <TopBar {path} {runningOps} />
+    <div class="banners">
       {#if dockerDown}
         <Banner kind="danger" title="Docker is unreachable">
           {#snippet children()}Status may be stale; lifecycle actions are disabled.{/snippet}
@@ -224,7 +227,7 @@
         </Banner>
       {/if}
     </div>
-    <main class="container" bind:this={mainEl}>
+    <main bind:this={mainEl}>
       {#if view === 'list'}
         <StackList />
       {:else if view === 'create'}
@@ -243,6 +246,7 @@
         </EmptyState>
       {/if}
     </main>
+    </div>
   </div>
   <ConfirmDialog
     open={pendingHref !== undefined || pendingLogout}
@@ -260,8 +264,15 @@
 <Toasts />
 
 <style>
-  .layout { display: flex; flex-direction: column; gap: var(--space-3); min-height: 100vh; }
-  .banners { display: flex; flex-direction: column; gap: var(--space-2); }
-  .banners:empty { display: none; }
-  main { padding-block: var(--space-4); }
+  .layout { display: flex; min-height: 100vh; }
+  .column { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .banners { display: flex; flex-direction: column; gap: var(--space-2); padding: 16px 20px 0; }
+  .banners:not(:has(*)) { display: none; }
+  main { flex: 1; min-width: 0; padding: 20px 20px 40px; }
+  main.bare { padding: 0; }
+  @media (max-width: 720px) {
+    .banners { padding: 12px 16px 0; }
+    main { padding: 20px 16px 40px; }
+    main.bare { padding: 0; }
+  }
 </style>

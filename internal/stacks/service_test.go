@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -1730,5 +1731,76 @@ func TestPreviewReadOnlyFieldIsRefused(t *testing.T) {
 	var ro *composefile.ReadOnlyFieldError
 	if !errors.Is(err, composefile.ErrEditRefused) && !errors.As(err, &ro) {
 		t.Errorf("err = %v, want ErrEditRefused or ReadOnlyFieldError", err)
+	}
+}
+
+func healthContainers(project string) []engine.Container {
+	mk := func(state, status string) engine.Container {
+		return engine.Container{ID: state + status, Name: project + "-web-1", State: state, Status: status,
+			Labels: map[string]string{"com.docker.compose.project": project, "com.docker.compose.service": "web"}}
+	}
+	return []engine.Container{
+		mk("running", "Up 1 hour (healthy)"), mk("running", "Up 1 hour (unhealthy)"),
+		mk("running", "Up 1 second (health: starting)"), mk("running", "Up 1 hour"),
+		mk("dead", ""), mk("restarting", "Restarting (1) 2 seconds ago"),
+		mk("exited", "Exited (1) 1 hour ago"), mk("exited", "Exited (0) 1 hour ago"), mk("created", "Created"),
+		{ID: "other", State: "running", Status: "Up (healthy)", Labels: map[string]string{"com.docker.compose.project": "elsewhere"}},
+	}
+}
+
+func TestDescribeHealthCounts(t *testing.T) {
+	h := newHarness(t)
+	h.create(t, "web", webCfg("8080:80"))
+	h.eng.containers = healthContainers("web")
+	d, err := h.svc.Get(context.Background(), "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (stacks.HealthCounts{Healthy: 1, Unhealthy: 1, Starting: 1, None: 1, Failed: 3}); d.Health != want {
+		t.Errorf("health = %+v, want %+v", d.Health, want)
+	}
+	if !reflect.DeepEqual(d.Ports, []string{"8080"}) {
+		t.Errorf("ports = %#v", d.Ports)
+	}
+	var healths []string
+	for _, c := range d.Services[0].Containers {
+		healths = append(healths, c.Health)
+	}
+	if len(healths) == 0 || healths[0] != "healthy" {
+		t.Errorf("container healths = %v", healths)
+	}
+}
+
+func TestDescribeHealthCountsOnParseError(t *testing.T) {
+	h := newHarness(t)
+	h.create(t, "web", webCfg("8080:80"))
+	if err := os.WriteFile(h.path("web"), []byte("services: [broken\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.eng.containers = []engine.Container{publishing("web", 8080), publishing("web", 8081)}
+	d, err := h.svc.Get(context.Background(), "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Status != stacks.StatusUnavailable || d.Health.None != 2 || len(d.Ports) != 0 {
+		t.Errorf("status=%v health=%+v ports=%v", d.Status, d.Health, d.Ports)
+	}
+}
+
+func TestListAndGetAgreeOnHealthAndPorts(t *testing.T) {
+	h := newHarness(t)
+	h.create(t, "web", webCfg("8080:80", "8000-8010:90"))
+	h.eng.containers = healthContainers("web")
+	list, err := h.svc.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := h.svc.Get(context.Background(), "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := summaryByName(t, list, "web")
+	if s.Health != d.Health || !reflect.DeepEqual(s.Ports, d.Ports) {
+		t.Errorf("list %+v %v != get %+v %v", s.Health, s.Ports, d.Health, d.Ports)
 	}
 }

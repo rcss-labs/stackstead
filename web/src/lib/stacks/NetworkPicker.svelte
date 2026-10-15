@@ -60,7 +60,7 @@
   </p>
 {/if}
 
-<ListEditor items={value} {onchange} {readonly} {errors} addLabel="Add network" newItem={() => ({ name: '', ipv4Address: '' })}>
+<ListEditor title="Networks" items={value} {onchange} {readonly} {errors} addLabel="Add network" newItem={() => ({ name: '', ipv4Address: '' })}>
   {#snippet row(item: Attachment, i: number, set: (v: Attachment) => void)}
     <div class="cols">
       {#if failed}
@@ -101,7 +101,7 @@
 </ListEditor>
 
 <style>
-  .cols { display: flex; flex-wrap: wrap; gap: var(--space-3); flex: 1; }
+  .cols { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; }
   .cols > :global(*) { flex: 1 1 12rem; }
-  .note { color: var(--muted); font-size: 0.875rem; }
+  .note { color: var(--muted); font-size: 12px; }
 </style>

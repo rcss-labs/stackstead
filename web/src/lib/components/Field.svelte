@@ -21,6 +21,7 @@
     hint,
     readonly = false,
     readonlyReason,
+    mono = false,
     children,
   }: {
     label: string;
@@ -29,6 +30,7 @@
     hint?: string;
     readonly?: boolean;
     readonlyReason?: string;
+    mono?: boolean;
     children?: Snippet<[FieldControlProps]>;
   } = $props();
 
@@ -51,7 +53,7 @@
   });
 </script>
 
-<div class="field">
+<div class="field" class:mono>
   <label for={id}>{label}</label>
   {@render children?.(control)}
   {#if hint}<p id={hintId} class="hint">{hint}</p>{/if}
@@ -61,18 +63,26 @@
 
 <style>
   .field { display: flex; flex-direction: column; gap: var(--space-1); }
-  label { font-weight: 600; }
-  .hint { color: var(--muted); font-size: 0.875rem; }
-  .error { color: var(--danger); font-size: 0.875rem; overflow-wrap: anywhere; }
+  label { font-size: 12px; font-weight: 500; color: var(--muted); }
+  .hint { color: var(--faint); font-size: 11.5px; }
+  .error { color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
   .field :global(input),
   .field :global(select),
   .field :global(textarea) {
-    padding: var(--space-2) var(--space-3);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    height: 32px;
+    padding: 0 10px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border-input);
+    border-radius: var(--radius);
+    font: inherit;
+    font-size: 13px;
   }
+  .field :global(textarea) { height: auto; padding-block: 6px; }
+  .field.mono :global(input),
+  .field.mono :global(select),
+  .field.mono :global(textarea) { font-family: var(--mono); }
   .field :global([aria-invalid='true']) { border-color: var(--danger); }
   .field :global(:is(input, textarea):read-only),
-  .field :global(:is(input, select, textarea):disabled) { background: var(--surface-raised); color: var(--muted); }
+  .field :global(:is(input, select, textarea):disabled) { background: var(--raised); color: var(--muted); }
 </style>

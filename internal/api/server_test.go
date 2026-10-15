@@ -430,3 +430,41 @@ func TestNosniffOnEveryResponse(t *testing.T) {
 		}
 	}
 }
+
+func TestFontsServedAsFontWoff2(t *testing.T) {
+	env := newEnvWith(t, "", func(o *api.Options) {
+		o.Static = fstest.MapFS{
+			"index.html":     {Data: []byte("<html>spa</html>")},
+			"assets/x.woff2": {Data: []byte("wOF2")},
+		}
+	})
+	rec := env.do(t, http.MethodGet, "/assets/x.woff2", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /assets/x.woff2 = %d", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "font/woff2" {
+		t.Errorf("Content-Type = %q, want font/woff2", got)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
+		t.Errorf("Cache-Control = %q", got)
+	}
+}
+
+func TestThemeScriptIsNoCache(t *testing.T) {
+	env := newEnvWith(t, "", func(o *api.Options) {
+		o.Static = fstest.MapFS{
+			"index.html": {Data: []byte("<html>spa</html>")},
+			"theme.js":   {Data: []byte("(function(){})();")},
+		}
+	})
+	rec := env.do(t, http.MethodGet, "/theme.js", "")
+	if rec.Code != http.StatusOK || rec.Body.String() != "(function(){})();" {
+		t.Fatalf("GET /theme.js = %d %q", rec.Code, rec.Body)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("Cache-Control = %q", got)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "javascript") {
+		t.Errorf("Content-Type = %q", ct)
+	}
+}

@@ -124,41 +124,44 @@
   }
 </script>
 
-<div>
-  <h1>Create stack</h1>
+<div class="page">
+  <h1>New stack</h1>
+  <p class="lead">One service to start with. Stackstead writes <code>compose.yaml</code> into a folder named after the stack in its stacks directory.</p>
   {#if unavailable}
     <div id="create-unavailable" tabindex="-1">
       <Banner kind="danger" title="Docker/compose unavailable: the stack was not created">{unavailable}</Banner>
     </div>
   {/if}
-  <form class="stack" onsubmit={submit} novalidate>
-    <Field
-      label="Stack name"
-      id="stack-name"
-      hint="Lowercase letters, digits, '-' and '_'; starts with a letter or digit; at most 63 characters."
-      error={stackNameError}
-    >
-      {#snippet children(c)}
-        <input {...c} type="text" bind:value={stackName} autocomplete="off" spellcheck="false" autocapitalize="off" />
-      {/snippet}
-    </Field>
-
+  <form class="card" onsubmit={submit} novalidate>
     <div class="svc">
       <ServiceForm bind:this={serviceFormRef} bind:form bind:name={serviceName} {errors} showName {onbrowse}>
+        {#snippet lead()}
+          <Field
+            label="Stack name"
+            id="stack-name"
+            mono
+            hint="Lowercase letters, digits, '-' and '_'; starts with a letter or digit; at most 63 characters."
+            error={stackNameError}
+          >
+            {#snippet children(c)}
+              <input {...c} type="text" bind:value={stackName} autocomplete="off" spellcheck="false" autocapitalize="off" />
+            {/snippet}
+          </Field>
+        {/snippet}
         {#snippet networkPicker(f, rowErrors)}
           <NetworkPicker value={f.networks} onchange={(v) => (f.networks = v)} errors={rowErrors} idPrefix="svc-networks" />
         {/snippet}
       </ServiceForm>
     </div>
 
-    <label class="check">
-      <input type="checkbox" bind:checked={startNow} />
-      Start now (up --build)
-    </label>
-
-    <div class="actions">
-      <Button variant="primary" type="submit" loading={pending}>Create stack</Button>
+    <div class="footer">
+      <label class="check">
+        <input type="checkbox" bind:checked={startNow} />
+        Start now (<code>up --build</code>)
+      </label>
+      <span class="spacer"></span>
       <a href="/" use:link>Cancel</a>
+      <Button variant="primary" type="submit" loading={pending}>Create stack</Button>
     </div>
   </form>
 </div>
@@ -175,9 +178,13 @@
 />
 
 <style>
-  .container { max-width: 48rem; padding-block: var(--space-5, 1.5rem); }
-  .stack { display: flex; flex-direction: column; gap: var(--space-4); }
+  .page { max-width: 720px; display: flex; flex-direction: column; gap: 12px; }
+  .lead { color: var(--muted); font-size: 13px; }
+  code { font-family: var(--mono); font-size: 12px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
   .svc :global(.form-error) { white-space: pre-wrap; }
-  .check { display: flex; gap: var(--space-2); align-items: center; }
-  .actions { display: flex; gap: var(--space-4); align-items: center; }
+  .footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 12px 14px; border-top: 1px solid var(--border); }
+  .check { display: flex; gap: 8px; align-items: center; font-size: 12.5px; }
+  .spacer { flex: 1; }
+  .footer a { color: var(--muted); font-size: 13px; }
 </style>

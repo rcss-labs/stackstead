@@ -30,20 +30,26 @@
     display: flex;
     gap: var(--space-3);
     align-items: flex-start;
-    padding: var(--space-3) var(--space-4);
-    border: 1px solid var(--tone);
-    border-left-width: 4px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--tone);
     border-radius: var(--radius-md);
-    background: var(--surface-raised);
+    background: var(--tone-soft);
+    font-size: 12.5px;
   }
-  .info { --tone: var(--info); }
-  .warning { --tone: var(--warning); }
-  .danger { --tone: var(--danger); }
+  strong { font-size: 13px; font-weight: 600; color: var(--text); }
+  .body { color: var(--muted); }
+  .info { --tone: var(--info); --tone-soft: var(--info-soft); }
+  .warning { --tone: var(--warning); --tone-soft: var(--warning-soft); }
+  .danger { --tone: var(--danger); --tone-soft: var(--danger-soft); }
   .icon { color: var(--tone); }
   .body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
   .close {
     background: none;
-    border: 1px solid var(--border);
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm);
     cursor: pointer;
     padding: var(--space-1) var(--space-2);

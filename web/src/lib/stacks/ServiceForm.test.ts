@@ -47,9 +47,9 @@ describe('ServiceForm', () => {
   it("hides the build source's errors while the image source is selected", async () => {
     render(Host, { errors: { 'build.context': 'build context is required' } });
     expect(screen.queryByText('build context is required')).toBeNull();
-    await userEvent.setup().click(screen.getByRole('radio', { name: 'From build' }));
+    await userEvent.setup().click(screen.getByRole('radio', { name: 'From Dockerfile' }));
     expect(screen.getByText('build context is required')).toBeTruthy();
-    await userEvent.setup().click(screen.getByRole('radio', { name: 'From image' }));
+    await userEvent.setup().click(screen.getByRole('radio', { name: 'From Image' }));
     expect(screen.queryByText('build context is required')).toBeNull();
   });
 

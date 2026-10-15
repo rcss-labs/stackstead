@@ -11,7 +11,11 @@ access is equivalent to root. Treat the Stackstead login like a root password.
 - There is one admin account. Passwords are hashed with argon2id, sessions use
   an HTTP-only, SameSite=Strict cookie, and login is rate-limited per IP.
 - The web UI is served with a strict Content-Security-Policy, `nosniff` on
-  every response, and never renders log, compose or error text as HTML.
+  every response, and never renders log, compose or error text as HTML. The
+  policy allows scripts from the same origin only: the theme script
+  (`/theme.js`, which sets the theme before first paint) is a same-origin
+  classic script, so no inline script and no third-party origin is needed.
+  The browser's `localStorage` holds only the theme and density preferences.
 - The optional Prometheus endpoint has its own bearer token. It is shown once,
   and only its SHA-256 is stored.
 

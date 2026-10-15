@@ -12,6 +12,10 @@ export interface LiveState {
   metricsDegraded: boolean;
   docker: 'ok' | 'unavailable' | 'unknown';
   compose: string | 'unavailable' | 'unknown';
+  /** Engine version; '' = unknown. */
+  dockerVersion: string;
+  metricsIntervalSeconds?: number;
+  metricsRetentionSeconds?: number;
 }
 
 export interface LiveChange {
@@ -26,6 +30,7 @@ const initial: LiveState = {
   metricsDegraded: false,
   docker: 'unknown',
   compose: 'unknown',
+  dockerVersion: '',
 };
 
 const state = writable<LiveState>({ ...initial });
@@ -145,7 +150,14 @@ export async function refreshStatus(): Promise<void> {
   try {
     const s = await fetchStatus();
     if (seq !== statusSeq) return; // stopped, or a newer refresh is in flight
-    state.update((v) => ({ ...v, docker: s.docker, compose: s.compose }));
+    state.update((v) => ({
+      ...v,
+      docker: s.docker,
+      compose: s.compose,
+      dockerVersion: s.dockerVersion ?? '',
+      metricsIntervalSeconds: s.metricsIntervalSeconds,
+      metricsRetentionSeconds: s.metricsRetentionSeconds,
+    }));
   } catch {
     // Keep the last known flags; the next open or flip tries again.
   }

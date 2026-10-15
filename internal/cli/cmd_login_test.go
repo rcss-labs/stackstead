@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -622,6 +623,34 @@ func TestStatusTableAndJSON(t *testing.T) {
 	}
 	if got["docker"] != "available" || got["metricsDegraded"] != true || got["clientVersion"] != nil {
 		t.Errorf("json = %v, want the server's Status verbatim", got)
+	}
+}
+
+func TestStatusCommandPrintsDockerVersion(t *testing.T) {
+	srv := t6API(t, map[string]http.HandlerFunc{"GET /api/status": func(w http.ResponseWriter, r *http.Request) {
+		t6JSON(w, 200, apitypes.Status{Docker: "ok", DockerVersion: "27.1.1", Compose: "v2", Events: "connected", Version: version.Get().Version})
+	}})
+	te := newTestEnv(t, nil)
+	t6Seed(t, te, srv.URL)
+	if err := t6Run(te, "status"); err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`(?m)^docker version\s+27\.1\.1$`).MatchString(te.Out.String()) {
+		t.Errorf("table lacks docker version row:\n%s", te.Out.String())
+	}
+}
+
+func TestStatusCommandOmitsEmptyDockerVersion(t *testing.T) {
+	srv := t6API(t, map[string]http.HandlerFunc{"GET /api/status": func(w http.ResponseWriter, r *http.Request) {
+		t6JSON(w, 200, apitypes.Status{Docker: "ok", Compose: "v2", Events: "connected", Version: version.Get().Version})
+	}})
+	te := newTestEnv(t, nil)
+	t6Seed(t, te, srv.URL)
+	if err := t6Run(te, "status"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(te.Out.String(), "docker version") {
+		t.Errorf("empty docker version must be omitted:\n%s", te.Out.String())
 	}
 }
 

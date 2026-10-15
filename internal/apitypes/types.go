@@ -14,6 +14,19 @@ type StackSummary struct {
 	Status       string `json:"status"`
 	ServiceCount int    `json:"serviceCount"`
 	Running      int    `json:"running"`
+	// Health counts the stack's containers by healthcheck result; Failed counts
+	// dead, restarting and non-zero-exit containers.
+	Health HealthCounts `json:"health"`
+	// Ports lists the host ports the compose file publishes, ranges as "a-b".
+	Ports []string `json:"ports"`
+}
+
+type HealthCounts struct {
+	Healthy   int `json:"healthy"`
+	Unhealthy int `json:"unhealthy"`
+	Starting  int `json:"starting"`
+	None      int `json:"none"`
+	Failed    int `json:"failed"`
 }
 
 type ContainerInfo struct {
@@ -22,6 +35,8 @@ type ContainerInfo struct {
 	Service string `json:"service"`
 	State   string `json:"state"`
 	Status  string `json:"status"`
+	// Health is "healthy", "unhealthy", "starting" or "none".
+	Health string `json:"health"`
 }
 
 type Build struct {
@@ -86,6 +101,8 @@ type StackDetail struct {
 	Hash         string          `json:"hash"`
 	Services     []ServiceDetail `json:"services"`
 	ParseError   string          `json:"parseError,omitempty"`
+	Health       HealthCounts    `json:"health"`
+	Ports        []string        `json:"ports"`
 }
 
 type Operation struct {
@@ -117,8 +134,10 @@ type FSEntry struct {
 }
 
 type Status struct {
-	Docker  string `json:"docker"`
-	Compose string `json:"compose"`
+	Docker string `json:"docker"`
+	// DockerVersion is the engine version; empty when it could not be read.
+	DockerVersion string `json:"dockerVersion"`
+	Compose       string `json:"compose"`
 	// Events is "connected" while the container status cache follows Docker
 	// events, else "disconnected"; MetricsDegraded is true while the sampler
 	// cannot store samples.
@@ -126,6 +145,9 @@ type Status struct {
 	MetricsDegraded bool   `json:"metricsDegraded"`
 	// Version is the server's build version; empty when unknown.
 	Version string `json:"version"`
+	// Metrics sampling settings, in seconds; 0 when unset.
+	MetricsIntervalSeconds  int64 `json:"metricsIntervalSeconds"`
+	MetricsRetentionSeconds int64 `json:"metricsRetentionSeconds"`
 }
 
 type FieldError struct {

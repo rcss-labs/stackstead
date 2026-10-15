@@ -44,13 +44,13 @@
     padding: var(--space-3);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
-    font-family: var(--font-mono);
+    font-family: var(--mono);
     font-size: 0.875rem;
     overflow: auto;
     max-height: 70vh;
   }
   .diff :global(.cm-editor) { max-height: 70vh; }
   .diff :global(.cm-scroller) { overflow: auto; }
-  .diff :global(.cm-deletedChunk) { background: color-mix(in srgb, var(--danger) 15%, transparent); }
-  .diff :global(.cm-changedLine) { background: color-mix(in srgb, var(--success) 15%, transparent); }
+  .diff :global(.cm-deletedChunk) { background: var(--danger-soft); }
+  .diff :global(.cm-changedLine) { background: var(--success-soft); }
 </style>

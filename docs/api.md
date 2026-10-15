@@ -21,7 +21,7 @@ All routes except health, setup and login need a session cookie. Errors are
 | `DELETE /api/stacks/{name}?volumes=true` | `compose down` then unregister (202) |
 | `GET /api/stacks/{name}/operations` | recent operations |
 | `GET /api/operations/{id}`, `/stream`, `POST .../cancel` | output, live SSE stream, cancel |
-| `GET /api/fs?path=`, `GET /api/networks`, `GET /api/status` | file browser, Docker networks, status (`version` of the server, `docker`, `compose`, `events`: `connected` or `disconnected` for the container event stream, `metricsDegraded`: true while samples cannot be stored) |
+| `GET /api/fs?path=`, `GET /api/networks`, `GET /api/status` | file browser, Docker networks, status (`version` of the server, `docker`, `dockerVersion` (engine version, empty when unreadable), `compose`, `events`: `connected` or `disconnected` for the container event stream, `metricsDegraded`: true while samples cannot be stored; `metricsIntervalSeconds` and `metricsRetentionSeconds`: the sampling settings, 0 when unset) |
 | `GET /api/operations?state=running` | operations across all stacks, optionally only running ones |
 | `GET /api/stacks/{name}/logs` | live container logs (SSE); every `log` event has an `id`, and `Last-Event-ID` resumes exactly |
 | `GET /api/stacks/{name}/metrics`, `.../metrics/live` | resource history (JSON) and live samples (SSE) |
@@ -52,6 +52,16 @@ Notes on the stacks API:
   next to it is refused, startup sync skips such folders with a warning, and
   lifecycle actions and edits are refused if one appears later. Merge or
   remove the override file.
+
+- **Health and ports.** Each stack in `GET /api/stacks` and `GET
+  /api/stacks/{name}` carries `health`, counts of its containers by healthcheck
+  result (`healthy`, `unhealthy`, `starting`, `none` for running containers
+  without a healthcheck, and `failed` for dead, restarting and non-zero-exit
+  containers; clean exits, created and paused containers count nowhere), and
+  `ports`, the distinct host ports its compose file publishes, sorted by port
+  number (a range as `"8000-8010"`; container-only ports are left out). Each
+  container in the detail has its own `health`: `healthy`, `unhealthy`,
+  `starting` or `none`.
 
 Removing a stack never deletes files: the compose file and its folder stay on
 disk, and volumes are removed only when `volumes=true`. Stopping Stackstead

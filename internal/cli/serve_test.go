@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rcss-labs/stackstead/internal/api"
 	"github.com/rcss-labs/stackstead/internal/config"
 	"github.com/rcss-labs/stackstead/internal/lockfile"
 	"github.com/rcss-labs/stackstead/internal/version"
@@ -201,4 +203,44 @@ func TestServeReleasesTheLockWhenItReturns(t *testing.T) {
 		t.Fatalf("the lock was not released: %v", err)
 	}
 	l.Release()
+}
+
+type fakeDockerProbe struct {
+	version string
+	verErr  error
+	pingErr error
+}
+
+func (f fakeDockerProbe) Version(context.Context) (string, error) { return f.version, f.verErr }
+func (f fakeDockerProbe) Ping(context.Context) error              { return f.pingErr }
+
+type fakeComposeProbe struct {
+	version string
+	err     error
+}
+
+func (f fakeComposeProbe) Version(context.Context) (string, error) { return f.version, f.err }
+
+func TestStatusProbeFallsBackToPing(t *testing.T) {
+	boom := errors.New("boom")
+	cases := []struct {
+		name    string
+		docker  fakeDockerProbe
+		compose fakeComposeProbe
+		want    api.StatusReport
+	}{
+		{"version ok", fakeDockerProbe{version: "27.1.1"}, fakeComposeProbe{version: "v2.30.0"},
+			api.StatusReport{Docker: "ok", DockerVersion: "27.1.1", Compose: "v2.30.0"}},
+		{"version fails, ping ok", fakeDockerProbe{verErr: boom}, fakeComposeProbe{version: "v2.30.0"},
+			api.StatusReport{Docker: "ok", Compose: "v2.30.0"}},
+		{"both fail", fakeDockerProbe{verErr: boom, pingErr: boom}, fakeComposeProbe{err: boom},
+			api.StatusReport{Docker: "unavailable", Compose: "unavailable"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := probeStatus(context.Background(), tc.docker, tc.compose); got != tc.want {
+				t.Errorf("got %+v, want %+v", got, tc.want)
+			}
+		})
+	}
 }

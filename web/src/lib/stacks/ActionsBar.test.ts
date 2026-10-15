@@ -12,6 +12,8 @@ const stack: StackSummary = {
   status: 'running',
   serviceCount: 2,
   running: 2,
+  health: { healthy: 0, unhealthy: 0, starting: 0, none: 0, failed: 0 },
+  ports: [],
 };
 
 const setup = (props: Record<string, unknown> = {}) => {

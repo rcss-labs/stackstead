@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/rcss-labs/stackstead/internal/composefile"
 	"github.com/rcss-labs/stackstead/internal/engine"
@@ -40,9 +41,12 @@ type OperationsAPI interface {
 	Cancel(id string) error
 }
 
-// StatusFunc reports "ok" or "unavailable" for docker, and the compose
+// StatusReport is what a StatusFunc learns: Docker is "ok" or "unavailable",
+// DockerVersion the engine version ("" when unknown), Compose the compose
 // version or "unavailable".
-type StatusFunc func(ctx context.Context) (docker, compose string)
+type StatusReport struct{ Docker, DockerVersion, Compose string }
+
+type StatusFunc func(ctx context.Context) StatusReport
 
 // Compile-time proof that the production types fit.
 var (
@@ -290,10 +294,15 @@ func (s *server) handleNetworks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	docker, compose := "unavailable", "unavailable"
+	report := StatusReport{Docker: "unavailable", Compose: "unavailable"}
 	if s.opts.Status != nil {
-		docker, compose = s.opts.Status(r.Context())
+		report = s.opts.Status(r.Context())
 	}
 	flags := s.statusFlags()
-	writeJSON(w, http.StatusOK, statusDTO{Docker: docker, Compose: compose, Events: flags.Events, MetricsDegraded: flags.MetricsDegraded, Version: s.opts.Version})
+	writeJSON(w, http.StatusOK, statusDTO{
+		Docker: report.Docker, DockerVersion: report.DockerVersion, Compose: report.Compose,
+		Events: flags.Events, MetricsDegraded: flags.MetricsDegraded, Version: s.opts.Version,
+		MetricsIntervalSeconds:  int64(s.opts.MetricsInterval / time.Second),
+		MetricsRetentionSeconds: int64(s.opts.MetricsRetention / time.Second),
+	})
 }

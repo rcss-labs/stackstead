@@ -128,4 +128,51 @@ describe('LogsViewer', () => {
     await fireEvent.change(screen.getByLabelText('Service'), { target: { value: 'worker' } });
     expect(screen.getByRole('button', { name: 'Pause' })).toBeTruthy();
   });
+
+  it('service prop preselects the stream filter', async () => {
+    fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'x')] });
+    render(LogsViewer, { stackName: 'web', services: ['api', 'worker'], service: 'worker' });
+    await tick();
+    expect(fake.requests[0]!.path).toContain('service=worker');
+    expect((screen.getByLabelText('Service') as HTMLSelectElement).value).toBe('worker');
+  });
+
+  it('unknown service prop falls back to all services', async () => {
+    fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'x')] });
+    render(LogsViewer, { stackName: 'web', services: ['api', 'worker'], service: 'nope' });
+    await tick();
+    expect(fake.requests[0]!.path).not.toContain('service=');
+    expect((screen.getByLabelText('Service') as HTMLSelectElement).value).toBe('');
+  });
+
+  it('shows the live status text', async () => {
+    fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'x')] });
+    render(LogsViewer, { stackName: 'web', services: ['api'] });
+    await tick();
+    expect(screen.getByRole('status').textContent).toContain('live · following');
+    await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    expect(screen.getByRole('status').textContent).toContain('paused');
+  });
+
+  it('while paused, a session-expired stream still announces it', async () => {
+    fake = installFakeStream({ [PATH]: { responses: [{ chunks: [logEvent(C_A, 1, 1, 'a')] }, { status: 401, body: {} }] } });
+    render(LogsViewer, { stackName: 'web', services: ['api'] });
+    await tick();
+    await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    fake.close(PATH);
+    await tick(60000);
+    expect(screen.getByRole('status').textContent).toContain('session expired - sign in again');
+  });
+
+  it('while paused, a reconnecting stream reads reconnecting in the warning tone', async () => {
+    fake = installFakeStream({ [PATH]: { responses: [{ chunks: [logEvent(C_A, 1, 1, 'a')] }, { chunks: [] }] } });
+    render(LogsViewer, { stackName: 'web', services: ['api'] });
+    await tick();
+    await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+    fake.close(PATH);
+    await tick(1);
+    const status = screen.getByRole('status');
+    expect(status.textContent).toContain('reconnecting');
+    expect(status.classList.contains('warning')).toBe(true);
+  });
 });

@@ -16,10 +16,11 @@
     flex-direction: column;
     align-items: center;
     gap: var(--space-3);
-    padding: var(--space-6) var(--space-4);
+    padding: 32px 16px;
     text-align: center;
-    border: 1px dashed var(--border);
-    border-radius: var(--radius-lg);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-md);
   }
+  h2 { font-size: 14px; font-weight: 600; }
   p { color: var(--muted); }
 </style>

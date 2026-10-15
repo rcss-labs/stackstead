@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { installFakeFetch, installFakeStream, type FakeFetch, type FakeStream } from '../../vitest-setup';
 import OperationPanel from './OperationPanel.svelte';
+import { outputTone } from './operation';
 
 const PATH = '/api/operations/op1/stream';
 const line = (id: string, text: string) => `id: ${id}\nevent: line\ndata: ${JSON.stringify(text)}\n\n`;
@@ -30,7 +31,7 @@ describe('OperationPanel', () => {
     expect(log.textContent).toContain('pulling <b>x</b>');
     expect(log.querySelector('b')).toBeNull();
     expect(log.getAttribute('aria-live')).toBe('off');
-    await waitFor(() => expect(screen.getByText('web')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('docker compose up')).toBeTruthy());
   });
 
   it('shows Cancel while running and calls oncancel with the id', async () => {
@@ -47,7 +48,7 @@ describe('OperationPanel', () => {
     await waitFor(() => expect(onfinished).toHaveBeenCalledTimes(1));
     expect(onfinished.mock.calls[0][0]).toMatchObject({ id: 'op1', state: 'succeeded' });
     expect(screen.getByText('succeeded')).toBeTruthy();
-    expect(screen.getByText(/exit code 0/i)).toBeTruthy();
+    expect(screen.getByText(/exit 0/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
   });
 
@@ -85,5 +86,42 @@ describe('OperationPanel', () => {
     await waitFor(() => expect(stream.requests).toHaveLength(1));
     unmount();
     expect(stream.requests[0].signal?.aborted).toBe(true);
+  });
+
+  it('shows an exit dash while running', async () => {
+    setup([line('0', 'a')]);
+    await waitFor(() => expect(screen.getByText(/exit —/)).toBeTruthy());
+  });
+
+  it('Copy output copies the joined lines', async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    setup([line('0', 'one'), line('1', 'two')]);
+    const log = await screen.findByRole('log');
+    await waitFor(() => expect(log.textContent).toContain('two'));
+    await user.click(screen.getByRole('button', { name: 'Copy output' }));
+    expect(writeText).toHaveBeenCalledWith('one\ntwo');
+  });
+
+  it('marks success lines with a tone class', async () => {
+    setup([line('0', '✔ done'), line('1', 'plain')]);
+    const ok = await screen.findByText('✔ done');
+    expect(ok.classList.contains('success')).toBe(true);
+    expect(screen.getByText('plain').classList.contains('success')).toBe(false);
+  });
+});
+
+describe('outputTone', () => {
+  it.each([
+    ['✔ Container web Started', 'success'],
+    ['✘ Container web Error', 'danger'],
+    ['Error response from daemon', 'danger'],
+    ['error: boom', 'danger'],
+    ['pull failed', 'danger'],
+    ['plain output', undefined],
+    ['', undefined],
+  ])('%s -> %s', (text, tone) => {
+    expect(outputTone(text)).toBe(tone);
   });
 });

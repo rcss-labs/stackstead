@@ -3,6 +3,9 @@
 
   let {
     variant,
+    size = 'md',
+    icon = false,
+    confirm = false,
     loading = false,
     disabled = false,
     disabledReason,
@@ -12,6 +15,10 @@
     ...rest
   }: {
     variant: 'primary' | 'secondary' | 'danger' | 'ghost';
+    size?: 'md' | 'sm' | 'xs';
+    icon?: boolean;
+    /** Set by ConfirmDialog: the danger variant is then filled so the destructive action is visible. */
+    confirm?: boolean;
     loading?: boolean;
     disabled?: boolean;
     disabledReason?: string;
@@ -37,7 +44,9 @@
 
 <button
   {...rest}
-  class="btn {variant}"
+  class="btn {variant} {size}"
+  class:icon
+  class:confirm
   {type}
   disabled={disabled && !disabledReason}
   aria-disabled={soft ? 'true' : undefined}
@@ -55,17 +64,32 @@
   .btn {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: var(--space-2);
-    padding: var(--space-2) var(--space-4);
-    min-height: 2.25rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--surface-raised);
+    height: 30px;
+    padding: 0 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    white-space: nowrap;
     cursor: pointer;
   }
-  .primary { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
-  .danger { background: var(--danger); border-color: var(--danger); color: var(--surface); }
-  .ghost { background: transparent; border-color: transparent; }
+  .btn.sm { height: 26px; padding: 0 10px; font-size: 12px; }
+  .btn.xs { height: 24px; padding: 0 8px; font-size: 12px; }
+  .btn.icon { width: 30px; padding: 0; }
+  .btn.icon.sm { width: 26px; }
+  .btn.icon.xs { width: 24px; }
+  .btn:hover { background: var(--hover); }
+  .primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .primary:hover { background: var(--accent); filter: brightness(1.08); }
+  .danger { background: transparent; border-color: var(--border); color: var(--danger); }
+  .danger:hover,
+  .danger.confirm { background: var(--danger-soft); }
+  .ghost { background: transparent; border-color: var(--border); color: var(--muted); }
+  .ghost:hover { background: var(--hover); color: var(--text); }
   .btn:disabled,
   .btn[aria-disabled='true'] { opacity: 0.6; cursor: not-allowed; }
   .btn[aria-busy='true'] { cursor: progress; }

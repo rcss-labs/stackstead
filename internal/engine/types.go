@@ -1,6 +1,11 @@
 package engine
 
-import "net/netip"
+import (
+	"net/netip"
+	"regexp"
+	"strconv"
+	"strings"
+)
 
 const (
 	labelProject = "com.docker.compose.project"
@@ -28,6 +33,36 @@ func (c Container) Project() string { return c.Labels[labelProject] }
 
 // ComposeService returns the compose service name, or "".
 func (c Container) ComposeService() string { return c.Labels[labelService] }
+
+// Health reports the container's healthcheck result parsed from Docker's
+// human Status text: "healthy", "unhealthy", "starting", or "none" when the
+// container is not running or has no healthcheck.
+func (c Container) Health() string {
+	if c.State != "running" {
+		return "none"
+	}
+	switch {
+	case strings.Contains(c.Status, "(unhealthy)"):
+		return "unhealthy"
+	case strings.Contains(c.Status, "(healthy)"):
+		return "healthy"
+	case strings.Contains(c.Status, "(health: starting)"):
+		return "starting"
+	}
+	return "none"
+}
+
+var exitedStatus = regexp.MustCompile(`^Exited \((-?\d+)\)`)
+
+// ExitCode returns the exit code from an "Exited (N) ..." Status, or ok=false.
+func (c Container) ExitCode() (code int, ok bool) {
+	m := exitedStatus.FindStringSubmatch(c.Status)
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(m[1])
+	return n, err == nil
+}
 
 // Network is a Docker network with its IPv4 IPAM configuration.
 type Network struct {

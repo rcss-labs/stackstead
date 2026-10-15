@@ -125,7 +125,7 @@ Prefer to hack on it, or try it without installing a service? You need Docker En
 and the Docker Compose v2 plugin (`docker compose`).
 
 ```bash
-make build                 # needs Go and Node >= 22; produces bin/stackstead
+make build                 # needs Go and Node >= 22; produces bin/stackstead (the UI build enforces the bundle and font budgets)
 ./bin/stackstead serve     # listens on http://127.0.0.1:8420
 ```
 
@@ -175,8 +175,11 @@ progress. Full reference: [docs/cli.md](docs/cli.md).
 - **If Docker is down**, Stackstead keeps running, shows a banner, and
   reconnects when Docker is back.
 - **Accessible.** The UI works with a keyboard and screen readers, follows
-  your light or dark theme and reduced-motion setting, and fits a phone
-  screen.
+  your light or dark theme (with a theme toggle) and reduced-motion setting,
+  offers a compact or comfortable density, and fits a phone screen.
+- **Third-party.** The UI ships IBM Plex Sans and Geist Mono, both under the
+  SIL OFL-1.1, served at `/licenses/IBMPlexSans-OFL.txt` and
+  `/licenses/GeistMono-OFL.txt`.
 
 ## Documentation
 

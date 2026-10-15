@@ -84,7 +84,11 @@
 
 <div class="auth">
   <form class="card stack" onsubmit={submit} novalidate>
-    <h1>Set up Stackstead</h1>
+    <header class="brand">
+      <img src="/logo-art.png" alt="" />
+      <h1 class="wordmark"><span class="visually-hidden">Set up </span>Stack<b>stead</b></h1>
+      <span class="host">{window.location.host}</span>
+    </header>
     <p class="hint">Create the first account.</p>
     {#if error}<p role="alert" class="error"><span aria-hidden="true">✖ </span>{error}</p>{/if}
     <Field label="Username" id="setup-username">
@@ -117,19 +121,30 @@
       {/snippet}
     </Field>
     <Button variant="primary" type="submit" loading={pending}>Create account</Button>
+    <p class="footer">Localhost only. For remote access use a TLS reverse proxy.</p>
   </form>
 </div>
 
 <style>
-  .auth { display: flex; justify-content: center; padding-block: var(--space-6, 2rem); }
+  .auth { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; background: var(--bg); }
   .card {
     width: 100%;
-    max-width: 26rem;
-    padding: var(--space-5, 1.5rem);
-    background: var(--surface-raised);
+    max-width: 400px;
+    padding: 28px;
+    gap: 16px;
+    background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
   }
-  .hint { color: var(--muted); }
+  .brand { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+  .brand img { width: 168px; height: auto; }
+  .wordmark { margin: 0; font-size: 24px; font-weight: 600; }
+  .wordmark b { font-weight: 400; }
+  .host { color: var(--muted); font-size: 12px; }
   .error { color: var(--danger); overflow-wrap: anywhere; }
+  .card :global(input) { height: 34px; }
+  .card :global(.btn) { width: 100%; height: 34px; }
+  .hint { margin: 0; color: var(--muted); text-align: center; }
+  .footer { margin: 0; color: var(--faint); font-size: 11px; text-align: center; }
 </style>
