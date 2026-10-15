@@ -420,3 +420,18 @@ type TopEntry struct {
 	Project   string  `json:"project"`
 	Value     float64 `json:"value"`
 }
+
+// EventMessage is the payload of an "event" message on GET /api/events: one
+// Docker container event. Project and Service are empty for containers that
+// are not part of a compose project. ExitCode is set only for "die" and Health
+// only for "health_status".
+type EventMessage struct {
+	Action    string    `json:"action"`
+	Container string    `json:"container"`
+	Project   string    `json:"project"`
+	Service   string    `json:"service"`
+	Image     string    `json:"image"`
+	Time      time.Time `json:"time"`
+	ExitCode  *int      `json:"exitCode,omitempty"`
+	Health    string    `json:"health,omitempty"`
+}

@@ -32,6 +32,8 @@ type ObserveAPI interface {
 	Connected() bool
 	// SubscribeChanges has the contract of state.Cache.Subscribe.
 	SubscribeChanges() (<-chan state.Change, func())
+	// SubscribeEvents has the contract of state.Cache.SubscribeEvents.
+	SubscribeEvents() (<-chan engine.Event, func())
 	// Logs has the contract of engine.Client.Logs. The container is passed
 	// whole so an implementation can choose the TTY mode when it knows it.
 	Logs(ctx context.Context, c engine.Container, opts engine.LogOptions) (<-chan engine.LogLine, <-chan error)
@@ -65,6 +67,10 @@ func (o ObserveSources) Containers(ctx context.Context) ([]engine.Container, err
 func (o ObserveSources) Connected() bool { return o.Cache.Connected() }
 func (o ObserveSources) SubscribeChanges() (<-chan state.Change, func()) {
 	return o.Cache.Subscribe()
+}
+
+func (o ObserveSources) SubscribeEvents() (<-chan engine.Event, func()) {
+	return o.Cache.SubscribeEvents()
 }
 
 // Logs requests multiplexed framing because the cache does not record whether
@@ -499,20 +505,46 @@ func (s *server) statusFlags() statusFlagsDTO {
 
 type eventItem struct {
 	change  state.Change
+	event   engine.Event
+	isEvent bool
 	poll    bool
 	dropped bool
 }
 
+// eventMessage maps an engine event to its wire form. The compose labels give
+// project and service; the exit code and health are passed on only for the
+// actions that define them.
+func eventMessage(ev engine.Event) apitypes.EventMessage {
+	msg := apitypes.EventMessage{
+		Action:    ev.Action,
+		Container: ev.Name,
+		Project:   ev.Labels["com.docker.compose.project"],
+		Service:   ev.Labels["com.docker.compose.service"],
+		Image:     ev.Image,
+		Time:      ev.Time.UTC(),
+	}
+	switch ev.Action {
+	case "die":
+		msg.ExitCode = ev.ExitCode
+	case "health_status":
+		msg.Health = ev.Health
+	}
+	return msg
+}
+
 // handleEvents streams the status cache: "status" {events, metricsDegraded}
 // once on connect and whenever either flag changes, and "change" {project, seq}
-// when a project's containers changed. The cache signals connection changes
+// when a project's containers changed, and "event" {action, container, ...} for
+// each Docker container event (no ids, no replay). The cache signals connection changes
 // with an empty project, which only triggers the flag check. The degraded flag
 // has no notification, so it is polled (at most every 2s). A subscriber the
-// cache dropped for being slow gets "dropped" and the stream ends; the client
-// should reconnect and refetch.
+// cache dropped for being slow, on either channel, gets "dropped" and the stream
+// ends; the client should reconnect and refetch.
 func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	changes, cancel := s.opts.Observe.SubscribeChanges()
 	defer cancel()
+	events, cancelEvents := s.opts.Observe.SubscribeEvents()
+	defer cancelEvents()
 	sw, err := startSSE(w, s.sseWriteTimeout())
 	if err != nil {
 		return
@@ -556,6 +588,14 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				if !send(eventItem{change: c}) {
 					return
 				}
+			case ev, ok := <-events:
+				if !ok {
+					send(eventItem{dropped: true})
+					return
+				}
+				if !send(eventItem{event: ev, isEvent: true}) {
+					return
+				}
 			}
 		}
 	}()
@@ -564,6 +604,9 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		if it.dropped {
 			_ = sw.Event("dropped", "", struct{}{})
 			return true, nil
+		}
+		if it.isEvent {
+			return false, sw.Event("event", "", eventMessage(it.event))
 		}
 		if !it.poll && it.change.Project != "" {
 			if err := sw.Event("change", "", changeDTO{Project: it.change.Project, Seq: it.change.Seq}); err != nil {
