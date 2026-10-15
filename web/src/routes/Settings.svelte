@@ -95,10 +95,11 @@
     { value: 'comfortable', label: 'Comfortable' },
   ];
 
+  // Only an explicit 'unavailable' means down; 'unknown' (no answer yet) stays neutral.
   const dockerText = $derived(
-    $live.docker === 'ok' ? ($live.dockerVersion ? `${$live.dockerVersion} · ok` : 'ok') : 'unavailable',
+    $live.docker === 'ok' ? ($live.dockerVersion ? `${$live.dockerVersion} · ok` : 'ok') : $live.docker,
   );
-  const dockerTone = $derived($live.docker === 'ok' ? 'success' : 'danger');
+  const dockerTone = $derived($live.docker === 'ok' ? 'success' : $live.docker === 'unavailable' ? 'danger' : 'muted');
   const composeTone = $derived($live.compose === 'unknown' || $live.compose === 'unavailable' ? 'muted' : 'success');
   const eventsTone = $derived($live.events === 'connected' ? 'success' : $live.events === 'disconnected' ? 'danger' : 'muted');
   const metricsText = $derived(
@@ -141,6 +142,7 @@
       {/if}
     </header>
     <div class="body stack">
+      <p class="intro">Prometheus scrapes <code>/metrics</code> with this bearer token.</p>
     {#if status.state === 'loading'}
       <Spinner />
     {:else if status.state === 'error'}
@@ -240,6 +242,8 @@
   .body { padding: 12px 14px; font-size: 12.5px; }
   .body p { margin: 0; }
   .card footer { padding: 8px 14px; border-top: 1px solid var(--border); color: var(--faint); font-size: 12px; }
+  .intro { color: var(--muted); }
+  .intro code { font-family: var(--mono); }
   .pill { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em; color: var(--muted); }
   .pill.on { color: var(--success); }
   .grid { display: grid; gap: var(--space-3) var(--space-4); }

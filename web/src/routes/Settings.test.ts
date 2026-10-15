@@ -30,6 +30,7 @@ describe('Settings metrics token', () => {
     render(Settings);
     expect(await screen.findByRole('button', { name: 'Create token' })).toBeTruthy();
     expect(screen.getByText(/404/)).toBeTruthy();
+    expect(screen.getByText(/scrapes/).textContent).toContain('Prometheus scrapes /metrics with this bearer token.');
     expect(screen.queryByRole('button', { name: 'Rotate token' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Disable' })).toBeNull();
   });
@@ -175,6 +176,13 @@ describe('Settings status and account', () => {
 });
 
 describe('Settings v2 cards', () => {
+  it('docker reads unknown, not unavailable, before any status arrives', async () => {
+    fake = installFakeFetch({ [`GET ${STATUS}`]: { body: { configured: false } } });
+    render(Settings);
+    expect(screen.getByTestId('status-docker').textContent).toContain('unknown');
+    expect(screen.getByTestId('status-docker').textContent).not.toContain('unavailable');
+  });
+
   it('appearance buttons reflect and set the theme and density', async () => {
     fake = installFakeFetch({ [`GET ${STATUS}`]: { body: { configured: false } } });
     const dispose = initAppearance({ root: document.createElement('html'), storage: () => null });
