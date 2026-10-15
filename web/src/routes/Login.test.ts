@@ -49,6 +49,12 @@ describe('safeNext', () => {
 });
 
 describe('Login', () => {
+  it('shows the host and the localhost note', () => {
+    render(Login);
+    expect(screen.getByText(window.location.host)).toBeTruthy();
+    expect(screen.getByText('Localhost only. For remote access use a TLS reverse proxy.')).toBeTruthy();
+  });
+
   it('submits typed values, logs in and navigates to next', async () => {
     fake = installFakeFetch({
       'POST /api/login': { body: {} },

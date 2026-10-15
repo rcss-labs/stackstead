@@ -196,9 +196,9 @@
 {#if !booted || $session.state === 'unknown'}
   <main class="container"><Spinner label="Loading Stackstead" /></main>
 {:else if $session.state === 'needs-setup'}
-  <main class="container"><Setup /></main>
+  <main class="bare"><Setup /></main>
 {:else if $session.state === 'anonymous'}
-  <main class="container"><Login /></main>
+  <main class="bare"><Login /></main>
 {:else}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="layout" onclickcapture={guardLinks}>
@@ -269,8 +269,10 @@
   .banners { display: flex; flex-direction: column; gap: var(--space-2); padding: 16px 20px 0; }
   .banners:empty { display: none; }
   main { flex: 1; min-width: 0; padding: 20px 20px 40px; }
+  main.bare { padding: 0; }
   @media (max-width: 720px) {
     .banners { padding: 12px 16px 0; }
     main { padding: 20px 16px 40px; }
+    main.bare { padding: 0; }
   }
 </style>
