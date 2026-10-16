@@ -12,8 +12,9 @@ import (
 // edit is one change to a compose document: set the value at path (a chain
 // of mapping keys from the root), or delete that key when value is nil.
 type edit struct {
-	path  []string
-	value *yaml.Node
+	path       []string
+	value      *yaml.Node
+	removeHead bool
 }
 
 // ErrEditRefused means an edit could not be applied without risking damage to
@@ -101,6 +102,9 @@ func applyEdit(src []byte, e edit) ([]byte, error) {
 			if len(m.Content) == 2 && mKey != nil {
 				// Deleting the only key would leave a null; keep an empty mapping.
 				return replaceValue(l, mKey, m, &yaml.Node{Kind: yaml.MappingNode, Style: yaml.FlowStyle}, lay)
+			}
+			if e.removeHead {
+				return deleteEntryWithHead(l, key, val)
 			}
 			return deleteEntry(l, key, val)
 		}
@@ -266,4 +270,23 @@ func deleteEntry(l lines, key, val *yaml.Node) ([]byte, error) {
 		stop = l.start[end]
 	}
 	return splice(l.src, l.start[key.Line-1], stop, ""), nil
+}
+
+// deleteEntryWithHead also removes contiguous comments at the key's own
+// indentation; comments separated by a blank line belong to the surrounding file.
+func deleteEntryWithHead(l lines, key, val *yaml.Node) ([]byte, error) {
+	out, err := deleteEntry(l, key, val)
+	if err != nil {
+		return nil, err
+	}
+	start := key.Line
+	for start > 1 {
+		line := l.text(start - 1)
+		indent := key.Column - 1
+		if len(line) <= indent || strings.TrimSpace(line[:indent]) != "" || line[indent] != '#' {
+			break
+		}
+		start--
+	}
+	return splice(out, l.start[start-1], l.start[key.Line-1], ""), nil
 }

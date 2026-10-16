@@ -50,30 +50,30 @@ func (f *File) UpdateService(name string, cfg ServiceConfig) (*File, error) {
 		{FieldImage, old.Image, cfg.Image, nil, func() []edit { return scalarEdit(at("image"), cfg.Image, strNode) }},
 		{FieldBuild, old.Build, cfg.Build, nil, func() []edit {
 			if cfg.Build == nil {
-				return []edit{{at("build"), nil}}
+				return []edit{{at("build"), nil, false}}
 			}
-			return []edit{{at("build"), buildNode(*cfg.Build)}}
+			return []edit{{at("build"), buildNode(*cfg.Build), false}}
 		}},
 		{FieldPorts, old.Ports, cfg.Ports, nil, func() []edit { return listEdit(at("ports"), cfg.Ports, quotedNode) }},
 		{FieldVolumes, old.Volumes, cfg.Volumes, nil, func() []edit { return listEdit(at("volumes"), cfg.Volumes, strNode) }},
 		{FieldEnvironment, old.Environment, cfg.Environment, func() error { return validateEnvironment(cfg.Environment) }, func() []edit {
 			if len(cfg.Environment) == 0 {
-				return []edit{{at("environment"), nil}}
+				return []edit{{at("environment"), nil, false}}
 			}
 			current := mappingValue(node, "environment")
 			asList := current != nil && current.Kind == yaml.SequenceNode
 			if perKey, ok := environmentKeyEdits(current, at("environment"), old.Environment, cfg.Environment); ok {
 				return perKey
 			}
-			return []edit{{at("environment"), environmentNode(cfg.Environment, asList)}}
+			return []edit{{at("environment"), environmentNode(cfg.Environment, asList), false}}
 		}},
 		{FieldNetworks, old.Networks, cfg.Networks, func() error { return validateNetworks(cfg.Networks) }, func() []edit {
 			if len(cfg.Networks) == 0 {
-				return []edit{{at("networks"), nil}}
+				return []edit{{at("networks"), nil, false}}
 			}
 			current := mappingValue(node, "networks")
 			asMap := current != nil && current.Kind == yaml.MappingNode
-			return []edit{{at("networks"), networksNode(cfg.Networks, asMap)}}
+			return []edit{{at("networks"), networksNode(cfg.Networks, asMap), false}}
 		}},
 		{FieldNetworkMode, old.NetworkMode, cfg.NetworkMode, nil, func() []edit {
 			return scalarEdit(at("network_mode"), cfg.NetworkMode, strNode)
@@ -82,9 +82,9 @@ func (f *File) UpdateService(name string, cfg ServiceConfig) (*File, error) {
 		{FieldRestart, old.Restart, cfg.Restart, nil, func() []edit { return scalarEdit(at("restart"), cfg.Restart, strNode) }},
 		{FieldHealthcheck, old.Healthcheck, cfg.Healthcheck, nil, func() []edit {
 			if cfg.Healthcheck == nil {
-				return []edit{{at("healthcheck"), nil}}
+				return []edit{{at("healthcheck"), nil, false}}
 			}
-			return []edit{{at("healthcheck"), healthcheckNode(*cfg.Healthcheck)}}
+			return []edit{{at("healthcheck"), healthcheckNode(*cfg.Healthcheck), false}}
 		}},
 	} {
 		if reflect.DeepEqual(fd.old, fd.new) {
@@ -115,16 +115,16 @@ func (f *File) UpdateService(name string, cfg ServiceConfig) (*File, error) {
 
 func scalarEdit(path []string, v string, node func(string) *yaml.Node) []edit {
 	if v == "" {
-		return []edit{{path, nil}}
+		return []edit{{path, nil, false}}
 	}
-	return []edit{{path, node(v)}}
+	return []edit{{path, node(v), false}}
 }
 
 func listEdit(path []string, items []string, item func(string) *yaml.Node) []edit {
 	if len(items) == 0 {
-		return []edit{{path, nil}}
+		return []edit{{path, nil, false}}
 	}
-	return []edit{{path, listNode(items, item)}}
+	return []edit{{path, listNode(items, item), false}}
 }
 
 // environmentKeyEdits edits a block-mapping environment one variable at a
@@ -164,16 +164,16 @@ func environmentKeyEdits(current *yaml.Node, path []string, old, new []EnvVar) (
 	keyPath := func(name string) []string { return append(slices.Clone(path), name) }
 	for _, v := range old {
 		if !slices.Contains(kept, v.Name) {
-			edits = append(edits, edit{keyPath(v.Name), nil})
+			edits = append(edits, edit{keyPath(v.Name), nil, false})
 		}
 	}
 	for _, v := range new {
 		if value, exists := oldValue[v.Name]; exists && value != v.Value {
-			edits = append(edits, edit{keyPath(v.Name), strNode(v.Value)})
+			edits = append(edits, edit{keyPath(v.Name), strNode(v.Value), false})
 		}
 	}
 	for _, v := range added {
-		edits = append(edits, edit{keyPath(v.Name), strNode(v.Value)})
+		edits = append(edits, edit{keyPath(v.Name), strNode(v.Value), false})
 	}
 	return edits, true
 }
@@ -189,13 +189,13 @@ func limitsEdits(svc *yaml.Node, at func(...string) []string, old, new Limits) [
 		limits := mappingValue(resources, "limits")
 		switch {
 		case hasOtherKeys(limits, "cpus", "memory"):
-			return []edit{{limitPath("cpus"), nil}, {limitPath("memory"), nil}}
+			return []edit{{limitPath("cpus"), nil, false}, {limitPath("memory"), nil, false}}
 		case hasOtherKeys(resources, "limits"):
-			return []edit{{at("deploy", "resources", "limits"), nil}}
+			return []edit{{at("deploy", "resources", "limits"), nil, false}}
 		case hasOtherKeys(deploy, "resources"):
-			return []edit{{at("deploy", "resources"), nil}}
+			return []edit{{at("deploy", "resources"), nil, false}}
 		default:
-			return []edit{{at("deploy"), nil}}
+			return []edit{{at("deploy"), nil, false}}
 		}
 	}
 	var edits []edit

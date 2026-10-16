@@ -199,11 +199,11 @@ func TestUpdateRefusalsAreErrEditRefused(t *testing.T) {
 }
 
 func TestApplyEditsWrapsDecodeFailuresInErrEditRefused(t *testing.T) {
-	_, err := applyEdits([]byte("a: [\n"), []edit{{path("a"), scalar("b")}})
+	_, err := applyEdits([]byte("a: [\n"), []edit{{path("a"), scalar("b"), false}})
 	if !errors.Is(err, ErrEditRefused) {
 		t.Errorf("err = %v, want ErrEditRefused", err)
 	}
-	_, err = applyEdits([]byte("a: b\n"), []edit{{path("a.c"), scalar("d")}})
+	_, err = applyEdits([]byte("a: b\n"), []edit{{path("a.c"), scalar("d"), false}})
 	if !errors.Is(err, ErrEditRefused) {
 		t.Errorf("path through scalar err = %v, want ErrEditRefused", err)
 	}
