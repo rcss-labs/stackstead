@@ -33,6 +33,7 @@ beforeEach(() => {
     'GET /api/status': () => ({ body: status }),
     'GET /api/stacks': () => stacksRes,
     'GET /api/containers': () => ({ body: [] }),
+    'GET /api/networks': () => ({ body: [] }),
     'GET /api/operations?state=running': () => ({ body: running }),
     'POST /api/logout': { status: 204 },
     'POST /api/login': { status: 204 },
@@ -52,7 +53,7 @@ const user = () => userEvent.setup();
 const at = (path: string) => navigate(path, { replace: true });
 
 describe('App landmarks', () => {
-  it.each(['/', '/stacks/new', '/stacks/import', '/settings', '/containers', '/nope'])('has exactly one main landmark on %s', async (path) => {
+  it.each(['/', '/stacks/new', '/stacks/import', '/settings', '/containers', '/networks', '/nope'])('has exactly one main landmark on %s', async (path) => {
     at(path);
     render(App);
     await screen.findByRole('navigation', { name: 'Main' });
@@ -172,6 +173,14 @@ describe('App routing and session', () => {
     await waitFor(() => expect(document.title).toBe('Containers · Stackstead'));
     expect(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Containers' }).getAttribute('aria-current')).toBe('page');
     await waitFor(() => expect(fake.calls.some((c) => c.path === '/api/containers')).toBe(true));
+  });
+
+  it('renders Networks at /networks with its title and current navigation', async () => {
+    at('/networks'); render(App);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Networks' })).toBeTruthy();
+    await waitFor(() => expect(document.title).toBe('Networks · Stackstead'));
+    expect(screen.getByRole('link', { name: 'Networks' }).getAttribute('aria-current')).toBe('page');
+    await waitFor(() => expect(fake.calls.some(c => c.path === '/api/networks')).toBe(true));
   });
 
   it('shows "Container not found" (not "no longer exists") after navigating from a found container to an unknown one', async () => {

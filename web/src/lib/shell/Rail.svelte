@@ -14,9 +14,10 @@
     current: string;
   } = $props();
 
-  const items: { href: string; label: string; icon: 'stacks' | 'box' | 'plus' | 'import' | 'settings'; match: (p: string) => boolean }[] = [
+  const items: { href: string; label: string; icon: 'stacks' | 'network' | 'box' | 'plus' | 'import' | 'settings'; match: (p: string) => boolean }[] = [
     { href: '/', label: 'Stacks', icon: 'stacks', match: (p) => p === '/' || /^\/stacks\/(?!new$|import$)[^/]+$/.test(p) },
     { href: '/containers', label: 'Containers', icon: 'box', match: (p) => p === '/containers' || p.startsWith('/containers/') },
+    { href: '/networks', label: 'Networks', icon: 'network', match: (p) => p === '/networks' },
     { href: '/stacks/new', label: 'New stack', icon: 'plus', match: (p) => p === '/stacks/new' },
     { href: '/stacks/import', label: 'Import', icon: 'import', match: (p) => p === '/stacks/import' },
     { href: '/settings', label: 'Settings', icon: 'settings', match: (p) => p === '/settings' },

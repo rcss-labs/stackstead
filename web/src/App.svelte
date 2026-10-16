@@ -17,6 +17,7 @@
   import TopBar from '$lib/shell/TopBar.svelte';
   import ContainerDetail from './routes/ContainerDetail.svelte';
   import ContainerList from './routes/ContainerList.svelte';
+  import NetworkList from './routes/NetworkList.svelte';
   import Login, { safeNext } from './routes/Login.svelte';
   import Settings from './routes/Settings.svelte';
   import Setup from './routes/Setup.svelte';
@@ -37,6 +38,7 @@
   const containerParams = $derived(matchRoute('/containers/:name', path));
   const view = $derived.by(() => {
     if (path === '/') return 'list' as const;
+    if (path === '/networks') return 'networks' as const;
     if (path === '/containers') return 'containers' as const;
     if (path === '/stacks/new') return 'create' as const;
     if (path === '/stacks/import') return 'import' as const;
@@ -157,6 +159,7 @@
     const titles: Record<string, string> = {
       list: 'Stacks',
       containers: 'Containers',
+      networks: 'Networks',
       settings: 'Settings',
       notfound: 'Page not found',
     };
@@ -236,6 +239,8 @@
     <main bind:this={mainEl}>
       {#if view === 'list'}
         <StackList />
+      {:else if view === 'networks'}
+        <NetworkList />
       {:else if view === 'containers'}
         <ContainerList />
       {:else if view === 'container' && containerParams}

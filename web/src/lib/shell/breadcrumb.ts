@@ -22,6 +22,7 @@ export function breadcrumb(path: string): Crumb[] {
   if (path === '/settings') return [{ label: 'Settings' }];
   if (path === '/stacks/new') return [stacks, { label: 'New stack' }];
   if (path === '/stacks/import') return [stacks, { label: 'Import' }];
+  if (path === '/networks') return [{ label: 'Networks' }];
   if (path === '/containers') return [{ label: 'Containers' }];
   const container = /^\/containers\/([^/]+)$/.exec(path);
   if (container) return [containers, { label: decode(container[1]), mono: true }];

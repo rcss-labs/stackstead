@@ -19,6 +19,7 @@ describe('breadcrumb', () => {
     ['/stacks/my%20stack', [{ label: 'Stacks', href: '/' }, { label: 'my stack', mono: true }]],
     ['/settings', [{ label: 'Settings' }]],
     ['/containers', [{ label: 'Containers' }]],
+    ['/networks', [{ label: 'Networks' }]],
     ['/containers/redis', [{ label: 'Containers', href: '/containers' }, { label: 'redis', mono: true }]],
     ['/containers/my%20db', [{ label: 'Containers', href: '/containers' }, { label: 'my db', mono: true }]],
     ['/nope', [{ label: 'Stacks', href: '/' }, { label: 'Not found' }]],
@@ -68,6 +69,18 @@ describe('Rail', () => {
     expect(screen.getByRole('link', { name: 'Containers' }).getAttribute('aria-current')).toBe('page');
     rerender({ username: 'ana', onlogout: () => {}, current: '/' });
     expect(screen.getByRole('link', { name: 'Containers' }).getAttribute('aria-current')).toBeNull();
+  });
+
+  it('places Networks after Containers and marks only its exact route current', async () => {
+    const { rerender } = render(Rail, { username: 'ana', onlogout: () => {}, current: '/networks' });
+    const names = screen.getAllByRole('link').map(a => a.getAttribute('aria-label'));
+    expect(names.indexOf('Networks')).toBe(names.indexOf('Containers') + 1);
+    const item = screen.getByRole('link', { name: 'Networks' });
+    expect(item.getAttribute('href')).toBe('/networks'); expect(item.getAttribute('title')).toBe('Networks'); expect(item.getAttribute('aria-current')).toBe('page');
+    expect(item.querySelector('path')?.getAttribute('d')).toBeTruthy();
+    for (const current of ['/networks/other', '/containers', '/']) {
+      await rerender({ username: 'ana', onlogout: () => {}, current }); expect(item.getAttribute('aria-current')).toBeNull();
+    }
   });
 
   it('navigates client-side when a link is clicked', async () => {
