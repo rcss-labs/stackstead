@@ -270,7 +270,7 @@ func (s *server) handleNetworkDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	if err = s.opts.NetworkEngine.RemoveNetwork(ctx, n.ID); err != nil {
 		var action *engine.ActionError
-		if errors.As(err, &action) {
+		if !errors.Is(err, engine.ErrNetworkNotFound) && errors.As(err, &action) {
 			refuse(action.Message)
 		} else {
 			s.writeNetworkError(w, r, err)

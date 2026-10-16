@@ -599,7 +599,7 @@ func TestNetworkMutationFailures(t *testing.T) {
 		{"delete list unavailable", "DELETE", "list", engine.ErrUnavailable, 503},
 		{"delete inspect unavailable", "DELETE", "inspect", engine.ErrUnavailable, 503},
 		{"delete inspect disappeared", "DELETE", "inspect", engine.ErrNetworkNotFound, 404},
-		{"delete remove disappeared", "DELETE", "remove", engine.ErrNetworkNotFound, 404},
+		{"delete remove disappeared", "DELETE", "remove", fmt.Errorf("%w: %w", engine.ErrNetworkNotFound, &engine.ActionError{Status: 404, Message: "network lan not found"}), 404},
 		{"delete remove unavailable", "DELETE", "remove", engine.ErrUnavailable, 503},
 		{"delete registry failure", "DELETE", "registry", errors.New("registry failure"), 500},
 	} {

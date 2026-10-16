@@ -21,6 +21,13 @@ func TestDefaultRouteParsing(t *testing.T) {
 			}
 		})
 	}
+	t.Run("requires zero mask even with a lower metric", func(t *testing.T) {
+		root := routeRoot(t, "tun0 00000000 0100080A 0003 0 0 0 00000080 0 0 0\neth0 00000000 0100A8C0 0003 0 0 100 00000000 0 0 0\n")
+		iface, gateway, ok, err := readDefaultRoute(root)
+		if err != nil || !ok || iface != "eth0" || gateway.String() != "192.168.0.1" {
+			t.Fatalf("got %q %v %v %v; want eth0 192.168.0.1", iface, gateway, ok, err)
+		}
+	})
 	t.Run("requires up and gateway flags", func(t *testing.T) {
 		root := routeRoot(t, "eth0 00000000 0100A8C0 0001 0 0 1 00000000 0 0 0\neth1 00000000 0100000A 0002 0 0 0 00000000 0 0 0\n")
 		_, _, ok, err := readDefaultRoute(root)
@@ -67,6 +74,8 @@ func TestInterfacesMalformedRouteFile(t *testing.T) {
 	for _, row := range []string{
 		"eth0 00000000 NOTHEX 0003 0 0 0 00000000 0 0 0\n",
 		"eth0 00000000 0100A8C0 0003 0 0 bad 00000000 0 0 0\n",
+		"eth0 00000000 0100A8C0 0003 0 0 0 NOTHEX00 0 0 0\n",
+		"eth0 00000000 0100A8C0 0003 0 0 0 0000000 0 0 0\n",
 		"eth0 too-short\n",
 	} {
 		t.Run(row, func(t *testing.T) { assertInterfacesWithoutRoute(t, routeRoot(t, row)) })

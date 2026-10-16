@@ -274,7 +274,8 @@ when Docker is unavailable.
 `id` (12 hexadecimal characters), `name`, `driver`, `scope`, `subnets`,
 `gateways`, `ipRange`, `parent`, `ipvlanMode`, `internal`, `builtin`, `project`,
 `stack` and `containers`. The arrays are never null; `gateways[i]` corresponds
-to `subnets[i]`. Each container has `name` and `ipv4` (Docker's IPv4 CIDR).
+to `subnets[i]`. Each container has `name` and `ipv4` (a bare IPv4 address,
+or an empty string when unavailable).
 `builtin` identifies Docker's `bridge`, `host` and `none` networks. `project`
 is the Compose project label, or an empty string; `stack` is the registered
 Stackstead stack owning that project, or an empty string. Successful creates

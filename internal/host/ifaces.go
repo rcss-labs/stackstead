@@ -147,12 +147,13 @@ func readDefaultRoute(procRoot string) (iface string, gateway netip.Addr, ok boo
 		}
 		destination, destErr := parseRouteAddress(fields[1])
 		routeGateway, gatewayErr := parseRouteAddress(fields[2])
+		mask, maskErr := parseRouteAddress(fields[7])
 		flags, flagsErr := strconv.ParseUint(fields[3], 16, 32)
 		metric, metricErr := strconv.ParseUint(fields[6], 10, 64)
-		if destErr != nil || gatewayErr != nil || flagsErr != nil || metricErr != nil {
+		if destErr != nil || gatewayErr != nil || maskErr != nil || flagsErr != nil || metricErr != nil {
 			return "", netip.Addr{}, false, fmt.Errorf("invalid route fields")
 		}
-		if destination != netip.AddrFrom4([4]byte{}) || flags&0x3 != 0x3 {
+		if destination != netip.AddrFrom4([4]byte{}) || mask != netip.AddrFrom4([4]byte{}) || flags&0x3 != 0x3 {
 			continue
 		}
 		if !ok || metric < lowestMetric {
