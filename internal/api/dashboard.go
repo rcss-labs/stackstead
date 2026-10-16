@@ -19,6 +19,11 @@ type HostAPI interface {
 	Snapshot(ctx context.Context) host.Snapshot
 }
 
+// InterfacesAPI is satisfied by host.InterfaceLister.
+type InterfacesAPI interface {
+	Interfaces() ([]host.Interface, error)
+}
+
 // AlertsAPI is satisfied by *alerts.Engine, which caches for 5 s itself.
 type AlertsAPI interface {
 	Alerts(ctx context.Context) ([]alerts.Alert, error)
@@ -69,6 +74,9 @@ const (
 )
 
 func (s *server) registerDashboardRoutes(mux *http.ServeMux) {
+	if s.opts.Interfaces != nil {
+		mux.Handle("GET /api/host/interfaces", s.requireSession(s.handleHostInterfaces))
+	}
 	if s.opts.Host != nil {
 		mux.Handle("GET /api/host", s.requireSession(s.handleHost))
 	}
@@ -82,6 +90,18 @@ func (s *server) registerDashboardRoutes(mux *http.ServeMux) {
 
 func (s *server) handleHost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, hostDTO(s.opts.Host.Snapshot(r.Context())))
+}
+
+func (s *server) handleHostInterfaces(w http.ResponseWriter, r *http.Request) {
+	list, err := s.opts.Interfaces.Interfaces()
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	if list == nil {
+		list = []host.Interface{}
+	}
+	writeJSON(w, http.StatusOK, list)
 }
 
 // hostDTO maps section by section so a field added to host.Snapshot cannot

@@ -207,6 +207,7 @@ func serve(ctx context.Context, env *Env, args []string) error {
 			Closing:          closing,
 			Version:          version.Get().Version,
 			Host:             collector,
+			Interfaces:       host.InterfaceLister{ProcRoot: "/proc", GOOS: runtime.GOOS},
 			Alerts:           alertsEngine,
 			Summary:          api.SummarySources{Store: metricsStore, Sampler: sampler},
 			Restarts:         collector,

@@ -53,6 +53,8 @@ type Options struct {
 	Host    HostAPI
 	Alerts  AlertsAPI
 	Summary SummaryAPI
+	// Interfaces backs /api/host/interfaces independently of Docker sources.
+	Interfaces InterfacesAPI
 	// Restarts feeds the restarts24h column of /api/containers; nil reports
 	// zeros.
 	Restarts RestartsAPI

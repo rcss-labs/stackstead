@@ -550,3 +550,70 @@ func TestSummaryPanickingQueryIs500AndLaterCallWorks(t *testing.T) {
 		t.Errorf("after the panic status = %d, want 200", res.Code)
 	}
 }
+
+type fakeInterfaces struct {
+	list []host.Interface
+	err  error
+}
+
+func (f fakeInterfaces) Interfaces() ([]host.Interface, error) { return f.list, f.err }
+
+func TestHostInterfacesBody(t *testing.T) {
+	_, get := dashboardEnv(t, func(o *api.Options) {
+		o.Interfaces = fakeInterfaces{list: []host.Interface{
+			{Name: "enp3s0", IPv4: "192.168.0.10/24", Subnet: "192.168.0.0/24", Gateway: "192.168.0.1", Default: true},
+			{Name: "eth1", IPv4: "10.0.0.2/16", Subnet: "10.0.0.0/16"},
+		}}
+	})
+	res := get("/api/host/interfaces")
+	want := `[{"name":"enp3s0","ipv4":"192.168.0.10/24","subnet":"192.168.0.0/24","gateway":"192.168.0.1","default":true},{"name":"eth1","ipv4":"10.0.0.2/16","subnet":"10.0.0.0/16","gateway":"","default":false}]`
+	if res.Code != http.StatusOK || strings.TrimSpace(string(res.Body)) != want {
+		t.Fatalf("response = %d %s, want 200 %s", res.Code, res.Body, want)
+	}
+}
+
+func TestHostInterfacesEmptyIsArray(t *testing.T) {
+	for _, list := range [][]host.Interface{nil, {}} {
+		_, get := dashboardEnv(t, func(o *api.Options) { o.Interfaces = fakeInterfaces{list: list} })
+		res := get("/api/host/interfaces")
+		if res.Code != http.StatusOK || strings.TrimSpace(string(res.Body)) != "[]" {
+			t.Fatalf("response = %d %s, want 200 []", res.Code, res.Body)
+		}
+	}
+}
+
+func TestHostInterfacesWorksWithoutDocker(t *testing.T) {
+	_, get := dashboardEnv(t, func(o *api.Options) {
+		o.Interfaces = fakeInterfaces{}
+		o.Host, o.Stacks, o.Observe, o.NetworkEngine, o.ContainerEngine = nil, nil, nil, nil, nil
+	})
+	if res := get("/api/host/interfaces"); res.Code != http.StatusOK {
+		t.Fatalf("response = %d %s, want 200", res.Code, res.Body)
+	}
+}
+
+func TestHostInterfacesErrorIs500(t *testing.T) {
+	_, get := dashboardEnv(t, func(o *api.Options) {
+		o.Interfaces = fakeInterfaces{err: errors.New("private interface failure")}
+	})
+	res := get("/api/host/interfaces")
+	if res.Code != http.StatusInternalServerError || strings.TrimSpace(string(res.Body)) != `{"error":"internal error"}` {
+		t.Fatalf("response = %d %s, want generic 500", res.Code, res.Body)
+	}
+}
+
+func TestHostInterfacesRequiresSession(t *testing.T) {
+	env := newEnvWith(t, "", func(o *api.Options) { o.Interfaces = fakeInterfaces{} })
+	env.createAdmin(t)
+	if rec := env.do(t, "GET", "/api/host/interfaces", ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("response = %d %s, want 401", rec.Code, rec.Body)
+	}
+}
+
+func TestHostInterfacesAbsentWithoutSource(t *testing.T) {
+	_, get := dashboardEnv(t, func(o *api.Options) { o.Host = fakeHost{} })
+	res := get("/api/host/interfaces")
+	if res.Code != http.StatusNotFound || strings.TrimSpace(string(res.Body)) != `{"error":"not found"}` {
+		t.Fatalf("response = %d %s, want JSON 404", res.Code, res.Body)
+	}
+}
