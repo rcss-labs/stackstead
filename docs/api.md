@@ -11,10 +11,14 @@ All routes except health, setup and login need a session cookie. Errors are
 | Method and path | Purpose |
 | --- | --- |
 | `GET /api/health` | liveness, no authentication: `{"ok": true}` (used by installers and monitors) |
-| `GET /api/stacks`, `POST /api/stacks` | list stacks with status; create a stack from an image or Dockerfile |
+| `GET /api/stacks` | list stacks with status |
+| `POST /api/stacks` | create with `{name, services: [{service, config}]}` or legacy `{name, service, config}` |
 | `POST /api/stacks/import` | register an existing compose file without modifying it |
 | `GET /api/stacks/{name}` | detail with services and containers |
 | `GET`/`PUT /api/stacks/{name}/compose` | raw YAML, saved with the hash from the read (409 if stale) |
+| `POST /api/stacks/{name}/services` | add a service with `{service, config, hash}`; returns stack detail (200) |
+| `POST /api/stacks/{name}/services/preview` | preview an addition with `{service, config, hash}`; returns `{content, hash}` without writing |
+| `DELETE /api/stacks/{name}/services/{service}?hash=` | remove a service from the file; returns stack detail (200) |
 | `PUT /api/stacks/{name}/services/{service}` | structured service edit |
 | `POST /api/stacks/{name}/services/{service}/preview` | the file a structured edit would produce, `{content, hash}`, without writing it; the save must send that same `hash` |
 | `POST /api/stacks/{name}/actions/{action}` | `up`, `down`, `restart`, `pull`, `build`; returns an operation (202) |
@@ -42,6 +46,42 @@ All routes except health, setup and login need a session cookie. Errors are
 
 Notes on the stacks API:
 
+- **Multi-service stacks.** Create with `{name, services: [{service, config}]}`
+  for 1–20 services, or the legacy `{name, service, config}` body for one.
+  In the services form, an omitted first service name defaults to the stack
+  name; later entries need a name. Legacy omitted service also defaults to the
+  stack name. The presence of both `services` and either `service` or `config`
+  returns 400, even when the values are empty or null. `services: null` and
+  `services: []` return a count error on `services`. Validation errors use
+  `services[i].` field paths in the services form and unprefixed paths in the
+  legacy form. Duplicate names, host ports and static IPs across entries are
+  reported on the later entry. External networks are declared once in a
+  shared top-level `networks:` block, deduplicated and sorted.
+
+  New structured create/add service names must match
+  `^[a-z0-9][a-z0-9_-]{0,62}$`: lowercase letters, digits, underscores and
+  hyphens, starting with a letter or digit, at most 63 characters. This is an
+  API compatibility narrowing: legacy create requests with formerly
+  Compose-valid uppercase, dotted or longer service names are now rejected.
+  Existing imported/raw-defined services can still be edited and removed by
+  their existing names without this new-name validation.
+- **Adding and removing services.** Send the hash from the last read with
+  `{service, config, hash}` to add or preview an addition; remove with the
+  mandatory `?hash=` query and no request body. A stale hash returns 409 and
+  never overwrites the file. Adding an existing service, removing the last
+  service, and removing a service referenced by another service's `depends_on`
+  also return 409 (the latter names its dependents). Unknown stacks/services
+  return 404. Successful add/remove returns the updated stack detail. Preview
+  returns candidate content and its base hash; save still performs full
+  validation, so preview success does not guarantee save success.
+
+  Add/remove validates the candidate compose file but runs no lifecycle
+  action. Run **Up** to start an added service; a removed service's running
+  container is removed on the next **Up**. Both POST routes require
+  a session, `Content-Type: application/json`, and a JSON body; unknown fields
+  are rejected. Bodyless DELETE requires a session and hash, follows the
+  existing DELETE convention, and does not decode JSON or require a JSON
+  content type.
 - **Partial checks.** Creating or editing a stack checks new host ports and
   static IPs against the Docker engine. If the engine is unreachable only the
   ports declared by other stacks are checked, and the response carries the

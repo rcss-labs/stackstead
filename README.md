@@ -69,6 +69,8 @@ without a platform to maintain.
   variables, networks and static IPs, CPU and memory limits, restart policy
   and healthcheck. Port and IP clashes are checked before anything is
   written.
+- **Multi-service stacks.** Create several services together, and add or remove services
+  on an existing stack, with the same validation and stale-file protection.
 - **See before you save.** Every change, from the form or the built-in YAML
   editor, is shown as a diff before it touches the file, and the previous
   version is kept as a `.bak`. If someone edits the file at the same time,
