@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -38,6 +38,146 @@ const submit = (user: ReturnType<typeof userEvent.setup>) => user.click(screen.g
 const post = () => fake.calls.find((c) => c.method === 'POST' && c.path === '/api/stacks');
 
 describe('StackCreate', () => {
+  async function addImage(user: ReturnType<typeof userEvent.setup>, name = 'db') {
+    await user.click(screen.getByRole('button', { name: '+ Add service' }));
+    await user.type(screen.getByLabelText('Service name'), name);
+    await user.type(screen.getByLabelText('Image'), 'postgres:17');
+  }
+
+  it('adds a card, opens and focuses it; removes it and reopens the previous one', async () => {
+    routes(); const user = userEvent.setup(); render(StackCreate);
+    await fillImage(user);
+    expect(screen.queryByRole('button', { name: /^Remove service/ })).toBeNull();
+    await user.click(screen.getByRole('button', { name: '+ Add service' }));
+    expect(document.activeElement).toBe(screen.getByLabelText('Service name'));
+    expect(screen.getAllByLabelText('Image')).toHaveLength(1);
+    const headers = screen.getAllByRole('button').filter((b) => b.hasAttribute('aria-expanded'));
+    expect(headers.map((h) => h.getAttribute('aria-expanded'))).toEqual(['false', 'true']);
+    await user.type(screen.getByLabelText('Service name'), 'db');
+    await user.click(screen.getByRole('button', { name: 'Remove service db' }));
+    expect((screen.getByLabelText('Image') as HTMLInputElement).value).toBe('nginx:1.27');
+    expect(screen.queryByRole('button', { name: /^Remove service/ })).toBeNull();
+  });
+
+  it('card 0 follows the stack name until edited; other cards do not', async () => {
+    routes(); const user = userEvent.setup(); render(StackCreate);
+    await fillImage(user); await addImage(user);
+    await user.type(screen.getByLabelText('Stack name'), 'app');
+    expect((screen.getByLabelText('Service name') as HTMLInputElement).value).toBe('db');
+    await user.click(screen.getByRole('button', { name: /^webapp nginx/ }));
+    expect((screen.getByLabelText('Service name') as HTMLInputElement).value).toBe('webapp');
+    await user.clear(screen.getByLabelText('Service name'));
+    await user.type(screen.getByLabelText('Service name'), 'api');
+    await user.type(screen.getByLabelText('Stack name'), '2');
+    expect((screen.getByLabelText('Service name') as HTMLInputElement).value).toBe('api');
+  });
+
+  it('sends every card in order and preserves collapsed form values', async () => {
+    routes(); const user = userEvent.setup(); render(StackCreate);
+    await fillImage(user); await addImage(user); await submit(user);
+    await waitFor(() => expect(post()).toBeTruthy());
+    expect(post()?.body).toEqual({ name: 'web', services: [
+      { service: 'web', config: { image: 'nginx:1.27', limits: {} } },
+      { service: 'db', config: { image: 'postgres:17', limits: {} } },
+    ] });
+  });
+
+  it('blocks duplicate service names before the request on the later card', async () => {
+    routes(); const user = userEvent.setup(); render(StackCreate);
+    await fillImage(user); await addImage(user, 'web'); await submit(user);
+    expect(screen.getByText('duplicate service name web')).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByLabelText('Service name'));
+    expect(post()).toBeUndefined();
+  });
+
+  it.each([true, false])('routes indexed errors and focuses in DOM order (name error: %s)', async (nameError) => {
+    routes({ 'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [
+      { field: 'services[1].ports[0]', message: 'port in use' },
+      ...(nameError ? [{ field: 'services[1].service', message: 'duplicate service name db' }] : []),
+    ] } } });
+    const user = userEvent.setup(); render(StackCreate);
+    await fillImage(user); await addImage(user);
+    await user.click(screen.getByRole('button', { name: 'Add port' }));
+    await user.type(screen.getByLabelText('Port 1'), '8080:80');
+    await user.click(screen.getByRole('button', { name: /^web nginx/ }));
+    await submit(user); await screen.findByText('port in use');
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText(nameError ? 'Service name' : 'Port 1')));
+    expect(screen.getByRole('button', { name: /^db postgres/ }).getAttribute('aria-expanded')).toBe('true');
+    await user.click(screen.getByRole('button', { name: /^web nginx/ }));
+    expect(screen.queryByText('port in use')).toBeNull();
+    expect(screen.getByRole('button', { name: /^db postgres/ }).textContent).toContain(nameError ? '2 errors' : '1 error');
+  });
+
+  it('marks collapsed cards that have client errors and opens the first invalid card', async () => {
+    routes(); const user = userEvent.setup(); render(StackCreate);
+    await user.type(screen.getByLabelText('Stack name'), 'web');
+    await user.click(screen.getByRole('button', { name: '+ Add service' }));
+    await user.type(screen.getByLabelText('Service name'), 'db'); await submit(user);
+    expect(screen.getByRole('button', { name: /^db/ }).textContent).toContain('1 error');
+    expect(document.activeElement).toBe(screen.getByLabelText('Image'));
+  });
+
+  it.each([undefined, []])('announces and focuses plain 400 above the cards (fields: %s)', async (fields) => {
+    routes({ 'POST /api/stacks': { status: 400, body: { error: 'use only one request form', fields } } });
+    const user = userEvent.setup(); render(StackCreate);
+    await fillImage(user); await submit(user);
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('use only one request form');
+    await waitFor(() => expect(document.activeElement).toBe(alert));
+    expect(alert.compareDocumentPosition(screen.getByRole('region', { name: /^web/ })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('keeps unknown and out-of-range server errors in the page alert', async () => {
+    routes({ 'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [
+      { field: 'services[0].unknown', message: 'unknown card field' },
+      { field: 'services[9].image', message: 'missing card' },
+      { field: 'services', message: 'bad services' },
+    ] } } });
+    const user = userEvent.setup(); render(StackCreate);
+    await fillImage(user); await submit(user);
+    const alert = await screen.findByRole('alert');
+    for (const message of ['unknown card field', 'missing card', 'bad services']) expect(alert.textContent).toContain(message);
+    await waitFor(() => expect(document.activeElement).toBe(alert));
+  });
+
+  it('soft-disables adding services at 20 with a reason', async () => {
+    routes(); const user = userEvent.setup(); render(StackCreate);
+    const add = screen.getByRole('button', { name: '+ Add service' });
+    for (let i = 1; i < 20; i++) await user.click(add);
+    expect(screen.getAllByRole('region')).toHaveLength(20);
+    expect(add.getAttribute('aria-disabled')).toBe('true'); expect(add.getAttribute('title')).toMatch(/20/);
+    await user.click(add); expect(screen.getAllByRole('region')).toHaveLength(20);
+  });
+
+  it('freezes structure during submission and routes delayed errors to submitted identities', async () => {
+    let respond!: (response: {status: number; body: unknown}) => void;
+    routes({ 'POST /api/stacks': () => new Promise((resolve) => { respond = resolve; }) });
+    const user = userEvent.setup(); render(StackCreate);
+    await fillImage(user); await addImage(user); await submit(user);
+    await user.click(screen.getByRole('button', { name: '+ Add service' }));
+    await user.click(screen.getByRole('button', { name: 'Remove service web' }));
+    expect(screen.getAllByRole('region')).toHaveLength(2);
+    respond({ status: 400, body: { error: 'invalid', fields: [{ field: 'services[1].service', message: 'bad submitted name' }] } });
+    await screen.findByText('bad submitted name');
+    expect((screen.getByLabelText('Service name') as HTMLInputElement).value).toBe('db');
+  });
+
+  it('keeps browser callbacks on their initiating card and prevents switching or removal during browsing', async () => {
+    routes(); const user = userEvent.setup(); render(StackCreate);
+    await fillImage(user); await addImage(user);
+    await user.click(screen.getByLabelText('From Dockerfile'));
+    await user.type(screen.getByLabelText('Build context'), '/srv/app');
+    await user.click(screen.getByRole('button', { name: 'Browse for Dockerfile' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(screen.getByRole('button', { name: /^web nginx/ }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Remove service db' }).hasAttribute('disabled')).toBe(true);
+    await user.click(await within(dialog).findByRole('button', { name: '/srv/app' }));
+    await user.click(await within(dialog).findByRole('button', { name: /^build\.Dockerfile/ }));
+    expect((screen.getByLabelText('Dockerfile') as HTMLInputElement).value).toBe('build.Dockerfile');
+    await user.click(screen.getByRole('button', { name: /^web nginx/ }));
+    expect((screen.getByLabelText('Image') as HTMLInputElement).value).toBe('nginx:1.27');
+  });
+
   it('Cancel is a router link', () => {
     routes();
     render(StackCreate);
@@ -56,7 +196,7 @@ describe('StackCreate', () => {
     expect((screen.getByLabelText('Service name') as HTMLInputElement).value).toBe('web');
     await submit(user);
     await waitFor(() => expect(get(route).path).toBe('/stacks/web'));
-    expect(post()?.body).toEqual({ name: 'web', service: 'web', config: { image: 'nginx:1.27', limits: {} } });
+    expect(post()?.body).toEqual({ name: 'web', services: [{ service: 'web', config: { image: 'nginx:1.27', limits: {} } }] });
     expect(fake.calls.some((c) => c.path === '/api/stacks/web/actions/up')).toBe(true);
     expect(get(route).query.get('tab')).toBe('operations');
     expect(get(route).query.get('op')).toBe('op1');
@@ -84,7 +224,7 @@ describe('StackCreate', () => {
     await user.type(svc, 'app');
     await submit(user);
     await waitFor(() => expect(post()).toBeTruthy());
-    expect(post()?.body).toMatchObject({ name: 'web', service: 'app' });
+    expect(post()?.body).toMatchObject({ name: 'web', services: [{ service: 'app' }] });
   });
 
   it('client validation blocks the request and focuses the first error', async () => {
@@ -123,7 +263,7 @@ describe('StackCreate', () => {
   });
 
   it('400 on build.context lands on the Build context field', async () => {
-    routes({ 'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'build.context', message: 'path is outside the allowed roots' }] } } });
+    routes({ 'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'services[0].build.context', message: 'path is outside the allowed roots' }] } } });
     const user = userEvent.setup();
     render(StackCreate);
     await user.type(screen.getByLabelText('Stack name'), 'web');
@@ -145,7 +285,7 @@ describe('StackCreate', () => {
   });
 
   it('a stale build error is dropped when switching back to image', async () => {
-    routes({ 'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'build.context', message: 'bad context' }] } } });
+    routes({ 'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'services[0].build.context', message: 'bad context' }] } } });
     const user = userEvent.setup();
     render(StackCreate);
     await user.type(screen.getByLabelText('Stack name'), 'web');
@@ -174,7 +314,7 @@ describe('StackCreate', () => {
   });
 
   it('400 field errors land on their fields', async () => {
-    routes({ 'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'ports[0]', message: 'port in use' }] } } });
+    routes({ 'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'services[0].ports[0]', message: 'port in use' }] } } });
     const user = userEvent.setup();
     render(StackCreate);
     await fillImage(user);

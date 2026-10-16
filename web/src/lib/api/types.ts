@@ -344,8 +344,7 @@ export interface CreateStackService {
 
 export interface CreateStackRequest {
   name: string;
-  service: string;
-  config: ServiceConfig;
+  services: CreateStackService[];
 }
 
 export interface ImportRequest {
