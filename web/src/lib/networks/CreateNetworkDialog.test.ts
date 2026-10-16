@@ -88,3 +88,28 @@ it('sends ipvlan mode and explicit advanced options', async () => {
   await userEvent.click(screen.getByRole('button', { name: 'Create network' }));
   expect(fake.calls.find(c => c.method === 'POST')?.body).toEqual({ name: 'lan', driver: 'ipvlan', subnet: '10.0.0.0/24', gateway: '10.0.0.1', parent: 'eth0', ipvlanMode: 'l3', ipRange: '10.0.0.128/25', internal: true });
 });
+it.each([201, 400])('ignores canceled request completion and preserves a newer busy submission (%s)', async status => {
+  let finishOld!: (response: { status: number; body: unknown }) => void;
+  let finishNew!: (response: { body: unknown }) => void;
+  let posts = 0;
+  fake = installFakeFetch({
+    'GET /api/host/interfaces': { body: [] },
+    'POST /api/networks': () => ++posts === 1 ? new Promise(resolve => { finishOld = resolve; }) : new Promise(resolve => { finishNew = resolve; }),
+  });
+  const oncreated = vi.fn(), onclose = vi.fn();
+  const view = render(CreateNetworkDialog, { open: true, oncreated, onclose });
+  await userEvent.type(input('Name'), 'old'); await userEvent.click(screen.getByRole('button', { name: 'Create network' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  await view.rerender({ open: false }); await view.rerender({ open: true });
+  await userEvent.type(input('Name'), 'new'); const button = screen.getByRole('button', { name: 'Create network' });
+  await userEvent.click(button);
+  finishOld({ status, body: status === 201 ? { name: 'old' } : { error: 'Old error', fields: [{ field: 'name', message: 'Old name error' }] } });
+  await userEvent.keyboard('{Tab}');
+  expect(oncreated).not.toHaveBeenCalled(); expect(onclose).toHaveBeenCalledTimes(1);
+  expect(screen.queryByText('Old name error')).toBeNull(); expect(screen.queryByRole('alert')).toBeNull();
+  expect(input('Name').value).toBe('new'); expect(button.getAttribute('aria-busy')).toBe('true');
+  await userEvent.click(button); expect(posts).toBe(2);
+  finishNew({ body: { name: 'new' } });
+  await waitFor(() => expect(oncreated).toHaveBeenCalledWith({ name: 'new' }));
+  expect(onclose).toHaveBeenCalledTimes(2);
+});

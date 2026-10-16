@@ -15,6 +15,11 @@
   let interfaces = $state<HostInterface[]>([]), selected = $state('');
   let errors = $state<Record<string, string>>({}), banner = $state(''), busy = $state(false);
   let lastAuto = { subnet: '', gateway: '' };
+  let session: object | undefined;
+  function cancel() {
+    session = undefined;
+    onclose();
+  }
   const lan = $derived(needsParent(driver));
 
   function applyInterface() {
@@ -34,6 +39,8 @@
   $effect(() => {
     if (!open) return;
     let alive = true;
+    const openedSession = {};
+    session = openedSession;
     untrack(() => {
       name = ''; driver = 'bridge'; subnet = ''; gateway = ''; ipRange = ''; parent = '';
       ipvlanMode = 'l2'; internal = false; interfaces = []; selected = ''; errors = {}; banner = ''; busy = false;
@@ -45,11 +52,17 @@
         if (needsParent(driver)) applyInterface();
       }, () => { if (alive) interfaces = []; });
     });
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+      if (session === openedSession) session = undefined;
+    };
   });
   async function submit(event: SubmitEvent) {
     event.preventDefault();
-    if (busy) return;
+    if (busy || !session) return;
+    const submittedSession = session;
+    const createdCallback = oncreated;
+    const closeCallback = onclose;
     busy = true; errors = {}; banner = '';
     const body: CreateNetworkRequest = { name, driver };
     if (subnet) body.subnet = subnet;
@@ -60,8 +73,10 @@
     if (internal) body.internal = true;
     try {
       const network = await api.createNetwork(body);
-      oncreated(network); onclose();
+      if (session !== submittedSession) return;
+      createdCallback(network); closeCallback();
     } catch (error) {
+      if (session !== submittedSession) return;
       const known = ['name', 'driver', 'parent', 'subnet', 'gateway', 'ipRange', 'ipvlanMode', 'internal'];
       if (error instanceof ApiError && error.fields.length) {
         for (const field of error.fields) {
@@ -69,11 +84,13 @@
           else banner = error.message;
         }
       } else banner = error instanceof Error ? error.message : 'Could not create network';
-    } finally { busy = false; }
+    } finally {
+      if (session === submittedSession) busy = false;
+    }
   }
 </script>
 
-<Dialog {open} title="Create network" {onclose}>
+<Dialog {open} title="Create network" onclose={cancel}>
   <form onsubmit={submit}>
     {#if banner}<Banner kind="danger" title={banner} />{/if}
     <Field label="Name" id="net-name" error={errors.name}>
@@ -125,7 +142,7 @@
         {#snippet children({ readonly: _, ...c })}<input {...c} type="checkbox" bind:checked={internal} />{/snippet}
       </Field>
     </details>
-    <div class="actions"><Button variant="secondary" onclick={onclose}>Cancel</Button><Button variant="primary" type="submit" loading={busy}>Create network</Button></div>
+    <div class="actions"><Button variant="secondary" onclick={cancel}>Cancel</Button><Button variant="primary" type="submit" loading={busy}>Create network</Button></div>
   </form>
 </Dialog>
 <style>

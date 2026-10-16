@@ -142,3 +142,27 @@ it('disables creation when readonly', async () => {
   render(NetworkPicker, { value: [{ name: 'frontend', ipv4Address: '' }], onchange: vi.fn(), readonly: true });
   expect((await screen.findByRole('option', { name: 'Create network…' }) as HTMLOptionElement).disabled).toBe(true);
 });
+it.each([false, true])('ignores a delayed canceled POST without changing rows or closing a newer dialog (reopen: %s)', async reopen => {
+  let finish!: (response: { status: number; body: Network }) => void;
+  fake = installFakeFetch({
+    'GET /api/networks': { body: nets }, 'GET /api/host/interfaces': { body: [] },
+    'POST /api/networks': () => new Promise(resolve => { finish = resolve; }),
+  });
+  const onchange = vi.fn();
+  render(NetworkPicker, { value: [{ name: 'frontend', ipv4Address: '' }, { name: 'backend', ipv4Address: '' }], onchange });
+  await screen.findAllByRole('option', { name: /backend/ });
+  const selects = screen.getAllByRole('combobox', { name: 'Network' }) as HTMLSelectElement[];
+  await userEvent.selectOptions(selects[0], '__create__'); await userEvent.type(screen.getByLabelText('Name'), 'old');
+  await userEvent.click(screen.getByRole('button', { name: 'Create network' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(selects[0].value).toBe('frontend');
+  if (reopen) {
+    await userEvent.selectOptions(selects[1], '__create__'); await userEvent.type(screen.getByLabelText('Name'), 'new');
+  }
+  finish({ status: 201, body: { ...nets[0], name: 'old', id: 'old' } });
+  await userEvent.keyboard('{Tab}');
+  expect(onchange).not.toHaveBeenCalled(); expect(selects[0].value).toBe('frontend');
+  expect(fake.calls.filter(c => c.path === '/api/networks' && c.method === 'GET')).toHaveLength(1);
+  if (reopen) { expect(screen.getByRole('dialog')).toBeTruthy(); expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('new'); }
+  else expect(screen.queryByRole('dialog')).toBeNull();
+});
