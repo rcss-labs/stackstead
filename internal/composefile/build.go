@@ -3,6 +3,7 @@ package composefile
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -13,6 +14,8 @@ import (
 var ErrInvalidServiceName = errors.New("service name must not be empty")
 
 var ErrInvalidConfig = errors.New("invalid service config")
+
+var ErrServiceExists = errors.New("service already exists")
 
 // ValidateConfig rejects configs that would render duplicate or empty mapping
 // keys, which Docker Compose refuses, or environment names that would not
@@ -239,22 +242,43 @@ func normalize(cfg ServiceConfig) ServiceConfig {
 	return cfg
 }
 
-// New renders a new compose file holding one service. Networks the service
-// joins are declared external: Stackstead attaches services to networks that
-// already exist on the host.
-func New(name string, cfg ServiceConfig) ([]byte, error) {
-	if name == "" {
-		return nil, ErrInvalidServiceName
+// New renders a new compose file holding services in request order. Networks
+// the services join are declared external once, sorted by name: Stackstead
+// attaches services to networks that already exist on the host.
+func New(services []NamedService) ([]byte, error) {
+	if len(services) == 0 {
+		return nil, fmt.Errorf("%w: no services", ErrInvalidConfig)
 	}
-	cfg = normalize(cfg)
-	if err := ValidateConfig(cfg); err != nil {
-		return nil, err
+	serviceMap := &yaml.Node{Kind: yaml.MappingNode}
+	seenServices := map[string]bool{}
+	networkNames := map[string]bool{}
+	for _, service := range services {
+		if service.Name == "" {
+			return nil, ErrInvalidServiceName
+		}
+		if seenServices[service.Name] {
+			return nil, fmt.Errorf("%w: %s", ErrServiceExists, service.Name)
+		}
+		seenServices[service.Name] = true
+		cfg := normalize(service.Config)
+		if err := ValidateConfig(cfg); err != nil {
+			return nil, fmt.Errorf("service %s: %w", service.Name, err)
+		}
+		serviceMap.Content = append(serviceMap.Content, strNode(service.Name), serviceNode(cfg))
+		for _, network := range cfg.Networks {
+			networkNames[network.Name] = true
+		}
 	}
-	root := mapNode("services", mapNode(name, serviceNode(cfg)))
-	if len(cfg.Networks) > 0 {
+	root := mapNode("services", serviceMap)
+	if len(networkNames) > 0 {
+		names := make([]string, 0, len(networkNames))
+		for name := range networkNames {
+			names = append(names, name)
+		}
+		sort.Strings(names)
 		nets := &yaml.Node{Kind: yaml.MappingNode}
-		for _, n := range cfg.Networks {
-			nets.Content = append(nets.Content, strNode(n.Name), mapNode("external", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"}))
+		for _, name := range names {
+			nets.Content = append(nets.Content, strNode(name), mapNode("external", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"}))
 		}
 		root.Content = append(root.Content, strNode("networks"), nets)
 	}

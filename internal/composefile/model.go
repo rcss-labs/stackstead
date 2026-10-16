@@ -16,6 +16,12 @@ const (
 	FieldHealthcheck Field = "healthcheck"
 )
 
+// NamedService pairs a service name with the configuration to render.
+type NamedService struct {
+	Name   string
+	Config ServiceConfig
+}
+
 // ServiceConfig is the subset of a compose service that Stackstead edits
 // through forms. Empty values mean "not set".
 type ServiceConfig struct {

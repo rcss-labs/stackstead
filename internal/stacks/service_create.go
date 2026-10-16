@@ -46,7 +46,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 	if err != nil {
 		return Summary{}, err
 	}
-	data, err := composefile.New(service, cfg)
+	data, err := composefile.New([]composefile.NamedService{{Name: service, Config: cfg}})
 	if err != nil {
 		return Summary{}, err
 	}
