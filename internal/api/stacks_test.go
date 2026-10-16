@@ -3,6 +3,7 @@ package api_test
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -818,5 +819,175 @@ func TestPreviewServiceRequiresSession(t *testing.T) {
 	rec := env.do(t, "POST", "/api/stacks/web/services/app/preview", `{"config":{"image":"x"},"hash":"h"}`)
 	if rec.Code != 401 {
 		t.Errorf("status = %d", rec.Code)
+	}
+}
+
+func (f *fakeStacks) AddService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) (stacks.EditResult, error) {
+	return f.UpdateService(ctx, stack, service, cfg, hash)
+}
+func (f *fakeStacks) PreviewAddService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) ([]byte, error) {
+	return f.PreviewService(ctx, stack, service, cfg, hash)
+}
+func (f *fakeStacks) RemoveService(_ context.Context, _, service, hash string) (stacks.EditResult, error) {
+	f.gotService, f.gotHash = service, hash
+	return stacks.EditResult{Hash: "h2"}, f.err
+}
+
+func TestCreateStackServicesBody(t *testing.T) {
+	f := newFakeStacks()
+	env, cookie := newStacksEnv(t, f)
+	rec := env.do(t, "POST", "/api/stacks", `{"name":"web","services":[{"service":"app","config":{"image":"nginx:1"}},{"service":"db","config":{"image":"postgres:17"}}]}`, withCookie(cookie))
+	if rec.Code != 201 {
+		t.Fatalf("status=%d: %s", rec.Code, rec.Body)
+	}
+	got := f.gotCreate
+	if !got.IndexedFields || got.Name != "web" || len(got.Services) != 2 || got.Services[0].Name != "app" || got.Services[0].Config.Image != "nginx:1" || got.Services[1].Name != "db" || got.Services[1].Config.Image != "postgres:17" {
+		t.Fatalf("request=%+v", got)
+	}
+}
+
+func TestCreateStackBothFormsIs400(t *testing.T) {
+	f := newFakeStacks()
+	env, cookie := newStacksEnv(t, f)
+	for _, body := range []string{
+		`{"name":"web","services":[],"service":"app"}`,
+		`{"name":"web","services":[],"service":""}`,
+		`{"name":"web","services":null,"service":""}`,
+		`{"name":"web","services":[],"config":null}`,
+		`{"name":"web","services":null,"config":{}}`,
+	} {
+		rec := env.do(t, "POST", "/api/stacks", body, withCookie(cookie))
+		if rec.Code != 400 || rec.Body.String() != "{\"error\":\"send either services or service and config, not both\",\"fields\":[]}\n" {
+			t.Errorf("%s => %d %s", body, rec.Code, rec.Body)
+		}
+	}
+}
+
+func TestCreateStackEmptyServicesIsForwarded(t *testing.T) {
+	f := newFakeStacks()
+	f.err = &stacks.ValidationError{Fields: []stacks.FieldError{{Field: "services", Message: "must contain 1–20 services"}}}
+	env, cookie := newStacksEnv(t, f)
+	for _, value := range []string{"[]", "null"} {
+		rec := env.do(t, "POST", "/api/stacks", `{"name":"web","services":`+value+`}`, withCookie(cookie))
+		if rec.Code != 400 || !strings.Contains(rec.Body.String(), `"field":"services"`) || !f.gotCreate.IndexedFields || f.gotCreate.Services == nil || len(f.gotCreate.Services) != 0 {
+			t.Errorf("%s => %d %s request=%+v", value, rec.Code, rec.Body, f.gotCreate)
+		}
+	}
+}
+
+func TestCreateStackNameOnlyIsLegacy(t *testing.T) {
+	f := newFakeStacks()
+	env, cookie := newStacksEnv(t, f)
+	rec := env.do(t, "POST", "/api/stacks", `{"name":"web"}`, withCookie(cookie))
+	if rec.Code != 201 || f.gotCreate.IndexedFields || len(f.gotCreate.Services) != 1 || f.gotCreate.Services[0].Name != "" || f.gotCreate.Services[0].Config.Image != "" {
+		t.Fatalf("%d %s request=%+v", rec.Code, rec.Body, f.gotCreate)
+	}
+}
+
+func TestCreateStackLegacyBodyUnprefixedPaths(t *testing.T) {
+	f := newFakeStacks()
+	f.err = &stacks.ValidationError{Fields: []stacks.FieldError{{Field: "ports[0]", Message: "bad port"}}}
+	env, cookie := newStacksEnv(t, f)
+	rec := env.do(t, "POST", "/api/stacks", `{"name":"web","service":"app","config":{}}`, withCookie(cookie))
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), `"field":"ports[0]"`) || f.gotCreate.IndexedFields || len(f.gotCreate.Services) != 1 || f.gotCreate.Services[0].Name != "app" {
+		t.Fatalf("%d %s request=%+v", rec.Code, rec.Body, f.gotCreate)
+	}
+}
+
+func TestCreateStackRejectsUnknownFields(t *testing.T) {
+	f := newFakeStacks()
+	env, cookie := newStacksEnv(t, f)
+	for _, body := range []string{
+		`{"name":"web","unknown":true}`,
+		`{"name":"web","config":{"unknown":true}}`,
+		`{"name":"web","services":[{"service":"app","unknown":true}]}`,
+		`{"name":"web","services":[{"service":"app","config":{"build":{"unknown":true}}}]}`,
+	} {
+		rec := env.do(t, "POST", "/api/stacks", body, withCookie(cookie))
+		if rec.Code != 400 || !strings.Contains(rec.Body.String(), `unknown field \"unknown\"`) {
+			t.Errorf("%s => %d %s", body, rec.Code, rec.Body)
+		}
+	}
+}
+
+func TestAddServiceReturnsDetailAndPartialHeader(t *testing.T) {
+	f := newFakeStacks()
+	f.partial = true
+	env, cookie := newStacksEnv(t, f)
+	rec := env.do(t, "POST", "/api/stacks/web/services", `{"service":"db","config":{"image":"postgres:17","networks":[{"name":"lan","ipv4Address":"10.0.0.7"}]},"hash":"h1"}`, withCookie(cookie))
+	if rec.Code != 200 || rec.Header().Get("X-Stackstead-Checks") != "partial" || !strings.Contains(rec.Body.String(), `"services":[`) || !strings.Contains(rec.Body.String(), `"hash":"h1"`) {
+		t.Fatalf("%d %s headers=%v", rec.Code, rec.Body, rec.Header())
+	}
+	if f.gotService != "db" || f.gotHash != "h1" || f.gotCfg.Image != "postgres:17" || len(f.gotCfg.Networks) != 1 || f.gotCfg.Networks[0].IPv4Address != "10.0.0.7" {
+		t.Fatalf("args=%s %+v %s", f.gotService, f.gotCfg, f.gotHash)
+	}
+}
+
+func TestPreviewAddServiceReturnsCandidateAndHash(t *testing.T) {
+	f := newFakeStacks()
+	env, cookie := newStacksEnv(t, f)
+	rec := env.do(t, "POST", "/api/stacks/web/services/preview", `{"service":"preview","config":{"image":"nginx:1"},"hash":"base"}`, withCookie(cookie))
+	var body struct{ Content, Hash string }
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if rec.Code != 200 || body.Content != "services: {}\n# candidate\n" || body.Hash != "base" || f.gotService != "preview" || f.gotCfg.Image != "nginx:1" || f.gotHash != "base" {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	// A service literally called preview retains the existing edit-preview route.
+	rec = env.do(t, "POST", "/api/stacks/web/services/preview/preview", `{"config":{"image":"redis:7"},"hash":"edit"}`, withCookie(cookie))
+	if rec.Code != 200 || f.gotService != "preview" || f.gotHash != "edit" || f.gotCfg.Image != "redis:7" {
+		t.Fatalf("edit preview: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestRemoveServiceRequiresHashAndReturnsDetail(t *testing.T) {
+	f := newFakeStacks()
+	env, cookie := newStacksEnv(t, f)
+	rec := env.do(t, "DELETE", "/api/stacks/web/services/Imported.Service", "", withCookie(cookie))
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "hash is required") || f.gotService != "" {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	rec = env.do(t, "DELETE", "/api/stacks/web/services/Imported.Service?hash=h%2B1", "", withCookie(cookie), withHeader("Content-Type", ""))
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"services":[`) || f.gotService != "Imported.Service" || f.gotHash != "h+1" {
+		t.Fatalf("%d %s args=%s %s", rec.Code, rec.Body, f.gotService, f.gotHash)
+	}
+}
+
+func TestServiceAddRemove409Mappings(t *testing.T) {
+	f := newFakeStacks()
+	env, cookie := newStacksEnv(t, f)
+	for _, err := range []error{composefile.ErrConflict, composefile.ErrServiceExists, composefile.ErrLastService, &composefile.DependentsError{Service: "db", Dependents: []string{"app"}}} {
+		f.err = fmt.Errorf("wrapped: %w", err)
+		for _, rt := range []struct{ method, path, body string }{
+			{"POST", "/api/stacks/web/services", `{"service":"db","config":{},"hash":"h"}`},
+			{"POST", "/api/stacks/web/services/preview", `{"service":"db","config":{},"hash":"h"}`},
+			{"DELETE", "/api/stacks/web/services/db?hash=h", ""},
+		} {
+			rec := env.do(t, rt.method, rt.path, rt.body, withCookie(cookie))
+			var body struct{ Error string }
+			_ = json.Unmarshal(rec.Body.Bytes(), &body)
+			if rec.Code != 409 || body.Error != f.err.Error() {
+				t.Errorf("%s %s: %d %s", rt.method, rt.path, rec.Code, rec.Body)
+			}
+		}
+	}
+}
+
+func TestServiceRoutesRequireSessionAndJSON(t *testing.T) {
+	env, cookie := newStacksEnv(t, newFakeStacks())
+	for _, rt := range []struct{ method, path string }{{"POST", "/api/stacks/web/services"}, {"POST", "/api/stacks/web/services/preview"}, {"DELETE", "/api/stacks/web/services/db?hash=h"}} {
+		rec := env.do(t, rt.method, rt.path, "{}")
+		if rec.Code != 401 {
+			t.Errorf("%s %s unauth=%d", rt.method, rt.path, rec.Code)
+		}
+		if rt.method == "POST" {
+			rec = env.do(t, rt.method, rt.path, "{}", withCookie(cookie), withHeader("Content-Type", "text/plain"))
+			if rec.Code != 415 {
+				t.Errorf("%s JSON=%d %s", rt.path, rec.Code, rec.Body)
+			}
+			rec = env.do(t, rt.method, rt.path, `{"config":{"unknown":true}}`, withCookie(cookie))
+			if rec.Code != 400 {
+				t.Errorf("%s unknown=%d %s", rt.path, rec.Code, rec.Body)
+			}
+		}
 	}
 }

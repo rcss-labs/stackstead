@@ -23,6 +23,7 @@ type (
 	attachmentDTO        = apitypes.NetworkAttachment
 	limitsDTO            = apitypes.Limits
 	healthcheckDTO       = apitypes.Healthcheck
+	addServiceRequest    = apitypes.AddServiceRequest
 	createStackRequest   = apitypes.CreateStackRequest
 	importRequest        = apitypes.ImportRequest
 	rawComposeBody       = apitypes.RawCompose

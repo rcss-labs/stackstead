@@ -4,7 +4,12 @@
 // library and must stay free of server packages.
 package apitypes
 
-import "time"
+import (
+	"bytes"
+	"encoding/json"
+	"strings"
+	"time"
+)
 
 type StackSummary struct {
 	Name         string `json:"name"`
@@ -192,10 +197,54 @@ type PreviewResponse struct {
 	Hash    string `json:"hash"`
 }
 
-type CreateStackRequest struct {
-	Name    string        `json:"name"`
+type CreateStackService struct {
 	Service string        `json:"service"`
 	Config  ServiceConfig `json:"config"`
+}
+
+type CreateStackRequest struct {
+	Name            string               `json:"name"`
+	Service         string               `json:"service,omitempty"`
+	Config          *ServiceConfig       `json:"config,omitempty"`
+	Services        []CreateStackService `json:"services,omitempty"`
+	servicesPresent bool
+	legacyPresent   bool
+}
+
+// UnmarshalJSON preserves field presence: null and empty legacy fields still
+// conflict with the services form. Decode strictly here because an outer
+// decoder's DisallowUnknownFields does not reach custom unmarshallers.
+func (r *CreateStackRequest) UnmarshalJSON(data []byte) error {
+	type wire CreateStackRequest
+	var decoded wire
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for key := range fields {
+		switch {
+		case strings.EqualFold(key, "services"):
+			decoded.servicesPresent = true
+		case strings.EqualFold(key, "service"), strings.EqualFold(key, "config"):
+			decoded.legacyPresent = true
+		}
+	}
+	*r = CreateStackRequest(decoded)
+	return nil
+}
+
+func (r CreateStackRequest) UsesServices() bool  { return r.servicesPresent }
+func (r CreateStackRequest) HasMixedForms() bool { return r.servicesPresent && r.legacyPresent }
+
+type AddServiceRequest struct {
+	Service string        `json:"service"`
+	Config  ServiceConfig `json:"config"`
+	Hash    string        `json:"hash"`
 }
 
 type ImportRequest struct {

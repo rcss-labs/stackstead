@@ -26,6 +26,7 @@ type fieldErrorBody struct {
 // logged and answered with a generic 500 so internals never leak.
 func (s *server) writeStackError(w http.ResponseWriter, r *http.Request, err error) {
 	var (
+		dependents *composefile.DependentsError
 		validation *stacks.ValidationError
 		exit       *composecli.ExitError
 		readOnly   *composefile.ReadOnlyFieldError
@@ -54,7 +55,7 @@ func (s *server) writeStackError(w http.ResponseWriter, r *http.Request, err err
 			msg += ": " + strings.TrimPrefix(detail, ": ")
 		}
 		writeError(w, http.StatusConflict, msg)
-	case errors.Is(err, stacks.ErrStackExists), errors.Is(err, stacks.ErrBusy), errors.Is(err, composefile.ErrConflict):
+	case errors.Is(err, composefile.ErrServiceExists), errors.Is(err, composefile.ErrLastService), errors.As(err, &dependents), errors.Is(err, stacks.ErrStackExists), errors.Is(err, stacks.ErrBusy), errors.Is(err, composefile.ErrConflict):
 		writeError(w, http.StatusConflict, err.Error())
 
 	case errors.Is(err, stacks.ErrShutdown), errors.Is(err, engine.ErrUnavailable),

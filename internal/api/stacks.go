@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/rcss-labs/stackstead/internal/apitypes"
 	"github.com/rcss-labs/stackstead/internal/composefile"
 	"github.com/rcss-labs/stackstead/internal/engine"
 	"github.com/rcss-labs/stackstead/internal/fsguard"
@@ -22,6 +23,9 @@ type StacksAPI interface {
 	Get(ctx context.Context, name string) (stacks.Detail, error)
 	Raw(ctx context.Context, name string) (content []byte, hash string, err error)
 	SaveRaw(ctx context.Context, stack string, content []byte, hash string) (stacks.EditResult, error)
+	AddService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) (stacks.EditResult, error)
+	PreviewAddService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) ([]byte, error)
+	RemoveService(ctx context.Context, stack, service, hash string) (stacks.EditResult, error)
 	UpdateService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) (stacks.EditResult, error)
 	PreviewService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) (candidate []byte, err error)
 	Act(ctx context.Context, stack, action string) (stacks.Operation, error)
@@ -64,6 +68,9 @@ func (s *server) registerStackRoutes(mux *http.ServeMux) {
 	route("GET /api/stacks/{name}", s.handleGetStack)
 	route("GET /api/stacks/{name}/compose", s.handleGetCompose)
 	route("PUT /api/stacks/{name}/compose", s.handlePutCompose)
+	route("POST /api/stacks/{name}/services", s.handleAddService)
+	route("POST /api/stacks/{name}/services/preview", s.handlePreviewAddService)
+	route("DELETE /api/stacks/{name}/services/{service}", s.handleRemoveService)
 	route("PUT /api/stacks/{name}/services/{service}", s.handleUpdateService)
 	route("POST /api/stacks/{name}/services/{service}/preview", s.handlePreviewService)
 	route("POST /api/stacks/{name}/actions/{action}", s.handleAction)
@@ -103,7 +110,24 @@ func (s *server) handleCreateStack(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	sum, err := s.opts.Stacks.Create(r.Context(), stacks.CreateRequest{Name: req.Name, Services: []composefile.NamedService{{Name: req.Service, Config: serviceConfigToDomain(req.Config)}}, IndexedFields: false})
+	if req.HasMixedForms() {
+		writeJSON(w, http.StatusBadRequest, fieldErrorBody{Error: "send either services or service and config, not both", Fields: []apitypes.FieldError{}})
+		return
+	}
+	domain := stacks.CreateRequest{Name: req.Name, IndexedFields: req.UsesServices()}
+	if req.UsesServices() {
+		domain.Services = make([]composefile.NamedService, 0, len(req.Services))
+		for _, entry := range req.Services {
+			domain.Services = append(domain.Services, composefile.NamedService{Name: entry.Service, Config: serviceConfigToDomain(entry.Config)})
+		}
+	} else {
+		var cfg serviceConfig
+		if req.Config != nil {
+			cfg = *req.Config
+		}
+		domain.Services = []composefile.NamedService{{Name: req.Service, Config: serviceConfigToDomain(cfg)}}
+	}
+	sum, err := s.opts.Stacks.Create(r.Context(), domain)
 	if err != nil {
 		s.writeStackError(w, r, err)
 		return
@@ -295,4 +319,55 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		MetricsIntervalSeconds:  int64(s.opts.MetricsInterval / time.Second),
 		MetricsRetentionSeconds: int64(s.opts.MetricsRetention / time.Second),
 	})
+}
+
+func (s *server) handleAddService(w http.ResponseWriter, r *http.Request) {
+	var req addServiceRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	res, err := s.opts.Stacks.AddService(r.Context(), r.PathValue("name"), req.Service, serviceConfigToDomain(req.Config), req.Hash)
+	if err != nil {
+		s.writeStackError(w, r, err)
+		return
+	}
+	d, err := s.opts.Stacks.Get(r.Context(), r.PathValue("name"))
+	if err != nil {
+		s.writeStackError(w, r, err)
+		return
+	}
+	markPartial(w, res.ChecksPartial)
+	writeJSON(w, http.StatusOK, toDetail(d))
+}
+
+func (s *server) handlePreviewAddService(w http.ResponseWriter, r *http.Request) {
+	var req addServiceRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	candidate, err := s.opts.Stacks.PreviewAddService(r.Context(), r.PathValue("name"), req.Service, serviceConfigToDomain(req.Config), req.Hash)
+	if err != nil {
+		s.writeStackError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, previewResponse{Content: string(candidate), Hash: req.Hash})
+}
+
+func (s *server) handleRemoveService(w http.ResponseWriter, r *http.Request) {
+	hash := r.URL.Query().Get("hash")
+	if hash == "" {
+		writeError(w, http.StatusBadRequest, "hash is required")
+		return
+	}
+	_, err := s.opts.Stacks.RemoveService(r.Context(), r.PathValue("name"), r.PathValue("service"), hash)
+	if err != nil {
+		s.writeStackError(w, r, err)
+		return
+	}
+	d, err := s.opts.Stacks.Get(r.Context(), r.PathValue("name"))
+	if err != nil {
+		s.writeStackError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toDetail(d))
 }

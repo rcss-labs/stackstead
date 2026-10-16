@@ -40,6 +40,9 @@ func populated[T any]() T {
 }
 
 func fill(v reflect.Value) {
+	if !v.CanSet() {
+		return
+	}
 	switch v.Kind() {
 	case reflect.String:
 		v.SetString("x")
@@ -96,7 +99,9 @@ func TestJSONTagsMatchContract(t *testing.T) {
 		{"RawCompose", populated[apitypes.RawCompose](), "content,hash"},
 		{"HashResponse", populated[apitypes.HashResponse](), "hash"},
 		{"PreviewResponse", populated[apitypes.PreviewResponse](), "content,hash"},
-		{"CreateStackRequest", populated[apitypes.CreateStackRequest](), "config,name,service"},
+		{"CreateStackRequest", populated[apitypes.CreateStackRequest](), "config,name,service,services"},
+		{"CreateStackService", populated[apitypes.CreateStackService](), "config,service"},
+		{"AddServiceRequest", populated[apitypes.AddServiceRequest](), "config,hash,service"},
 		{"ImportRequest", populated[apitypes.ImportRequest](), "path"},
 		{"UpdateServiceRequest", populated[apitypes.UpdateServiceRequest](), "config,hash"},
 		{"LogEvent", populated[apitypes.LogEvent](), "container,service,stream,text,time"},
