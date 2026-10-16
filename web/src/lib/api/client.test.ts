@@ -187,6 +187,51 @@ describe('api wrappers', () => {
     ]);
   });
 
+  const serviceDetail = {
+    name: 'my stack', path: '/srv/my stack', project: 'my-stack', origin: 'managed', status: 'stopped',
+    serviceCount: 1, running: 0, health: { healthy: 0, unhealthy: 0, starting: 0, none: 0, failed: 0 },
+    ports: [], hash: 'h2',
+    services: [{ name: 'api/worker', config: { image: 'alpine:3.21', limits: {} }, readOnly: [], containers: [] }],
+  };
+
+  it.each([false, true])('adds a service and surfaces checksPartial=%s with the detail', async (partial) => {
+    fake = installFakeFetch({
+      'POST /api/stacks/my%20stack/services': {
+        status: 201, body: serviceDetail, headers: partial ? { 'X-Stackstead-Checks': 'partial' } : {},
+      },
+    });
+    const config = { image: 'alpine:3.21', limits: {} };
+    expect(await api.addService('my stack', 'api/worker', config, 'h1')).toEqual({
+      data: serviceDetail, checksPartial: partial,
+    });
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.calls[0]).toMatchObject({
+      method: 'POST', path: '/api/stacks/my%20stack/services', body: { service: 'api/worker', config, hash: 'h1' },
+    });
+  });
+
+  it('previews an added service with its name, config and hash', async () => {
+    const preview = { content: 'services: {}\n', hash: 'h1' };
+    fake = installFakeFetch({ 'POST /api/stacks/my%20stack/services/preview': { body: preview } });
+    const config = { image: 'alpine:3.21', limits: {} };
+    expect(await api.previewAddService('my stack', 'api/worker', config, 'h1')).toEqual(preview);
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.calls[0]).toMatchObject({
+      method: 'POST', path: '/api/stacks/my%20stack/services/preview', body: { service: 'api/worker', config, hash: 'h1' },
+    });
+  });
+
+  it('removes a service with encoded path segments and hash query and returns detail', async () => {
+    fake = installFakeFetch({
+      'DELETE /api/stacks/my%20stack/services/api%2Fworker?hash=h%2B%2F%3D%26%3F%23': { body: serviceDetail },
+    });
+    expect(await api.removeService('my stack', 'api/worker', 'h+/=&?#')).toEqual(serviceDetail);
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.calls[0]).toMatchObject({
+      method: 'DELETE', path: '/api/stacks/my%20stack/services/api%2Fworker?hash=h%2B%2F%3D%26%3F%23', body: undefined,
+    });
+  });
+
   it('sends setup token only when given and password change fields', async () => {
     fake = installFakeFetch({ 'POST /api/setup': { status: 204 }, 'POST /api/password': { status: 204 } });
     await api.setup('u', 'p');

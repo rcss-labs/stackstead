@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ServiceConfig } from '../api/types';
-import { emptyForm, fieldOf, fromForm, mapServerErrors, toForm, validateForm, type ServiceForm } from './form';
+import { emptyForm, fieldOf, fromForm, groupServiceErrors, mapServerErrors, toForm, validateForm, type ServiceForm } from './form';
 
 const full: ServiceConfig = {
   build: { context: './app', dockerfile: 'Dockerfile.dev' },
@@ -204,6 +204,32 @@ describe('validateForm', () => {
   });
 });
 
+describe('groupServiceErrors', () => {
+  it('buckets indexed service fields, strips only the card prefix and keeps other fields at page level', () => {
+    const fields = [
+      { field: 'services[1].ports[0]', message: 'port is in use' },
+      { field: 'name', message: 'stack exists' },
+      { field: 'services[0].service', message: 'invalid service name' },
+      { field: 'services', message: 'too many services' },
+      { field: 'services[1].networks.lan.ipv4_address', message: 'IP is in use' },
+      { field: 'image', message: 'invalid image' },
+      { field: 'services.web.ports[0]', message: 'legacy path' },
+    ];
+    expect(groupServiceErrors(fields)).toEqual({
+      cards: new Map([
+        [1, [{ field: 'ports[0]', message: 'port is in use' }, { field: 'networks.lan.ipv4_address', message: 'IP is in use' }]],
+        [0, [{ field: 'service', message: 'invalid service name' }]],
+      ]),
+      rest: [fields[1], fields[3], fields[5], fields[6]],
+    });
+    expect(fields[0].field).toBe('services[1].ports[0]');
+  });
+
+  it('returns empty buckets when there are no field errors', () => {
+    expect(groupServiceErrors([])).toEqual({ cards: new Map(), rest: [] });
+  });
+});
+
 describe('mapServerErrors', () => {
   const f = form({
     ports: ['80', '', '8080:80'],
@@ -224,6 +250,11 @@ describe('mapServerErrors', () => {
     expect(m('name')).toEqual({ name: 'boom' });
     expect(m('build.context')).toEqual({ 'build.context': 'boom' });
     expect(m('image')).toEqual({ image: 'boom' });
+  });
+  it('maps a card service name error to the name field', () => {
+    expect(m('service')).toEqual({ name: 'boom' });
+    const { cards } = groupServiceErrors([{ field: 'services[0].service', message: 'duplicate name' }]);
+    expect(mapServerErrors(cards.get(0)!, f)).toEqual({ name: 'duplicate name' });
   });
   it('handles dotted service names and ignores other services', () => {
     expect(mapServerErrors([{ field: 'services.a.b.ports[0]', message: 'x' }], f, 'a.b')).toEqual({ 'ports[0]': 'x' });

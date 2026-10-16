@@ -337,6 +337,11 @@ export interface SetupRequest extends LoginRequest {
   setupToken?: string;
 }
 
+export interface CreateStackService {
+  service: string;
+  config: ServiceConfig;
+}
+
 export interface CreateStackRequest {
   name: string;
   service: string;
@@ -345,6 +350,10 @@ export interface CreateStackRequest {
 
 export interface ImportRequest {
   path: string;
+}
+
+export interface AddServiceRequest extends CreateStackService {
+  hash: string;
 }
 
 export interface UpdateServiceRequest {

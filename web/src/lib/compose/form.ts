@@ -358,6 +358,24 @@ export function validateForm(f: ServiceForm, opts: { name?: string; requireName?
 
 // --- server errors --------------------------------------------------------
 
+/** Split create errors into card-local fields and page-level fields. */
+export function groupServiceErrors(fields: FieldError[]): { cards: Map<number, FieldError[]>; rest: FieldError[] } {
+  const cards = new Map<number, FieldError[]>();
+  const rest: FieldError[] = [];
+  for (const fe of fields) {
+    const match = /^services\[(\d+)\]\.(.+)$/.exec(fe.field);
+    if (!match) {
+      rest.push(fe);
+      continue;
+    }
+    const index = Number(match[1]);
+    const errors = cards.get(index) ?? [];
+    errors.push({ ...fe, field: match[2] });
+    cards.set(index, errors);
+  }
+  return { cards, rest };
+}
+
 /** Server list index -> form row index, since blank rows are dropped by fromForm. */
 function rowIndex(rows: boolean[], serverIndex: number): number | null {
   let n = -1;
@@ -384,6 +402,7 @@ function mapPath(f: ServiceForm, path: string): string | null {
     const i = rowIndex(f.env.map((e) => e.name !== '' || e.value !== ''), Number(m[1]));
     return i === null ? null : `env[${i}].${m[2] ?? 'name'}`;
   }
+  if (path === 'service') return 'name';
   if (path === 'name' || path === 'image' || path === 'restart') return path;
   if (path === 'build.context' || path === 'build.dockerfile') return path;
   if (path === 'network_mode') return 'networkMode';

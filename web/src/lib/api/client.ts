@@ -1,5 +1,6 @@
 import type {
   Action,
+  AddServiceRequest,
   ChangePasswordRequest,
   ContainerDetail,
   ContainerRow,
@@ -184,6 +185,20 @@ export const api = {
       config,
       hash,
     } satisfies UpdateServiceRequest),
+  addService: (name: string, service: string, config: ServiceConfig, hash: string) =>
+    request<StackDetail>('POST', `/api/stacks/${seg(name)}/services`, {
+      service,
+      config,
+      hash,
+    } satisfies AddServiceRequest),
+  previewAddService: (name: string, service: string, config: ServiceConfig, hash: string) =>
+    post<PreviewResponse>(`/api/stacks/${seg(name)}/services/preview`, {
+      service,
+      config,
+      hash,
+    } satisfies AddServiceRequest),
+  removeService: (name: string, service: string, hash: string) =>
+    request<StackDetail>('DELETE', `/api/stacks/${seg(name)}/services/${seg(service)}?hash=${seg(hash)}`).then((r) => r.data),
   act: (name: string, action: Action) => post<Operation>(`/api/stacks/${seg(name)}/actions/${seg(action)}`),
   remove: (name: string, withVolumes: boolean) =>
     request<Operation>('DELETE', `/api/stacks/${seg(name)}${withVolumes ? '?volumes=true' : ''}`).then((r) => r.data),
