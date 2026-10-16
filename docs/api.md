@@ -21,7 +21,7 @@ All routes except health, setup and login need a session cookie. Errors are
 | `DELETE /api/stacks/{name}?volumes=true` | `compose down` then unregister (202) |
 | `GET /api/stacks/{name}/operations` | recent operations |
 | `GET /api/operations/{id}`, `/stream`, `POST .../cancel` | output, live SSE stream, cancel |
-| `GET /api/fs?path=`, `GET /api/networks`, `GET /api/status` | file browser, Docker networks, status (`version` of the server, `docker`, `dockerVersion` (engine version, empty when unreadable), `compose`, `events`: `connected` or `disconnected` for the container event stream, `metricsDegraded`: true while samples cannot be stored; `metricsIntervalSeconds` and `metricsRetentionSeconds`: the sampling settings, 0 when unset) |
+| `GET /api/fs?path=`, `GET /api/status` | file browser, status (`version` of the server, `docker`, `dockerVersion` (engine version, empty when unreadable), `compose`, `events`: `connected` or `disconnected` for the container event stream, `metricsDegraded`: true while samples cannot be stored; `metricsIntervalSeconds` and `metricsRetentionSeconds`: the sampling settings, 0 when unset) |
 | `GET /api/operations?state=running` | operations across all stacks, optionally only running ones |
 | `GET /api/stacks/{name}/logs` | live container logs (SSE); every `log` event has an `id`, and `Last-Event-ID` resumes exactly |
 | `GET /api/stacks/{name}/metrics`, `.../metrics/live` | resource history (JSON) and live samples (SSE) |
@@ -31,6 +31,9 @@ All routes except health, setup and login need a session cookie. Errors are
 | `GET /api/containers`, `GET /api/containers/{id}` | every container on the host (all states) and one container's details; see [Containers](#containers) |
 | `GET /api/containers/{id}/logs` | one container's logs (SSE), the same contract as the stack logs |
 | `POST /api/containers/{id}/{start\|stop\|restart}` | act on a container outside the registered stacks; returns its row (200) |
+| `GET /api/networks`, `POST /api/networks` | list Docker networks; create a bridge, macvlan or ipvlan network (201); see [Networks](#networks) |
+| `DELETE /api/networks/{id}` | remove an unused, unmanaged network (204), by ID or name |
+| `GET /api/host/interfaces` | IPv4 host interfaces for LAN network setup; see [Networks](#networks) |
 | `GET /api/events` | container changes and Docker container events as they happen (SSE) |
 | `POST /api/password` | change the signed-in user's password (`{current, new}`; 204) |
 | `GET /api/settings/metrics-token` | whether a scrape token exists, `{configured}` (never the token) |
@@ -264,6 +267,53 @@ characters; it is never a name (look the id up in the list). Errors: `404`
 for an unknown or ambiguous id, `409` for an action on a stack container,
 `502` when Docker refuses the action (its message is passed on), and `503`
 when Docker is unavailable.
+
+### Networks
+
+`GET /api/networks` returns an array, cached for 2 seconds. Each network has
+`id` (12 hexadecimal characters), `name`, `driver`, `scope`, `subnets`,
+`gateways`, `ipRange`, `parent`, `ipvlanMode`, `internal`, `builtin`, `project`,
+`stack` and `containers`. The arrays are never null; `gateways[i]` corresponds
+to `subnets[i]`. Each container has `name` and `ipv4` (Docker's IPv4 CIDR).
+`builtin` identifies Docker's `bridge`, `host` and `none` networks. `project`
+is the Compose project label, or an empty string; `stack` is the registered
+Stackstead stack owning that project, or an empty string. Successful creates
+and removals invalidate the cache immediately.
+
+`POST /api/networks` requires JSON with `name` and `driver` (`bridge`,
+`macvlan` or `ipvlan`). Optional fields are `subnet`, `gateway`, `ipRange`,
+`parent`, `ipvlanMode` and `internal` (boolean). Unknown fields are rejected.
+Names are 1–63 letters, digits, underscores, dots or hyphens and start with a
+letter or digit. A supplied subnet must be a masked IPv4 CIDR and must not
+overlap any existing network. Macvlan and ipvlan require a subnet and parent;
+bridge permits an omitted subnet (Docker allocates one) and forbids parent.
+A gateway requires a subnet, must lie inside it and cannot be its network or
+broadcast address. An IP range requires a subnet and must be an IPv4 CIDR
+inside it. Parent names are 1–15 letters, digits, underscores, dots, colons or
+hyphens; Docker validates that the interface exists. `ipvlanMode` is accepted
+only for ipvlan, is `l2` or `l3`, and defaults to `l2`. Created networks carry
+`dev.stackstead.created=true`. Success is 201 with the network object.
+
+`DELETE /api/networks/{id}` accepts a name, full ID or unique 12–64 character
+hexadecimal ID prefix and returns 204. Removal refuses built-in networks,
+networks belonging to a registered stack, and networks with attached
+containers (409, with the stack or container names in the error). These
+checks run on the server against fresh Docker state.
+
+Validation returns 400 `{error, fields}`. Duplicate names and Docker
+conflicts return 409; other Docker create refusals return 400 with Docker's
+message. An unknown removal target is 404. Docker unavailable is 503 for the
+network routes. All these routes require a session.
+
+`GET /api/host/interfaces` returns an array of `{name, ipv4, subnet,
+gateway, default}`: IPv4 address with prefix length, masked subnet CIDR, optional
+gateway (empty string when unknown), and a boolean identifying the default route. Only up,
+non-loopback, non-virtual IPv4 interfaces are included, with the default
+interface first. This is Linux-only; other systems return `[]`. In a
+container, these are the interfaces of Stackstead's network namespace, so
+host networking is needed to see host interfaces. The route works without
+Docker. Interface enumeration uses the OS interface API and reads only
+`/proc/net/route` for routing information; it does not change host networking.
 
 ### What is stored
 

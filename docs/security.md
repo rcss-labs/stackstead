@@ -25,6 +25,10 @@ access is equivalent to root. Treat the Stackstead login like a root password.
   server refuses those actions on registered stacks' containers, whatever the
   client sends. Container details never include environment variables or the
   command line.
+- Macvlan/ipvlan networks put containers directly on the LAN, bypassing
+  Docker's port publishing, so host firewall rules do not apply to them.
+  `parent` goes to Docker as a driver option only; the interface list reads
+  `/proc/net/route` only for routing information.
 - The optional Prometheus endpoint has its own bearer token. It is shown once,
   and only its SHA-256 is stored.
 

@@ -56,6 +56,7 @@ without a platform to maintain.
 
 ## What you get
 
+- **Networks.** Create LAN (macvlan/ipvlan) and bridge networks from the UI, give services static IPs on them, and see which containers use each network.
 - **A live overview.** Every stack and service on the machine, its status,
   health and running containers, updated the moment Docker reports a change.
 - **A dashboard at a glance.** Host tiles for CPU, memory, disk and network,
