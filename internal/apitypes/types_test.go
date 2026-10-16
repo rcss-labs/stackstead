@@ -86,6 +86,7 @@ func TestJSONTagsMatchContract(t *testing.T) {
 		{"Healthcheck", populated[apitypes.Healthcheck](), "interval,retries,startPeriod,test,timeout"},
 		{"Operation", populated[apitypes.Operation](), "action,endedAt,error,exitCode,id,stack,startedAt,state"},
 		{"OperationDetail", populated[apitypes.OperationDetail](), "action,endedAt,error,exitCode,id,lines,stack,startedAt,state"},
+		{"NetworkCreateRequest", populated[apitypes.NetworkCreateRequest](), "driver,gateway,internal,ipRange,ipvlanMode,name,parent,subnet"},
 		{"NetworkContainer", populated[apitypes.NetworkContainer](), "ipv4,name"},
 		{"Network", populated[apitypes.Network](), "builtin,containers,driver,gateways,id,internal,ipRange,ipvlanMode,name,parent,project,scope,stack,subnets"},
 		{"FSEntry", populated[apitypes.FSEntry](), "isDir,name,size"},

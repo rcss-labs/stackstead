@@ -506,3 +506,15 @@ type ContainerDetail struct {
 	Mounts        []ContainerMount  `json:"mounts"`   // never null
 	Labels        map[string]string `json:"labels"`   // never null
 }
+
+// NetworkCreateRequest configures a user-created Docker network.
+type NetworkCreateRequest struct {
+	Name       string `json:"name"`
+	Driver     string `json:"driver"`
+	Subnet     string `json:"subnet"`
+	Gateway    string `json:"gateway"`
+	IPRange    string `json:"ipRange"`
+	Parent     string `json:"parent"`
+	IPvlanMode string `json:"ipvlanMode"`
+	Internal   bool   `json:"internal"`
+}
