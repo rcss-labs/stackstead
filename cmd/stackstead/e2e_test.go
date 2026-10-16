@@ -15,16 +15,19 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/rcss-labs/stackstead/internal/apitypes"
 	"github.com/rcss-labs/stackstead/web"
 )
 
@@ -532,6 +535,7 @@ func dockerStack(t *testing.T, c *client) {
 
 	dashboardEndpoints(t, c)
 	t.Run("containers", func(t *testing.T) { containerEndpoints(t, c, name) })
+	t.Run("networks", func(t *testing.T) { networkEndpoints(t, c, name) })
 
 	got, body = c.do("POST", "/api/stacks/"+name+"/actions/down", map[string]any{})
 	if got != 202 {
@@ -705,5 +709,130 @@ func containerEndpoints(t *testing.T, c *client, stackName string) {
 	}
 	for _, a := range []string{"start", "stop", "restart"} {
 		anon.expect(401, "POST", "/api/containers/"+plain.ID+"/"+a, map[string]any{})
+	}
+}
+
+// networkEndpoints exercises server-side network guards and a real endpoint's lifecycle.
+func networkEndpoints(t *testing.T, c *client, stackName string) {
+	t.Helper()
+	var interfaces []struct{ Default bool }
+	if err := json.Unmarshal(c.expect(200, "GET", "/api/host/interfaces", nil), &interfaces); err != nil || interfaces == nil {
+		t.Fatalf("interfaces must be a JSON array: %v", err)
+	}
+	if runtime.GOOS == "linux" {
+		defaults := 0
+		for _, iface := range interfaces {
+			if iface.Default {
+				defaults++
+			}
+		}
+		if defaults > 1 {
+			t.Errorf("interfaces have %d default routes", defaults)
+		}
+	}
+	list := func() []apitypes.Network {
+		t.Helper()
+		var rows []apitypes.Network
+		if err := json.Unmarshal(c.expect(200, "GET", "/api/networks", nil), &rows); err != nil || rows == nil {
+			t.Fatalf("networks must be a JSON array: %v", err)
+		}
+		return rows
+	}
+	find := func(name string) (apitypes.Network, bool) {
+		for _, row := range list() {
+			if row.Name == name {
+				return row, true
+			}
+		}
+		return apitypes.Network{}, false
+	}
+	if row, ok := find("bridge"); !ok || !row.Builtin {
+		t.Errorf("bridge missing or not built-in: %+v", row)
+	}
+	if row, ok := find(stackName + "_default"); !ok || row.Stack != stackName || len(row.Containers) != 1 {
+		t.Errorf("stack network ownership/endpoints: %+v", row)
+	}
+	for name, reason := range map[string]string{"bridge": "built-in", stackName + "_default": stackName} {
+		if body := c.expect(409, "DELETE", "/api/networks/"+name, nil); !strings.Contains(string(body), reason) {
+			t.Errorf("remove %s lacks refusal reason %q: %s", name, reason, body)
+		}
+	}
+	name := "e2e-net-" + strings.ToLower(rand.Text()[:10])
+	container := "ss-e2e-net-" + strings.ToLower(rand.Text()[:10])
+	t.Cleanup(func() {
+		_, _ = dockerOutput("rm", "-f", container)
+		_, _ = dockerOutput("network", "rm", name)
+	})
+	var subnet, gateway string
+	var request apitypes.NetworkCreateRequest
+	created := false
+	var seed [1]byte
+	if _, err := rand.Read(seed[:]); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		// Keep retries distinct even when the first candidate overlaps.
+		r := (int(seed[0]) + attempt) % 256
+		subnet, gateway = fmt.Sprintf("10.213.%d.0/24", r), fmt.Sprintf("10.213.%d.1", r)
+		request = apitypes.NetworkCreateRequest{Name: name, Driver: "bridge", Subnet: subnet, Gateway: gateway}
+		status, body := c.do("POST", "/api/networks", request)
+		if status == 400 && strings.Contains(strings.ToLower(string(body)), "overlap") {
+			continue
+		}
+		if status != 201 {
+			t.Fatalf("create network = %d: %s", status, body)
+		}
+		var row apitypes.Network
+		if err := json.Unmarshal(body, &row); err != nil {
+			t.Fatal(err)
+		}
+		if row.Builtin || row.Stack != "" || row.Containers == nil || len(row.Containers) != 0 || len(row.Subnets) != 1 || row.Subnets[0] != subnet || len(row.Gateways) != 1 || row.Gateways[0] != gateway {
+			t.Fatalf("created network metadata: %+v", row)
+		}
+		created = true
+		break
+	}
+	if !created {
+		t.Fatal("three candidate subnets overlapped existing networks")
+	}
+	c.expect(409, "POST", "/api/networks", request)
+	if out, err := dockerOutput("run", "-d", "--rm", "--network", name, "--name", container, "busybox", "sleep", "300"); err != nil {
+		t.Fatalf("start network endpoint: %v: %.200s", err, out)
+	}
+	prefix := netip.MustParsePrefix(subnet)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		row, ok := find(name)
+		if ok && len(row.Containers) == 1 {
+			endpoint := row.Containers[0]
+			ip, err := netip.ParseAddr(strings.Split(endpoint.IPv4, "/")[0])
+			if endpoint.Name != container || err != nil || !prefix.Contains(ip) {
+				t.Fatalf("unexpected endpoint: %+v", endpoint)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("network endpoint not listed: %+v", row)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if body := c.expect(409, "DELETE", "/api/networks/"+name, nil); !strings.Contains(string(body), container) {
+		t.Errorf("in-use refusal does not name container: %s", body)
+	}
+	if _, err := dockerOutput("rm", "-f", container); err != nil {
+		t.Fatal(err)
+	}
+	c.expect(204, "DELETE", "/api/networks/"+name, nil)
+	if _, ok := find(name); ok {
+		t.Error("deleted network still listed")
+	}
+	anon := newClient(t, c.base)
+	for _, route := range []struct {
+		method, path string
+		body         any
+	}{
+		{"GET", "/api/networks", nil}, {"POST", "/api/networks", request}, {"DELETE", "/api/networks/x", nil}, {"GET", "/api/host/interfaces", nil},
+	} {
+		anon.expect(401, route.method, route.path, route.body)
 	}
 }
