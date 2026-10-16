@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/rcss-labs/stackstead/internal/apitypes"
@@ -44,38 +43,8 @@ const (
 	managedNone    = "none"
 )
 
-// containerCache is the single-flight 2 s cache of the host-wide list. mu
-// guards the fields; the computation runs outside it, shared through inflight.
-type containerCache struct {
-	mu       sync.Mutex
-	at       time.Time
-	body     []apitypes.ContainerRow
-	ok       bool
-	inflight *containerFlight
-	// gen counts invalidations; a computation started under an older
-	// generation must not repopulate the cache.
-	gen uint64
-}
-
-// invalidateContainerList drops the cached list after a change Docker has
-// already made, and detaches any running computation so neither it nor new
-// readers reuse pre-change data.
 func (s *server) invalidateContainerList() {
-	c := &s.containerCache
-	c.mu.Lock()
-	c.ok = false
-	c.gen++
-	c.inflight = nil
-	c.mu.Unlock()
-}
-
-type containerFlight struct {
-	done chan struct{}
-	gen  uint64
-	body []apitypes.ContainerRow
-	err  error
-	// unavailable marks a state-cache error wrapping engine.ErrUnavailable.
-	unavailable bool
+	s.containerCache.invalidate()
 }
 
 func (s *server) registerContainerRoutes(mux *http.ServeMux) {
@@ -100,51 +69,7 @@ func (s *server) handleContainerList(w http.ResponseWriter, r *http.Request) {
 // containerList returns the list from the 2 s cache; concurrent misses share
 // one computation. Errors are not cached.
 func (s *server) containerList(ctx context.Context) ([]apitypes.ContainerRow, error) {
-	c := &s.containerCache
-	c.mu.Lock()
-	now := s.opts.Now()
-	if c.ok && now.Sub(c.at) < containerListTTL {
-		body := c.body
-		c.mu.Unlock()
-		return body, nil
-	}
-	f := c.inflight
-	if f == nil {
-		f = &containerFlight{done: make(chan struct{}), gen: c.gen}
-		c.inflight = f
-		go s.runContainerList(ctx, f, now)
-	}
-	c.mu.Unlock()
-
-	// Each caller waits on its own context, so a cancelled request neither
-	// blocks nor fails the others.
-	select {
-	case <-f.done:
-		return f.body, f.err
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-}
-
-func (s *server) runContainerList(ctx context.Context, f *containerFlight, now time.Time) {
-	qctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), containerListTimeout)
-	defer cancel()
-	defer func() {
-		if r := recover(); r != nil {
-			f.body, f.err = nil, fmt.Errorf("container list panicked: %v", r)
-		}
-		c := &s.containerCache
-		c.mu.Lock()
-		if c.inflight == f {
-			c.inflight = nil
-		}
-		if f.err == nil && f.gen == c.gen {
-			c.body, c.at, c.ok = f.body, now, true
-		}
-		c.mu.Unlock()
-		close(f.done)
-	}()
-	f.body, f.err = s.computeContainerList(qctx)
+	return s.containerCache.get(ctx, s.opts.Now(), containerListTTL, containerListTimeout, s.computeContainerList)
 }
 
 // freshContainers is the container listing with Docker's live human Status

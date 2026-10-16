@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rcss-labs/stackstead/internal/apitypes"
 	"github.com/rcss-labs/stackstead/internal/auth"
 )
 
@@ -74,7 +75,7 @@ type server struct {
 	summaryCache map[time.Duration]*summaryEntry
 
 	// containerCache is the 2 s cache of /api/containers.
-	containerCache containerCache
+	containerCache flightCache[[]apitypes.ContainerRow]
 }
 
 func New(opts Options) http.Handler {
