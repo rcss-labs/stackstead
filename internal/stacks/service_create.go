@@ -17,8 +17,9 @@ import (
 const composeFileName = "compose.yaml"
 
 type CreateRequest struct {
-	Name, Service string // Service defaults to Name
-	Config        composefile.ServiceConfig
+	Name          string
+	Services      []composefile.NamedService
+	IndexedFields bool
 }
 
 // Create writes a new stack <StacksDir>/<name>/compose.yaml, validates it with
@@ -38,22 +39,89 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 		return Summary{}, ErrStackExists
 	}
 
-	service := req.Service
-	if service == "" {
-		service = req.Name
+	if len(req.Services) < 1 || len(req.Services) > 20 {
+		return Summary{}, &ValidationError{Fields: []FieldError{{Field: "services", Message: "a stack needs between 1 and 20 services"}}}
 	}
-	cfg, err := s.prepareConfig(req.Name, dir, req.Config)
+	var services []composefile.NamedService
+	var configs []namedConfig
+	var indices []int
+	fields := make([][]FieldError, len(req.Services))
+	var configErr error
+	seen := map[string]bool{}
+	for i, entry := range req.Services {
+		prefix := ""
+		if req.IndexedFields {
+			prefix = fmt.Sprintf("services[%d].", i)
+		}
+		collect := func(err error) bool {
+			var ve *ValidationError
+			if errors.As(prefixFields(err, prefix), &ve) {
+				fields[i] = append(fields[i], ve.Fields...)
+				return true
+			}
+			return false
+		}
+		if i == 0 && entry.Name == "" {
+			entry.Name = req.Name
+		}
+		if entry.Name == "" {
+			collect(&ValidationError{Fields: []FieldError{{Field: "service", Message: "service name is required"}}})
+			continue
+		}
+		if err := ValidateServiceName(entry.Name); err != nil {
+			collect(err)
+			continue
+		}
+		if seen[entry.Name] {
+			collect(&ValidationError{Fields: []FieldError{{Field: "service", Message: "duplicate service name " + entry.Name}}})
+			continue
+		}
+		seen[entry.Name] = true
+		cfg, err := s.prepareConfig(req.Name, entry.Name, dir, entry.Config)
+		if err != nil {
+			if collect(err) {
+				continue
+			}
+			return Summary{}, err
+		}
+		if err := composefile.ValidateConfig(cfg); err != nil {
+			if configErr == nil {
+				configErr = err
+				if req.IndexedFields {
+					configErr = fmt.Errorf("services[%d]: %w", i, err)
+				}
+			}
+			continue
+		}
+		services = append(services, composefile.NamedService{Name: entry.Name, Config: cfg})
+		configs = append(configs, namedConfig{Name: entry.Name, Config: cfg})
+		indices = append(indices, i)
+	}
+	partial, err := s.checkChanges(ctx, changeSet{services: configs, indexed: req.IndexedFields, indices: indices})
 	if err != nil {
-		return Summary{}, err
+		var ve *ValidationError
+		if !errors.As(err, &ve) {
+			return Summary{}, err
+		}
+		for _, field := range ve.Fields {
+			index := 0
+			if req.IndexedFields {
+				fmt.Sscanf(field.Field, "services[%d].", &index)
+			}
+			fields[index] = append(fields[index], field)
+		}
 	}
-	data, err := composefile.New([]composefile.NamedService{{Name: service, Config: cfg}})
-	if err != nil {
-		return Summary{}, err
+	var allFields []FieldError
+	for _, entryFields := range fields {
+		allFields = append(allFields, entryFields...)
 	}
-
-	partial, err := s.checkChanges(ctx, changeSet{
-		services: []namedConfig{{Name: service, Config: cfg}},
-	})
+	if len(allFields) > 0 {
+		return Summary{}, &ValidationError{Fields: allFields}
+	}
+	if configErr != nil {
+		return Summary{}, configErr
+	}
+	data, err := composefile.New(services)
 	if err != nil {
 		return Summary{}, err
 	}
@@ -155,13 +223,17 @@ func (s *Service) projectAvailable(ctx context.Context, project, stack string) (
 }
 
 // prepareConfig applies build defaults and confines the build context.
-func (s *Service) prepareConfig(name, stackDir string, cfg composefile.ServiceConfig) (composefile.ServiceConfig, error) {
+func (s *Service) prepareConfig(stack, service, stackDir string, cfg composefile.ServiceConfig) (composefile.ServiceConfig, error) {
 	if cfg.Build == nil {
 		return cfg, nil
 	}
 	b := *cfg.Build
 	cfg.Build = &b
 	if cfg.Image == "" {
+		name := stack
+		if service != stack {
+			name += "-" + service
+		}
 		cfg.Image = "stackstead/" + name + ":latest"
 	}
 	if b.Context == "" {

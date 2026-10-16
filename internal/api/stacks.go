@@ -103,7 +103,7 @@ func (s *server) handleCreateStack(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	sum, err := s.opts.Stacks.Create(r.Context(), stacks.CreateRequest{Name: req.Name, Service: req.Service, Config: serviceConfigToDomain(req.Config)})
+	sum, err := s.opts.Stacks.Create(r.Context(), stacks.CreateRequest{Name: req.Name, Services: []composefile.NamedService{{Name: req.Service, Config: serviceConfigToDomain(req.Config)}}, IndexedFields: false})
 	if err != nil {
 		s.writeStackError(w, r, err)
 		return

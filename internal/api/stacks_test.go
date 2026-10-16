@@ -248,9 +248,9 @@ func TestCreateStack(t *testing.T) {
 		t.Errorf("body = %s", rec.Body)
 	}
 	got := fake.gotCreate
-	if got.Name != "web" || got.Service != "app" || got.Config.Image != "nginx:1" ||
-		got.Config.Ports[0] != "8080:80" || got.Config.Environment[0].Name != "A" ||
-		got.Config.Networks[0].IPv4Address != "10.0.0.5" || got.Config.Limits.Memory != "64M" {
+	if len(got.Services) != 1 || got.IndexedFields || got.Name != "web" || got.Services[0].Name != "app" || got.Services[0].Config.Image != "nginx:1" ||
+		got.Services[0].Config.Ports[0] != "8080:80" || got.Services[0].Config.Environment[0].Name != "A" ||
+		got.Services[0].Config.Networks[0].IPv4Address != "10.0.0.5" || got.Services[0].Config.Limits.Memory != "64M" {
 		t.Errorf("decoded request = %+v", got)
 	}
 }

@@ -258,7 +258,9 @@ type changeSet struct {
 	// previous configs. Only ports and IPs absent from old are checked.
 	services []namedConfig
 	old      map[string]composefile.ServiceConfig
-	qualify  bool // prefix field names with "services.<name>." (multi-service input)
+	indexed  bool  // prefix paths with the original services request index
+	indices  []int // original indices when invalid create entries were excluded
+	qualify  bool  // prefix field names with "services.<name>." (multi-service input)
 	// localNetworks are the networks the edited file declares itself (not
 	// external). One that does not exist on the engine yet is created by the
 	// first `up`, so its static IPs are left to `compose config` and `up`.
@@ -272,13 +274,18 @@ type changeSet struct {
 func (s *Service) checkChanges(ctx context.Context, cs changeSet) (partial bool, err error) {
 	type job struct {
 		svc          namedConfig
+		index        int
+		position     int
 		changedPorts map[int]bool
 		changedIPs   []int
 	}
 	var jobs []job
-	for _, svc := range cs.services {
+	for position, svc := range cs.services {
 		old := cs.old[svc.Name]
-		j := job{svc: svc, changedPorts: map[int]bool{}}
+		j := job{svc: svc, index: position, position: position, changedPorts: map[int]bool{}}
+		if cs.indices != nil {
+			j.index = cs.indices[position]
+		}
 		oldPorts := setOf(old.Ports)
 		for i, p := range svc.Config.Ports {
 			if !oldPorts[p] {
@@ -318,13 +325,34 @@ func (s *Service) checkChanges(ctx context.Context, cs changeSet) (partial bool,
 	var fields []FieldError
 	for _, j := range jobs {
 		prefix := ""
-		if cs.qualify {
+		if cs.indexed {
+			prefix = fmt.Sprintf("services[%d].", j.index)
+		} else if cs.qualify {
 			prefix = "services." + j.svc.Name + "."
 		}
 		use := append([]PortUse(nil), inUse...)
-		for _, sib := range cs.services {
-			if sib.Name != j.svc.Name {
-				use = append(use, declaredBy("service "+sib.Name, sib.Config.Ports)...)
+		// Derive sibling usage afresh for each job: later jobs must not see
+		// their own static addresses inserted while checking an earlier job.
+		jobIPs := make(map[string][]IPUse, len(usedIPs))
+		for network, uses := range usedIPs {
+			jobIPs[network] = append([]IPUse(nil), uses...)
+		}
+		for position, sib := range cs.services {
+			_, existed := cs.old[sib.Name]
+			if sib.Name == j.svc.Name || (!existed && position >= j.position) {
+				continue
+			}
+			use = append(use, declaredBy("service "+sib.Name, sib.Config.Ports)...)
+			if partial {
+				continue
+			}
+			for _, n := range sib.Config.Networks {
+				addr, err := netip.ParseAddr(n.IPv4Address)
+				if err != nil {
+					continue
+				}
+				network := resolveNetwork(nets, cs.project, n.Name)
+				jobIPs[network] = append(jobIPs[network], IPUse{Addr: addr, Owner: "service " + sib.Name})
 			}
 		}
 		for _, fe := range PortConflicts("ports", j.svc.Config.Ports, use) {
@@ -344,7 +372,7 @@ func (s *Service) checkChanges(ctx context.Context, cs changeSet) (partial bool,
 			if cs.localNetworks[n.Name] && !networkExists(nets, network) {
 				continue
 			}
-			for _, fe := range CheckStaticIP(fmt.Sprintf("%snetworks.%s.ipv4_address", prefix, n.Name), network, n.IPv4Address, nets, usedIPs) {
+			for _, fe := range CheckStaticIP(fmt.Sprintf("%snetworks.%s.ipv4_address", prefix, n.Name), network, n.IPv4Address, nets, jobIPs) {
 				fields = append(fields, fe)
 			}
 		}

@@ -215,3 +215,17 @@ func TestCheckStaticIPMultipleSubnetsAndNoGateway(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateServiceName(t *testing.T) {
+	for _, name := range []string{"a", "0web", "my-service_1", strings.Repeat("a", 63)} {
+		if err := ValidateServiceName(name); err != nil {
+			t.Errorf("%q: %v", name, err)
+		}
+	}
+	for _, name := range []string{"", "Web", "a.b", "-web", "my service", strings.Repeat("a", 64)} {
+		var ve *ValidationError
+		if err := ValidateServiceName(name); !errors.As(err, &ve) || len(ve.Fields) != 1 || ve.Fields[0].Field != "service" {
+			t.Errorf("%q: %v", name, err)
+		}
+	}
+}

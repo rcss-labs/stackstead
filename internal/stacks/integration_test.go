@@ -144,9 +144,7 @@ func (e *itEnv) writeContext(dockerfile string) string {
 func (e *itEnv) createBuilt(name, dockerfile string) stacks.Summary {
 	e.t.Helper()
 	ctxDir := e.writeContext(dockerfile)
-	sum, err := e.svc.Create(context.Background(), stacks.CreateRequest{
-		Name: name, Config: composefile.ServiceConfig{Build: &composefile.Build{Context: ctxDir}},
-	})
+	sum, err := e.svc.Create(context.Background(), stacks.CreateRequest{Name: name, Services: []composefile.NamedService{{Name: "", Config: composefile.ServiceConfig{Build: &composefile.Build{Context: ctxDir}}}}, IndexedFields: false})
 	if err != nil {
 		e.t.Fatalf("Create %s: %v", name, err)
 	}
@@ -417,12 +415,10 @@ func TestStaticIPConflict(t *testing.T) {
 	}
 
 	name := e.prefix + "-ip"
-	_, err := e.svc.Create(context.Background(), stacks.CreateRequest{
-		Name: name, Config: composefile.ServiceConfig{
-			Image:    "busybox",
-			Networks: []composefile.NetworkAttachment{{Name: netName, IPv4Address: taken}},
-		},
-	})
+	_, err := e.svc.Create(context.Background(), stacks.CreateRequest{Name: name, Services: []composefile.NamedService{{Name: "", Config: composefile.ServiceConfig{
+		Image:    "busybox",
+		Networks: []composefile.NetworkAttachment{{Name: netName, IPv4Address: taken}},
+	}}}, IndexedFields: false})
 	var ve *stacks.ValidationError
 	if !errors.As(err, &ve) {
 		t.Fatalf("Create err = %v, want ValidationError", err)

@@ -139,7 +139,7 @@ func newHarness(t *testing.T) *harness {
 
 func (h *harness) create(t *testing.T, name string, cfg composefile.ServiceConfig) stacks.Summary {
 	t.Helper()
-	s, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: name, Config: cfg})
+	s, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: name, Services: []composefile.NamedService{{Name: "", Config: cfg}}, IndexedFields: false})
 	if err != nil {
 		t.Fatalf("Create %s: %v", name, err)
 	}
@@ -190,10 +190,7 @@ func publishing(project string, port uint16) engine.Container {
 
 func TestCreateWritesFileAndRegisters(t *testing.T) {
 	h := newHarness(t)
-	sum, err := h.svc.Create(context.Background(), stacks.CreateRequest{
-		Name:   "web",
-		Config: composefile.ServiceConfig{Build: &composefile.Build{Dockerfile: "Dockerfile"}, Ports: []string{"8080:80"}},
-	})
+	sum, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "web", Services: []composefile.NamedService{{Name: "", Config: composefile.ServiceConfig{Build: &composefile.Build{Dockerfile: "Dockerfile"}, Ports: []string{"8080:80"}}}}, IndexedFields: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +219,7 @@ func TestCreateWritesFileAndRegisters(t *testing.T) {
 func TestCreateConfigFailureLeavesNoTrace(t *testing.T) {
 	h := newHarness(t)
 	h.compose.configErr = &composecli.ExitError{Code: 1, Output: "services.web.image invalid"}
-	_, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "web", Config: webCfg()})
+	_, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "web", Services: []composefile.NamedService{{Name: "", Config: webCfg()}}, IndexedFields: false})
 	var ee *composecli.ExitError
 	if !errors.As(err, &ee) {
 		t.Fatalf("want ExitError, got %v", err)
@@ -238,7 +235,7 @@ func TestCreateConfigFailureLeavesNoTrace(t *testing.T) {
 func TestCreateProjectNameFailureRollsBack(t *testing.T) {
 	h := newHarness(t)
 	h.compose.projectErr = errors.New("boom")
-	if _, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "web", Config: webCfg()}); err == nil {
+	if _, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "web", Services: []composefile.NamedService{{Name: "", Config: webCfg()}}, IndexedFields: false}); err == nil {
 		t.Fatal("want error")
 	}
 	if _, err := os.Stat(filepath.Join(h.dir, "web")); !errors.Is(err, os.ErrNotExist) {
@@ -249,7 +246,7 @@ func TestCreateProjectNameFailureRollsBack(t *testing.T) {
 func TestCreatePortConflictWithRunningContainer(t *testing.T) {
 	h := newHarness(t)
 	h.eng.containers = []engine.Container{publishing("other", 8080)}
-	_, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "web", Config: webCfg("8080:80")})
+	_, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "web", Services: []composefile.NamedService{{Name: "", Config: webCfg("8080:80")}}, IndexedFields: false})
 	fs := fieldsOf(t, err)
 	if len(fs) != 1 || fs[0].Field != "ports[0]" {
 		t.Errorf("fields = %+v", fs)
@@ -262,7 +259,7 @@ func TestCreatePortConflictWithRunningContainer(t *testing.T) {
 func TestCreatePortConflictWithOtherStackDeclaredPort(t *testing.T) {
 	h := newHarness(t)
 	h.create(t, "a", webCfg("8080:80"))
-	_, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "b", Config: webCfg("8080:80")})
+	_, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "b", Services: []composefile.NamedService{{Name: "", Config: webCfg("8080:80")}}, IndexedFields: false})
 	if fs := fieldsOf(t, err); len(fs) != 1 || fs[0].Field != "ports[0]" {
 		t.Errorf("fields = %+v", fs)
 	}
@@ -273,10 +270,10 @@ func TestCreateEngineDownStillChecksDeclaredPortsAndReportsPartial(t *testing.T)
 	h.create(t, "a", webCfg("8080:80"))
 	h.eng.err = engine.ErrUnavailable
 
-	_, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "b", Config: webCfg("8080:80")})
+	_, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "b", Services: []composefile.NamedService{{Name: "", Config: webCfg("8080:80")}}, IndexedFields: false})
 	fieldsOf(t, err)
 
-	sum, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "c", Config: webCfg("9090:80")})
+	sum, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "c", Services: []composefile.NamedService{{Name: "", Config: webCfg("9090:80")}}, IndexedFields: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +292,7 @@ func TestCreateExistingFolderIsErrStackExistsAndUntouched(t *testing.T) {
 	if err := os.WriteFile(keep, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "web", Config: webCfg()})
+	_, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "web", Services: []composefile.NamedService{{Name: "", Config: webCfg()}}, IndexedFields: false})
 	if !errors.Is(err, stacks.ErrStackExists) {
 		t.Fatalf("err = %v", err)
 	}
@@ -306,13 +303,11 @@ func TestCreateExistingFolderIsErrStackExistsAndUntouched(t *testing.T) {
 
 func TestCreateRejectsInvalidNameAndEscapingBuildContext(t *testing.T) {
 	h := newHarness(t)
-	_, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "../x", Config: webCfg()})
+	_, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "../x", Services: []composefile.NamedService{{Name: "", Config: webCfg()}}, IndexedFields: false})
 	if fs := fieldsOf(t, err); fs[0].Field != "name" {
 		t.Errorf("fields = %+v", fs)
 	}
-	_, err = h.svc.Create(context.Background(), stacks.CreateRequest{
-		Name: "web", Config: composefile.ServiceConfig{Build: &composefile.Build{Context: "/etc"}},
-	})
+	_, err = h.svc.Create(context.Background(), stacks.CreateRequest{Name: "web", Services: []composefile.NamedService{{Name: "", Config: composefile.ServiceConfig{Build: &composefile.Build{Context: "/etc"}}}}, IndexedFields: false})
 	if fs := fieldsOf(t, err); fs[0].Field != "build.context" {
 		t.Errorf("fields = %+v", fs)
 	}
@@ -321,12 +316,10 @@ func TestCreateRejectsInvalidNameAndEscapingBuildContext(t *testing.T) {
 func TestCreateRejectsStaticIPOutsideSubnet(t *testing.T) {
 	h := newHarness(t)
 	h.eng.networks = []engine.Network{{Name: "lan", Subnets: []engine.Subnet{{Prefix: mustPrefix("10.0.0.0/24")}}}}
-	_, err := h.svc.Create(context.Background(), stacks.CreateRequest{
-		Name: "web", Config: composefile.ServiceConfig{
-			Image:    "nginx",
-			Networks: []composefile.NetworkAttachment{{Name: "lan", IPv4Address: "192.168.1.5"}},
-		},
-	})
+	_, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "web", Services: []composefile.NamedService{{Name: "", Config: composefile.ServiceConfig{
+		Image:    "nginx",
+		Networks: []composefile.NetworkAttachment{{Name: "lan", IPv4Address: "192.168.1.5"}},
+	}}}, IndexedFields: false})
 	if fs := fieldsOf(t, err); len(fs) != 1 || fs[0].Field != "networks.lan.ipv4_address" {
 		t.Errorf("fields = %+v", fs)
 	}
@@ -888,7 +881,7 @@ func TestCreateRefusesProjectAlreadyRegisteredOrRunningUnregistered(t *testing.T
 	h := newHarness(t)
 	ctx := context.Background()
 	h.reg.Add(ctx, stacks.Entry{Name: "x", ComposePath: "/x/compose.yaml", Origin: stacks.OriginExternal, Project: "web"})
-	_, err := h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Config: webCfg()})
+	_, err := h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Services: []composefile.NamedService{{Name: "", Config: webCfg()}}, IndexedFields: false})
 	if fs := fieldsOf(t, err); fs[0].Field != "name" || !strings.Contains(fs[0].Message, "stack x") {
 		t.Errorf("fields = %+v", fs)
 	}
@@ -898,7 +891,7 @@ func TestCreateRefusesProjectAlreadyRegisteredOrRunningUnregistered(t *testing.T
 
 	h.reg.Remove(ctx, "x")
 	h.eng.containers = []engine.Container{publishing("web", 8080)}
-	_, err = h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Config: webCfg()})
+	_, err = h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Services: []composefile.NamedService{{Name: "", Config: webCfg()}}, IndexedFields: false})
 	if fs := fieldsOf(t, err); !strings.Contains(fs[0].Message, "import it instead") {
 		t.Errorf("fields = %+v", fs)
 	}
@@ -926,7 +919,7 @@ func TestCreateTreatsRowAdoptedByConcurrentSyncAsSuccess(t *testing.T) {
 		h.reg.Add(ctx, stacks.Entry{Name: "web", ComposePath: file, Origin: stacks.OriginManaged, Project: "web"})
 		return "web"
 	}
-	sum, err := h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Config: webCfg()})
+	sum, err := h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Services: []composefile.NamedService{{Name: "", Config: webCfg()}}, IndexedFields: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -970,7 +963,7 @@ func TestMissingComposePluginIsErrComposeUnavailable(t *testing.T) {
 	calls := map[string]error{}
 	_, calls["act"] = h.svc.Act(ctx, "web", "up")
 	_, calls["remove"] = h.svc.Remove(ctx, "web", false)
-	_, calls["create"] = h.svc.Create(ctx, stacks.CreateRequest{Name: "new", Config: webCfg()})
+	_, calls["create"] = h.svc.Create(ctx, stacks.CreateRequest{Name: "new", Services: []composefile.NamedService{{Name: "", Config: webCfg()}}, IndexedFields: false})
 	_, calls["import"] = h.svc.Import(ctx, ext)
 	_, calls["update"] = h.svc.UpdateService(ctx, "web", "web", composefile.ServiceConfig{Image: "x"}, hash)
 	_, calls["saveraw"] = h.svc.SaveRaw(ctx, "web", []byte("services:\n  web:\n    image: a\n"), hash)
@@ -1005,7 +998,7 @@ func TestStaticIPAlsoCheckedAgainstOtherStacksDeclaredIPs(t *testing.T) {
 		return composefile.ServiceConfig{Image: "nginx", Networks: []composefile.NetworkAttachment{{Name: "lan", IPv4Address: "10.0.0.5"}}}
 	}
 	h.create(t, "a", cfg())
-	_, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "b", Config: cfg()})
+	_, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "b", Services: []composefile.NamedService{{Name: "", Config: cfg()}}, IndexedFields: false})
 	fs := fieldsOf(t, err)
 	if len(fs) != 1 || fs[0].Field != "networks.lan.ipv4_address" || !strings.Contains(fs[0].Message, "stack a service a") {
 		t.Errorf("fields = %+v", fs)
@@ -1129,7 +1122,7 @@ func TestCreateVersusEditClaimingSameProjectGivesOneWinner(t *testing.T) {
 		}
 		return projectFromFile(file)
 	}
-	_, createErr := h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Config: webCfg()})
+	_, createErr := h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Services: []composefile.NamedService{{Name: "", Config: webCfg()}}, IndexedFields: false})
 	if (editErr == nil) == (createErr == nil) {
 		t.Fatalf("edit err %v, create err %v: want exactly one success", editErr, createErr)
 	}
@@ -1153,7 +1146,7 @@ func TestRegistryProjectConflictIsMappedToValidationError(t *testing.T) {
 		h.eng.onContainers = nil
 		h.reg.Add(ctx, stacks.Entry{Name: "sneaky", ComposePath: "/s/compose.yaml", Origin: stacks.OriginExternal, Project: "web"})
 	}
-	_, err := h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Config: webCfg()})
+	_, err := h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Services: []composefile.NamedService{{Name: "", Config: webCfg()}}, IndexedFields: false})
 	if fs := fieldsOf(t, err); fs[0].Field != "name" {
 		t.Errorf("fields = %+v", fs)
 	}
@@ -1165,7 +1158,7 @@ func TestRegistryProjectConflictIsMappedToValidationError(t *testing.T) {
 func TestCreateWithEngineDownIsPartialEvenWithoutPorts(t *testing.T) {
 	h := newHarness(t)
 	h.eng.err = engine.ErrUnavailable
-	sum, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "web", Config: composefile.ServiceConfig{Image: "nginx"}})
+	sum, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "web", Services: []composefile.NamedService{{Name: "", Config: composefile.ServiceConfig{Image: "nginx"}}}, IndexedFields: false})
 	if err != nil || !sum.ChecksPartial {
 		t.Errorf("sum = %+v err = %v", sum, err)
 	}
@@ -1174,7 +1167,7 @@ func TestCreateWithEngineDownIsPartialEvenWithoutPorts(t *testing.T) {
 func TestCreateDoesNotTouchStacksDirWhenComposeMissing(t *testing.T) {
 	h := newHarness(t)
 	h.compose.versionErr = composecli.ErrComposeUnavailable
-	h.svc.Create(context.Background(), stacks.CreateRequest{Name: "web", Config: webCfg()})
+	h.svc.Create(context.Background(), stacks.CreateRequest{Name: "web", Services: []composefile.NamedService{{Name: "", Config: webCfg()}}, IndexedFields: false})
 	if _, err := os.Stat(h.dir); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("stacks dir created: %v", err)
 	}
@@ -1520,7 +1513,7 @@ func TestActRederivesProjectAfterOutOfBandRename(t *testing.T) {
 func TestCreateSummaryIsTruthfulAboutEngineState(t *testing.T) {
 	h := newHarness(t)
 	h.eng.err = engine.ErrUnavailable
-	sum, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "down", Config: webCfg()})
+	sum, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "down", Services: []composefile.NamedService{{Name: "", Config: webCfg()}}, IndexedFields: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1529,7 +1522,7 @@ func TestCreateSummaryIsTruthfulAboutEngineState(t *testing.T) {
 	}
 
 	h.eng.err = nil
-	sum, err = h.svc.Create(context.Background(), stacks.CreateRequest{Name: "up", Config: webCfg()})
+	sum, err = h.svc.Create(context.Background(), stacks.CreateRequest{Name: "up", Services: []composefile.NamedService{{Name: "", Config: webCfg()}}, IndexedFields: false})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1616,14 +1609,14 @@ func TestValidationUsesEngineNotStatusSource(t *testing.T) {
 
 	// A container of another project publishes 8080 on the engine only.
 	h.eng.containers = []engine.Container{publishing("other", 8080)}
-	_, err := h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Config: webCfg("8080:80")})
+	_, err := h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Services: []composefile.NamedService{{Name: "", Config: webCfg("8080:80")}}, IndexedFields: false})
 	if fs := fieldsOf(t, err); len(fs) == 0 {
 		t.Fatalf("port conflict not detected: %v", err)
 	}
 
 	// An unregistered host project is visible on the engine only.
 	h.eng.containers = []engine.Container{publishing("web", 9090)}
-	_, err = h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Config: webCfg()})
+	_, err = h.svc.Create(ctx, stacks.CreateRequest{Name: "web", Services: []composefile.NamedService{{Name: "", Config: webCfg()}}, IndexedFields: false})
 	if fs := fieldsOf(t, err); !strings.Contains(fs[0].Message, "import it instead") {
 		t.Errorf("host project not detected: %+v", fs)
 	}

@@ -1,6 +1,7 @@
 package stacks
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
 	"regexp"
@@ -41,6 +42,29 @@ func ValidateName(name string) error {
 		Field:   "name",
 		Message: "name must start with a lowercase letter or digit, contain only lowercase letters, digits, '-' and '_', and be at most 63 characters",
 	}}}
+}
+
+// ValidateServiceName applies the structured create/add naming policy.
+func ValidateServiceName(name string) error {
+	if err := ValidateName(name); err != nil {
+		var ve *ValidationError
+		errors.As(err, &ve)
+		return &ValidationError{Fields: []FieldError{{Field: "service", Message: ve.Fields[0].Message}}}
+	}
+	return nil
+}
+
+// prefixFields copies validation fields so callers never mutate a shared error.
+func prefixFields(err error, prefix string) error {
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		return err
+	}
+	fields := make([]FieldError, len(ve.Fields))
+	for i, field := range ve.Fields {
+		fields[i] = FieldError{Field: prefix + field.Field, Message: field.Message}
+	}
+	return &ValidationError{Fields: fields}
 }
 
 // HostPort is one published host-side port.
