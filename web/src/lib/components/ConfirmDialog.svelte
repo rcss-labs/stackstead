@@ -9,6 +9,8 @@
     message,
     confirmLabel,
     danger = false,
+    confirmDisabledReason,
+    pending = false,
     onconfirm,
     oncancel,
     children,
@@ -18,6 +20,8 @@
     message: string;
     confirmLabel: string;
     danger?: boolean;
+    confirmDisabledReason?: string;
+    pending?: boolean;
     onconfirm: () => void;
     oncancel: () => void;
     /** Extra content between the message and the actions (e.g. an option checkbox). */
@@ -33,7 +37,7 @@
   <div class="cluster actions">
     <!-- Cancel comes first so initial focus never lands on the destructive action. -->
     <Button variant="secondary" onclick={oncancel}>Cancel</Button>
-    <Button variant={danger ? 'danger' : 'primary'} confirm={danger} onclick={onconfirm}>{confirmLabel}</Button>
+    <Button variant={danger ? 'danger' : 'primary'} confirm={danger} disabledReason={confirmDisabledReason} loading={pending} onclick={onconfirm}>{confirmLabel}</Button>
   </div>
 </Dialog>
 

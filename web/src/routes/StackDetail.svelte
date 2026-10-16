@@ -31,6 +31,7 @@
 
   // Heavy editors and charts load on demand so the entry chunk stays small.
   const loadComposeEditor = () => import('$lib/stacks/ComposeEditor.svelte');
+  const loadAddService = () => import('$lib/stacks/AddServicePanel.svelte');
   const loadServiceEditor = () => import('$lib/stacks/ServiceEditor.svelte');
   const loadMetricsPanel = () => import('$lib/stacks/MetricsPanel.svelte');
 
@@ -51,6 +52,8 @@
   let removeOpId = $state<string | undefined>();
 
   let editingService = $state<string | undefined>();
+  let addingService = $state(false);
+  let addDirty = $state(false);
   let serviceDirty = $state(false);
   let composeDirty = $state(false);
   onDestroy(() => setUnsavedChanges(false));
@@ -76,7 +79,7 @@
   // An editor's flag only counts while that editor is mounted; unmounting without the confirm path
   // (browser Back, a parse error appearing) must not leave a stale "unsaved" state behind.
   const dirty = $derived(
-    (activeTab === 'compose' && composeDirty) || (activeTab === 'services' && !!editingService && serviceDirty),
+    (activeTab === 'compose' && composeDirty) || (activeTab === 'services' && ((!!editingService && serviceDirty) || (addingService && addDirty))),
   );
   let pendingLeave = $state<(() => void) | undefined>();
 
@@ -86,6 +89,7 @@
   $effect(() => {
     if (activeTab !== 'compose') composeDirty = false;
     if (activeTab !== 'services' || !editingService) serviceDirty = false;
+    if (activeTab !== 'services' || parseError) closeAdd();
   });
 
   const hasRunning = $derived(operations.some((o) => o.state === 'running'));
@@ -182,6 +186,7 @@
     serviceDirty = false;
     composeDirty = false;
     editingService = undefined;
+    closeAdd();
     action?.();
   }
 
@@ -194,6 +199,7 @@
     if (id === activeTab) return;
     guarded(() => {
       editingService = undefined;
+      closeAdd();
       navigate(stackUrl({ tab: id }));
     });
   }
@@ -208,6 +214,7 @@
     try {
       const o = await api.act(name, action);
       editingService = undefined;
+      closeAdd();
       serviceDirty = false;
       composeDirty = false;
       openOperation(o.id);
@@ -225,6 +232,7 @@
       const o = await api.remove(name, withVolumes);
       removeOpId = o.id;
       editingService = undefined;
+      closeAdd();
       serviceDirty = false;
       composeDirty = false;
       openOperation(o.id);
@@ -284,19 +292,145 @@
   }
 
   function editService(s: ServiceDetail) {
-    guarded(() => (editingService = s.name));
+    guarded(() => { closeAdd(); editingService = s.name; });
   }
   function toRawEditor() {
     guarded(() => {
       editingService = undefined;
+      closeAdd();
       navigate(stackUrl({ tab: 'compose' }));
     });
+  }
+
+
+  function closeAdd() {
+    addingService = false;
+    addDirty = false;
+  }
+  function openAdd() {
+    guarded(() => {
+      editingService = undefined;
+      serviceDirty = false;
+      addingService = true;
+    });
+  }
+  let alive = true;
+  onDestroy(() => {
+    alive = false;
+    seq++;
+    removing = undefined;
+  });
+  function acceptDetail(d: StackDetail) {
+    seq++;
+    detail = d;
+    notFound = false;
+    loadError = '';
+  }
+  function added(d: StackDetail, _partial: boolean) {
+    acceptDetail(d);
+    closeAdd();
+  }
+  const lastServiceReason = 'The last service cannot be removed; delete the stack instead.';
+  type Removal = {
+    service: string;
+    hash: string;
+    pending: boolean;
+    error?: string;
+    disabledReason?: string;
+  };
+  let removing = $state<Removal | undefined>();
+  function askRemove(service: string) {
+    guarded(() => {
+      closeAdd();
+      editingService = undefined;
+      serviceDirty = false;
+      if (detail)
+        removing = { service, hash: detail.hash, pending: false };
+    });
+  }
+  async function confirmRemove() {
+    const session = removing;
+    if (!session || session.pending || session.disabledReason)
+      return;
+    const service = session.service, hash = session.hash;
+    session.pending = true;
+    session.error = undefined;
+    const owns = () => alive && removing === session;
+    try {
+      const d = await api.removeService(name, service, hash);
+      void refreshStacks();
+      if (!alive)
+        return;
+      // A cancelled dialog still accepted a server mutation; refetch instead of replacing a newer session.
+      if (!owns()) {
+        void load();
+        return;
+      }
+      acceptDetail(d);
+      removing = undefined;
+      toasts.push({ kind: 'success', message: `Removed ${service} from compose.yaml. Run Up to apply.` });
+    }
+    catch (e) {
+      if (!owns())
+        return;
+      const message = e instanceof Error ? e.message : String(e);
+      if (e instanceof ApiError && e.status === 409 && /changed on disk/i.test(message)) {
+        try {
+          const mine = ++seq;
+          const d = await api.stack(name);
+          if (!owns())
+            return;
+          if (mine !== seq) {
+            session.error = 'The stack changed while reloading. Try again.';
+            return;
+          }
+          acceptDetail(d);
+          session.hash = d.hash;
+          if (!d.services.some(s => s.name === service)) {
+            session.error = `Service "${service}" no longer exists.`;
+            session.disabledReason = session.error;
+          }
+          else if (d.services.length === 1) {
+            session.error = lastServiceReason;
+            session.disabledReason = lastServiceReason;
+          }
+          else
+            session.error = 'The compose file changed and was reloaded. Confirm again to remove.';
+        }
+        catch (reloadError) {
+          if (owns()) {
+            session.error = `Could not reload the stack: ${reloadError instanceof Error ? reloadError.message : String(reloadError)}`;
+            if (reloadError instanceof ApiError && reloadError.status === 503)
+              void refreshStatus();
+          }
+        }
+      }
+      else if (e instanceof ApiError && e.status === 404) {
+        removing = undefined;
+        toasts.push({ kind: 'warning', message });
+        void load();
+      }
+      else {
+        session.error = message;
+        if (e instanceof ApiError && e.status === 409 && /depends|last service/i.test(message))
+          session.disabledReason = message;
+        if (e instanceof ApiError && e.status === 503) {
+          void refreshStatus();
+          toasts.push({ kind: 'danger', message });
+        }
+      }
+    }
+    finally {
+      if (owns())
+        session.pending = false;
+    }
   }
 
   const serviceLogsHref = (service: string) => stackUrl({ tab: 'logs', service });
   function openLogs(service: string) {
     guarded(() => {
       editingService = undefined;
+      closeAdd();
       navigate(serviceLogsHref(service));
     });
   }
@@ -362,6 +496,14 @@
       {#snippet children(tab)}
         {#if tab === 'services'}
           <div class="services">
+            <div class="service-header"><h2>Services</h2>{#if !editingService && !addingService && !parseError}<Button variant="secondary" onclick={openAdd}>Add service</Button>{/if}</div>
+            {#if addingService && !parseError}
+              {#key d.name}
+                {#await loadAddService()}<Spinner />{:then m}
+                  <m.default stack={d} bind:dirty={addDirty} onadded={added} oncancel={() => guarded(closeAdd)} onreload={reloadDetail} />
+                {/await}
+              {/key}
+            {/if}
             {#each d.services as svc (svc.name)}
               {#if editingService === svc.name}
                 {#key `${d.name}/${svc.name}`}
@@ -390,6 +532,8 @@
                   stack={d.name}
                   service={svc}
                   onedit={() => editService(svc)}
+                  onremove={() => askRemove(svc.name)}
+                  removeDisabledReason={d.services.length === 1 ? lastServiceReason : undefined}
                   logsHref={serviceLogsHref(svc.name)}
                   onlogs={() => openLogs(svc.name)}
                 />
@@ -454,6 +598,10 @@
   </section>
 {/if}
 
+<ConfirmDialog open={removing !== undefined} title="Remove service?" message={`Remove ${removing?.service ?? ''} from compose.yaml? Its container is removed on the next Up.`} confirmLabel="Remove service" danger pending={removing?.pending} confirmDisabledReason={removing?.disabledReason} onconfirm={() => void confirmRemove()} oncancel={() => (removing = undefined)}>
+  {#if removing?.error}<p role="alert">{removing.error}</p>{/if}
+</ConfirmDialog>
+
 <ConfirmDialog
   open={pendingLeave !== undefined}
   title="Discard unsaved changes?"
@@ -478,6 +626,8 @@
   .cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
   .cols.with-aside { grid-template-columns: minmax(0, 1fr) 300px; }
   .main { min-width: 0; }
+  .service-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+  .service-header h2 { margin: 0; font-size: 16px; }
   .services { display: flex; flex-direction: column; gap: var(--space-3); padding-top: var(--space-3); }
   .ops { display: flex; flex-direction: column; gap: var(--space-4); padding-top: var(--space-3); }
   .perr { white-space: pre-wrap; overflow-wrap: anywhere; margin: var(--space-2) 0; }

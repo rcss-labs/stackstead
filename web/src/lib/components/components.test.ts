@@ -634,3 +634,13 @@ describe('RelativeTime', () => {
     expect(screen.getByText('—')).toBeTruthy();
   });
 });
+
+it('ConfirmDialog forwards pending and a soft-disabled reason to confirm', async () => {
+  const confirm = vi.fn();
+  render(ConfirmDialog, { open: true, title: 'Remove?', message: 'm', confirmLabel: 'Remove now', pending: true, confirmDisabledReason: 'Blocked by dependency', onconfirm: confirm, oncancel: () => {} });
+  const button = screen.getByRole('button', { name: 'Remove now' });
+  expect(button.getAttribute('aria-busy')).toBe('true');
+  expect(button.getAttribute('aria-disabled')).toBe('true');
+  await userEvent.setup().click(button);
+  expect(confirm).not.toHaveBeenCalled();
+});

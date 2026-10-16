@@ -52,6 +52,7 @@ const op = (over: Partial<Operation> = {}): Operation => ({
 });
 
 let fake: FakeFetch;
+let routes: Parameters<typeof installFakeFetch>[0];
 let stream: FakeStream;
 let stackRes: FakeResponse;
 let stackGate: Promise<void> | undefined;
@@ -65,7 +66,7 @@ beforeEach(() => {
   stackGate = undefined;
   opsRes = [];
   statusRes = { docker: 'ok', compose: '2.29.0', events: 'connected', metricsDegraded: false };
-  fake = installFakeFetch({
+  routes = {
     'GET /api/stacks/web': async () => {
       if (stackGate) await stackGate;
       return stackRes;
@@ -81,7 +82,8 @@ beforeEach(() => {
     'POST /api/stacks/web/actions/up': { body: op() },
     'DELETE /api/stacks/web': { body: op({ id: 'rm1', action: 'down' }) },
     'GET /api/operations/rm1': { body: { ...op({ id: 'rm1', action: 'down' }), lines: [] } },
-  });
+  };
+  fake = installFakeFetch(routes);
   stream = installFakeStream({
     '/api/events': [],
     '/api/stacks/web/logs': [],
@@ -478,4 +480,138 @@ describe('StackDetail', () => {
       expect(await screen.findByRole('button', { name: 'Copy path' })).toBeTruthy();
     });
   });
+});
+
+describe('service membership', () => {
+  function twoServices() {
+    const d = detail();
+    return detail({ serviceCount: 2, services: [...d.services, { ...d.services[0], name: 'cache', config: { image: 'redis:7', limits: {} }, containers: [] }] });
+  }
+  it('opens add, guards a dirty panel before editing, and hides Add during editing', async () => {
+    render(StackDetail, { name: 'web' });
+    await user().click(await screen.findByRole('button', { name: 'Add service' }));
+    await user().type(await screen.findByLabelText('Service name'), 'cache');
+    expect(get(unsavedChanges)).toBe(true);
+    await user().click(screen.getByRole('button', { name: 'Edit app' }));
+    await user().click(await screen.findByRole('button', { name: 'Discard changes' }));
+    await screen.findByLabelText('Image');
+    expect(screen.queryByLabelText('Service name')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add service' })).toBeNull();
+    expect(get(unsavedChanges)).toBe(false);
+  });
+  it('does not offer Add on parse errors', async () => {
+    stackRes = { body: detail({ parseError: 'bad YAML' }) };
+    render(StackDetail, { name: 'web' });
+    await screen.findByRole('heading', { name: 'web' });
+    expect(screen.queryByRole('button', { name: 'Add service' })).toBeNull();
+  });
+  it('adds reviewed service, replaces detail, closes panel and gives next-Up guidance', async () => {
+    routes['GET /api/networks'] = { body: [] };
+    routes['POST /api/stacks/web/services/preview'] = { body: { content: 'new', hash: 'h1' } };
+    routes['POST /api/stacks/web/services'] = { body: twoServices(), headers: { 'X-Stackstead-Checks': 'partial' } };
+    render(StackDetail, { name: 'web' });
+    await user().click(await screen.findByRole('button', { name: 'Add service' }));
+    await user().type(await screen.findByLabelText('Service name'), 'cache');
+    await user().type(screen.getByLabelText('Image'), 'redis:7');
+    await user().click(screen.getByRole('button', { name: 'Preview changes' }));
+    await user().click(await screen.findByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('heading', { name: 'cache' })).toBeTruthy();
+    expect(screen.queryByLabelText('Service name')).toBeNull();
+    expect(get(toasts).some(t => t.message === 'Added cache to compose.yaml. Run Up to start it.')).toBe(true);
+  });
+  it('soft-disables removal of the last service', async () => {
+    render(StackDetail, { name: 'web' });
+    const b = await screen.findByRole('button', { name: 'Remove service app' });
+    expect(b.getAttribute('aria-disabled')).toBe('true');
+    expect(b.getAttribute('title')).toMatch(/last service/);
+  });
+  it('asks about next Up, reloads stale hash and requires a second confirmation', async () => {
+    stackRes = { body: twoServices() };
+    let calls = 0;
+    routes['DELETE /api/stacks/web/services/cache?hash=h1'] = () => {
+      calls++;
+      stackRes = { body: { ...twoServices(), hash: 'h2' } };
+      return { status: 409, body: { error: 'compose changed on disk' } };
+    };
+    routes['DELETE /api/stacks/web/services/cache?hash=h2'] = { body: detail({ hash: 'h3' }) };
+    render(StackDetail, { name: 'web' });
+    await user().click(await screen.findByRole('button', { name: 'Remove service cache' }));
+    expect(screen.getByText('Remove cache from compose.yaml? Its container is removed on the next Up.')).toBeTruthy();
+    await user().click(screen.getByRole('button', { name: 'Remove service' }));
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'The compose file changed and was reloaded. Confirm again to remove.');
+    expect(calls).toBe(1);
+    await user().click(screen.getByRole('button', { name: 'Remove service' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(screen.queryByRole('heading', { name: 'cache' })).toBeNull();
+  });
+  it('keeps dependency refusal visible and disables confirm', async () => {
+    stackRes = { body: twoServices() };
+    routes['DELETE /api/stacks/web/services/cache?hash=h1'] = { status: 409, body: { error: 'app depends_on cache' } };
+    render(StackDetail, { name: 'web' });
+    await user().click(await screen.findByRole('button', { name: 'Remove service cache' }));
+    await user().click(screen.getByRole('button', { name: 'Remove service' }));
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'app depends_on cache');
+    expect(screen.getByRole('button', { name: 'Remove service' }).getAttribute('aria-disabled')).toBe('true');
+  });
+});
+it('remove ignores double confirm and a cancelled response cannot close the replacement dialog', async () => {
+  const d = detail();
+  stackRes = { body: detail({ serviceCount: 3, services: [...d.services, { ...d.services[0], name: 'cache' }, { ...d.services[0], name: 'worker' }] }) };
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => release = resolve);
+  routes['DELETE /api/stacks/web/services/cache?hash=h1'] = async () => {
+    await gate;
+    return { body: detail({ hash: 'h2' }) };
+  };
+  render(StackDetail, { name: 'web' });
+  const u = user();
+  await u.click(await screen.findByRole('button', { name: 'Remove service cache' }));
+  await u.dblClick(screen.getByRole('button', { name: 'Remove service' }));
+  expect(fake.calls.filter(c => c.method === 'DELETE')).toHaveLength(1);
+  expect(screen.getByRole('button', { name: 'Remove service' }).getAttribute('aria-busy')).toBe('true');
+  await u.click(screen.getByRole('button', { name: 'Cancel' }));
+  await u.click(screen.getByRole('button', { name: 'Remove service worker' }));
+  const before = stackGets();
+  release();
+  await waitFor(() => expect(stackGets()).toBeGreaterThan(before));
+  expect(screen.getByRole('alertdialog').textContent).toContain('Remove worker from compose.yaml?');
+  expect(screen.getByRole('button', { name: 'Remove service' }).getAttribute('aria-busy')).toBeNull();
+});
+it.each(['last', 'missing', 'failed'] as const)('stale remove rechecks %s reload outcome before another confirmation', async (outcome) => {
+  const d = detail();
+  stackRes = { body: detail({ serviceCount: 2, services: [...d.services, { ...d.services[0], name: 'cache' }] }) };
+  routes['DELETE /api/stacks/web/services/cache?hash=h1'] = () => {
+    stackRes = outcome === 'failed' ? { status: 500, body: { error: 'read failed' } } : { body: detail({ hash: 'h2', services: outcome === 'last' ? [{ ...d.services[0], name: 'cache' }] : d.services }) };
+    return { status: 409, body: { error: 'compose changed on disk' } };
+  };
+  render(StackDetail, { name: 'web' });
+  await user().click(await screen.findByRole('button', { name: 'Remove service cache' }));
+  await user().click(screen.getByRole('button', { name: 'Remove service' }));
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toMatch(outcome === 'last' ? /last service/ : outcome === 'missing' ? /no longer exists/ : /Could not reload.*read failed/);
+  expect(screen.getByRole('button', { name: 'Remove service' }).getAttribute('aria-disabled')).toBe(outcome === 'failed' ? null : 'true');
+  expect(screen.getByRole('button', { name: 'Remove service' }).getAttribute('aria-busy')).toBeNull();
+});
+it('a pending detail read cannot overwrite an accepted remove result', async () => {
+  const initial = detail();
+  const two = detail({ serviceCount: 2, services: [...initial.services, { ...initial.services[0], name: 'cache' }] });
+  stackRes = { body: two };
+  routes['DELETE /api/stacks/web/services/cache?hash=h1'] = { body: detail({ hash: 'h2' }) };
+  render(StackDetail, { name: 'web' });
+  await screen.findByRole('heading', { name: 'cache' });
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => release = resolve);
+  routes['GET /api/stacks/web'] = async () => {
+    await gate;
+    return { body: two };
+  };
+  const before = stackGets();
+  startLive({ fetchStatus: () => fetch('/api/status').then(r => r.json()) });
+  await waitFor(() => expect(stackGets()).toBeGreaterThan(before));
+  await user().click(screen.getByRole('button', { name: 'Remove service cache' }));
+  await user().click(screen.getByRole('button', { name: 'Remove service' }));
+  await waitFor(() => expect(screen.queryByRole('heading', { name: 'cache' })).toBeNull());
+  release();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  expect(screen.queryByRole('heading', { name: 'cache' })).toBeNull();
 });

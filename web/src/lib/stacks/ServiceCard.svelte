@@ -12,6 +12,8 @@
     onedit,
     logsHref,
     onlogs,
+    onremove,
+    removeDisabledReason,
   }: {
     stack: string;
     service: ServiceDetail;
@@ -19,6 +21,8 @@
     logsHref: string;
     /** When set, a plain click on Logs calls this instead of navigating (the page guards unsaved edits). */
     onlogs?: () => void;
+    onremove?: () => void;
+    removeDisabledReason?: string;
   } = $props();
 
   const state = $derived(serviceState(service));
@@ -53,6 +57,7 @@
         <a class="logs" href={logsHref} use:link>Logs</a>
       {/if}
       <Button variant="secondary" size="sm" aria-label="Edit {service.name}" onclick={onedit}>Edit</Button>
+      {#if onremove}<Button variant="danger" size="sm" aria-label="Remove service {service.name}" disabledReason={removeDisabledReason} onclick={onremove}>Remove</Button>{/if}
     </span>
   </header>
   <dl>

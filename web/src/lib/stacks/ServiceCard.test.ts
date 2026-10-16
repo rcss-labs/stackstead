@@ -31,3 +31,9 @@ describe('ServiceCard', () => {
     expect(screen.getByRole('link', { name: 'Logs' }).getAttribute('href')).toBe('/stacks/web?tab=logs&service=app');
   });
 });
+
+it('Remove exposes its service and the soft-disabled reason', () => {
+  render(ServiceCard, { ...props, service: svc(), onremove: () => {}, removeDisabledReason: 'Keep the last service' });
+  expect(screen.getByRole('button', { name: 'Remove service app' }).getAttribute('aria-disabled')).toBe('true');
+  expect(screen.getByText('Keep the last service')).toBeTruthy();
+});
