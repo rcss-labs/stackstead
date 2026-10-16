@@ -74,7 +74,6 @@ func (s *server) registerStackRoutes(mux *http.ServeMux) {
 	route("GET /api/operations/{id}/stream", s.handleStreamOperation)
 	route("POST /api/operations/{id}/cancel", s.handleCancelOperation)
 	route("GET /api/fs", s.handleFS)
-	route("GET /api/networks", s.handleNetworks)
 	route("GET /api/status", s.handleStatus)
 }
 
@@ -282,15 +281,6 @@ func (s *server) handleFS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toFSEntries(entries))
-}
-
-func (s *server) handleNetworks(w http.ResponseWriter, r *http.Request) {
-	nets, err := s.opts.Stacks.Networks(r.Context())
-	if err != nil {
-		s.writeStackError(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, toNetworks(nets))
 }
 
 func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {

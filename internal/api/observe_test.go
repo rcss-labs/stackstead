@@ -198,6 +198,7 @@ func newObserveEnvWith(t *testing.T, fake *fakeObserve, st *fakeStacks) (*testEn
 	env := newEnvWith(t, "", func(o *api.Options) {
 		o.Stacks, o.Operations, o.FSRoots, o.Status = st, fakeOps{st}, st.roots, st.status
 		o.Observe = fake
+		o.NetworkEngine = lanNetworkEngine()
 		o.SSEHeartbeat = 20 * time.Millisecond
 	})
 	env.createAdmin(t)

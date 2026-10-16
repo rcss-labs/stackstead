@@ -368,11 +368,7 @@ func TestLifecycleAndOperations(t *testing.T) {
 
 func TestNetworksAndStatus(t *testing.T) {
 	env, cookie := newStacksEnv(t, newFakeStacks())
-	rec := env.do(t, "GET", "/api/networks", "", withCookie(cookie))
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `[{"name":"lan","driver":"bridge","subnets":["10.0.0.0/24"]}]`) {
-		t.Fatalf("networks = %d %s", rec.Code, rec.Body)
-	}
-	rec = env.do(t, "GET", "/api/status", "", withCookie(cookie))
+	rec := env.do(t, "GET", "/api/status", "", withCookie(cookie))
 	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"docker":"ok","dockerVersion":"27.1.1","compose":"v2.30.0","events":"disconnected","metricsDegraded":false,"version":"","metricsIntervalSeconds":0,"metricsRetentionSeconds":0}` {
 		t.Fatalf("status = %d %s", rec.Code, rec.Body)
 	}

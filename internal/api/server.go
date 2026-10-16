@@ -21,7 +21,7 @@ type Options struct {
 	Logger     *slog.Logger
 
 	// Stacks and Operations back the /api/stacks, /api/operations, /api/fs,
-	// /api/networks and /api/status routes; they are not registered unless
+	// /api/status routes; they are not registered unless
 	// both are set. FSRoots are the directories the file browser may enter,
 	// Status feeds /api/status.
 	Stacks     StacksAPI
@@ -59,6 +59,8 @@ type Options struct {
 	// ContainerEngine backs the container details and action routes, which
 	// are registered only when Stacks, Observe and ContainerEngine are set.
 	ContainerEngine ContainerEngineAPI
+	// NetworkEngine backs network routes when Stacks is also set.
+	NetworkEngine NetworkEngineAPI
 }
 
 type server struct {
@@ -76,6 +78,7 @@ type server struct {
 
 	// containerCache is the 2 s cache of /api/containers.
 	containerCache flightCache[[]apitypes.ContainerRow]
+	networkCache   flightCache[[]apitypes.Network]
 }
 
 func New(opts Options) http.Handler {
@@ -109,6 +112,9 @@ func New(opts Options) http.Handler {
 		})
 	}
 
+	if opts.Stacks != nil && opts.NetworkEngine != nil {
+		s.registerNetworkRoutes(mux)
+	}
 	s.registerDashboardRoutes(mux)
 	if opts.Stacks != nil && opts.Observe != nil {
 		s.registerContainerRoutes(mux)

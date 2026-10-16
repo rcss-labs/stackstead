@@ -3,7 +3,6 @@ package api
 import (
 	"github.com/rcss-labs/stackstead/internal/apitypes"
 	"github.com/rcss-labs/stackstead/internal/composefile"
-	"github.com/rcss-labs/stackstead/internal/engine"
 	"github.com/rcss-labs/stackstead/internal/fsguard"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 )
@@ -31,7 +30,6 @@ type (
 	hashResponse         = apitypes.HashResponse
 	previewResponse      = apitypes.PreviewResponse
 	operationDTO         = apitypes.Operation
-	networkDTO           = apitypes.Network
 	fsEntryDTO           = apitypes.FSEntry
 	statusDTO            = apitypes.Status
 	operationDetailDTO   = apitypes.OperationDetail
@@ -134,18 +132,6 @@ func toOperations(ops []stacks.Operation) []operationDTO {
 	out := make([]operationDTO, 0, len(ops))
 	for _, o := range ops {
 		out = append(out, toOperation(o))
-	}
-	return out
-}
-
-func toNetworks(nets []engine.Network) []networkDTO {
-	out := make([]networkDTO, 0, len(nets))
-	for _, n := range nets {
-		dto := networkDTO{Name: n.Name, Driver: n.Driver, Subnets: make([]string, 0, len(n.Subnets))}
-		for _, s := range n.Subnets {
-			dto.Subnets = append(dto.Subnets, s.Prefix.String())
-		}
-		out = append(out, dto)
 	}
 	return out
 }

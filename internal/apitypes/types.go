@@ -122,9 +122,25 @@ type OperationDetail struct {
 }
 
 type Network struct {
-	Name    string   `json:"name"`
-	Driver  string   `json:"driver"`
-	Subnets []string `json:"subnets"`
+	ID         string             `json:"id"`
+	Name       string             `json:"name"`
+	Driver     string             `json:"driver"`
+	Scope      string             `json:"scope"`
+	Subnets    []string           `json:"subnets"`
+	Gateways   []string           `json:"gateways"`
+	IPRange    string             `json:"ipRange"`
+	Parent     string             `json:"parent"`
+	IPvlanMode string             `json:"ipvlanMode"`
+	Internal   bool               `json:"internal"`
+	Builtin    bool               `json:"builtin"`
+	Project    string             `json:"project"`
+	Stack      string             `json:"stack"`
+	Containers []NetworkContainer `json:"containers"`
+}
+
+type NetworkContainer struct {
+	Name string `json:"name"`
+	IPv4 string `json:"ipv4"`
 }
 
 type FSEntry struct {
