@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -478,9 +479,27 @@ func dockerStack(t *testing.T, c *client) {
 	})
 
 	c.expect(201, "POST", "/api/stacks", map[string]any{
-		"name": name, "service": "web",
-		"config": map[string]any{"image": "nginx:alpine", "limits": map[string]string{"memory": "64m"}},
+		"name": name, "services": []any{
+			map[string]any{"service": "web", "config": map[string]any{"image": "nginx:alpine", "limits": map[string]string{"memory": "64m"}}},
+			map[string]any{"service": "web2", "config": map[string]any{"image": "nginx:alpine"}},
+		},
 	})
+	base := "/api/stacks/" + name
+	var detail apitypes.StackDetail
+	readDetail := func(body []byte, count int) {
+		t.Helper()
+		if err := json.Unmarshal(body, &detail); err != nil {
+			t.Fatal(err)
+		}
+		if detail.ServiceCount != count || len(detail.Services) != count || detail.Hash == "" {
+			t.Fatalf("detail: count=%d services=%d hash present=%t, want %d", detail.ServiceCount, len(detail.Services), detail.Hash != "", count)
+		}
+	}
+	readDetail(c.expect(200, "GET", base, nil), 2)
+	anon := newClient(t, c.base)
+	anon.expect(401, "POST", base+"/services", map[string]any{})
+	anon.expect(401, "POST", base+"/services/preview", map[string]any{})
+	anon.expect(401, "DELETE", base+"/services/web2?hash="+detail.Hash, nil)
 	wait := func(opBody []byte, what string) {
 		var op struct{ ID, State string }
 		_ = json.Unmarshal(opBody, &op)
@@ -503,6 +522,12 @@ func dockerStack(t *testing.T, c *client) {
 		t.Fatalf("up = %d: %.200s", got, body)
 	}
 	wait(body, "up")
+	readDetail(c.expect(200, "GET", base, nil), 2)
+	for _, service := range detail.Services {
+		if len(service.Containers) != 1 || service.Containers[0].State != "running" {
+			t.Fatalf("%s has no running container after up: %+v", service.Name, service.Containers)
+		}
+	}
 
 	// Logs: every log event carries an id of the form <12hex>:<ns>:<ord>.
 	idRe := regexp.MustCompile(`^[0-9a-f]{1,12}:\d+:\d+$`)
@@ -523,7 +548,7 @@ func dockerStack(t *testing.T, c *client) {
 	for {
 		var h struct{ Points []struct{ Service string } }
 		_ = json.Unmarshal(c.expect(200, "GET", "/api/stacks/"+name+"/metrics", nil), &h)
-		if len(h.Points) > 0 && h.Points[0].Service == "web" {
+		if slices.ContainsFunc(h.Points, func(point struct{ Service string }) bool { return point.Service == "web" }) {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -536,6 +561,57 @@ func dockerStack(t *testing.T, c *client) {
 	dashboardEndpoints(t, c)
 	t.Run("containers", func(t *testing.T) { containerEndpoints(t, c, name) })
 	t.Run("networks", func(t *testing.T) { networkEndpoints(t, c, name) })
+
+	// File mutations leave running containers alone until a compose action.
+	readDetail(c.expect(200, "GET", base, nil), 2)
+	stale := detail.Hash
+	readDetail(c.expect(200, "DELETE", base+"/services/web2?hash="+detail.Hash, nil), 1)
+	var preview apitypes.PreviewResponse
+	add := map[string]any{"service": "web2", "config": map[string]any{"image": "nginx:alpine"}, "hash": detail.Hash}
+	if err := json.Unmarshal(c.expect(200, "POST", base+"/services/preview", add), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(preview.Content, "web2:") || preview.Hash != detail.Hash {
+		t.Fatalf("add preview missing web2 or changed base hash: %+v", preview)
+	}
+	add["hash"] = stale
+	c.expect(409, "POST", base+"/services", add)
+	readDetail(c.expect(200, "GET", base, nil), 1)
+	if detail.Hash != preview.Hash {
+		t.Fatal("stale add or preview changed the compose file")
+	}
+	add["hash"] = detail.Hash
+	readDetail(c.expect(200, "POST", base+"/services", add), 2)
+	var compose apitypes.RawCompose
+	if err := json.Unmarshal(c.expect(200, "GET", base+"/compose", nil), &compose); err != nil {
+		t.Fatal(err)
+	}
+	dependent := strings.Replace(compose.Content, "  web2:\n", "  web2:\n    depends_on: [web]\n", 1)
+	if dependent == compose.Content {
+		t.Fatal("web2 service not found for dependency check")
+	}
+	c.expect(200, "PUT", base+"/compose", map[string]string{"content": dependent, "hash": compose.Hash})
+	readDetail(c.expect(200, "GET", base, nil), 2)
+	if refusal := c.expect(409, "DELETE", base+"/services/web?hash="+detail.Hash, nil); !strings.Contains(string(refusal), "web2") {
+		t.Fatalf("dependency refusal does not name web2: %s", refusal)
+	}
+	readDetail(c.expect(200, "DELETE", base+"/services/web2?hash="+detail.Hash, nil), 1)
+	c.expect(409, "DELETE", base+"/services/web?hash="+detail.Hash, nil)
+	wait(c.expect(202, "POST", base+"/actions/up", map[string]any{}), "apply service removal")
+	if left := projectContainers(name); len(left) != 1 {
+		t.Fatalf("next Up left %d project containers, want web only", len(left))
+	}
+	readDetail(c.expect(200, "GET", base, nil), 1)
+	if detail.Services[0].Name != "web" || len(detail.Services[0].Containers) != 1 || detail.Services[0].Containers[0].State != "running" {
+		t.Fatalf("next Up did not retain running web: %+v", detail.Services)
+	}
+
+	legacy := name + "-legacy"
+	t.Cleanup(func() { c.do("DELETE", "/api/stacks/"+legacy, nil) })
+	c.expect(201, "POST", "/api/stacks", map[string]any{
+		"name": legacy, "service": "web", "config": map[string]string{"image": "nginx:alpine"},
+	})
+	wait(c.expect(202, "DELETE", "/api/stacks/"+legacy, nil), "legacy remove")
 
 	got, body = c.do("POST", "/api/stacks/"+name+"/actions/down", map[string]any{})
 	if got != 202 {
@@ -749,7 +825,7 @@ func networkEndpoints(t *testing.T, c *client, stackName string) {
 	if row, ok := find("bridge"); !ok || !row.Builtin {
 		t.Errorf("bridge missing or not built-in: %+v", row)
 	}
-	if row, ok := find(stackName + "_default"); !ok || row.Stack != stackName || len(row.Containers) != 1 {
+	if row, ok := find(stackName + "_default"); !ok || row.Stack != stackName || len(row.Containers) != 2 {
 		t.Errorf("stack network ownership/endpoints: %+v", row)
 	}
 	for name, reason := range map[string]string{"bridge": "built-in", stackName + "_default": stackName} {
