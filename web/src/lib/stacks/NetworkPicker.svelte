@@ -4,6 +4,7 @@
   import type { Network } from '../api/types';
   import Field from '../components/Field.svelte';
   import ListEditor from '../components/ListEditor.svelte';
+  import CreateNetworkDialog from '../networks/CreateNetworkDialog.svelte';
 
   type Attachment = { name: string; ipv4Address: string };
 
@@ -26,6 +27,25 @@
   const prefix = $derived(idPrefix ?? uid);
   let networks = $state<Network[]>([]);
   let failed = $state(false);
+  let creating = $state(false);
+  let created = false;
+  let pending: { index: number; item: Attachment; set: (v: Attachment) => void; select: HTMLSelectElement } | undefined;
+  function choose(event: Event & { currentTarget: HTMLSelectElement }, item: Attachment, index: number, set: (v: Attachment) => void) {
+    if (event.currentTarget.value !== '__create__') { set(rename(item, event.currentTarget.value)); return; }
+    pending = { index, item, set, select: event.currentTarget };
+    created = false; creating = true;
+  }
+  function closeCreate() {
+    creating = false;
+    if (!created && pending) pending.select.value = pending.item.name;
+  }
+  async function networkCreated(network: Network) {
+    created = true;
+    const target = pending;
+    try { networks = await api.networks(); }
+    catch { networks = [...networks, network]; }
+    if (target && value[target.index] === target.item) target.set(rename(target.item, network.name));
+  }
 
   onMount(() => {
     let alive = true;
@@ -72,12 +92,13 @@
       {:else}
         <Field label="Network" id="{prefix}-{i}-name" {readonly}>
           {#snippet children({ readonly: ro, ...c })}
-            <select {...c} aria-invalid={nameInvalid(item, i) ? 'true' : c['aria-invalid']} disabled={ro} value={item.name} onchange={(e) => set(rename(item, e.currentTarget.value))}>
+            <select {...c} aria-invalid={nameInvalid(item, i) ? 'true' : c['aria-invalid']} disabled={ro} value={item.name} onchange={(e) => choose(e, item, i, set)}>
               <option value="">Select a network</option>
               {#if item.name && !known(item.name)}<option value={item.name}>{item.name}</option>{/if}
               {#each networks as n (n.name)}
                 <option value={n.name}>{label(n)}</option>
               {/each}
+              <option value="__create__" disabled={ro}>Create network…</option>
             </select>
           {/snippet}
         </Field>
@@ -99,6 +120,8 @@
     </div>
   {/snippet}
 </ListEditor>
+
+<CreateNetworkDialog open={creating} onclose={closeCreate} oncreated={networkCreated} />
 
 <style>
   .cols { display: flex; flex-wrap: wrap; gap: 8px; flex: 1; }

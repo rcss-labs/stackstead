@@ -72,6 +72,7 @@ describe('NetworkPicker', () => {
     render(NetworkPicker, { value: [{ name: 'frontend', ipv4Address: '' }], onchange });
     expect(await screen.findByText(/couldn.t list networks/i)).toBeTruthy();
     expect(screen.queryByRole('combobox', { name: /network/i })).toBeNull();
+    expect(screen.queryByRole('option', { name: 'Create network…' })).toBeNull();
     const text = screen.getByRole('textbox', { name: /network/i }) as HTMLInputElement;
     expect(text.value).toBe('frontend');
     await userEvent.type(text, 'x');
@@ -110,4 +111,34 @@ describe('NetworkPicker', () => {
     expect(document.getElementById('svc-networks-0-name')!.getAttribute('aria-invalid')).toBeNull();
     expect(document.getElementById('svc-networks-1-name')!.getAttribute('aria-invalid')).toBe('true');
   });
+});
+
+it('offers Create network last and restores previous selection on cancel', async () => {
+  fake = installFakeFetch({ 'GET /api/networks': { body: nets }, 'GET /api/host/interfaces': { body: [] } });
+  const onchange = vi.fn(); render(NetworkPicker, { value: [{ name: 'frontend', ipv4Address: '' }], onchange });
+  await screen.findByRole('option', { name: /backend/ });
+  const select = screen.getByRole('combobox', { name: 'Network' }) as HTMLSelectElement;
+  expect(select.options[select.options.length - 1].text).toBe('Create network…');
+  await userEvent.selectOptions(select, '__create__'); expect(await screen.findByRole('dialog')).toBeTruthy(); expect(onchange).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel' })); expect(select.value).toBe('frontend'); expect(onchange).not.toHaveBeenCalled();
+});
+it('selects the created network after delayed reload without restoring the old selection', async () => {
+  let count = 0, finish!: (value: { body: Network[] }) => void;
+  const created = { ...nets[0], name: 'lan', id: 'lan-id' };
+  fake = installFakeFetch({
+    'GET /api/networks': () => ++count === 1 ? { body: nets } : new Promise(resolve => { finish = resolve; }),
+    'GET /api/host/interfaces': { body: [] }, 'POST /api/networks': { status: 201, body: created },
+  });
+  const onchange = vi.fn(); render(NetworkPicker, { value: [{ name: 'frontend', ipv4Address: '' }], onchange });
+  await screen.findByRole('option', { name: /backend/ }); const select = screen.getByRole('combobox', { name: 'Network' }) as HTMLSelectElement;
+  await userEvent.selectOptions(select, '__create__'); await userEvent.type(screen.getByLabelText('Name'), 'lan');
+  await userEvent.click(screen.getByRole('button', { name: 'Create network' })); await waitFor(() => expect(count).toBe(2));
+  expect(screen.queryByRole('dialog')).toBeNull(); expect(select.value).not.toBe('frontend');
+  finish({ body: [...nets, created] }); await waitFor(() => expect(onchange).toHaveBeenCalledWith([{ name: 'lan', ipv4Address: '' }]));
+  expect(await screen.findByRole('option', { name: /lan/ })).toBeTruthy(); expect(count).toBe(2);
+});
+it('disables creation when readonly', async () => {
+  fake = installFakeFetch({ 'GET /api/networks': { body: nets } });
+  render(NetworkPicker, { value: [{ name: 'frontend', ipv4Address: '' }], onchange: vi.fn(), readonly: true });
+  expect((await screen.findByRole('option', { name: 'Create network…' }) as HTMLOptionElement).disabled).toBe(true);
 });
