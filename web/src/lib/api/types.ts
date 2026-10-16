@@ -170,10 +170,47 @@ export interface FSEntry {
   size: number;
 }
 
+export interface NetworkContainer {
+  name: string;
+  ipv4: string;
+}
+
 export interface Network {
+  id: string;
   name: string;
   driver: string;
+  scope: string;
   subnets: string[];
+  gateways: string[];
+  ipRange: string;
+  parent: string;
+  ipvlanMode: string;
+  internal: boolean;
+  builtin: boolean;
+  project: string;
+  stack: string;
+  containers: NetworkContainer[];
+}
+
+export type NetworkDriver = 'bridge' | 'macvlan' | 'ipvlan';
+
+export interface CreateNetworkRequest {
+  name: string;
+  driver: NetworkDriver;
+  subnet?: string;
+  gateway?: string;
+  ipRange?: string;
+  parent?: string;
+  ipvlanMode?: 'l2' | 'l3';
+  internal?: boolean;
+}
+
+export interface HostInterface {
+  name: string;
+  ipv4: string;
+  subnet: string;
+  gateway: string;
+  default: boolean;
 }
 
 export interface Status {

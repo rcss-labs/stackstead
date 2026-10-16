@@ -4,6 +4,8 @@ import type {
   ContainerDetail,
   ContainerRow,
   CreateStackRequest,
+  CreateNetworkRequest,
+  HostInterface,
   FSEntry,
   FieldError,
   Alert,
@@ -192,6 +194,9 @@ export const api = {
 
   fs: (path?: string) => get<FSEntry[]>(`/api/fs${query({ path })}`),
   networks: () => get<Network[]>('/api/networks'),
+  createNetwork: (body: CreateNetworkRequest) => post<Network>('/api/networks', body),
+  deleteNetwork: (id: string) => request<void>('DELETE', `/api/networks/${seg(id)}`).then((r) => r.data),
+  hostInterfaces: () => get<HostInterface[]>('/api/host/interfaces'),
   status: () => get<Status>('/api/status'),
   host: () => get<HostSnapshot>('/api/host'),
   alerts: () => get<Alert[]>('/api/alerts'),

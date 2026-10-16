@@ -3,13 +3,15 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { installFakeFetch, type FakeFetch } from '../../vitest-setup';
 import NetworkPicker from './NetworkPicker.svelte';
+import type { Network } from '../api/types';
 
 let fake: FakeFetch;
 afterEach(() => fake?.restore());
 
-const nets = [
-  { name: 'frontend', driver: 'bridge', subnets: ['172.20.0.0/16'] },
-  { name: 'backend', driver: 'bridge', subnets: [] },
+const networkDefaults = { scope: 'local', gateways: [], ipRange: '', parent: '', ipvlanMode: '', internal: false, builtin: false, project: '', stack: '', containers: [] };
+const nets: Network[] = [
+  { ...networkDefaults, id: 'frontend-id', name: 'frontend', driver: 'bridge', subnets: ['172.20.0.0/16'] },
+  { ...networkDefaults, id: 'backend-id', name: 'backend', driver: 'bridge', subnets: [] },
 ];
 
 describe('NetworkPicker', () => {

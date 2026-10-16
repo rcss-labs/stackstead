@@ -301,3 +301,26 @@ describe('container endpoints', () => {
     expect(fake.calls[0].path).toBe('/api/containers/a%2Fb');
   });
 });
+
+describe('network endpoints', () => {
+  it('creates a network with the JSON request body and returns the row', async () => {
+    const body = { name: 'lan', driver: 'macvlan' as const, subnet: '10.0.0.0/24', gateway: '10.0.0.1', parent: 'eth0', internal: false };
+    const row = { ...body, id: 'abc123' };
+    fake = installFakeFetch({ 'POST /api/networks': { status: 201, body: row } });
+    expect(await api.createNetwork(body)).toEqual(row);
+    expect(fake.calls[0].body).toEqual(body);
+    expect(fake.calls[0].headers.get('content-type')).toBe('application/json');
+  });
+  it('deletes an encoded network id without a body and resolves on 204', async () => {
+    fake = installFakeFetch({ 'DELETE /api/networks/lan%2Fname%20%3F': { status: 204 } });
+    expect(await api.deleteNetwork('lan/name ?')).toBeUndefined();
+    expect(fake.calls[0].body).toBeUndefined();
+    expect(fake.calls[0].headers.has('content-type')).toBe(false);
+  });
+  it('gets host interfaces', async () => {
+    const rows = [{ name: 'eth0', ipv4: '10.0.0.2', subnet: '10.0.0.0/24', gateway: '', default: true }];
+    fake = installFakeFetch({ 'GET /api/host/interfaces': { body: rows } });
+    expect(await api.hostInterfaces()).toEqual(rows);
+    expect(fake.calls[0].body).toBeUndefined();
+  });
+});
