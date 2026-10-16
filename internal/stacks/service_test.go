@@ -1854,3 +1854,343 @@ func TestDetailsOverrides(t *testing.T) {
 		t.Errorf("details = %+v", details)
 	}
 }
+
+// ---- Add/remove services ----
+
+func setupServices(t *testing.T, h *harness) string {
+	t.Helper()
+	_, err := h.svc.Create(context.Background(), stacks.CreateRequest{Name: "web", Services: []composefile.NamedService{{Name: "web", Config: webCfg("8080:80")}, {Name: "cache", Config: webCfg()}, {Name: "worker", Config: webCfg()}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, hash, err := h.svc.Raw(context.Background(), "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hash
+}
+
+func TestAddServiceWritesAndReturnsNewHash(t *testing.T) {
+	h := newHarness(t)
+	hash := setupWeb(t, h)
+	before, _ := os.ReadFile(h.path("web"))
+	res, err := h.svc.AddService(context.Background(), "web", "cache", webCfg(), hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, got, err := composefile.Load(h.path("web"))
+	if err != nil || got != res.Hash || got == hash || !strings.Contains(string(data), "cache:") {
+		t.Fatalf("result %+v, hash %s, err %v, data %s", res, got, err, data)
+	}
+	bak, err := os.ReadFile(h.path("web") + ".bak")
+	if err != nil || string(bak) != string(before) {
+		t.Fatalf("backup %q, err %v", bak, err)
+	}
+	entry, err := h.reg.Get(context.Background(), "web")
+	if err != nil || entry.Project != "web" {
+		t.Fatalf("entry %+v, err %v", entry, err)
+	}
+}
+
+func TestAddAndRemoveStaleHashIsConflictAndWritesNothing(t *testing.T) {
+	for _, backup := range []bool{false, true} {
+		for _, action := range []string{"add", "preview", "remove"} {
+			t.Run(fmt.Sprintf("%s/backup=%t", action, backup), func(t *testing.T) {
+				h := newHarness(t)
+				setupServices(t, h)
+				before, _ := os.ReadFile(h.path("web"))
+				bakPath := h.path("web") + ".bak"
+				if backup {
+					if err := os.WriteFile(bakPath, []byte("keep existing backup"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				var err error
+				switch action {
+				case "add":
+					_, err = h.svc.AddService(context.Background(), "web", "new", webCfg(), "stale")
+				case "preview":
+					_, err = h.svc.PreviewAddService(context.Background(), "web", "new", webCfg(), "stale")
+				case "remove":
+					_, err = h.svc.RemoveService(context.Background(), "web", "cache", "stale")
+				}
+				if !errors.Is(err, composefile.ErrConflict) {
+					t.Fatalf("err %v", err)
+				}
+				after, _ := os.ReadFile(h.path("web"))
+				if string(before) != string(after) {
+					t.Fatal("file changed")
+				}
+				bak, err := os.ReadFile(bakPath)
+				if backup {
+					if err != nil || string(bak) != "keep existing backup" {
+						t.Fatalf("backup changed %q %v", bak, err)
+					}
+				} else if !os.IsNotExist(err) {
+					t.Fatalf("backup created: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestAddServiceExistingNameIsErrServiceExists(t *testing.T) {
+	h := newHarness(t)
+	hash := setupWeb(t, h)
+	_, err := h.svc.AddService(context.Background(), "web", "web", webCfg(), hash)
+	if !errors.Is(err, composefile.ErrServiceExists) {
+		t.Fatal(err)
+	}
+}
+
+func TestAddServicePortClashWithExistingServiceAndContainer(t *testing.T) {
+	h := newHarness(t)
+	hash := setupWeb(t, h)
+	h.eng.containers = []engine.Container{publishing("other", 7070)}
+	_, err := h.svc.AddService(context.Background(), "web", "cache", webCfg("8080:80", "7070:70"), hash)
+	fs := fieldsOf(t, err)
+	if len(fs) != 2 || fs[0].Field != "ports[0]" || !strings.Contains(fs[0].Message, "service web") || fs[1].Field != "ports[1]" || !strings.Contains(fs[1].Message, "container other-web-1") {
+		t.Fatalf("fields %+v", fs)
+	}
+}
+
+func TestAddServiceStaticIPCheckedAndImageDefaulted(t *testing.T) {
+	h := newHarness(t)
+	hash := setupWeb(t, h)
+	cfg := composefile.ServiceConfig{Build: &composefile.Build{}, Networks: []composefile.NetworkAttachment{{Name: "lan", IPv4Address: "192.168.1.30"}}}
+	_, err := h.svc.AddService(context.Background(), "web", "cache", cfg, hash)
+	if fs := fieldsOf(t, err); len(fs) != 1 || fs[0].Field != "networks.lan.ipv4_address" {
+		t.Fatalf("fields %+v", fs)
+	}
+	cfg.Networks = nil
+	if _, err := h.svc.AddService(context.Background(), "web", "cache", cfg, hash); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(h.path("web"))
+	if !strings.Contains(string(data), "stackstead/web-cache:latest") {
+		t.Fatalf("image not defaulted: %s", data)
+	}
+}
+
+func TestAddAndRemoveConfigFailureLeavesFileUnchanged(t *testing.T) {
+	for _, remove := range []bool{false, true} {
+		t.Run(fmt.Sprint(remove), func(t *testing.T) {
+			h := newHarness(t)
+			hash := setupServices(t, h)
+			before, _ := os.ReadFile(h.path("web"))
+			failure := &composecli.ExitError{Code: 1, Output: "invalid candidate"}
+			h.compose.configErr = failure
+			var err error
+			if remove {
+				_, err = h.svc.RemoveService(context.Background(), "web", "cache", hash)
+			} else {
+				_, err = h.svc.AddService(context.Background(), "web", "new", webCfg(), hash)
+			}
+			var exit *composecli.ExitError
+			if !errors.As(err, &exit) {
+				t.Fatalf("err %v", err)
+			}
+			after, _ := os.ReadFile(h.path("web"))
+			if string(before) != string(after) {
+				t.Fatal("file changed")
+			}
+			if _, err := os.Stat(h.path("web") + ".bak"); !os.IsNotExist(err) {
+				t.Fatalf("backup created %v", err)
+			}
+			checkTempFiles(t, h)
+			// Retrying proves the failed operation released the stack lock.
+			h.compose.configErr = nil
+			if remove {
+				_, err = h.svc.RemoveService(context.Background(), "web", "cache", hash)
+			} else {
+				_, err = h.svc.AddService(context.Background(), "web", "new", webCfg(), hash)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestPreviewAddServiceDoesNotWriteOrCallCompose(t *testing.T) {
+	h := newHarness(t)
+	hash := setupWeb(t, h)
+	before, _ := os.ReadFile(h.path("web"))
+	h.compose.configFiles = nil
+	h.compose.versionErr = errors.New("unavailable")
+	h.eng.err = errors.New("unavailable")
+	data, err := h.svc.PreviewAddService(context.Background(), "web", "cache", composefile.ServiceConfig{Build: &composefile.Build{}}, hash)
+	if err != nil || !strings.Contains(string(data), "stackstead/web-cache:latest") {
+		t.Fatalf("preview %s, err %v", data, err)
+	}
+	after, _ := os.ReadFile(h.path("web"))
+	if string(before) != string(after) || len(h.compose.configFiles) != 0 || len(h.compose.runs) != 0 {
+		t.Fatal("preview wrote or called compose")
+	}
+	if _, err := os.Stat(h.path("web") + ".bak"); !os.IsNotExist(err) {
+		t.Fatal("backup created")
+	}
+}
+
+func TestPreviewAddAndAddUseSameHash(t *testing.T) {
+	h := newHarness(t)
+	hash := setupWeb(t, h)
+	cfg := composefile.ServiceConfig{Build: &composefile.Build{}}
+	preview, err := h.svc.PreviewAddService(context.Background(), "web", "cache", cfg, hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := h.svc.AddService(context.Background(), "web", "cache", cfg, hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, got, _ := composefile.Load(h.path("web"))
+	if string(data) != string(preview) || got != res.Hash {
+		t.Fatal("preview/save mismatch")
+	}
+	if _, err := h.svc.AddService(context.Background(), "web", "worker", webCfg(), hash); !errors.Is(err, composefile.ErrConflict) {
+		t.Fatal(err)
+	}
+}
+
+func TestRemoveServiceWritesFileAndRunsNoComposeAction(t *testing.T) {
+	h := newHarness(t)
+	hash := setupServices(t, h)
+	h.compose.configFiles = nil
+	h.eng.err = errors.New("engine should not be needed")
+	res, err := h.svc.RemoveService(context.Background(), "web", "cache", hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, got, _ := composefile.Load(h.path("web"))
+	f, err := composefile.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names, err := f.Services()
+	if err != nil || !reflect.DeepEqual(names, []string{"web", "worker"}) || got != res.Hash || got == hash {
+		t.Fatalf("services %v, result %+v, err %v", names, res, err)
+	}
+	if len(h.compose.configFiles) != 1 || len(h.compose.runs) != 0 {
+		t.Fatalf("config %v runs %v", h.compose.configFiles, h.compose.runs)
+	}
+}
+
+func TestRemoveServiceUnknownLastAndDependents(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw, target string
+		want              error
+	}{
+		{name: "unknown", target: "missing", want: composefile.ErrServiceNotFound},
+		{name: "last", target: "web", want: composefile.ErrLastService},
+		{name: "dependent", raw: "services:\n  web:\n    image: nginx:1\n  cache:\n    image: redis:7\n    depends_on: [web]\n", target: "web"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			hash := setupWeb(t, h)
+			if tc.raw != "" {
+				if err := os.WriteFile(h.path("web"), []byte(tc.raw), 0600); err != nil {
+					t.Fatal(err)
+				}
+				hash = composefile.Hash([]byte(tc.raw))
+			}
+			_, err := h.svc.RemoveService(context.Background(), "web", tc.target, hash)
+			if tc.want != nil {
+				if !errors.Is(err, tc.want) {
+					t.Fatalf("err %v", err)
+				}
+			} else {
+				var deps *composefile.DependentsError
+				if !errors.As(err, &deps) || !reflect.DeepEqual(deps.Dependents, []string{"cache"}) {
+					t.Fatalf("err %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestConcurrentAddAndRemoveWithSameHashExactlyOneWins(t *testing.T) {
+	h := newHarness(t)
+	hash := setupServices(t, h)
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	go func() {
+		<-start
+		_, err := h.svc.AddService(context.Background(), "web", "new", webCfg(), hash)
+		errs <- err
+	}()
+	go func() {
+		<-start
+		_, err := h.svc.RemoveService(context.Background(), "web", "cache", hash)
+		errs <- err
+	}()
+	close(start)
+	ok, conflict := 0, 0
+	for range 2 {
+		err := <-errs
+		if err == nil {
+			ok++
+		} else if errors.Is(err, composefile.ErrConflict) {
+			conflict++
+		} else {
+			t.Fatal(err)
+		}
+	}
+	if ok != 1 || conflict != 1 {
+		t.Fatalf("success %d conflict %d", ok, conflict)
+	}
+}
+
+func TestAddAndRemoveRefuseOverrideFilesAndMissingFiles(t *testing.T) {
+	for _, missing := range []bool{false, true} {
+		for _, action := range []string{"add", "preview", "remove"} {
+			t.Run(fmt.Sprintf("%s/missing=%t", action, missing), func(t *testing.T) {
+				h := newHarness(t)
+				hash := setupServices(t, h)
+				if missing {
+					if err := os.Remove(h.path("web")); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					if err := os.WriteFile(filepath.Join(filepath.Dir(h.path("web")), "compose.override.yaml"), []byte("services: {}\n"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				var err error
+				switch action {
+				case "add":
+					_, err = h.svc.AddService(context.Background(), "web", "new", webCfg(), hash)
+				case "preview":
+					_, err = h.svc.PreviewAddService(context.Background(), "web", "new", webCfg(), hash)
+				case "remove":
+					_, err = h.svc.RemoveService(context.Background(), "web", "cache", hash)
+				}
+				if missing {
+					if !errors.Is(err, stacks.ErrStackUnavailable) {
+						t.Fatalf("err %v", err)
+					}
+				} else if !errors.Is(err, stacks.ErrStackUnavailable) {
+					t.Fatalf("override err %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestAddServiceStrictNamesAndRemoveExistingComposeName(t *testing.T) {
+	h := newHarness(t)
+	hash := setupWeb(t, h)
+	for _, name := range []string{"", "Upper", "has.dot"} {
+		_, err := h.svc.AddService(context.Background(), "web", name, webCfg(), hash)
+		if fs := fieldsOf(t, err); len(fs) != 1 || fs[0].Field != "service" {
+			t.Fatalf("name %q fields %+v", name, fs)
+		}
+	}
+	raw := []byte("services:\n  web:\n    image: nginx:1\n  Upper.Name:\n    image: redis:7\n")
+	if err := os.WriteFile(h.path("web"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.RemoveService(context.Background(), "web", "Upper.Name", composefile.Hash(raw)); err != nil {
+		t.Fatal(err)
+	}
+}

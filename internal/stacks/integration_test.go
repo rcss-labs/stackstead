@@ -431,3 +431,80 @@ func TestStaticIPConflict(t *testing.T) {
 		t.Errorf("rejected create left a folder behind (stat err %v)", err)
 	}
 }
+
+func TestTwoServiceCreateRemoveAndUp(t *testing.T) {
+	e := newITEnv(t)
+	netName := e.prefix + "-two-net"
+	var subnet string
+	for attempt := 0; attempt < 8; attempt++ {
+		b := make([]byte, 2)
+		if _, err := rand.Read(b); err != nil {
+			t.Fatal(err)
+		}
+		candidate := fmt.Sprintf("10.%d.%d", 100+int(b[0])%100, 1+int(b[1])%250)
+		if _, err := e.docker("network", "create", "--label", "stackstead.test=two-service", "--subnet", candidate+".0/24", netName); err == nil {
+			subnet = candidate
+			break
+		}
+	}
+	if subnet == "" {
+		t.Fatal("could not allocate test network after 8 attempts")
+	}
+	e.teardown = append(e.teardown, func() {
+		if out, err := e.docker("network", "rm", netName); err != nil {
+			t.Errorf("remove test network: %v: %s", err, out)
+		}
+	})
+	name := e.prefix + "-two"
+	ctxDir := e.writeContext("FROM busybox:1.37.0\nCMD [\"sleep\", \"3600\"]\n")
+	sum, err := e.svc.Create(context.Background(), stacks.CreateRequest{Name: name, Services: []composefile.NamedService{
+		{Name: "web", Config: composefile.ServiceConfig{Build: &composefile.Build{Context: ctxDir}, Networks: []composefile.NetworkAttachment{{Name: netName, IPv4Address: subnet + ".20"}}}},
+		{Name: "cache", Config: composefile.ServiceConfig{Build: &composefile.Build{Context: ctxDir}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Register before Up, so partially started projects are cleaned too.
+	e.teardown = append(e.teardown, func() {
+		if out, err := e.docker("compose", "-f", sum.Path, "down", "-v", "--remove-orphans", "-t", "1"); err != nil {
+			t.Errorf("remove test project: %v: %s", err, out)
+		}
+		for _, service := range []string{"web", "cache"} {
+			if out, err := e.docker("rmi", "-f", "stackstead/"+name+"-"+service+":latest"); err != nil {
+				t.Errorf("remove test image: %v: %s", err, out)
+			}
+		}
+	})
+	e.act(name, "up")
+	containers := e.projectContainers(sum.Project)
+	if len(containers) != 2 {
+		t.Fatalf("containers before removal: %+v", containers)
+	}
+	var webID string
+	for _, c := range containers {
+		if c.Labels["com.docker.compose.service"] == "web" {
+			webID = c.ID
+			if c.Networks[netName] != subnet+".20" {
+				t.Fatalf("web IP: %+v", c.Networks)
+			}
+		}
+	}
+	if webID == "" {
+		t.Fatal("web container missing")
+	}
+	_, hash, err := e.svc.Raw(context.Background(), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.RemoveService(context.Background(), name, "cache", hash); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.projectContainers(sum.Project); len(got) != 2 {
+		t.Fatalf("remove started action: %+v", got)
+	}
+	e.act(name, "up")
+	containers = e.projectContainers(sum.Project)
+	if len(containers) != 1 || containers[0].Labels["com.docker.compose.service"] != "web" || containers[0].State != "running" || containers[0].Networks[netName] != subnet+".20" {
+		t.Fatalf("containers after Up: %+v", containers)
+	}
+}

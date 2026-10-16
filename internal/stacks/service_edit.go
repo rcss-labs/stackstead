@@ -556,3 +556,98 @@ func containerIPs(containers []engine.Container, ownProject string) map[string][
 	}
 	return used
 }
+
+// stagedAdd shares the locked hash and preparation checks between preview and save.
+// The caller must release unlock after using the staged file.
+func (s *Service) stagedAdd(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) (e Entry, old, edited *composefile.File, unlock func(), err error) {
+	e, unlock, err = s.lockedEntry(ctx, stack)
+	if err != nil {
+		return Entry{}, nil, nil, nil, err
+	}
+	fail := func(err error) (Entry, *composefile.File, *composefile.File, func(), error) {
+		unlock()
+		return Entry{}, nil, nil, nil, err
+	}
+	data, current, err := loadFile(e)
+	if err != nil {
+		return fail(err)
+	}
+	if current != hash {
+		return fail(composefile.ErrConflict)
+	}
+	old, err = parseFile(data)
+	if err != nil {
+		return fail(err)
+	}
+	if err := ValidateServiceName(service); err != nil {
+		return fail(err)
+	}
+	cfg, err = s.prepareConfig(stack, service, filepath.Dir(e.ComposePath), cfg)
+	if err != nil {
+		return fail(err)
+	}
+	edited, err = old.AddService(service, cfg)
+	if err != nil {
+		return fail(err)
+	}
+	if err := refuseOverrides(e.ComposePath); err != nil {
+		return fail(err)
+	}
+	return e, old, edited, unlock, nil
+}
+
+// AddService saves a new service after checking its ports, IPs and compose config.
+func (s *Service) AddService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) (EditResult, error) {
+	e, old, edited, unlock, err := s.stagedAdd(ctx, stack, service, cfg, hash)
+	if err != nil {
+		return EditResult{}, err
+	}
+	defer unlock()
+	result, err := s.commit(ctx, e, old, edited, hash, false)
+	if err == nil {
+		s.log.Info("added service", "stack", stack, "service", service)
+	}
+	return result, err
+}
+
+// PreviewAddService returns the candidate without compose calls or filesystem writes.
+func (s *Service) PreviewAddService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) ([]byte, error) {
+	_, _, edited, unlock, err := s.stagedAdd(ctx, stack, service, cfg, hash)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	return edited.Bytes(), nil
+}
+
+// RemoveService validates and saves the removal; Up applies it to containers later.
+func (s *Service) RemoveService(ctx context.Context, stack, service, hash string) (EditResult, error) {
+	e, unlock, err := s.lockedEntry(ctx, stack)
+	if err != nil {
+		return EditResult{}, err
+	}
+	defer unlock()
+	data, current, err := loadFile(e)
+	if err != nil {
+		return EditResult{}, err
+	}
+	if current != hash {
+		return EditResult{}, composefile.ErrConflict
+	}
+	old, err := parseFile(data)
+	if err != nil {
+		return EditResult{}, err
+	}
+	if err := refuseOverrides(e.ComposePath); err != nil {
+		return EditResult{}, err
+	}
+	edited, err := old.RemoveService(service)
+	if err != nil {
+		return EditResult{}, err
+	}
+	result, err := s.commit(ctx, e, old, edited, hash, false)
+	if err == nil {
+		s.log.Info("removed service", "stack", stack, "service", service)
+	}
+	return result, err
+}
