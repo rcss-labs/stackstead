@@ -1,0 +1,31 @@
+{
+  "Name": "lan",
+  "Id": "0123456789ab",
+  "Driver": "macvlan",
+  "Scope": "local",
+  "Options": {
+    "parent": "enp3s0"
+  },
+  "Labels": {
+    "com.docker.compose.project": "dns"
+  },
+  "IPAM": {
+    "Config": [
+      {
+        "Subnet": "192.168.0.0/24",
+        "Gateway": "192.168.0.1",
+        "IPRange": "192.168.0.129/25"
+      }
+    ]
+  },
+  "Containers": {
+    "bbb": {
+      "Name": "zebra",
+      "IPv4Address": ""
+    },
+    "aaa": {
+      "Name": "alpha",
+      "IPv4Address": "192.168.0.30/24"
+    }
+  }
+}

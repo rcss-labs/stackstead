@@ -12,6 +12,7 @@ import (
 const (
 	labelProject = "com.docker.compose.project"
 	labelService = "com.docker.compose.service"
+	labelCreated = "dev.stackstead.created"
 )
 
 // Port is one published or exposed container port.
@@ -90,14 +91,36 @@ type ContainerInspect struct {
 
 // Network is a Docker network with its IPv4 IPAM configuration.
 type Network struct {
-	ID, Name, Driver string
-	Subnets          []Subnet
+	ID, Name, Driver, Scope string
+	Internal                bool
+	Subnets                 []Subnet
+	Options, Labels         map[string]string
+	Containers              []NetworkEndpoint // populated only by InspectNetwork
+}
+
+// Project returns the compose project that owns the network, or "".
+func (n Network) Project() string { return n.Labels[labelProject] }
+
+// Parent returns the parent interface driver option, or "".
+func (n Network) Parent() string { return n.Options["parent"] }
+
+// IPvlanMode returns the ipvlan mode driver option, or "".
+func (n Network) IPvlanMode() string { return n.Options["ipvlan_mode"] }
+
+// NetworkEndpoint is one container attached to a network.
+type NetworkEndpoint struct{ ID, Name, IPv4 string }
+
+// NetworkSpec is the configuration sent when creating a Docker network.
+type NetworkSpec struct {
+	Name, Driver, Subnet, Gateway, IPRange, Parent, IPvlanMode string
+	Internal                                                   bool
 }
 
 // Subnet is one IPv4 IPAM entry.
 type Subnet struct {
 	Prefix  netip.Prefix
-	Gateway netip.Addr // zero value if none
+	Gateway netip.Addr   // zero value if none
+	IPRange netip.Prefix // zero value if none
 }
 
 // Wire shapes; only the fields we read.
@@ -126,12 +149,39 @@ type apiPort struct {
 }
 
 type apiNetwork struct {
-	ID     string `json:"Id"`
-	Name   string
-	Driver string
-	IPAM   struct {
-		Config []struct{ Subnet, Gateway string }
+	ID                  string `json:"Id"`
+	Name, Driver, Scope string
+	Internal            bool
+	Options, Labels     map[string]string
+	IPAM                struct {
+		Config []struct{ Subnet, Gateway, IPRange string }
 	}
+	Containers map[string]struct{ Name, IPv4Address string }
+}
+
+func (r apiNetwork) toNetwork() Network {
+	n := Network{ID: r.ID, Name: r.Name, Driver: r.Driver, Scope: r.Scope, Internal: r.Internal, Options: r.Options, Labels: r.Labels}
+	if n.Options == nil {
+		n.Options = make(map[string]string)
+	}
+	if n.Labels == nil {
+		n.Labels = make(map[string]string)
+	}
+	for _, cfg := range r.IPAM.Config {
+		prefix, err := netip.ParsePrefix(cfg.Subnet)
+		if err != nil || !prefix.Addr().Is4() {
+			continue
+		}
+		sn := Subnet{Prefix: prefix.Masked()}
+		if gw, err := netip.ParseAddr(cfg.Gateway); err == nil && gw.Is4() {
+			sn.Gateway = gw
+		}
+		if ipRange, err := netip.ParsePrefix(cfg.IPRange); err == nil && ipRange.Addr().Is4() {
+			sn.IPRange = ipRange.Masked()
+		}
+		n.Subnets = append(n.Subnets, sn)
+	}
+	return n
 }
 
 type apiInspect struct {

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -164,7 +165,7 @@ func TestNetworks(t *testing.T) {
 	for _, n := range ns {
 		by[n.Name] = n
 	}
-	if len(ns) != 5 {
+	if len(ns) != 6 {
 		t.Fatalf("got %d networks", len(ns))
 	}
 	if b := by["bridge"]; b.Driver != "bridge" || len(b.Subnets) != 1 ||
@@ -181,6 +182,135 @@ func TestNetworks(t *testing.T) {
 	}
 	if n := by["broken"]; len(n.Subnets) != 1 || n.Subnets[0].Prefix != netip.MustParsePrefix("10.5.0.0/24") {
 		t.Errorf("malformed subnet should be skipped: %+v", n)
+	}
+	for _, n := range ns {
+		if n.Options == nil || n.Labels == nil || n.Containers != nil {
+			t.Errorf("maps/containers = %+v", n)
+		}
+	}
+	if b := by["bridge"]; len(b.Options) != 0 || len(b.Labels) != 0 || b.Subnets[0].IPRange.IsValid() {
+		t.Errorf("bridge metadata = %+v", b)
+	}
+	if n := by["lan"]; n.Scope != "local" || n.Internal || n.Parent() != "enp3s0" || n.Project() != "dns" || n.Subnets[0].IPRange != netip.MustParsePrefix("192.168.0.128/25") {
+		t.Errorf("lan = %+v", n)
+	}
+	if !by["demo_default"].Internal || by["broken"].Subnets[0].IPRange.IsValid() {
+		t.Error("internal or malformed range decoding")
+	}
+}
+
+func TestInspectNetworkDecodes(t *testing.T) {
+	sock := serve(t, fileHandler(t, map[string]string{"/v1.41/networks/lan": "inspect_network.json"}))
+	got, err := New(sock, time.Second).InspectNetwork(ctx(t), "lan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "lan" || got.Scope != "local" || got.Parent() != "enp3s0" || got.Project() != "dns" || len(got.Subnets) != 1 {
+		t.Fatalf("network = %+v", got)
+	}
+	want := []NetworkEndpoint{{ID: "aaa", Name: "alpha", IPv4: "192.168.0.30"}, {ID: "bbb", Name: "zebra", IPv4: ""}}
+	if !reflect.DeepEqual(got.Containers, want) {
+		t.Errorf("containers = %+v", got.Containers)
+	}
+}
+
+func TestInspectNetworkNotFound(t *testing.T) {
+	for _, status := range []int{404, 400} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+				w.Write([]byte(`{"message":"network lookup failed"}`))
+			}))
+			_, err := New(sock, time.Second).InspectNetwork(ctx(t), "missing")
+			var ae *ActionError
+			if !errors.As(err, &ae) || ae.Status != status || ae.Message != "network lookup failed" || errors.Is(err, ErrNetworkNotFound) != (status == 404) {
+				t.Errorf("err = %v", err)
+			}
+		})
+	}
+}
+
+func TestCreateNetworkBody(t *testing.T) {
+	for _, driver := range []string{"macvlan", "ipvlan", "bridge"} {
+		t.Run(driver, func(t *testing.T) {
+			spec := NetworkSpec{Name: "lan", Driver: driver, Internal: true}
+			want := map[string]any{"Name": "lan", "Driver": driver, "CheckDuplicate": true, "Internal": true, "IPAM": map[string]any{"Driver": "default"}, "Labels": map[string]any{"dev.stackstead.created": "true"}}
+			if driver != "bridge" {
+				spec.Subnet, spec.Gateway, spec.IPRange, spec.Parent = "192.168.0.0/24", "192.168.0.1", "192.168.0.128/25", "enp3s0"
+				want["IPAM"].(map[string]any)["Config"] = []any{map[string]any{"Subnet": spec.Subnet, "Gateway": spec.Gateway, "IPRange": spec.IPRange}}
+				options := map[string]any{"parent": "enp3s0"}
+				if driver == "ipvlan" {
+					spec.IPvlanMode = "l2"
+					options["ipvlan_mode"] = "l2"
+				}
+				want["Options"] = options
+			}
+			sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/v1.41/networks/create" || r.Header.Get("Content-Type") != "application/json" {
+					t.Errorf("request = %s %s, content type %q", r.Method, r.URL.Path, r.Header.Get("Content-Type"))
+				}
+				var got map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+					t.Error(err)
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Errorf("body = %#v, want %#v", got, want)
+				}
+				w.WriteHeader(201)
+				w.Write([]byte(`{"Id":"new-network"}`))
+			}))
+			id, err := New(sock, time.Second).CreateNetwork(ctx(t), spec)
+			if err != nil || id != "new-network" {
+				t.Errorf("id = %q err = %v", id, err)
+			}
+		})
+	}
+}
+
+func TestCreateNetworkMapsErrors(t *testing.T) {
+	for _, status := range []int{409, 400, 404} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+				w.Write([]byte(`{"message":"network with name lan already exists"}`))
+			}))
+			_, err := New(sock, time.Second).CreateNetwork(ctx(t), NetworkSpec{Name: "lan"})
+			var ae *ActionError
+			if !errors.As(err, &ae) || ae.Status != status || ae.Message != "network with name lan already exists" || errors.Is(err, ErrNetworkNotFound) {
+				t.Errorf("err = %v", err)
+			}
+		})
+	}
+	_, err := New(filepath.Join(t.TempDir(), "missing.sock"), time.Second).CreateNetwork(ctx(t), NetworkSpec{})
+	if !errors.Is(err, ErrUnavailable) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestRemoveNetworkMapsStatus(t *testing.T) {
+	for _, status := range []int{204, 404, 409, 403} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodDelete || r.URL.Path != "/v1.41/networks/lan" {
+					t.Errorf("request = %s %s", r.Method, r.URL.Path)
+				}
+				w.WriteHeader(status)
+				if status != 204 {
+					w.Write([]byte(`{"message":"has active endpoints"}`))
+				}
+			}))
+			err := New(sock, time.Second).RemoveNetwork(ctx(t), "lan")
+			if status == 204 {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			var ae *ActionError
+			if !errors.As(err, &ae) || ae.Status != status || ae.Message != "has active endpoints" || errors.Is(err, ErrNetworkNotFound) != (status == 404) {
+				t.Errorf("err = %v", err)
+			}
+		})
 	}
 }
 

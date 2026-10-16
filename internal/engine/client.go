@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,8 +11,8 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,9 @@ var ErrUnavailable = errors.New("docker engine is unavailable")
 
 // ErrNotFound is wrapped by errors for HTTP 404 answers about a container.
 var ErrNotFound = errors.New("docker engine: no such container")
+
+// ErrNetworkNotFound is wrapped for Docker 404 answers about a network.
+var ErrNetworkNotFound = errors.New("docker engine: no such network")
 
 // ActionError is a non-2xx answer from Docker, with the message from its
 // {"message": ...} body when it sent one.
@@ -246,18 +250,7 @@ func (c *Client) Networks(ctx context.Context) ([]Network, error) {
 	}
 	out := make([]Network, 0, len(raw))
 	for _, r := range raw {
-		n := Network{ID: r.ID, Name: r.Name, Driver: r.Driver}
-		for _, cfg := range r.IPAM.Config {
-			prefix, err := netip.ParsePrefix(cfg.Subnet)
-			if err != nil || !prefix.Addr().Is4() {
-				continue
-			}
-			sn := Subnet{Prefix: prefix.Masked()}
-			if gw, err := netip.ParseAddr(cfg.Gateway); err == nil && gw.Is4() {
-				sn.Gateway = gw
-			}
-			n.Subnets = append(n.Subnets, sn)
-		}
+		n := r.toNetwork()
 		out = append(out, n)
 	}
 	return out, nil
@@ -406,6 +399,25 @@ func (c *Client) request(caller, ctx context.Context, method, path string) (*res
 	if err != nil {
 		return nil, err
 	}
+	return c.send(caller, ctx, req)
+}
+
+// postJSON sends a JSON body through the same bounded response/error path.
+func (c *Client) postJSON(caller, ctx context.Context, path string, payload any) (*response, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encode docker request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://docker"+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return c.send(caller, ctx, req)
+}
+
+// send reads, caps and classifies a request's response under its deadline.
+func (c *Client) send(caller, ctx context.Context, req *http.Request) (*response, error) {
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, c.classify(caller, err)
@@ -492,4 +504,106 @@ func (c *Client) InspectContainer(ctx context.Context, id string) (ContainerInsp
 		return ContainerInspect{}, fmt.Errorf("decode container: %w", err)
 	}
 	return raw.toInspect(), nil
+}
+
+// InspectNetwork reads a network and its attached containers with the client timeout.
+func (c *Client) InspectNetwork(ctx context.Context, id string) (Network, error) {
+	body, err := c.get(ctx, "/networks/"+url.PathEscape(id))
+	if err != nil {
+		return Network{}, networkResult(err)
+	}
+	var raw apiNetwork
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return Network{}, fmt.Errorf("decode network: %w", err)
+	}
+	n := raw.toNetwork()
+	n.Containers = make([]NetworkEndpoint, 0, len(raw.Containers))
+	for id, endpoint := range raw.Containers {
+		ip, _, _ := strings.Cut(endpoint.IPv4Address, "/")
+		n.Containers = append(n.Containers, NetworkEndpoint{ID: id, Name: endpoint.Name, IPv4: ip})
+	}
+	sort.Slice(n.Containers, func(i, j int) bool {
+		if n.Containers[i].Name == n.Containers[j].Name {
+			return n.Containers[i].ID < n.Containers[j].ID
+		}
+		return n.Containers[i].Name < n.Containers[j].Name
+	})
+	return n, nil
+}
+
+// CreateNetwork creates a network bounded by the caller's deadline, or the client timeout.
+func (c *Client) CreateNetwork(ctx context.Context, spec NetworkSpec) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("docker engine request: %w", err)
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, c.callerBound(ctx))
+	defer cancel()
+	v, err := c.apiVersion(ctx, reqCtx)
+	if err != nil {
+		return "", err
+	}
+	ipam := struct {
+		Driver string
+		Config []map[string]string `json:",omitempty"`
+	}{Driver: "default"}
+	if spec.Subnet != "" {
+		config := map[string]string{"Subnet": spec.Subnet}
+		if spec.Gateway != "" {
+			config["Gateway"] = spec.Gateway
+		}
+		if spec.IPRange != "" {
+			config["IPRange"] = spec.IPRange
+		}
+		ipam.Config = []map[string]string{config}
+	}
+	options := make(map[string]string)
+	if spec.Parent != "" {
+		options["parent"] = spec.Parent
+	}
+	if spec.IPvlanMode != "" {
+		options["ipvlan_mode"] = spec.IPvlanMode
+	}
+	payload := struct {
+		Name           string
+		CheckDuplicate bool
+		Driver         string
+		Internal       bool
+		IPAM           any
+		Options        map[string]string `json:",omitempty"`
+		Labels         map[string]string
+	}{Name: spec.Name, CheckDuplicate: true, Driver: spec.Driver, Internal: spec.Internal, IPAM: ipam, Options: options, Labels: map[string]string{labelCreated: "true"}}
+	resp, err := c.postJSON(ctx, reqCtx, "/v"+v+"/networks/create", payload)
+	if err != nil {
+		return "", err
+	}
+	var result struct {
+		ID string `json:"Id"`
+	}
+	if err := json.Unmarshal(resp.body, &result); err != nil {
+		return "", fmt.Errorf("decode created network: %w", err)
+	}
+	return result.ID, nil
+}
+
+// RemoveNetwork removes a network, preserving Docker's refusal message.
+func (c *Client) RemoveNetwork(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("docker engine request: %w", err)
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, c.callerBound(ctx))
+	defer cancel()
+	v, err := c.apiVersion(ctx, reqCtx)
+	if err != nil {
+		return err
+	}
+	_, err = c.request(ctx, reqCtx, http.MethodDelete, "/v"+v+"/networks/"+url.PathEscape(id))
+	return networkResult(err)
+}
+
+func networkResult(err error) error {
+	var ae *ActionError
+	if errors.As(err, &ae) && ae.Status == http.StatusNotFound {
+		return fmt.Errorf("%w: %w", ErrNetworkNotFound, ae)
+	}
+	return err
 }
