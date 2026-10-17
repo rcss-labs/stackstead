@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/rcss-labs/stackstead/internal/maintenance"
 )
 
 // OpState is the lifecycle state of an operation.
@@ -63,6 +65,7 @@ type op struct {
 	cancel  context.CancelFunc
 	// finished is closed after info reaches its final state.
 	finished chan struct{}
+	release  func()
 }
 
 // subscriber is registered in op.subs until it is dropped, cancels or the
@@ -79,8 +82,9 @@ type subscriber struct {
 // the lock blocks: subscriber sends are non-blocking (a full subscriber is
 // dropped) and OpFuncs always run outside the lock.
 type Ops struct {
-	timeout time.Duration
-	now     func() time.Time
+	maintenance *maintenance.Gate
+	timeout     time.Duration
+	now         func() time.Time
 
 	mu       sync.Mutex
 	byID     map[string]*op
@@ -96,6 +100,9 @@ func NewOps(timeout time.Duration, now func() time.Time) *Ops {
 	return &Ops{timeout: timeout, now: now, byID: map[string]*op{}, byStack: map[string][]*op{}}
 }
 
+// SetMaintenance configures admission before the manager is used.
+func (o *Ops) SetMaintenance(g *maintenance.Gate) { o.maintenance = g }
+
 func newOpID() (string, error) {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -107,6 +114,16 @@ func newOpID() (string, error) {
 // Start runs fn in the background. It returns ErrBusy if the stack already
 // has a running operation.
 func (o *Ops) Start(stack, action string, fn OpFunc) (Operation, error) {
+	release, err := o.maintenance.Enter()
+	if err != nil {
+		return Operation{}, err
+	}
+	admitted := false
+	defer func() {
+		if !admitted {
+			release()
+		}
+	}()
 	id, err := newOpID()
 	if err != nil {
 		return Operation{}, fmt.Errorf("generate operation id: %w", err)
@@ -134,6 +151,7 @@ func (o *Ops) Start(stack, action string, fn OpFunc) (Operation, error) {
 		subs:     map[*subscriber]struct{}{},
 		cancel:   cancel,
 		finished: make(chan struct{}),
+		release:  release,
 	}
 	o.byID[id] = rec
 	hist := append(o.byStack[stack], rec)
@@ -147,6 +165,7 @@ func (o *Ops) Start(stack, action string, fn OpFunc) (Operation, error) {
 	snapshot := rec.info
 	o.mu.Unlock()
 
+	admitted = true
 	go o.run(ctx, rec, fn)
 	return snapshot, nil
 }
@@ -200,6 +219,7 @@ func (o *Ops) finish(rec *op, err, ctxErr error) {
 		close(s.done)
 	}
 	rec.subs = nil
+	rec.release()
 	close(rec.finished)
 }
 

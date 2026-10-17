@@ -64,7 +64,7 @@ type Sampler struct {
 	lastPrune    time.Time
 }
 
-func NewSampler(st *Store, lister ContainerLister, stats StatsSource, interval, retention time.Duration, logger *slog.Logger, now func() time.Time) *Sampler {
+func NewSampler(st sampleStore, lister ContainerLister, stats StatsSource, interval, retention time.Duration, logger *slog.Logger, now func() time.Time) *Sampler {
 	if now == nil {
 		now = time.Now
 	}

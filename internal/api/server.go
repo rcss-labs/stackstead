@@ -11,14 +11,16 @@ import (
 
 	"github.com/rcss-labs/stackstead/internal/apitypes"
 	"github.com/rcss-labs/stackstead/internal/auth"
+	"github.com/rcss-labs/stackstead/internal/maintenance"
 )
 
 type Options struct {
-	Auth       *auth.Service
-	Limiter    *auth.LoginLimiter
-	SetupToken string // empty once an admin exists
-	Static     fs.FS  // SPA build output; must contain index.html
-	Logger     *slog.Logger
+	Maintenance *maintenance.Gate
+	Auth        *auth.Service
+	Limiter     *auth.LoginLimiter
+	SetupToken  string // empty once an admin exists
+	Static      fs.FS  // SPA build output; must contain index.html
+	Logger      *slog.Logger
 
 	// Stacks and Operations back the /api/stacks, /api/operations, /api/fs,
 	// /api/status routes; they are not registered unless
@@ -87,6 +89,13 @@ func New(opts Options) http.Handler {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
+	if opts.Auth != nil {
+		auth.WithMaintenance(opts.Maintenance)(opts.Auth)
+	}
+	// The operation manager retains its own admission beyond an HTTP 202.
+	if ops, ok := opts.Operations.(interface{ SetMaintenance(*maintenance.Gate) }); ok {
+		ops.SetMaintenance(opts.Maintenance)
+	}
 	s := &server{opts: opts, summaryCache: map[time.Duration]*summaryEntry{}}
 	mux := http.NewServeMux()
 
@@ -131,13 +140,30 @@ func New(opts Options) http.Handler {
 		writeError(w, http.StatusNotFound, "not found")
 	}))
 	mux.Handle("/", spaHandler(opts.Static))
-	return nosniff(mux)
+	return nosniff(s.admitMutations(mux))
 }
 
 // nosniff stops browsers from second-guessing Content-Type on any response.
 func nosniff(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// admitMutations is outside auth so login, setup and auth cleanup share the
+// same admission boundary as all present and future API mutation routes.
+func (s *server) admitMutations(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+			release, err := s.opts.Maintenance.Enter()
+			if err != nil {
+				writeError(w, http.StatusServiceUnavailable, "maintenance in progress")
+				return
+			}
+			defer release()
+		}
 		next.ServeHTTP(w, r)
 	})
 }

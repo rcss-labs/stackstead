@@ -23,10 +23,12 @@ import (
 	"github.com/rcss-labs/stackstead/internal/engine"
 	"github.com/rcss-labs/stackstead/internal/host"
 	"github.com/rcss-labs/stackstead/internal/lockfile"
+	"github.com/rcss-labs/stackstead/internal/maintenance"
 	"github.com/rcss-labs/stackstead/internal/metrics"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 	"github.com/rcss-labs/stackstead/internal/state"
 	"github.com/rcss-labs/stackstead/internal/store"
+	"github.com/rcss-labs/stackstead/internal/update"
 	"github.com/rcss-labs/stackstead/internal/version"
 	"github.com/rcss-labs/stackstead/web"
 )
@@ -64,7 +66,60 @@ var serveRun func(ctx context.Context, env *Env, args []string) error
 // Assigned in init: serve prints serveCommand's usage, which refers to serveRun.
 func init() { serveRun = serve }
 
+// StartupProvider is installed only by trusted updater composition. Nil
+// probation preserves ordinary startup; lookup errors fail before migration.
+type StartupProvider interface {
+	StartupProbation(context.Context) (*update.Probation, error)
+}
+
+// ServeOptions injects trusted startup negotiation and its shared control gate.
+// Production control must authenticate the job before thawing this gate.
+type ServeOptions struct {
+	Startup     StartupProvider
+	Maintenance *maintenance.Gate
+}
+
+func ServeWithOptions(ctx context.Context, env *Env, args []string, opts ServeOptions) error {
+	return serveWithOptions(ctx, env, args, opts)
+}
+
+// deferredStartup keeps probation writers dormant without holding up HTTP or
+// shutdown. Ordinary startup retains its synchronous sync and runner ordering.
+func deferredStartup(ctx context.Context, g *maintenance.Gate, syncStacks func(context.Context), runners ...func(context.Context)) *background {
+	if release, err := g.Enter(); err == nil {
+		bg := startBackground(ctx, runners...)
+		syncStacks(ctx)
+		release()
+		return bg
+	}
+	return startBackground(ctx, func(ctx context.Context) {
+		for {
+			if err := g.Wait(ctx); err != nil {
+				return
+			}
+			release, err := g.Enter()
+			if err != nil {
+				continue
+			}
+			if ctx.Err() != nil {
+				release()
+				return
+			}
+			syncStacks(ctx)
+			release()
+			break
+		}
+		child := startBackground(ctx, runners...)
+		<-ctx.Done()
+		child.stop(time.Second)
+	})
+}
+
 func serve(ctx context.Context, env *Env, args []string) error {
+	return serveWithOptions(ctx, env, args, ServeOptions{})
+}
+
+func serveWithOptions(ctx context.Context, env *Env, args []string, opts ServeOptions) error {
 	logger := slog.New(slog.NewTextHandler(env.Stderr, nil))
 	flags := flag.NewFlagSet("stackstead serve", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -109,13 +164,28 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	} else {
 		logger.Info("no config file; using defaults and STACKSTEAD_* environment")
 	}
+	gate := opts.Maintenance
+	if opts.Startup != nil {
+		probation, err := opts.Startup.StartupProbation(ctx)
+		if err != nil {
+			return fmt.Errorf("startup probation: %w", err)
+		}
+		if probation != nil {
+			if gate == nil {
+				return errors.New("startup probation requires a shared maintenance gate")
+			}
+			if err := gate.Freeze(); err != nil {
+				return fmt.Errorf("freeze startup probation: %w", err)
+			}
+		}
+	}
 	db, err := store.Open(filepath.Join(cfg.DataDir, "stackstead.db"))
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 
-	authSvc, err := auth.NewService(db, time.Now)
+	authSvc, err := auth.NewService(db, time.Now, auth.WithMaintenance(gate))
 	if err != nil {
 		return err
 	}
@@ -146,20 +216,27 @@ func serve(ctx context.Context, env *Env, args []string) error {
 			"docker", report.Docker, "compose", report.Compose, "socket", cfg.DockerSocket)
 	}
 
-	if err := os.MkdirAll(cfg.StacksDir, 0o755); err != nil {
-		return fmt.Errorf("create stacks dir: %w", err)
+	startupRelease, admissionErr := gate.Enter()
+	probationStartup := errors.Is(admissionErr, maintenance.ErrFrozen)
+	if !probationStartup {
+		if admissionErr != nil {
+			return admissionErr
+		}
+		err := os.MkdirAll(cfg.StacksDir, 0o755)
+		startupRelease()
+		if err != nil {
+			return fmt.Errorf("create stacks dir: %w", err)
+		}
 	}
 	// The cache follows Docker events and serves container status to the
 	// stack service, the sampler and the observability routes.
 	cache := state.New(dockerEngine, logger, state.Backoff{})
 	metricsStore := metrics.NewStore(db, time.Now)
-	sampler := metrics.NewSampler(metricsStore, cache, dockerEngine, cfg.MetricsInterval, cfg.MetricsRetention, logger, time.Now)
+	sampler := metrics.NewSampler(admittedMetricsStore{Store: metricsStore, gate: gate}, cache, dockerEngine, cfg.MetricsInterval, cfg.MetricsRetention, logger, time.Now)
 	// A service context separate from the signal context: background work
 	// must outlive the signal until HTTP and operations have drained.
-	bg := startBackground(context.Background(), cache.Run, sampler.Run)
-	defer bg.stop(time.Second) // safety net for early returns; the normal path stops it in order below
-
 	ops := stacks.NewOps(cfg.OperationTimeout, time.Now)
+	ops.SetMaintenance(gate)
 	stackSvc := stacks.NewService(stacks.Deps{
 		Registry:     stacks.NewRegistry(db, time.Now),
 		Ops:          ops,
@@ -172,9 +249,21 @@ func serve(ctx context.Context, env *Env, args []string) error {
 		Now:          time.Now,
 	})
 	// Sync returns joined per-folder warnings; none of them stop startup.
-	if err := stackSvc.Sync(ctx); err != nil {
-		logger.Warn("stack sync reported problems", "err", err)
+	syncStacks := func(syncCtx context.Context) {
+		if probationStartup {
+			if err := os.MkdirAll(cfg.StacksDir, 0o755); err != nil {
+				logger.Warn("create stacks dir after probation", "err", err)
+				return
+			}
+		} else {
+			syncCtx = ctx // preserve ordinary startup cancellation during sync
+		}
+		if err := stackSvc.Sync(syncCtx); err != nil {
+			logger.Warn("stack sync reported problems", "err", err)
+		}
 	}
+	bg := deferredStartup(context.Background(), gate, syncStacks, cache.Run, sampler.Run)
+	defer bg.stop(time.Second)
 
 	// The collector and alerts engine do nothing until a request arrives:
 	// both cache for 5 s and start no goroutines.
@@ -194,6 +283,7 @@ func serve(ctx context.Context, env *Env, args []string) error {
 		Addr: cfg.Listen,
 		Handler: api.New(api.Options{
 			Auth:             authSvc,
+			Maintenance:      gate,
 			Limiter:          auth.NewLoginLimiter(5, 15*time.Minute, time.Now),
 			SetupToken:       setupToken,
 			Static:           web.Dist(),
@@ -342,4 +432,35 @@ func probeStatus(ctx context.Context, docker dockerProber, compose composeVersio
 		report.Compose = v
 	}
 	return report
+}
+
+// admittedMetricsStore serializes persistence with maintenance admission.
+type admittedMetricsStore struct {
+	*metrics.Store
+	gate *maintenance.Gate
+}
+
+// InsertBatch and Prune skip persistence while frozen, including subsequent
+// freezes after startup. In-flight DB writes retain admission until return.
+func (s admittedMetricsStore) InsertBatch(ctx context.Context, samples []metrics.Sample) error {
+	release, err := s.gate.Enter()
+	if errors.Is(err, maintenance.ErrFrozen) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.Store.InsertBatch(ctx, samples)
+}
+func (s admittedMetricsStore) Prune(ctx context.Context, olderThan time.Time) (int64, error) {
+	release, err := s.gate.Enter()
+	if errors.Is(err, maintenance.ErrFrozen) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+	return s.Store.Prune(ctx, olderThan)
 }

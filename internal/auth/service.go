@@ -14,6 +14,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/rcss-labs/stackstead/internal/maintenance"
 )
 
 const (
@@ -40,8 +42,9 @@ type User struct {
 }
 
 type Service struct {
-	db  *sql.DB
-	now func() time.Time
+	maintenance *maintenance.Gate
+	db          *sql.DB
+	now         func() time.Time
 	// dummyHash is verified against when a username does not exist, so a failed
 	// login costs the same time either way and does not reveal valid usernames.
 	dummyHash string
@@ -50,6 +53,9 @@ type Service struct {
 	hashSlots chan struct{}
 	params    argonParams
 }
+
+// WithMaintenance configures the gate before the service handles requests.
+func WithMaintenance(g *maintenance.Gate) Option { return func(s *Service) { s.maintenance = g } }
 
 // Option customizes NewService.
 type Option func(*Service)
@@ -277,6 +283,16 @@ func (s *Service) Authenticate(ctx context.Context, token string) (User, error) 
 		return User{}, fmt.Errorf("look up session: %w", err)
 	}
 	if s.now().Unix() >= expiresAt {
+		// Expired authentication remains a read while frozen. Admission, rather
+		// than a Frozen check, prevents cleanup racing an updater freeze.
+		release, err := s.maintenance.Enter()
+		if errors.Is(err, maintenance.ErrFrozen) {
+			return User{}, ErrInvalidSession
+		}
+		if err != nil {
+			return User{}, err
+		}
+		defer release()
 		if err := s.Logout(ctx, token); err != nil {
 			return User{}, err
 		}
