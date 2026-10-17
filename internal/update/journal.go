@@ -116,7 +116,7 @@ func (j *Journal) Load(id string) (Job, error) {
 		return Job{}, ErrRecoveryRequired
 	}
 	var job Job
-	if json.Unmarshal(e.Job, &job) != nil || job.Protocol != JournalProtocol || job.InstallationID != id || !safeID.MatchString(job.ID) {
+	if json.Unmarshal(e.Job, &job) != nil || job.Protocol != JournalProtocol || job.InstallationID != id || !safeID.MatchString(job.ID) || !validRecovery(job) {
 		return Job{}, ErrRecoveryRequired
 	}
 	return job, nil

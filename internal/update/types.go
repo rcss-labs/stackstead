@@ -150,6 +150,11 @@ const (
 )
 
 type Job struct {
+	// RecoveryDecision is durable control state, independent of public diagnostics.
+	RecoveryDecision RecoveryAction `json:"recoveryDecision,omitempty"`
+	RecoveryStep     RecoveryStep   `json:"recoveryStep,omitempty"`
+	ReleasePending   bool           `json:"releasePending,omitempty"`
+
 	ID             string       `json:"id"`
 	InstallationID string       `json:"installationID"`
 	IdempotencyKey string       `json:"idempotencyKey"`

@@ -238,3 +238,19 @@ func readBounded(f *os.File) ([]byte, error) {
 	}
 	return b, err
 }
+
+// SaveRegistration publishes identity reconciliation while retaining the same
+// installation mutation lock as its durable transaction outcome.
+func (l *InstallationLock) SaveRegistration(reg Registration) error {
+	if l.file == nil || reg.ID != l.id {
+		return ErrUnauthorized
+	}
+	if e := ValidateRegistration(reg); e != nil {
+		return e
+	}
+	data, e := json.Marshal(reg)
+	if e != nil {
+		return e
+	}
+	return l.journal.store.atomic("registrations", reg.ID+".json", data, 0600)
+}
