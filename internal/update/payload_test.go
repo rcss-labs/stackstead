@@ -64,3 +64,31 @@ func TestExtractVerifiedPayloadRechecksDigestAndTrust(t *testing.T) {
 		t.Fatalf("untrusted destination: %v", err)
 	}
 }
+
+func TestVerifyNativeArtifactRechecksBytesWithoutTarExtraction(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	s := &trustStore{root: root, anchor: root, owner: uint32(os.Getuid())}
+	dir := filepath.Join(root, StagingDirectory)
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "native.deb")
+	data := []byte("!<arch>\nnative package")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	a := VerifiedArtifact{Path: path, Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:])}
+	if err := verifyArtifact(s, a); err != nil {
+		t.Fatalf("valid native bytes refused: %v", err)
+	}
+	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), len(data)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyArtifact(s, a); !errors.Is(err, ErrIncompatible) {
+		t.Fatalf("mutated native artifact: %v", err)
+	}
+}

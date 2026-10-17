@@ -48,7 +48,7 @@ func (r commandRunner) Run(ctx context.Context, uid, gid uint32, path string, ar
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, args...)
-	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C", "LC_ALL=C", "HOME=/", "SYSTEMD_PAGER=cat", "SYSTEMD_COLORS=0"}
+	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C", "LC_ALL=C", "HOME=/", "SYSTEMD_PAGER=cat", "SYSTEMD_COLORS=0", "DEBIAN_FRONTEND=noninteractive"}
 	cmd.Dir = "/"
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uid, Gid: gid, Groups: []uint32{}}}
 	cmd.Stdin = bytes.NewReader(stdin)
@@ -70,8 +70,18 @@ func (r commandRunner) allowedRoot(path string, args []string) bool {
 		return len(args) == 7 && args[0] == "--system" && args[1] == "--no-ask-password" && args[2] == "show" && args[3] == "--property=LoadState,ActiveState,UnitFileState,MainPID" && args[4] == "--no-pager" && args[5] == "--" && serviceName.MatchString(args[6])
 	}
 	if path == "/usr/bin/dpkg-query" {
-		return len(args) == 3 && args[0] == "-S" && args[1] == "--" && filepath.IsAbs(args[2])
+		return len(args) == 3 && args[0] == "-S" && args[1] == "--" && filepath.IsAbs(args[2]) || len(args) == 4 && args[0] == "--show" && args[1] == "--showformat="+debQueryFormat && args[2] == "--" && args[3] == "stackstead"
 	}
+	if path == "/usr/bin/dpkg-deb" {
+		return len(args) == 3 && args[0] == "--show" && args[1] == "--showformat="+debArtifactFormat && debArtifactPath(args[2])
+	}
+	if path == "/usr/bin/dpkg" {
+		if len(args) == 5 && args[0] == "--dry-run" {
+			args = args[1:]
+		}
+		return len(args) == 4 && args[0] == "--force-confdef" && args[1] == "--force-confold" && args[2] == "--install" && debArtifactPath(args[3])
+	}
+
 	if path == "/usr/bin/rpm" {
 		return len(args) == 3 && args[0] == "-qf" && args[1] == "--" && filepath.IsAbs(args[2])
 	}

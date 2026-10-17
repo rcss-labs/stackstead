@@ -173,8 +173,16 @@ func (s *scriptAdapter) Inspect(ctx context.Context, p update.Plan) (update.Iden
 	if err := s.registration(p); err != nil {
 		return id, err
 	}
+	return inspectExecutable(ctx, s.runner, p)
+}
+
+func inspectExecutable(ctx context.Context, runner CommandRunner, p update.Plan) (update.Identity, error) {
+	var id update.Identity
+	if len(p.Registration.Instances) == 0 || p.Registration.Instances[0].UID == 0 {
+		return id, update.ErrSetupRequired
+	}
 	in := p.Registration.Instances[0]
-	out, _, err := s.runner.Run(ctx, in.UID, in.GID, p.Registration.Binary, []string{"version", "-o", "json"}, nil)
+	out, _, err := runner.Run(ctx, in.UID, in.GID, p.Registration.Binary, []string{"version", "-o", "json"}, nil)
 	if err != nil {
 		return id, err
 	}
@@ -189,6 +197,7 @@ func (s *scriptAdapter) Inspect(ctx context.Context, p update.Plan) (update.Iden
 	if decoder.Decode(&trailing) != io.EOF || id.Version == "" || id.Commit == "" || id.OS != "linux" || (id.Arch != "amd64" && id.Arch != "arm64") {
 		return id, update.ErrIncompatible
 	}
+	id.Version = strings.TrimPrefix(id.Version, "v")
 	return id, nil
 }
 func (s *scriptAdapter) refusePackageOwnership(ctx context.Context, binary string) error {
