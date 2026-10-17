@@ -15,15 +15,16 @@ import (
 // and groups before accessing the destination; prefix code is never root code.
 type darwinPrefixWriter func(context.Context, uint32, uint32, *os.File, *os.File, int64) error
 type darwinScriptAdapter struct {
-	runner CommandRunner
-	core   *scriptAdapter
-	writer darwinPrefixWriter
+	runner   CommandRunner
+	core     *scriptAdapter
+	writer   darwinPrefixWriter
+	aclProof func(*os.File) error
 }
 
 func NewDarwinScript(r CommandRunner) PackageAdapter {
 	core := NewScript(r).(*scriptAdapter)
 	core.platform = "darwin"
-	s := &darwinScriptAdapter{runner: r, core: core}
+	s := &darwinScriptAdapter{runner: r, core: core, aclProof: darwinACLProof}
 	core.ownership = s.refusePackageOwnership
 	return s
 }
@@ -46,7 +47,7 @@ func (s *darwinScriptAdapter) refusePackageOwnership(ctx context.Context, binary
 // a registered owner of the final directory. Root never mutates that directory.
 func (s *darwinScriptAdapter) destination(p update.Plan) (*os.File, *update.Instance, error) {
 	path := filepath.Dir(p.Registration.Binary)
-	if d, e := trustedDirectory(path, s.core.owner, s.core.anchor); e == nil {
+	if d, e := trustedDirectoryWithProof(path, s.core.owner, s.core.anchor, s.aclProof); e == nil {
 		return d, nil, nil
 	}
 	start, relative := "/", strings.TrimPrefix(path, "/")

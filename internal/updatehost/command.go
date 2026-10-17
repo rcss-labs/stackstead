@@ -155,6 +155,9 @@ func sanitizeOutput(p []byte) []byte {
 // Walk descriptors from / so neither a symlink nor a writable parent can redirect
 // a privileged command or installation. Tests can anchor at their own directory.
 func trustedDirectory(path string, owner uint32, anchor string) (*os.File, error) {
+	return trustedDirectoryWithProof(path, owner, anchor, func(f *os.File) error { return platformDescriptorTrustFD(int(f.Fd())) })
+}
+func trustedDirectoryWithProof(path string, owner uint32, anchor string, proof func(*os.File) error) (*os.File, error) {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return nil, update.ErrSetupRequired
 	}
@@ -177,7 +180,10 @@ func trustedDirectory(path string, owner uint32, anchor string) (*os.File, error
 		if unix.Fstat(int(f.Fd()), &st) != nil || st.Uid != owner || st.Mode&0022 != 0 {
 			return update.ErrSetupRequired
 		}
-		return nil
+		if proof == nil {
+			return update.ErrSetupRequired
+		}
+		return proof(f)
 	}
 	if err = check(current); err != nil {
 		current.Close()
@@ -215,5 +221,5 @@ func trustedExecutable(path string) error {
 	if unix.Fstat(fd, &st) != nil || st.Uid != 0 || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Mode&0022 != 0 || st.Mode&0111 == 0 {
 		return update.ErrSetupRequired
 	}
-	return nil
+	return platformDescriptorTrustFD(fd)
 }

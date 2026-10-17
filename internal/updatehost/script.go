@@ -117,7 +117,7 @@ func (s *scriptAdapter) checkBinary(d *os.File) error {
 	if unix.Fstat(fd, &st) != nil || st.Uid != s.owner || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Mode&0022 != 0 || st.Mode&0111 == 0 {
 		return update.ErrSetupRequired
 	}
-	return nil
+	return platformDescriptorTrustFD(fd)
 }
 func (s *scriptAdapter) Install(ctx context.Context, p update.Plan, a update.VerifiedArtifact) error {
 	stage, err := s.payload(ctx, p, a)
