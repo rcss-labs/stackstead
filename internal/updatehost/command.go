@@ -72,7 +72,13 @@ func (r commandRunner) allowedRoot(path string, args []string) bool {
 			return len(args) == 2 && args[0] == "-axo" && args[1] == "pid=,uid=,lstart=" || len(args) == 4 && args[0] == "-p" && commandPID.MatchString(args[1]) && args[2] == "-o" && args[3] == "pid=,uid=,lstart="
 		case "/usr/sbin/lsof":
 			return len(args) == 9 && args[0] == "-n" && args[1] == "-P" && args[2] == "-a" && args[3] == "-p" && commandPID.MatchString(args[4]) && args[5] == "-d" && args[6] == "txt" && args[7] == "-F" && args[8] == "pufDin"
+		case "/usr/sbin/installer":
+			const staging = "/Library/Application Support/StacksteadUpdater/staging/"
+			return len(args) == 4 && args[0] == "-pkg" && filepath.IsAbs(args[1]) && filepath.Clean(args[1]) == args[1] && strings.HasPrefix(args[1], staging) && strings.HasSuffix(args[1], ".pkg") && !strings.ContainsAny(args[1], "\x00\r\n\t'\"`$") && args[2] == "-target" && args[3] == "/"
 		case "/usr/sbin/pkgutil":
+			if len(args) == 2 && args[0] == "--pkg-info" && args[1] == "io.github.rcss-labs.stackstead" {
+				return true
+			}
 			return len(args) == 2 && args[0] == "--file-info" && filepath.IsAbs(args[1]) && filepath.Clean(args[1]) == args[1] && filepath.Base(args[1]) == "stackstead"
 		}
 	}
