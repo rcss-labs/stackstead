@@ -133,20 +133,41 @@ func (c *Coordinator) keepOld(ctx context.Context, l *InstallationLock, j *Job) 
 	if e := c.save(l, j, PhaseRecoveryRequired); e != nil {
 		return e
 	}
-	// StartProbation is probe-aware: existing old processes are retained and
-	// only missing originally-running peers are started, with this same ticket.
-	if e := c.runtime.StartProbation(ctx, j.Plan, j.Probation); e != nil {
-		return c.requireRecovery(l, j, e)
-	}
+	// Peer routing is transient: retain the complete original registration/state
+	// set in the journal, and never release a peer whose probe/start is unproven.
+	var unresolved error
+	registered := false
 	reg := j.Plan.Registration
 	reg.Identity = j.Plan.Current.Identity
-	if e := l.SaveRegistration(reg); e != nil {
-		return c.requireRecovery(l, j, e)
+	for _, state := range j.Plan.States {
+		if !state.Running {
+			continue
+		}
+		peerPlan := j.Plan
+		peerPlan.States = []ServiceState{state}
+		if e := c.runtime.StartProbation(ctx, peerPlan, j.Probation); e != nil {
+			unresolved = errors.Join(unresolved, e)
+			continue
+		}
+		if !registered {
+			if e := l.SaveRegistration(reg); e != nil {
+				return c.requireRecovery(l, j, e)
+			}
+			registered = true
+		}
+		if e := c.runtime.Release(ctx, peerPlan, j.Probation); e != nil {
+			unresolved = errors.Join(unresolved, e)
+		}
 	}
-	// Release itself reconciles Freeze/Prepare/Release for every possible peer.
-	if e := c.runtime.Release(ctx, j.Plan, j.Probation); e != nil {
-		return c.requireRecovery(l, j, e)
+	if unresolved != nil {
+		return c.requireRecovery(l, j, unresolved)
 	}
+	if !registered {
+		if e := l.SaveRegistration(reg); e != nil {
+			return c.requireRecovery(l, j, e)
+		}
+	}
+
 	j.ReleasePending = false
 	j.ErrorCode = "update-aborted"
 	j.ErrorMessage = "Update aborted; previous release retained"

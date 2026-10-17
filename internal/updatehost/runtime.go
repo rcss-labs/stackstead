@@ -75,10 +75,18 @@ func (r *runtime) StartProbation(ctx context.Context, p update.Plan, b update.Pr
 	if r.control == nil || b.JobID == "" || b.Nonce == "" {
 		return update.ErrUnavailable
 	}
-	if e := r.validateSupervisors(p); e != nil {
-		return e
+	if len(p.Registration.Instances) == 0 {
+		return update.ErrUnavailable
 	}
-	for _, in := range active(p) {
+	instances := active(p)
+	// Cleanup may route a single peer while retaining the full registration.
+	// Only selected active peers need a supervisor for this call.
+	for _, in := range instances {
+		if r.supervisors[in.Supervisor.Kind] == nil {
+			return update.ErrUnavailable
+		}
+	}
+	for _, in := range instances {
 		supervisor := r.supervisors[in.Supervisor.Kind]
 		state, e := supervisor.Probe(ctx, in)
 		if e != nil {
