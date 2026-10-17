@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	goruntime "runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -18,6 +19,8 @@ import (
 )
 
 const commandOutputLimit = 64 << 10
+
+var commandPID = regexp.MustCompile(`^[1-9][0-9]{0,9}$`)
 
 var instanceID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
 var serviceName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.@-]{0,180}\.service$`)
@@ -63,6 +66,17 @@ func (r commandRunner) Run(ctx context.Context, uid, gid uint32, path string, ar
 	return sanitizeOutput(out.data), sanitizeOutput(errout.data), err
 }
 func (r commandRunner) allowedRoot(path string, args []string) bool {
+	if goruntime.GOOS == "darwin" {
+		switch path {
+		case "/bin/ps":
+			return len(args) == 2 && args[0] == "-axo" && args[1] == "pid=,uid=,lstart=" || len(args) == 4 && args[0] == "-p" && commandPID.MatchString(args[1]) && args[2] == "-o" && args[3] == "pid=,uid=,lstart="
+		case "/usr/sbin/lsof":
+			return len(args) == 9 && args[0] == "-n" && args[1] == "-P" && args[2] == "-a" && args[3] == "-p" && commandPID.MatchString(args[4]) && args[5] == "-d" && args[6] == "txt" && args[7] == "-F" && args[8] == "pufDin"
+		case "/usr/sbin/pkgutil":
+			return len(args) == 2 && args[0] == "--file-info" && filepath.IsAbs(args[1]) && filepath.Clean(args[1]) == args[1] && filepath.Base(args[1]) == "stackstead"
+		}
+	}
+
 	if path == "/usr/bin/systemctl" {
 		if len(args) == 5 && args[0] == "--system" && args[1] == "--no-ask-password" && (args[2] == "stop" || args[2] == "start") && args[3] == "--" && serviceName.MatchString(args[4]) {
 			return true

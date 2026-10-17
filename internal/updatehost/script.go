@@ -19,6 +19,7 @@ import (
 
 type scriptAdapter struct {
 	runner              CommandRunner
+	platform            string
 	owner               uint32
 	anchor, stagingRoot string
 	ownership           func(context.Context, string) error
@@ -32,7 +33,11 @@ func NewScript(runner CommandRunner) PackageAdapter {
 }
 func (s *scriptAdapter) registration(p update.Plan) error {
 	r := p.Registration
-	if s.runner == nil || r.Installer != update.InstallerScript || r.Identity.OS != "linux" || !filepath.IsAbs(r.Prefix) || filepath.Clean(r.Prefix) != r.Prefix || r.Binary != filepath.Join(r.Prefix, "bin", "stackstead") || len(r.Instances) == 0 {
+	platform := s.platform
+	if platform == "" {
+		platform = "linux"
+	}
+	if s.runner == nil || r.Installer != update.InstallerScript || r.Identity.OS != platform || !filepath.IsAbs(r.Prefix) || filepath.Clean(r.Prefix) != r.Prefix || r.Binary != filepath.Join(r.Prefix, "bin", "stackstead") || len(r.Instances) == 0 {
 		return update.ErrSetupRequired
 	}
 	for _, in := range r.Instances {
@@ -177,6 +182,10 @@ func (s *scriptAdapter) Inspect(ctx context.Context, p update.Plan) (update.Iden
 }
 
 func inspectExecutable(ctx context.Context, runner CommandRunner, p update.Plan) (update.Identity, error) {
+	return inspectPlatformExecutable(ctx, runner, p, "linux")
+}
+
+func inspectPlatformExecutable(ctx context.Context, runner CommandRunner, p update.Plan, platform string) (update.Identity, error) {
 	var id update.Identity
 	if len(p.Registration.Instances) == 0 || p.Registration.Instances[0].UID == 0 {
 		return id, update.ErrSetupRequired
@@ -194,7 +203,7 @@ func inspectExecutable(ctx context.Context, runner CommandRunner, p update.Plan)
 		return id, update.ErrIncompatible
 	}
 	var trailing json.RawMessage
-	if decoder.Decode(&trailing) != io.EOF || id.Version == "" || id.Commit == "" || id.OS != "linux" || (id.Arch != "amd64" && id.Arch != "arm64") {
+	if decoder.Decode(&trailing) != io.EOF || id.Version == "" || id.Commit == "" || id.OS != platform || (id.Arch != "amd64" && id.Arch != "arm64") {
 		return id, update.ErrIncompatible
 	}
 	id.Version = strings.TrimPrefix(id.Version, "v")
