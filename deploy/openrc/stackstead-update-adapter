@@ -1,0 +1,46 @@
+#!/bin/sh
+# Example for ONE root-registered OpenRC instance, ID main, service stackstead.
+# Install root:root 0755 with every parent root-owned and not group/world writable.
+# The application service must maintain /run/stackstead-app.pid with the actual
+# application PID (not the supervise-daemon PID), root-owned, mode 0644 or 0600.
+# The updater helper above must be independently supervised before registration
+# can report ready. This example does not configure services or enable updates.
+set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+unset ENV BASH_ENV CDPATH
+
+fail() { printf '%s\n' "$1" >&2; exit 1; }
+usage() { printf 'Usage: %s {probe|stop|start} main\n' "$0" >&2; exit 2; }
+[ "$#" -eq 2 ] || usage
+case "$1" in probe|stop|start) ;; *) usage ;; esac
+[ "$2" = main ] || fail "Unregistered instance"
+[ "$(/usr/bin/id -u)" = 0 ] || fail "Root adapter required"
+[ -x /sbin/rc-service ] || fail "OpenRC service tool is missing"
+[ -f /etc/init.d/stackstead ] || fail "Application service is not configured"
+
+case "$1" in
+    stop) exec /sbin/rc-service stackstead stop ;;
+    start) exec /sbin/rc-service stackstead start ;;
+    probe)
+        enabled=false
+        for entry in /etc/runlevels/*/stackstead; do
+            if [ -L "$entry" ]; then enabled=true; break; fi
+        done
+        if /sbin/rc-service stackstead status >/dev/null 2>&1; then
+            # Refuse writable/symlinked state rather than return an unverified PID.
+            [ -f /run/stackstead-app.pid ] && [ ! -L /run/stackstead-app.pid ] || fail "Trusted application PID file required"
+            meta=$(/usr/bin/stat -c '%u:%a' /run/stackstead-app.pid) || fail "Cannot inspect application PID file"
+            case "$meta" in 0:644|0:600) ;; *) fail "Application PID file must be root-owned and unwritable by the application" ;; esac
+            pid=$(/usr/bin/head -c 12 /run/stackstead-app.pid) || fail "Cannot read application PID"
+            case "$pid" in ''|*[!0-9]*) fail "Invalid application PID" ;; esac
+            [ "${#pid}" -le 10 ] && [ "$pid" -gt 0 ] || fail "Invalid application PID"
+            kill -0 "$pid" 2>/dev/null || fail "Application PID is not alive"
+            printf '{"instanceId":"main","running":true,"enabled":%s,"masked":false,"loaded":true,"pid":%s}\n' "$enabled" "$pid"
+        else
+            status=$?
+            [ "$status" -eq 3 ] || fail "Application service status is ambiguous"
+            printf '{"instanceId":"main","running":false,"enabled":%s,"masked":false,"loaded":true,"pid":0}\n' "$enabled"
+        fi
+        ;;
+esac

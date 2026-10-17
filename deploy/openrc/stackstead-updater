@@ -1,0 +1,28 @@
+#!/sbin/openrc-run
+# Independently supervised root helper; install root:root 0755 only after the
+# private bootstrap has been provisioned. Never point this at the package binary.
+# Usage: rc-service stackstead-updater {start|stop|status}
+# OpenRC reads these variables after sourcing this file.
+# shellcheck disable=SC2034
+set -eu
+name="Stackstead update helper"
+description="Serve authenticated local update requests using the private bootstrap"
+command="/var/lib/stackstead-updater/bootstrap/v1/stackstead-updater-bootstrap"
+command_args="serve"
+command_user="root:root"
+supervisor="supervise-daemon"
+respawn_delay=5
+respawn_max=5
+respawn_period=60
+
+depend() {
+    need localmount
+    after firewall
+}
+
+start_pre() {
+    if [ ! -x "$command" ] || [ -L "$command" ]; then
+        eerror "Provision the private root-owned bootstrap before starting the helper"
+        return 1
+    fi
+}
