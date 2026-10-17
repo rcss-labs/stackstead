@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -54,11 +53,7 @@ func NewReleaseClient(client *http.Client) *ReleaseClient {
 	if client != nil && client.Transport != nil {
 		transport = client.Transport
 	}
-	root := "/var/lib/stackstead-updater"
-	if runtime.GOOS == "darwin" {
-		root = "/Library/Application Support/StacksteadUpdater"
-	}
-	return &ReleaseClient{client: &http.Client{Transport: transport, Timeout: requestTimeout, CheckRedirect: releaseRedirect}, cache: make(map[string]releaseCacheEntry), issued: make(map[string]issuedCandidate), now: time.Now, stagingRoot: filepath.Join(root, StagingDirectory), checkTrustedRoot: func(string) error { return ErrSetupRequired }}
+	return &ReleaseClient{client: &http.Client{Transport: transport, Timeout: requestTimeout, CheckRedirect: releaseRedirect}, cache: make(map[string]releaseCacheEntry), issued: make(map[string]issuedCandidate), now: time.Now, stagingRoot: filepath.Join(PrivateRoot, StagingDirectory), checkTrustedRoot: validateStaging}
 }
 
 func releaseRedirect(req *http.Request, via []*http.Request) error {
