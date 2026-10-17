@@ -226,3 +226,33 @@ func TestProbationServeFreezesBeforeMigrationAndWaitsForRelease(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewProbationShutdownHonorsOuterGrace(t *testing.T) {
+	gate := maintenance.New()
+	if err := gate.Freeze(); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	finishCleanup := make(chan struct{})
+	exited := make(chan struct{})
+	bg := deferredStartup(context.Background(), gate, func(context.Context) {}, func(ctx context.Context) {
+		close(started)
+		<-ctx.Done()
+		<-finishCleanup
+		close(exited)
+	})
+	gate.Thaw()
+	<-started
+	stopped := bg.stop(2 * time.Second)
+	select {
+	case <-exited:
+	default:
+		close(finishCleanup)
+		<-exited
+		if stopped {
+			t.Fatal("background reported stopped while child cleanup remained active, before the 2s outer grace expired")
+		}
+		return
+	}
+	close(finishCleanup)
+}

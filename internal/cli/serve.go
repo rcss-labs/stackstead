@@ -110,8 +110,10 @@ func deferredStartup(ctx context.Context, g *maintenance.Gate, syncStacks func(c
 			break
 		}
 		child := startBackground(ctx, runners...)
-		<-ctx.Done()
-		child.stop(time.Second)
+		defer child.cancel()
+		// Keep this wrapper in the outer group until every runner exits.
+		// The outer stop owns the grace; inherited cancellation stops children.
+		child.wg.Wait()
 	})
 }
 
