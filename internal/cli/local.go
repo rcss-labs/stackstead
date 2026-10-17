@@ -4,15 +4,14 @@ import (
 	"database/sql"
 	"errors"
 	"flag"
-	"fmt"
 	"io/fs"
 	"os"
 	"os/user"
 	"path/filepath"
 	"strconv"
-	"syscall"
 
 	"github.com/rcss-labs/stackstead/internal/config"
+	"github.com/rcss-labs/stackstead/internal/dbmaint"
 	"github.com/rcss-labs/stackstead/internal/lockfile"
 	"github.com/rcss-labs/stackstead/internal/store"
 )
@@ -30,15 +29,7 @@ var geteuid = os.Geteuid
 var fileOwner = realFileOwner
 
 func realFileOwner(path string) (int, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return 0, err
-	}
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return 0, fmt.Errorf("cannot determine the owner of %s", path)
-	}
-	return int(st.Uid), nil
+	return dbmaint.FileOwner(path)
 }
 
 // loadLocalConfig loads the config the way serve does: --config, else the
@@ -159,10 +150,5 @@ func stdinIsTerminal(env *Env) bool {
 
 // syncDirChecked fsyncs a directory and reports the failure.
 func syncDirChecked(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	return d.Sync()
+	return dbmaint.SyncDir(dir)
 }
