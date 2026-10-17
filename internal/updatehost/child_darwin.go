@@ -44,10 +44,17 @@ func childResourceLimits(request childRequest) error {
 	if err := unix.Setrlimit(unix.RLIMIT_CORE, &unix.Rlimit{Cur: 0, Max: 0}); err != nil {
 		return err
 	}
-	if err := unix.Setrlimit(unix.RLIMIT_CPU, &unix.Rlimit{Cur: 600, Max: 605}); err != nil {
+	cpu := uint64(600)
+	if request.Role == childInspectPayload {
+		cpu = 120
+	}
+	if err := unix.Setrlimit(unix.RLIMIT_CPU, &unix.Rlimit{Cur: cpu, Max: cpu + 5}); err != nil {
 		return err
 	}
 	limit := request.Limit
+	if request.Role == childInspectPayload {
+		limit = 1 << 30
+	}
 	if request.Role == childRestoreDB {
 		limit = request.Expected.Budget
 	}

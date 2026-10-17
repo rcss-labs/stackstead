@@ -36,12 +36,14 @@ type childRequest struct {
 	Instance update.Instance `json:"instance"`
 	Limit    int64           `json:"limit,omitempty"`
 	Expected snapshotProof   `json:"expected,omitempty"`
+	Payload  payloadRequest  `json:"payload,omitempty"`
 }
 type childResponse struct {
-	Protocol   int            `json:"protocol"`
-	Error      string         `json:"error,omitempty"`
-	Inspection *dbInspection  `json:"inspection,omitempty"`
-	Snapshot   *snapshotProof `json:"snapshot,omitempty"`
+	Protocol   int                `json:"protocol"`
+	Error      string             `json:"error,omitempty"`
+	Inspection *dbInspection      `json:"inspection,omitempty"`
+	Snapshot   *snapshotProof     `json:"snapshot,omitempty"`
+	Payload    *payloadInspection `json:"payload,omitempty"`
 }
 
 var childDigest = regexp.MustCompile(`^[a-f0-9]{64}$`)
@@ -99,6 +101,9 @@ func validChildRequest(r childRequest) error {
 	if r.Protocol != 1 || !instanceID.MatchString(r.JobID) || !instanceID.MatchString(r.Instance.ID) || r.Instance.UID == 0 {
 		return update.ErrUnauthorized
 	}
+	if r.Role != childInspectPayload && r.Payload != (payloadRequest{}) {
+		return update.ErrUnauthorized
+	}
 	switch r.Role {
 	case childInspectDB:
 		if r.Limit != 0 || r.Expected != (snapshotProof{}) {
@@ -113,6 +118,23 @@ func validChildRequest(r childRequest) error {
 		if r.Limit != p.Size || p.Size <= 0 || p.Budget < p.Size || p.Budget >= int64(^uint64(0)>>1) || p.Schema < 0 || !childDigest.MatchString(p.SHA256) || !childDigest.MatchString(p.ConfigSHA256) {
 			return update.ErrUnauthorized
 		}
+	case childInspectPayload:
+		p := r.Payload
+		if r.Limit != p.Artifact.Size || r.Limit <= 0 || r.Limit > childArtifactLimit || !childDigest.MatchString(p.Artifact.SHA256) || r.Expected != (snapshotProof{}) || r.Instance.DataDir != "" || r.Instance.ConfigPath != "" {
+			return update.ErrUnauthorized
+		}
+		switch p.Installer {
+		case update.InstallerScript, update.InstallerDeb, update.InstallerRPM, update.InstallerPkg:
+		default:
+			return update.ErrUnauthorized
+		}
+		if p.Identity.OS != "linux" && p.Identity.OS != "darwin" {
+			return update.ErrUnauthorized
+		}
+		if p.Identity.Arch != "amd64" && p.Identity.Arch != "arm64" {
+			return update.ErrUnauthorized
+		}
+		return nil
 	case childWritePrefix:
 		if r.Limit <= 0 || r.Limit > childArtifactLimit || r.Expected != (snapshotProof{}) || r.Instance.DataDir != "" || r.Instance.ConfigPath != "" {
 			return update.ErrUnauthorized
@@ -136,7 +158,7 @@ func childRoleFiles(role childRole) (input, output, dir *os.File, err error) {
 	switch role {
 	case childSnapshotDB:
 		allowed[5] = true
-	case childRestoreDB:
+	case childRestoreDB, childInspectPayload:
 		allowed[4] = true
 	case childWritePrefix:
 		allowed[4] = true
@@ -169,7 +191,7 @@ func childRoleFiles(role childRole) (input, output, dir *os.File, err error) {
 				return nil, nil, nil, update.ErrUnauthorized
 			}
 		} else if fd != 3 {
-			if st.Mode&unix.S_IFMT != unix.S_IFIFO && !(role == childWritePrefix && fd == 4 && st.Mode&unix.S_IFMT == unix.S_IFREG) {
+			if st.Mode&unix.S_IFMT != unix.S_IFIFO && !((role == childWritePrefix || role == childInspectPayload) && fd == 4 && st.Mode&unix.S_IFMT == unix.S_IFREG) {
 				return nil, nil, nil, update.ErrUnauthorized
 			}
 		}

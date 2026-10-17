@@ -32,6 +32,22 @@ func TestMain(m *testing.M) {
 	}
 	if len(os.Args) == 2 {
 		switch os.Args[1] {
+		case "internal-child-descendant-test":
+			control := os.NewFile(3, "test-control")
+			var request childRequest
+			if readChildFrame(control, &request) != nil {
+				os.Exit(72)
+			}
+			descendant := exec.Command("/bin/sleep", "30")
+			if descendant.Start() != nil {
+				os.Exit(73)
+			}
+			fmt.Fprintln(os.Stderr, "descendant:", descendant.Process.Pid)
+			descendant.Process.Release()
+			if writeChildResponse(control, childResponse{Protocol: 1, Error: "child-operation-failed"}) != nil {
+				os.Exit(74)
+			}
+			os.Exit(0)
 		case "internal-child-production-test":
 			if RunInternalChild(context.Background()) != nil {
 				os.Exit(71)
@@ -507,5 +523,34 @@ func TestChildPublicationRefusesTamper(t *testing.T) {
 	}
 	if _, err := e.InspectDB(context.Background(), "job-123", in); err == nil {
 		t.Fatal("followed digest executable symlink")
+	}
+}
+
+func TestChildPayloadFailureKillsSurvivingConverterDescendants(t *testing.T) {
+	e, in := childFixture(t)
+	pid := 0
+	e.testStderr = func(b []byte) { fmt.Sscanf(string(b), "descendant: %d", &pid) }
+	e.testCredentialHook = func(cmd *exec.Cmd) error {
+		cmd.SysProcAttr.Credential = nil
+		cmd.Args[1] = "internal-child-descendant-test"
+		return nil
+	}
+	if _, err := e.InspectDB(context.Background(), "job-123", in); err == nil {
+		t.Fatal("child operation error accepted")
+	}
+	if pid <= 0 {
+		t.Fatal("descendant fixture did not start")
+	}
+	defer unix.Kill(pid, unix.SIGKILL)
+	deadline := time.Now().Add(time.Second)
+	for {
+		state, err := exec.Command("/bin/ps", "-p", fmt.Sprint(pid), "-o", "stat=").Output()
+		if err != nil || strings.HasPrefix(strings.TrimSpace(string(state)), "Z") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("native converter descendant survived failed fixed child: pid%d state%s", pid, state)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

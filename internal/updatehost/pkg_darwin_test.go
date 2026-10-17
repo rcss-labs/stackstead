@@ -76,9 +76,15 @@ func pkgFixture() (*pkgAdapter, *pkgRunner, update.Plan) {
 	r.executable = `{"version":"1.2.3","commit":"` + current.Commit + `","os":"darwin","arch":"arm64"}`
 	d := NewPKG(r).(*pkgAdapter)
 	d.verify = func(update.VerifiedArtifact) error { return nil }
+	d.destinations = func(context.Context, pkgPayloadProof) error { return nil }
 	d.payload = func(_ context.Context, got update.Plan, a update.VerifiedArtifact) (pkgPayloadProof, error) {
 		id, e := nativeArtifactIdentity(got, a)
-		return pkgPayloadProof{Identifier: pkgIdentifier, Version: id.Version, InstallLocation: "/", Artifact: a, App: pkgExecutableProof{Identity: id, Architectures: [2]string{"amd64", "arm64"}}, PayloadPaths: []string{"/usr/local/bin/stackstead"}}, e
+		slice0 := id
+		slice0.Arch = "amd64"
+		slice1 := id
+		slice1.Arch = "arm64"
+		binary := pkgExecutableProof{Identity: id, Architectures: [2]string{"amd64", "arm64"}, Slices: [2]update.Identity{slice0, slice1}}
+		return pkgPayloadProof{Identifier: pkgIdentifier, Version: id.Version, InstallLocation: "/", Artifact: a, App: binary, Helper: binary, Bootstrap: binary, PayloadPaths: []string{"/usr/local/bin/stackstead", "/Library/PrivilegedHelperTools/stackstead-updater", "/Library/PrivilegedHelperTools/stackstead-updater-bootstrap"}}, e
 	}
 	d.managed = func(context.Context, update.Plan, update.VerifiedArtifact) error { return nil }
 	return d, r, p
@@ -368,6 +374,7 @@ func TestPKGAcceptsOnlyKnownPayloadLayoutAndAncestors(t *testing.T) {
 	d.payload = func(ctx context.Context, p update.Plan, a update.VerifiedArtifact) (pkgPayloadProof, error) {
 		v, e := proof(ctx, p, a)
 		v.PayloadPaths = []string{
+			"/Library/PrivilegedHelperTools/stackstead-updater", "/Library/PrivilegedHelperTools/stackstead-updater-bootstrap",
 			"/usr", "/usr/local", "/usr/local/bin", "/usr/local/bin/stackstead",
 			"/usr/local/share", "/usr/local/share/stackstead",
 			"/usr/local/share/stackstead/install.sh",

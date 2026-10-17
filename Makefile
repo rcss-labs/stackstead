@@ -240,7 +240,7 @@ pkg: ## Build dist/stackstead_<ver>_darwin.pkg (macOS host; unsigned unless all 
 	install -m 755 deploy/macos/scripts/postinstall install.sh "$$scripts/"; \
 	install -m 644 deploy/macos/launchagent.plist.in deploy/config.example.yaml "$$scripts/"; \
 	pkgbuild --root "$$root" --identifier $(PKG_IDENTIFIER) --version "$$pkgver" --install-location / \
-		--ownership recommended --scripts "$$scripts" "$$work/pkgs/stackstead-component.pkg" >/dev/null; \
+		--ownership recommended --compression legacy --scripts "$$scripts" "$$work/pkgs/stackstead-component.pkg" >/dev/null; \
 	sed -e "s|@IDENTIFIER@|$(PKG_IDENTIFIER)|g" -e "s|@VERSION@|$$pkgver|g" -e "s|@COMPONENT@|stackstead-component.pkg|g" deploy/macos/distribution.xml.in >"$$work/distribution.xml"; \
 	cp deploy/macos/resources/welcome.html deploy/macos/resources/conclusion.html "$$work/res/"; \
 	rm -f "$$out"; \

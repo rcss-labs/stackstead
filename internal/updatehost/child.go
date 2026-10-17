@@ -101,6 +101,12 @@ func runInternalChild(ctx context.Context, expectedPeer uint32) error {
 		}
 	case childRestoreDB:
 		err = restoreChildDB(ctx, request.JobID, request.Instance, request.Expected, input)
+	case childInspectPayload:
+		var proof payloadInspection
+		proof, err = inspectChildPayload(ctx, request.Payload, input)
+		if err == nil {
+			response.Payload = &proof
+		}
 	case childWritePrefix:
 		err = writeChildPrefix(ctx, request.Instance, request.Limit, input, dir)
 	default:
@@ -180,7 +186,11 @@ func (e *childExecutor) execute(ctx context.Context, request childRequest, input
 	if err != nil {
 		return response, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	timeout := 10 * time.Minute
+	if request.Role == childInspectPayload {
+		timeout = payloadTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	pair, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
 	if err != nil {
@@ -208,6 +218,11 @@ func (e *childExecutor) execute(ctx context.Context, request childRequest, input
 	case childRestoreDB:
 		inputRead, inputWrite, err = os.Pipe()
 		files = append(files, inputRead)
+	case childInspectPayload:
+		if input == nil {
+			return response, update.ErrUnauthorized
+		}
+		files = append(files, input)
 	case childWritePrefix:
 		files = append(files, input, nil, dir)
 	}
@@ -239,6 +254,18 @@ func (e *childExecutor) execute(ctx context.Context, request childRequest, input
 	if err = cmd.Start(); err != nil {
 		return response, err
 	}
+	// Native converters stay inside this owned group. Clean surviving descendants
+	// even when the fixed child reports an ordinary operation failure and exits.
+	cleanupPending := true
+	cleanupGroup := func() {
+		if cleanupPending {
+			cleanupPending = false
+			if cmd.Process.Pid > 1 {
+				_ = unix.Kill(-cmd.Process.Pid, unix.SIGKILL)
+			}
+		}
+	}
+	defer cleanupGroup()
 	child.Close()
 	if inputRead != nil {
 		inputRead.Close()
@@ -290,6 +317,7 @@ func (e *childExecutor) execute(ctx context.Context, request childRequest, input
 		streamDone <- nil
 	}
 	waitErr := cmd.Wait() // Always reap, including deadline, metadata or stream overflow.
+	cleanupGroup()        // Do not delay cleanup behind control or stream result handling.
 	if e.testStderr != nil {
 		e.testStderr(stderr.data)
 	}

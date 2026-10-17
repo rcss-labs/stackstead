@@ -24,18 +24,22 @@ const pkgPrivateRoot = "/Library/Application Support/StacksteadUpdater"
 type pkgExecutableProof struct {
 	Identity      update.Identity
 	Architectures [2]string
+	Slices        [2]update.Identity
 }
 type pkgPayloadProof struct {
 	Artifact                             update.VerifiedArtifact
 	Identifier, Version, InstallLocation string
 	App                                  pkgExecutableProof
+	Helper, Bootstrap                    pkgExecutableProof
 	PayloadPaths                         []string
+	Metadata                             []payloadMetadataProof
 }
 type pkgPayloadVerifier func(context.Context, update.Plan, update.VerifiedArtifact) (pkgPayloadProof, error)
 type pkgAdapter struct {
-	runner  CommandRunner
-	verify  func(update.VerifiedArtifact) error
-	payload pkgPayloadVerifier
+	runner       CommandRunner
+	verify       func(update.VerifiedArtifact) error
+	payload      pkgPayloadVerifier
+	destinations func(context.Context, pkgPayloadProof) error
 	// Task 16 must prove suppression of user setup/helper replacement for all
 	// registered UIDs, bound to this plan and the selected target/rollback artifact.
 	// Composition must also prove destination stability immediately before the
@@ -44,7 +48,7 @@ type pkgAdapter struct {
 }
 
 func NewPKG(runner CommandRunner) PackageAdapter {
-	return &pkgAdapter{runner: runner, verify: update.VerifyArtifact}
+	return &pkgAdapter{runner: runner, verify: update.VerifyArtifact, destinations: provePKGDestinations}
 }
 func (d *pkgAdapter) registration(p update.Plan) error {
 	r := p.Registration
@@ -107,28 +111,59 @@ func (d *pkgAdapter) prove(ctx context.Context, p update.Plan, a update.Verified
 	if proof.Artifact != a || proof.Identifier != pkgIdentifier || proof.Version != expected.Version || proof.InstallLocation != "/" || proof.App.Identity != expected || proof.App.Architectures != [2]string{"amd64", "arm64"} || len(proof.PayloadPaths) == 0 || len(proof.PayloadPaths) > 4096 {
 		return update.ErrIncompatible
 	}
+	for _, binary := range []pkgExecutableProof{proof.App, proof.Helper, proof.Bootstrap} {
+		if binary.Identity != expected || binary.Architectures != [2]string{"amd64", "arm64"} {
+			return update.ErrIncompatible
+		}
+		for i, arch := range []string{"amd64", "arm64"} {
+			id := expected
+			id.Arch = arch
+			if binary.Slices[i] != id {
+				return update.ErrIncompatible
+			}
+		}
+	}
+	metadata := map[string]payloadMetadataProof{}
+	for _, m := range proof.Metadata {
+		if m.Size != 163 || m.Attribute != "com.apple.provenance" || !pkgPayloadDestination(m.Companion) || m.Path != metadataPath(m.Companion) {
+			return update.ErrIncompatible
+		}
+		if _, ok := metadata[m.Path]; ok {
+			return update.ErrIncompatible
+		}
+		metadata[m.Path] = m
+	}
 	seen := map[string]bool{}
 	size := 0
 	for _, path := range proof.PayloadPaths {
 		size += len(path)
-		if size > commandOutputLimit || !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsAny(path, "\x00\r\n\t") || seen[path] || !pkgPayloadDestination(path) {
+		if size > commandOutputLimit || !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsAny(path, "\x00\r\n\t") || seen[path] || (!pkgPayloadDestination(path) && metadata[path].Path != path) {
 			return update.ErrIncompatible
 		}
 		seen[path] = true
 	}
-	if !seen[p.Registration.Binary] {
+	for _, m := range metadata {
+		if !seen[m.Path] || !seen[m.Companion] {
+			return update.ErrIncompatible
+		}
+	}
+	if !seen[p.Registration.Binary] || !seen["/Library/PrivilegedHelperTools/stackstead-updater"] || !seen["/Library/PrivilegedHelperTools/stackstead-updater-bootstrap"] {
 		return update.ErrIncompatible
 	}
-	return nil
+	if d.destinations == nil {
+		return update.ErrUnavailable
+	}
+	return d.destinations(ctx, proof)
 }
 
 // Match only the current Makefile PKG layout, including its directory entries.
 // A private-tree denylist cannot enumerate filesystem aliases (such as the Data
-// volume). Task 13 must add explicit helper leaves with tests when packaging them;
+// volume). The helper leaves are fixed for the three-binary release layout;
 // no arbitrary descendants or alternative spellings are accepted here.
 func pkgPayloadDestination(path string) bool {
 	switch path {
-	case "/usr", "/usr/local", "/usr/local/bin", "/usr/local/bin/stackstead",
+	case "/Library", "/Library/PrivilegedHelperTools", "/Library/PrivilegedHelperTools/stackstead-updater", "/Library/PrivilegedHelperTools/stackstead-updater-bootstrap", "/Library/LaunchDaemons", "/Library/LaunchDaemons/io.github.rcss-labs.stackstead-updater.plist",
+		"/usr", "/usr/local", "/usr/local/bin", "/usr/local/bin/stackstead",
 		"/usr/local/share", "/usr/local/share/stackstead",
 		"/usr/local/share/stackstead/install.sh",
 		"/usr/local/share/stackstead/launchagent.plist.in",
@@ -221,6 +256,9 @@ func (d *pkgAdapter) Install(ctx context.Context, p update.Plan, a update.Verifi
 		return err
 	}
 	if err = d.managed(ctx, p, a); err != nil {
+		return err
+	}
+	if err = d.prove(ctx, p, a); err != nil {
 		return err
 	}
 	if _, err = d.run(ctx, "/usr/sbin/installer", "-pkg", a.Path, "-target", "/"); err != nil {
