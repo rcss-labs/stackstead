@@ -263,7 +263,8 @@ type changeSet struct {
 	qualify  bool  // prefix field names with "services.<name>." (multi-service input)
 	// localNetworks are the networks the edited file declares itself (not
 	// external). One that does not exist on the engine yet is created by the
-	// first `up`, so its static IPs are left to `compose config` and `up`.
+	// first `up`, so engine-dependent subnet and usage checks wait until then.
+	// Same-file sibling conflicts are checked even before that first `up`.
 	localNetworks map[string]bool
 }
 
@@ -333,10 +334,7 @@ func (s *Service) checkChanges(ctx context.Context, cs changeSet) (partial bool,
 		use := append([]PortUse(nil), inUse...)
 		// Derive sibling usage afresh for each job: later jobs must not see
 		// their own static addresses inserted while checking an earlier job.
-		jobIPs := make(map[string][]IPUse, len(usedIPs))
-		for network, uses := range usedIPs {
-			jobIPs[network] = append([]IPUse(nil), uses...)
-		}
+		siblingIPs := make(map[string][]IPUse)
 		for position, sib := range cs.services {
 			_, existed := cs.old[sib.Name]
 			if sib.Name == j.svc.Name || (!existed && position >= j.position) {
@@ -352,7 +350,7 @@ func (s *Service) checkChanges(ctx context.Context, cs changeSet) (partial bool,
 					continue
 				}
 				network := resolveNetwork(nets, cs.project, n.Name)
-				jobIPs[network] = append(jobIPs[network], IPUse{Addr: addr, Owner: "service " + sib.Name})
+				siblingIPs[network] = append(siblingIPs[network], IPUse{Addr: addr, Owner: "service " + sib.Name})
 			}
 		}
 		for _, fe := range PortConflicts("ports", j.svc.Config.Ports, use) {
@@ -369,10 +367,20 @@ func (s *Service) checkChanges(ctx context.Context, cs changeSet) (partial bool,
 		for _, i := range j.changedIPs {
 			n := j.svc.Config.Networks[i]
 			network := resolveNetwork(nets, cs.project, n.Name)
-			if cs.localNetworks[n.Name] && !networkExists(nets, network) {
+			field := fmt.Sprintf("%snetworks.%s.ipv4_address", prefix, n.Name)
+			addr, parseErr := netip.ParseAddr(n.IPv4Address)
+			conflict := false
+			for _, use := range siblingIPs[network] {
+				if parseErr == nil && use.Addr == addr {
+					fields = append(fields, FieldError{Field: field, Message: fmt.Sprintf("%s is already used by %s", n.IPv4Address, use.Owner)})
+					conflict = true
+					break
+				}
+			}
+			if conflict || (cs.localNetworks[n.Name] && !networkExists(nets, network)) {
 				continue
 			}
-			for _, fe := range CheckStaticIP(fmt.Sprintf("%snetworks.%s.ipv4_address", prefix, n.Name), network, n.IPv4Address, nets, jobIPs) {
+			for _, fe := range CheckStaticIP(field, network, n.IPv4Address, nets, usedIPs) {
 				fields = append(fields, fe)
 			}
 		}

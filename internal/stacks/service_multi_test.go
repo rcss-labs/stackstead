@@ -3,6 +3,7 @@ package stacks_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -198,5 +199,99 @@ func TestSaveRawStaticIPUsageIsIndependentPerService(t *testing.T) {
 	}
 	if _, err := h.svc.SaveRaw(context.Background(), "lab", data, hash); err != nil {
 		t.Fatalf("independent addresses rejected: %v", err)
+	}
+}
+
+// Same-file network identity must work before Docker creates project networks.
+func TestLocalSiblingStaticIPsBeforeFirstUp(t *testing.T) {
+	for _, tc := range []struct {
+		name, network, ip string
+		conflict          bool
+	}{
+		{"duplicate", "lan", "10.9.0.5", true},
+		{"distinct address", "lan", "10.9.0.6", false},
+		{"distinct network", "other", "10.9.0.5", false},
+	} {
+		for _, backup := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/backup=%t", tc.name, backup), func(t *testing.T) {
+				h := newHarness(t)
+				setupWeb(t, h)
+				before := []byte(localNetworkYAML + "  other:\n    ipam:\n      config:\n        - subnet: 10.9.0.0/24\n")
+				if err := os.WriteFile(h.path("web"), before, 0600); err != nil {
+					t.Fatal(err)
+				}
+				bakPath := h.path("web") + ".bak"
+				if backup {
+					if err := os.WriteFile(bakPath, []byte("keep backup"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				_, hash, err := composefile.Load(h.path("web"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				cfg := composefile.ServiceConfig{Image: "nginx", Networks: []composefile.NetworkAttachment{{Name: tc.network, IPv4Address: tc.ip}}}
+				_, err = h.svc.AddService(context.Background(), "web", "cache", cfg, hash)
+				if !tc.conflict {
+					if err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
+				var validation *stacks.ValidationError
+				if !errors.As(err, &validation) {
+					t.Errorf("expected ValidationError, got %v", err)
+				} else if fs := validation.Fields; len(fs) != 1 || fs[0].Field != "networks.lan.ipv4_address" || !strings.Contains(fs[0].Message, "service web") {
+					t.Errorf("fields=%+v", fs)
+				}
+				after, err := os.ReadFile(h.path("web"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(after) != string(before) {
+					t.Error("refused add changed file")
+				}
+				bak, err := os.ReadFile(bakPath)
+				if backup {
+					if err != nil || string(bak) != "keep backup" {
+						t.Errorf("backup changed: %q %v", bak, err)
+					}
+				} else if !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("backup created: %q %v", bak, err)
+				}
+			})
+		}
+	}
+}
+
+func TestLocalSiblingStaticIPConflictOnEditAndRawSave(t *testing.T) {
+	for _, action := range []string{"edit", "raw"} {
+		t.Run(action, func(t *testing.T) {
+			h := newHarness(t)
+			setupWeb(t, h)
+			before := strings.Replace(localNetworkYAML, "networks:\n  lan:", "  cache:\n    image: nginx\n    networks:\n      lan:\n        ipv4_address: 10.9.0.6\nnetworks:\n  lan:", 1)
+			if err := os.WriteFile(h.path("web"), []byte(before), 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, hash, err := composefile.Load(h.path("web"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			field, owner := "networks.lan.ipv4_address", "service cache"
+			if action == "edit" {
+				_, err = h.svc.UpdateService(context.Background(), "web", "web", composefile.ServiceConfig{Image: "nginx", Networks: []composefile.NetworkAttachment{{Name: "lan", IPv4Address: "10.9.0.6"}}}, hash)
+			} else {
+				field, owner = "services.cache.networks.lan.ipv4_address", "service web"
+				_, err = h.svc.SaveRaw(context.Background(), "web", []byte(strings.Replace(before, "10.9.0.6", "10.9.0.5", 1)), hash)
+			}
+			fs := fieldsOf(t, err)
+			if len(fs) != 1 || fs[0].Field != field || !strings.Contains(fs[0].Message, owner) {
+				t.Fatalf("fields=%+v", fs)
+			}
+			after, err := os.ReadFile(h.path("web"))
+			if err != nil || string(after) != before {
+				t.Fatalf("file changed: %v", err)
+			}
+		})
 	}
 }
