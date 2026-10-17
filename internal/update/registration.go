@@ -168,6 +168,11 @@ func readClientLocator(s *trustStore, configPath string, uid uint32) (ClientLoca
 	var selected ClientLocator
 	found := false
 	for _, name := range names {
+		// Atomic publication can leave a temp after process death, or expose it
+		// during a concurrent write. Only the writer's exact namespace is ignored.
+		if atomicTempPattern.MatchString(name) {
+			continue
+		}
 		if !strings.HasSuffix(name, ".json") {
 			return ClientLocator{}, ErrIncompatible
 		}

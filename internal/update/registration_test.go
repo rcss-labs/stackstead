@@ -2,8 +2,11 @@ package update
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func validTestRegistration() Registration {
@@ -114,5 +117,76 @@ func TestTrustStoreRegistrationPrivateRoundTripAndMembership(t *testing.T) {
 	j.store.owner++
 	if _, err = j.store.directory("registrations", false); err == nil {
 		t.Fatal("different owner accepted")
+	}
+}
+
+func TestTrustStoreLocatorModesWithRestrictiveUmask(t *testing.T) {
+	if os.Getenv("STACKSTEAD_TEST_LOCATOR_UMASK_CHILD") != "1" {
+		executable, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		child := exec.Command(executable, "-test.run=^TestTrustStoreLocatorModesWithRestrictiveUmask$", "-test.count=1")
+		child.Env = append(os.Environ(), "STACKSTEAD_TEST_LOCATOR_UMASK_CHILD=1")
+		output, err := child.CombinedOutput()
+		if err != nil {
+			t.Fatalf("restrictive-umask subprocess: %v\n%s", err, output)
+		}
+		return
+	}
+	// The umask change is isolated to this dedicated test subprocess.
+	unix.Umask(0077)
+	j := testJournal(t)
+	s := &trustStore{root: j.root, anchor: j.root, owner: uint32(os.Getuid()), publicDirs: true}
+	config := filepath.Join(j.root, "config")
+	if err := os.WriteFile(config, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := filepath.EvalSymlinks(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := ClientLocator{InstallationID: "install", InstanceID: "instance", Socket: "/run/control.sock", ConfigPath: config}
+	if err = writeClientLocator(s, l, 42); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]os.FileMode{filepath.Join(j.root, "42"): 0755, filepath.Join(j.root, "42", "instance.json"): 0644} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != want {
+			t.Errorf("public %s mode=%04o, want %04o", filepath.Base(path), info.Mode().Perm(), want)
+		}
+	}
+}
+func TestTrustStoreLocatorIgnoresInterruptedPublicationTemp(t *testing.T) {
+	j := testJournal(t)
+	s := &trustStore{root: j.root, anchor: j.root, owner: uint32(os.Getuid()), publicDirs: true}
+	config := filepath.Join(j.root, "config")
+	if err := os.WriteFile(config, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := filepath.EvalSymlinks(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := ClientLocator{InstallationID: "install", InstanceID: "instance", Socket: "/run/control.sock", ConfigPath: config}
+	if err = writeClientLocator(s, l, 42); err != nil {
+		t.Fatal(err)
+	}
+	temp := filepath.Join(j.root, "42", ".tmp-0123456789abcdef0123456789abcdef")
+	if err = os.WriteFile(temp, []byte("interrupted publication"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readClientLocator(s, config, 42)
+	if err != nil || got != l {
+		t.Fatalf("committed locator blocked by internal temp: %+v %v", got, err)
+	}
+	if err = os.WriteFile(filepath.Join(j.root, "42", ".tmp-not-a-nonce"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = readClientLocator(s, config, 42); err == nil {
+		t.Fatal("invalid temp namespace accepted")
 	}
 }

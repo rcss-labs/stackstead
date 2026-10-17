@@ -14,6 +14,11 @@ import (
 )
 
 var safeID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
+
+const atomicTempPrefix = ".tmp-"
+
+var atomicTempPattern = regexp.MustCompile("^" + regexp.QuoteMeta(atomicTempPrefix) + `[a-f0-9]{32}$`)
+
 var digestPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 const stateLimit = 4 << 20
@@ -74,6 +79,7 @@ func (s *trustStore) directory(relative string, create bool) (*os.File, error) {
 		if part == "" {
 			continue
 		}
+		created := false
 		next, e := unix.Openat(int(current.Fd()), part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 		if e == unix.ENOENT && create {
 			mode := uint32(0700)
@@ -81,6 +87,7 @@ func (s *trustStore) directory(relative string, create bool) (*os.File, error) {
 				mode = 0755
 			}
 			e = unix.Mkdirat(int(current.Fd()), part, mode)
+			created = e == nil
 			if e == nil || e == unix.EEXIST {
 				if e = current.Sync(); e == nil {
 					next, e = unix.Openat(int(current.Fd()), part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
@@ -95,6 +102,17 @@ func (s *trustStore) directory(relative string, create bool) (*os.File, error) {
 		if e = s.check(current, true, false); e != nil {
 			current.Close()
 			return nil, e
+		}
+		if created && s.publicDirs {
+			// The creation mode is filtered by umask. Establish the public mode
+			// only after opening and validating this newly created directory.
+			if e = establishMode(current, 0755); e == nil {
+				e = current.Sync()
+			}
+			if e != nil {
+				current.Close()
+				return nil, e
+			}
 		}
 	}
 	if err = s.check(current, true, !s.publicDirs); err != nil {
@@ -148,12 +166,18 @@ func (s *trustStore) atomic(dir, name string, data []byte, mode uint32) error {
 	if _, err = rand.Read(nonce[:]); err != nil {
 		return err
 	}
-	temp := ".tmp-" + hex.EncodeToString(nonce[:])
+	temp := atomicTempPrefix + hex.EncodeToString(nonce[:])
 	f, err := s.openFile(d, temp, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL, mode, mode == 0600)
 	if err != nil {
 		return err
 	}
 	defer unix.Unlinkat(int(d.Fd()), temp, 0)
+	// The descriptor is exclusive and ownership/type checked; never alter the
+	// process umask or follow a caller-controlled path to set publication modes.
+	if err = establishMode(f, os.FileMode(mode)); err != nil {
+		f.Close()
+		return err
+	}
 	_, err = f.Write(data)
 	if err == nil {
 		err = f.Sync()
@@ -200,4 +224,18 @@ func validateStaging(path string) error {
 		err = d.Close()
 	}
 	return err
+}
+
+func establishMode(f *os.File, mode os.FileMode) error {
+	if err := f.Chmod(mode); err != nil {
+		return err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if info.Mode().Perm() != mode.Perm() {
+		return fmt.Errorf("%w: publication mode mismatch", ErrSetupRequired)
+	}
+	return nil
 }
