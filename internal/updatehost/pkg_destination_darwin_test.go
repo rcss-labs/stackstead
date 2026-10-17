@@ -24,7 +24,7 @@ func TestPKGDestinationRejectsSymlinkWritableACLAndAliases(t *testing.T) {
 			if e := os.WriteFile(leaf, []byte("fixture"), 0755); e != nil {
 				t.Fatal(e)
 			}
-			proof := pkgPayloadProof{PayloadPaths: []string{"/usr/local/bin/stackstead"}}
+			proof := pkgPayloadProof{PayloadPaths: []string{"/usr/local/bin/stackstead"}, Entries: pkgEntriesForPaths([]string{"/usr/local/bin/stackstead"})}
 			switch bad {
 			case "hardlink":
 				if e := os.Link(leaf, filepath.Join(base, "other-root-file")); e != nil {
@@ -110,6 +110,40 @@ func TestPayloadVerifiesAllThreeExecutableIdentities(t *testing.T) {
 			}
 			if e := d.Validate(context.Background(), p, p.TargetArtifact); e == nil {
 				t.Fatal("incomplete binary evidence accepted")
+			}
+		})
+	}
+}
+func TestPKGDestinationRejectsUnsafeCreationAttributes(t *testing.T) {
+	base := t.TempDir()
+	os.Chmod(base, 0755)
+	os.MkdirAll(filepath.Join(base, "usr/local"), 0755)
+	root, e := os.Open(base)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer root.Close()
+	for _, bad := range []string{"", "writable", "uid", "gid", "setuid", "owner-name"} {
+		t.Run(bad, func(t *testing.T) {
+			proof := pkgPayloadProof{PayloadPaths: []string{"/usr/local/bin", "/usr/local/bin/stackstead"}, Entries: []payloadEntry{{Path: "/usr/local/bin", Directory: true, Mode: 0755}, {Path: "/usr/local/bin/stackstead", Mode: 0755}}}
+			switch bad {
+			case "writable":
+				proof.Entries[0].Mode = 0777
+			case "uid":
+				proof.Entries[0].UID = 501
+			case "gid":
+				proof.Entries[1].GID = 20
+			case "setuid":
+				proof.Entries[1].Mode = 04755
+			case "owner-name":
+				proof.Entries[0].Uname = "stackstead"
+			}
+			e := provePKGDestinationAt(context.Background(), root, proof, uint32(os.Getuid()), platformDescriptorTrustFD)
+			if bad == "" && e != nil {
+				t.Fatal(e)
+			}
+			if bad != "" && e == nil {
+				t.Fatalf("unsafe %s attributes accepted for missing destination under safe parent", bad)
 			}
 		})
 	}

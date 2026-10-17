@@ -28,6 +28,9 @@ func provePKGDestinations(ctx context.Context, proof pkgPayloadProof) error {
 // Test-owned descriptor roots permit exercising the same walk without host changes.
 // Production always anchors at / and requires UID0 and Darwin ACL evidence.
 func provePKGDestinationAt(ctx context.Context, root *os.File, proof pkgPayloadProof, owner uint32, acl func(int) error) error {
+	if err := validatePKGPackageEntries(proof); err != nil {
+		return err
+	}
 	check := func(fd int, directory bool) error {
 		var st unix.Stat_t
 		if unix.Fstat(fd, &st) != nil || st.Uid != owner || st.Mode&0022 != 0 || st.Mode&06000 != 0 {
@@ -119,5 +122,29 @@ func pkgProofFromInspection(p payloadInspection) pkgPayloadProof {
 			metadata = append(metadata, *e.Metadata)
 		}
 	}
-	return pkgPayloadProof{Metadata: metadata, Artifact: p.Artifact, Identifier: p.Identifier, Version: p.Version, InstallLocation: p.InstallLocation, App: cv(p.App), Helper: cv(p.Helper), Bootstrap: cv(p.Bootstrap), PayloadPaths: paths}
+	return pkgPayloadProof{Entries: p.Entries, Metadata: metadata, Artifact: p.Artifact, Identifier: p.Identifier, Version: p.Version, InstallLocation: p.InstallLocation, App: cv(p.App), Helper: cv(p.Helper), Bootstrap: cv(p.Bootstrap), PayloadPaths: paths}
+}
+
+func validatePKGPackageEntries(proof pkgPayloadProof) error {
+	if len(proof.Entries) == 0 || len(proof.Entries) != len(proof.PayloadPaths) || len(proof.Entries) > 4096 {
+		return update.ErrIncompatible
+	}
+	paths := map[string]bool{}
+	for _, p := range proof.PayloadPaths {
+		if paths[p] {
+			return update.ErrIncompatible
+		}
+		paths[p] = true
+	}
+	seen := map[string]bool{}
+	for _, e := range proof.Entries {
+		if !paths[e.Path] || seen[e.Path] || e.Size < 0 || e.Size > childArtifactLimit || (e.Directory && e.Size != 0) {
+			return update.ErrIncompatible
+		}
+		seen[e.Path] = true
+		if err := validateNativePayloadEntry(update.InstallerPkg, e); err != nil {
+			return err
+		}
+	}
+	return nil
 }

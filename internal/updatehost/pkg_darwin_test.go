@@ -84,7 +84,8 @@ func pkgFixture() (*pkgAdapter, *pkgRunner, update.Plan) {
 		slice1 := id
 		slice1.Arch = "arm64"
 		binary := pkgExecutableProof{Identity: id, Architectures: [2]string{"amd64", "arm64"}, Slices: [2]update.Identity{slice0, slice1}}
-		return pkgPayloadProof{Identifier: pkgIdentifier, Version: id.Version, InstallLocation: "/", Artifact: a, App: binary, Helper: binary, Bootstrap: binary, PayloadPaths: []string{"/usr/local/bin/stackstead", "/Library/PrivilegedHelperTools/stackstead-updater", "/Library/PrivilegedHelperTools/stackstead-updater-bootstrap"}}, e
+		paths := []string{"/usr/local/bin/stackstead", "/Library/PrivilegedHelperTools/stackstead-updater", "/Library/PrivilegedHelperTools/stackstead-updater-bootstrap"}
+		return pkgPayloadProof{Entries: pkgEntriesForPaths(paths), Identifier: pkgIdentifier, Version: id.Version, InstallLocation: "/", Artifact: a, App: binary, Helper: binary, Bootstrap: binary, PayloadPaths: paths}, e
 	}
 	d.managed = func(context.Context, update.Plan, update.VerifiedArtifact) error { return nil }
 	return d, r, p
@@ -382,9 +383,23 @@ func TestPKGAcceptsOnlyKnownPayloadLayoutAndAncestors(t *testing.T) {
 			"/usr/local/share/stackstead/config.example.yaml",
 			"/usr/local/share/stackstead/LICENSE",
 		}
+		v.Entries = pkgEntriesForPaths(v.PayloadPaths)
 		return v, e
 	}
 	if e := d.Validate(context.Background(), p, p.TargetArtifact); e != nil || pkgInstalls(r) != 0 {
 		t.Fatalf("known current builder layout rejected: %v", e)
 	}
+}
+
+func pkgEntriesForPaths(paths []string) []payloadEntry {
+	entries := make([]payloadEntry, len(paths))
+	for i, p := range paths {
+		directory := pkgPayloadDirectory(p)
+		mode := int64(0644)
+		if directory || payloadBinaryRole(p, update.InstallerPkg) != "" || p == "/usr/local/share/stackstead/install.sh" {
+			mode = 0755
+		}
+		entries[i] = payloadEntry{Path: p, Directory: directory, Mode: mode}
+	}
+	return entries
 }

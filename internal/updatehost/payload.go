@@ -30,10 +30,13 @@ type executableInspection struct {
 	Slices   []update.Identity
 }
 type payloadEntry struct {
-	Path      string
-	Size      int64
-	Directory bool
-	Metadata  *payloadMetadataProof
+	Path         string
+	Size         int64
+	Directory    bool
+	Metadata     *payloadMetadataProof
+	Mode         int64
+	UID, GID     int64
+	Uname, Gname string
 }
 type payloadInspection struct {
 	Artifact                             update.VerifiedArtifact
@@ -172,11 +175,15 @@ func validatePayloadIdentities(p payloadInspection, want update.Identity, univer
 	return nil
 }
 func inventoryTar(ctx context.Context, source io.Reader, req payloadRequest, bounds payloadBounds, identities bool) (payloadInspection, error) {
+	return inventoryTarWithRPMMetadata(ctx, source, req, bounds, identities, nil)
+}
+func inventoryTarWithRPMMetadata(ctx context.Context, source io.Reader, req payloadRequest, bounds payloadBounds, identities bool, facts map[string]rpmFileMetadata) (payloadInspection, error) {
 	if bounds.Decoded <= 0 || bounds.Decoded > 2<<30 || bounds.File <= 0 || bounds.File > childArtifactLimit || bounds.Entries <= 0 || bounds.Entries > 4096 || bounds.Names <= 0 || bounds.Names > 64<<10 {
 		return payloadInspection{}, update.ErrIncompatible
 	}
 	lr := &io.LimitedReader{R: source, N: bounds.Decoded + 1}
-	tr := tar.NewReader(lr)
+	records := &payloadTarRecords{source: lr}
+	tr := tar.NewReader(records)
 	proof := payloadInspection{}
 	seen := map[string]bool{}
 	names := 0
@@ -201,13 +208,16 @@ func inventoryTar(ctx context.Context, source io.Reader, req payloadRequest, bou
 			return proof, update.ErrIncompatible
 		}
 		if name == "/" && h.Typeflag == tar.TypeDir {
-			if seen[name] || h.Size != 0 || h.Linkname != "" || len(h.PAXRecords) != 0 || h.Format == tar.FormatPAX || h.Format == tar.FormatGNU {
+			if seen[name] || h.Size != 0 || h.Linkname != "" || len(h.PAXRecords) != 0 || h.Format == tar.FormatPAX {
 				return proof, update.ErrIncompatible
+			}
+			if err = validateNativePayloadEntry(req.Installer, payloadEntry{Path: name, Directory: true, Mode: h.Mode, UID: int64(h.Uid), GID: int64(h.Gid), Uname: h.Uname, Gname: h.Gname}); err != nil {
+				return proof, err
 			}
 			seen[name] = true
 			continue
 		}
-		if len(h.PAXRecords) != 0 || h.Format == tar.FormatPAX || h.Format == tar.FormatGNU || h.Linkname != "" || h.Size < 0 || h.Size > bounds.File || seen[name] || len(proof.Entries) >= bounds.Entries || (h.Typeflag != tar.TypeReg && h.Typeflag != tar.TypeRegA && h.Typeflag != tar.TypeDir) {
+		if len(h.PAXRecords) != 0 || h.Format == tar.FormatPAX || h.Linkname != "" || h.Size < 0 || h.Size > bounds.File || seen[name] || len(proof.Entries) >= bounds.Entries || (h.Typeflag != tar.TypeReg && h.Typeflag != tar.TypeRegA && h.Typeflag != tar.TypeDir) {
 			return proof, update.ErrIncompatible
 		}
 		if h.Typeflag == tar.TypeDir && h.Size != 0 {
@@ -218,7 +228,7 @@ func inventoryTar(ctx context.Context, source io.Reader, req payloadRequest, bou
 			return proof, update.ErrIncompatible
 		}
 		seen[name] = true
-		proof.Entries = append(proof.Entries, payloadEntry{Path: name, Size: h.Size, Directory: h.Typeflag == tar.TypeDir})
+		proof.Entries = append(proof.Entries, payloadEntry{Path: name, Size: h.Size, Directory: h.Typeflag == tar.TypeDir, Mode: h.Mode, UID: int64(h.Uid), GID: int64(h.Gid), Uname: h.Uname, Gname: h.Gname})
 		if companion, ok := metadataCompanion(name); ok && req.Installer == update.InstallerPkg {
 			if h.Typeflag == tar.TypeDir || h.Size > 4096 {
 				return proof, update.ErrIncompatible
@@ -231,7 +241,18 @@ func inventoryTar(ctx context.Context, source io.Reader, req payloadRequest, bou
 				return proof, e
 			}
 			proof.Entries[len(proof.Entries)-1].Metadata = &payloadMetadataProof{Path: name, Companion: companion, Attribute: "com.apple.provenance", Size: h.Size}
+			if e = validateNativePayloadEntry(req.Installer, proof.Entries[len(proof.Entries)-1]); e != nil {
+				return proof, e
+			}
 			continue
+		}
+		if req.Installer == update.InstallerRPM && facts != nil {
+			if err = applyRPMFileMetadata(&proof.Entries[len(proof.Entries)-1], facts); err != nil {
+				return proof, err
+			}
+		}
+		if err = validateNativePayloadEntry(req.Installer, proof.Entries[len(proof.Entries)-1]); err != nil {
+			return proof, err
 		}
 		role := payloadBinaryRole(name, req.Installer)
 		if identities && role != "" {
@@ -298,7 +319,7 @@ func inventoryTar(ctx context.Context, source io.Reader, req payloadRequest, bou
 	// Do not hide extra nonzero tar records, gzip checksum failures, or limit exhaustion.
 	var buf [32768]byte
 	for {
-		n, err := lr.Read(buf[:])
+		n, err := records.Read(buf[:])
 		for _, b := range buf[:n] {
 			if b != 0 {
 				return proof, update.ErrIncompatible
@@ -317,6 +338,11 @@ func inventoryTar(ctx context.Context, source io.Reader, req payloadRequest, bou
 	for _, entry := range proof.Entries {
 		if entry.Metadata != nil && !seen[entry.Metadata.Companion] {
 			return proof, update.ErrIncompatible
+		}
+	}
+	if req.Installer == update.InstallerRPM && facts != nil {
+		if err := correlateRPMFileMetadata(proof.Entries, facts); err != nil {
+			return proof, err
 		}
 	}
 	proof.DecodedBytes = bounds.Decoded + 1 - lr.N
@@ -576,6 +602,9 @@ func validatePayloadInventory(p payloadInspection) error {
 		names += len(e.Path)
 		if len(e.Path) > 1024 || names > 64<<10 || !strings.HasPrefix(e.Path, "/") || path.Clean(e.Path) != e.Path || e.Path == "/" || strings.ContainsAny(e.Path, "\x00\r\n\t\\") || seen[e.Path] || e.Size < 0 || e.Size > childArtifactLimit || (e.Directory && e.Size != 0) {
 			return update.ErrIncompatible
+		}
+		if err := validateNativePayloadEntry(p.Installer, e); err != nil {
+			return err
 		}
 		seen[e.Path] = true
 		total += e.Size

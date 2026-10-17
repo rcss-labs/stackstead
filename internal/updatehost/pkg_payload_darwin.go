@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -192,14 +193,16 @@ func readPKGEnvelope(source io.Reader, member func(string, *tar.Header, io.Reade
 	return nil
 }
 func readPKGInfo(b []byte) (identifier, version, location string, err error) {
+	fail := func() (string, string, string, error) { return "", "", "", update.ErrIncompatible }
 	if len(b) == 0 || len(b) > childMetadataLimit {
-		return "", "", "", update.ErrIncompatible
+		return fail()
 	}
 	d := xml.NewDecoder(strings.NewReader(string(b)))
-	depth := 0
-	root := false
+	stack := []string{}
+	seen := map[string]bool{}
 	closed := false
-	allowedElements := map[string]bool{"payload": true, "bundle-version": true, "upgrade-bundle": true, "update-bundle": true, "atomic-update-bundle": true, "strict-identifier": true, "relocate": true, "scripts": true, "postinstall": true, "preinstall": true}
+	tokens := 0
+	empty := map[string]bool{"bundle-version": true, "upgrade-bundle": true, "update-bundle": true, "atomic-update-bundle": true, "strict-identifier": true, "relocate": true}
 	for {
 		token, e := d.Token()
 		if e == io.EOF {
@@ -208,60 +211,119 @@ func readPKGInfo(b []byte) (identifier, version, location string, err error) {
 		if e != nil {
 			return "", "", "", e
 		}
+		tokens++
+		if tokens > 256 {
+			return fail()
+		}
 		switch t := token.(type) {
 		case xml.Directive:
-			return "", "", "", update.ErrIncompatible
+			return fail()
 		case xml.ProcInst:
-			if t.Target != "xml" || root {
-				return "", "", "", update.ErrIncompatible
-			}
-		case xml.StartElement:
-			if closed || t.Name.Space != "" {
-				return "", "", "", update.ErrIncompatible
-			}
-			if depth == 0 {
-				if root || t.Name.Local != "pkg-info" {
-					return "", "", "", update.ErrIncompatible
-				}
-				root = true
-				seen := map[string]bool{}
-				for _, a := range t.Attr {
-					if a.Name.Space != "" || seen[a.Name.Local] {
-						return "", "", "", update.ErrIncompatible
-					}
-					seen[a.Name.Local] = true
-					switch a.Name.Local {
-					case "identifier":
-						identifier = a.Value
-					case "version":
-						version = a.Value
-					case "install-location":
-						location = a.Value
-					case "overwrite-permissions", "relocatable", "postinstall-action", "format-version", "generator-version", "auth":
-					default:
-						return "", "", "", update.ErrIncompatible
-					}
-				}
-			} else if !allowedElements[t.Name.Local] || depth > 2 {
-				return "", "", "", update.ErrIncompatible
-			}
-			depth++
-		case xml.EndElement:
-			depth--
-			if depth == 0 {
-				closed = true
+			if t.Target != "xml" || seen["pkg-info"] {
+				return fail()
 			}
 		case xml.CharData:
 			if strings.TrimSpace(string(t)) != "" {
-				return "", "", "", update.ErrIncompatible
+				return fail()
+			}
+		case xml.StartElement:
+			name := t.Name.Local
+			if closed || t.Name.Space != "" || strings.Contains(name, ":") || seen[name] {
+				return fail()
+			}
+			parent := ""
+			if len(stack) > 0 {
+				parent = stack[len(stack)-1]
+			}
+			switch name {
+			case "pkg-info":
+				if parent != "" {
+					return fail()
+				}
+			case "payload", "scripts":
+				if parent != "pkg-info" {
+					return fail()
+				}
+			case "postinstall":
+				if parent != "scripts" {
+					return fail()
+				}
+			default:
+				if !empty[name] || parent != "pkg-info" {
+					return fail()
+				}
+			}
+			attrs := map[string]string{}
+			for _, a := range t.Attr {
+				if a.Name.Space != "" || strings.Contains(a.Name.Local, ":") {
+					return fail()
+				}
+				if _, ok := attrs[a.Name.Local]; ok {
+					return fail()
+				}
+				attrs[a.Name.Local] = a.Value
+			}
+			switch name {
+			case "pkg-info":
+				expected := map[string]string{"overwrite-permissions": "true", "relocatable": "false", "identifier": pkgIdentifier, "postinstall-action": "none", "format-version": "2", "install-location": "/", "auth": "root"}
+				if len(attrs) != 9 {
+					return fail()
+				}
+				for k, v := range expected {
+					if attrs[k] != v {
+						return fail()
+					}
+				}
+				identifier = attrs["identifier"]
+				version = attrs["version"]
+				location = attrs["install-location"]
+				if !nativeStableVersion.MatchString(version) || !pkgGeneratorVersion.MatchString(attrs["generator-version"]) {
+					return fail()
+				}
+			case "payload":
+				if len(attrs) != 2 {
+					return fail()
+				}
+				for k, max := range map[string]uint64{"numberOfFiles": 4096, "installKBytes": 2 << 20} {
+					v, ok := attrs[k]
+					n, e := strconv.ParseUint(v, 10, 32)
+					if !ok || e != nil || n == 0 || n > max {
+						return fail()
+					}
+				}
+			case "postinstall":
+				if len(attrs) != 2 || attrs["file"] != "./postinstall" || attrs["timeout"] != "600" {
+					return fail()
+				}
+			default:
+				if len(attrs) != 0 {
+					return fail()
+				}
+			}
+			seen[name] = true
+			stack = append(stack, name)
+		case xml.EndElement:
+			if len(stack) == 0 {
+				return fail()
+			}
+			stack = stack[:len(stack)-1]
+			if len(stack) == 0 {
+				closed = true
 			}
 		}
 	}
-	if !root || !closed || depth != 0 {
-		return "", "", "", errors.Join(update.ErrIncompatible, io.ErrUnexpectedEOF)
+	for _, name := range []string{"pkg-info", "payload", "bundle-version", "upgrade-bundle", "update-bundle", "atomic-update-bundle", "strict-identifier", "relocate", "scripts", "postinstall"} {
+		if !seen[name] {
+			return fail()
+		}
+	}
+	if !closed || len(stack) != 0 {
+		return fail()
 	}
 	return identifier, version, location, nil
 }
+
+var pkgGeneratorVersion = regexp.MustCompile(`^InstallCmds-[0-9]+ \([A-Za-z0-9]+\)$`)
 
 func validatePKGDistribution(b []byte, version string) error {
 	if len(b) == 0 || len(b) > childMetadataLimit {

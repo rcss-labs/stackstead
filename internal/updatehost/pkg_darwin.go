@@ -33,6 +33,7 @@ type pkgPayloadProof struct {
 	Helper, Bootstrap                    pkgExecutableProof
 	PayloadPaths                         []string
 	Metadata                             []payloadMetadataProof
+	Entries                              []payloadEntry
 }
 type pkgPayloadVerifier func(context.Context, update.Plan, update.VerifiedArtifact) (pkgPayloadProof, error)
 type pkgAdapter struct {
@@ -110,6 +111,9 @@ func (d *pkgAdapter) prove(ctx context.Context, p update.Plan, a update.Verified
 	}
 	if proof.Artifact != a || proof.Identifier != pkgIdentifier || proof.Version != expected.Version || proof.InstallLocation != "/" || proof.App.Identity != expected || proof.App.Architectures != [2]string{"amd64", "arm64"} || len(proof.PayloadPaths) == 0 || len(proof.PayloadPaths) > 4096 {
 		return update.ErrIncompatible
+	}
+	if err = validatePKGPackageEntries(proof); err != nil {
+		return err
 	}
 	for _, binary := range []pkgExecutableProof{proof.App, proof.Helper, proof.Bootstrap} {
 		if binary.Identity != expected || binary.Architectures != [2]string{"amd64", "arm64"} {
