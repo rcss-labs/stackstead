@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/rcss-labs/stackstead/internal/update"
@@ -12,8 +11,6 @@ import (
 
 const debQueryFormat = "${Package}\t${Architecture}\t${Version}\t${Status}\n"
 const debArtifactFormat = "${Package}\t${Architecture}\t${Version}\n"
-
-var debStableVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 
 type debAdapter struct {
 	runner CommandRunner
@@ -28,47 +25,16 @@ func NewDeb(runner CommandRunner) PackageAdapter {
 	return &debAdapter{runner: runner, verify: update.VerifyArtifact, locks: debLocks}
 }
 func (d *debAdapter) registration(p update.Plan) error {
-	r := p.Registration
-	if d.runner == nil || d.verify == nil || d.locks == nil || r.Installer != update.InstallerDeb || r.Binary != "/usr/bin/stackstead" || r.Prefix != "/usr" || r.Identity.OS != "linux" || (r.Identity.Arch != "amd64" && r.Identity.Arch != "arm64") || p.Current.Identity != r.Identity || len(r.Instances) == 0 {
+	if d.runner == nil || d.verify == nil || d.locks == nil {
 		return update.ErrSetupRequired
 	}
-	for _, id := range []update.Identity{p.Current.Identity, p.Target.Identity} {
-		if id.OS != "linux" || id.Arch != r.Identity.Arch || !debStableVersion.MatchString(id.Version) {
-			return update.ErrIncompatible
-		}
-	}
-	for _, in := range r.Instances {
-		if in.UID == 0 || !instanceID.MatchString(in.ID) {
-			return update.ErrSetupRequired
-		}
-	}
-	return nil
+	return nativeRegistration(p, update.InstallerDeb)
 }
 func (d *debAdapter) artifactIdentity(p update.Plan, a update.VerifiedArtifact) (update.Identity, error) {
-	if a == p.TargetArtifact && a != p.PreviousArtifact {
-		return p.Target.Identity, nil
-	}
-	if a == p.PreviousArtifact && a != p.TargetArtifact {
-		return p.Current.Identity, nil
-	}
-	return update.Identity{}, update.ErrUnauthorized
+	return nativeArtifactIdentity(p, a)
 }
 func (d *debAdapter) run(ctx context.Context, path string, args ...string) (string, error) {
-	out, _, err := d.runner.Run(ctx, 0, 0, path, args, nil)
-	if err != nil {
-		return "", err
-	}
-	if len(out) > commandOutputLimit {
-		return "", update.ErrIncompatible
-	}
-	return string(out), nil
-}
-func debFields(out string, n int) ([]string, error) {
-	fields := strings.Split(strings.TrimSuffix(out, "\n"), "\t")
-	if len(fields) != n || strings.Contains(strings.TrimSuffix(out, "\n"), "\n") {
-		return nil, update.ErrIncompatible
-	}
-	return fields, nil
+	return nativeCommand(ctx, d.runner, path, args...)
 }
 func (d *debAdapter) state(ctx context.Context, p update.Plan, rollback bool) (update.Identity, error) {
 	out, err := d.run(ctx, "/usr/bin/dpkg-query", "-S", "--", p.Registration.Binary)
@@ -82,7 +48,7 @@ func (d *debAdapter) state(ctx context.Context, p update.Plan, rollback bool) (u
 	if err != nil {
 		return update.Identity{}, errors.Join(update.ErrRecoveryRequired, err)
 	}
-	fields, err := debFields(out, 4)
+	fields, err := nativeFields(out, 4)
 	if err != nil || fields[0] != "stackstead" || fields[1] != p.Registration.Identity.Arch {
 		return update.Identity{}, update.ErrIncompatible
 	}
@@ -122,7 +88,7 @@ func (d *debAdapter) Validate(ctx context.Context, p update.Plan, a update.Verif
 	if err != nil {
 		return errors.Join(update.ErrIncompatible, err)
 	}
-	fields, err := debFields(out, 3)
+	fields, err := nativeFields(out, 3)
 	if err != nil || fields[0] != "stackstead" || fields[1] != expected.Arch || fields[2] != expected.Version+"-1" {
 		return update.ErrIncompatible
 	}

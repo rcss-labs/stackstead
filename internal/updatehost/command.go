@@ -82,8 +82,30 @@ func (r commandRunner) allowedRoot(path string, args []string) bool {
 		return len(args) == 4 && args[0] == "--force-confdef" && args[1] == "--force-confold" && args[2] == "--install" && debArtifactPath(args[3])
 	}
 
-	if path == "/usr/bin/rpm" {
-		return len(args) == 3 && args[0] == "-qf" && args[1] == "--" && filepath.IsAbs(args[2])
+	if path == rpmTool {
+		// Preserve script-install ownership discovery; all transaction forms are
+		// fixed below and still require the adapter's exact managed proof.
+		if len(args) == 3 && args[0] == "-qf" && args[1] == "--" && filepath.IsAbs(args[2]) {
+			return true
+		}
+		if len(args) == 2 && args[0] == "--eval" && args[1] == rpmPathsFormat {
+			return true
+		}
+		if len(args) == 4 && args[2] == "--" {
+			if args[0] == "-qp" && args[1] == "--queryformat="+rpmMetadataFormat && rpmArtifactPath(args[3]) {
+				return true
+			}
+			if args[0] == "-qf" && args[1] == "--queryformat="+rpmMetadataFormat && args[3] == "/usr/bin/stackstead" {
+				return true
+			}
+			if args[0] == "-q" && args[1] == "--queryformat="+rpmStateFormat && args[3] == "stackstead" {
+				return true
+			}
+		}
+		if len(args) > 0 && args[0] == "--test" {
+			args = args[1:]
+		}
+		return len(args) == 2 && args[0] == "--upgrade" && rpmArtifactPath(args[1]) || len(args) == 4 && args[0] == "--upgrade" && args[1] == "--oldpackage" && args[2] == "--replacepkgs" && rpmArtifactPath(args[3])
 	}
 	if path == "/sbin/apk" {
 		return len(args) == 4 && args[0] == "info" && args[1] == "--who-owns" && args[2] == "--" && filepath.IsAbs(args[3])
