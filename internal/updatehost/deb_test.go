@@ -271,3 +271,25 @@ func TestDebRechecksArtifactAfterDryRun(t *testing.T) {
 		t.Fatalf("expected one successful dry run, got %d", dryRuns)
 	}
 }
+
+func TestDebValidateRejectsDryRunBeforeManagedInstall(t *testing.T) {
+	d, r, p := debFixture()
+	d.managed = nil
+	refusal := errors.New("native package dependency refusal")
+	r.dryError = refusal
+	if err := d.Validate(context.Background(), p, p.TargetArtifact); !errors.Is(err, refusal) {
+		t.Fatalf("read-only preflight accepted native dry-run refusal: %v", err)
+	}
+	dryRuns := 0
+	for _, call := range r.calls {
+		if call.path == "/usr/bin/dpkg" {
+			if !reflect.DeepEqual(call.args, []string{"--dry-run", "--force-confdef", "--force-confold", "--install", p.TargetArtifact.Path}) {
+				t.Fatalf("preflight reached real install or unexpected argv: %+v", call)
+			}
+			dryRuns++
+		}
+	}
+	if dryRuns != 1 {
+		t.Fatalf("preflight dry runs: %d", dryRuns)
+	}
+}

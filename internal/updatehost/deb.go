@@ -126,7 +126,11 @@ func (d *debAdapter) Validate(ctx context.Context, p update.Plan, a update.Verif
 	if err != nil || fields[0] != "stackstead" || fields[1] != expected.Arch || fields[2] != expected.Version+"-1" {
 		return update.ErrIncompatible
 	}
-	_, err = d.state(ctx, p, a == p.PreviousArtifact)
+	if _, err = d.state(ctx, p, a == p.PreviousArtifact); err != nil {
+		return err
+	}
+	// Read-only preflight must discover native refusals before service stop.
+	_, err = d.run(ctx, "/usr/bin/dpkg", "--dry-run", "--force-confdef", "--force-confold", "--install", a.Path)
 	return err
 }
 func (d *debAdapter) Install(ctx context.Context, p update.Plan, a update.VerifiedArtifact) error {
@@ -140,9 +144,6 @@ func (d *debAdapter) Install(ctx context.Context, p update.Plan, a update.Verifi
 		return err
 	}
 	if err := d.Validate(ctx, p, a); err != nil {
-		return err
-	}
-	if _, err := d.run(ctx, "/usr/bin/dpkg", "--dry-run", "--force-confdef", "--force-confold", "--install", a.Path); err != nil {
 		return err
 	}
 	// Recheck bytes and native locks immediately before the irreversible command.
