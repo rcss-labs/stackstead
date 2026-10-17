@@ -7,7 +7,7 @@ BIN := bin
 # Build identity stamped into the binary (internal/version). Plan 7's release
 # targets reuse LDFLAGS; these names appear nowhere else.
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-COMMIT  ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
+COMMIT  ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 # Commit time (UTC), not build time, so rebuilding a commit is reproducible.
 DATE    ?= $(shell TZ=UTC git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)
 VERSION_PKG := github.com/rcss-labs/stackstead/internal/version

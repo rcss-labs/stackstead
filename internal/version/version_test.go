@@ -49,3 +49,12 @@ func TestStringOmitsMissingCommitAndDate(t *testing.T) {
 		t.Errorf("first line = %q, want %q", first, want)
 	}
 }
+
+// Release commit identity must not be shortened for rollback matching.
+func TestVersionPreservesFullStampedCommit(t *testing.T) {
+	commit := "0123456789abcdef0123456789abcdef01234567"
+	setVars(t, "v1.2.3", commit, "2026-10-17T00:00:00Z")
+	if got := Get().Commit; got != commit {
+		t.Errorf("Commit = %q, want %q", got, commit)
+	}
+}

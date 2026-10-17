@@ -30,7 +30,8 @@ type Info struct {
 }
 
 // Get returns the build identity. ldflags values win; whatever they leave
-// unset is filled from the VCS data the Go toolchain embeds.
+// unset is filled from the VCS data the Go toolchain embeds. Stamped release
+// commits retain their full identity for exact managed-update rollback matching.
 func Get() Info {
 	info := Info{
 		Version: Version, Commit: Commit, Date: Date,
