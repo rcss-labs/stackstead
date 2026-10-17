@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +32,7 @@ import (
 	"github.com/rcss-labs/stackstead/internal/state"
 	"github.com/rcss-labs/stackstead/internal/store"
 	"github.com/rcss-labs/stackstead/internal/update"
+	"github.com/rcss-labs/stackstead/internal/updatecontrol"
 	"github.com/rcss-labs/stackstead/internal/version"
 	"github.com/rcss-labs/stackstead/web"
 )
@@ -167,11 +171,36 @@ func serveWithOptions(ctx context.Context, env *Env, args []string, opts ServeOp
 		logger.Info("no config file; using defaults and STACKSTEAD_* environment")
 	}
 	gate := opts.Maintenance
+	var locator *update.ClientLocator
+	if opts.Startup == nil {
+		resolvedPath := path
+		if path != "" {
+			resolvedPath, err = filepath.Abs(path)
+			if err == nil {
+				resolvedPath, err = filepath.EvalSymlinks(resolvedPath)
+			}
+			if err != nil {
+				return fmt.Errorf("resolve updater config: %w", err)
+			}
+		}
+		locator, err = lookupUpdater(resolvedPath, uint32(os.Getuid()), updaterLocatorReader)
+		if err != nil {
+			return fmt.Errorf("trusted updater locator: %w", err)
+		}
+		if locator != nil {
+			opts.Startup = locatorStartup{locator: *locator}
+			if gate == nil {
+				gate = maintenance.New()
+			}
+		}
+	}
+	var bootTicket *update.Probation
 	if opts.Startup != nil {
 		probation, err := opts.Startup.StartupProbation(ctx)
 		if err != nil {
 			return fmt.Errorf("startup probation: %w", err)
 		}
+		bootTicket = probation
 		if probation != nil {
 			if gate == nil {
 				return errors.New("startup probation requires a shared maintenance gate")
@@ -181,6 +210,7 @@ func serveWithOptions(ctx context.Context, env *Env, args []string, opts ServeOp
 			}
 		}
 	}
+
 	db, err := store.Open(filepath.Join(cfg.DataDir, "stackstead.db"))
 	if err != nil {
 		return err
@@ -319,8 +349,38 @@ func serveWithOptions(ctx context.Context, env *Env, args []string, opts ServeOp
 	// hold it until the grace expires.
 	srv.RegisterOnShutdown(func() { close(closing) })
 
+	var control *updatecontrol.State
+	if locator != nil {
+		in := update.Instance{ID: locator.InstanceID, UID: uint32(os.Getuid()), ControlSocket: locator.ControlSocket}
+		l, e := updatecontrol.Listen(in)
+		if e != nil {
+			return fmt.Errorf("app control socket: %w", e)
+		}
+		control = updatecontrol.NewState(in, gate, bootTicket)
+		controlCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		defer l.Close()
+		go updatecontrol.Serve(controlCtx, l, control)
+	}
+	listener, err := listenForReadiness(cfg.Listen, func() error {
+		if control == nil {
+			return nil
+		}
+		b, e := os.ReadFile(path)
+		if e != nil {
+			return fmt.Errorf("read readiness config: %w", e)
+		}
+		hash := sha256.Sum256(b)
+		identity := version.Get()
+		control.MarkReady(update.Readiness{InstanceID: locator.InstanceID, Identity: update.Identity{Version: strings.TrimPrefix(identity.Version, "v"), Commit: identity.Commit, OS: identity.OS, Arch: identity.Arch}, PID: os.Getpid(), Schema: store.SupportedSchema(), ConfigSHA256: hex.EncodeToString(hash[:]), Ready: true})
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("http listener: %w", err)
+	}
+	defer listener.Close()
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- srv.ListenAndServe() }()
+	go func() { serveErr <- srv.Serve(listener) }()
 	logger.Info("stackstead listening", "addr", cfg.Listen, "version", version.Get().Version)
 
 	select {

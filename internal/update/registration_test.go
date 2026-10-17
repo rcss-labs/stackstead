@@ -1,6 +1,7 @@
 package update
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,7 +35,7 @@ func TestTrustStoreLocatorCanonicalUIDAndAmbiguity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	locator := ClientLocator{InstallationID: "install", InstanceID: "instance", Socket: "/run/control.sock", ConfigPath: config, Enabled: true}
+	locator := ClientLocator{InstallationID: "install", InstanceID: "instance", Socket: "/run/control.sock", ControlSocket: "/run/apps/instance/control.sock", ConfigPath: config, Enabled: true}
 	if err = writeClientLocator(s, locator, 42); err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +71,7 @@ func TestTrustStoreLocatorRejectsWritableAndSymlink(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			l := ClientLocator{InstallationID: "install", InstanceID: "instance", Socket: "/run/control.sock", ConfigPath: config}
+			l := ClientLocator{InstallationID: "install", InstanceID: "instance", Socket: "/run/control.sock", ControlSocket: "/run/apps/instance/control.sock", ConfigPath: config}
 			if err = writeClientLocator(s, l, 42); err != nil {
 				t.Fatal(err)
 			}
@@ -146,7 +147,7 @@ func TestTrustStoreLocatorModesWithRestrictiveUmask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l := ClientLocator{InstallationID: "install", InstanceID: "instance", Socket: "/run/control.sock", ConfigPath: config}
+	l := ClientLocator{InstallationID: "install", InstanceID: "instance", Socket: "/run/control.sock", ControlSocket: "/run/apps/instance/control.sock", ConfigPath: config}
 	if err = writeClientLocator(s, l, 42); err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +172,7 @@ func TestTrustStoreLocatorIgnoresInterruptedPublicationTemp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l := ClientLocator{InstallationID: "install", InstanceID: "instance", Socket: "/run/control.sock", ConfigPath: config}
+	l := ClientLocator{InstallationID: "install", InstanceID: "instance", Socket: "/run/control.sock", ControlSocket: "/run/apps/instance/control.sock", ConfigPath: config}
 	if err = writeClientLocator(s, l, 42); err != nil {
 		t.Fatal(err)
 	}
@@ -188,5 +189,28 @@ func TestTrustStoreLocatorIgnoresInterruptedPublicationTemp(t *testing.T) {
 	}
 	if _, err = readClientLocator(s, config, 42); err == nil {
 		t.Fatal("invalid temp namespace accepted")
+	}
+}
+
+func TestLocatorAbsentVersusUnsafe(t *testing.T) {
+	j := testJournal(t)
+	s := &trustStore{root: j.root, anchor: j.root, owner: uint32(os.Getuid()), publicDirs: true}
+	config := filepath.Join(j.root, "config.yaml")
+	if err := os.WriteFile(config, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readClientLocator(s, config, 42); !errors.Is(err, ErrLocatorAbsent) {
+		t.Fatalf("missing locator = %v", err)
+	}
+	config, _ = filepath.EvalSymlinks(config)
+	l := ClientLocator{InstallationID: "install", InstanceID: "instance", Socket: "/run/helper.sock", ControlSocket: "/run/apps/instance/control.sock", ConfigPath: config, Enabled: true}
+	if err := writeClientLocator(s, l, 42); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(s.root, "42", "instance.json"), 0666); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readClientLocator(s, config, 42); err == nil || errors.Is(err, ErrLocatorAbsent) {
+		t.Fatalf("unsafe locator treated absent: %v", err)
 	}
 }

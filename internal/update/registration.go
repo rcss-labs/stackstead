@@ -3,6 +3,7 @@ package update
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -126,16 +127,19 @@ func (j *Journal) writeRegistration(reg Registration) error {
 	return j.store.atomic("registrations", reg.ID+".json", b, 0600)
 }
 
+var ErrLocatorAbsent = errors.New("updater client locator absent")
+
 type ClientLocator struct {
 	InstallationID string `json:"installationID"`
 	InstanceID     string `json:"instanceID"`
 	Socket         string `json:"socket"`
+	ControlSocket  string `json:"controlSocket"`
 	ConfigPath     string `json:"configPath"`
 	Enabled        bool   `json:"enabled"`
 }
 
 func validateLocator(l ClientLocator) error {
-	if !safeID.MatchString(l.InstallationID) || !safeID.MatchString(l.InstanceID) || !canonicalAbsolute(l.Socket) || !canonicalAbsolute(l.ConfigPath) {
+	if !safeID.MatchString(l.InstallationID) || !safeID.MatchString(l.InstanceID) || !canonicalAbsolute(l.Socket) || !canonicalAbsolute(l.ControlSocket) || !canonicalAbsolute(l.ConfigPath) {
 		return ErrIncompatible
 	}
 	return nil
@@ -155,12 +159,18 @@ func readClientLocator(s *trustStore, configPath string, uid uint32) (ClientLoca
 	dir := strconv.FormatUint(uint64(uid), 10)
 	d, err := s.directory(dir, false)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ClientLocator{}, ErrLocatorAbsent
+		}
 		return ClientLocator{}, err
 	}
 	defer d.Close()
 	names, err := d.Readdirnames(1025)
 	if err != nil && len(names) == 0 {
-		return ClientLocator{}, ErrSetupRequired
+		if err != io.EOF {
+			return ClientLocator{}, err
+		}
+		return ClientLocator{}, ErrLocatorAbsent
 	}
 	if len(names) > 1024 {
 		return ClientLocator{}, ErrIncompatible
@@ -200,7 +210,7 @@ func readClientLocator(s *trustStore, configPath string, uid uint32) (ClientLoca
 		found = true
 	}
 	if !found {
-		return ClientLocator{}, ErrSetupRequired
+		return ClientLocator{}, ErrLocatorAbsent
 	}
 	return selected, nil
 }
