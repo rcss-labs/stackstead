@@ -4,6 +4,10 @@ package config
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -43,12 +47,53 @@ func Defaults() Config {
 // Load builds the configuration. An empty path skips the file; a non-empty
 // path that does not exist is an error. AllowedRoots defaults to StacksDir.
 func Load(path string, getenv func(string) string) (Config, error) {
+	cfg, _, err := LoadWithFingerprint(path, getenv)
+	return cfg, err
+}
+
+// LoadWithFingerprint hashes the exact once-read file bytes and the normalized
+// effective configuration, including environment overrides. The fingerprint
+// deliberately excludes the source pathname so an authenticated maintenance
+// child can parse a bounded copy of the same bytes.
+func LoadWithFingerprint(path string, getenv func(string) string) (Config, string, error) {
+	var data []byte
+	if path != "" {
+		var err error
+		data, err = os.ReadFile(path)
+		if err != nil {
+			return Config{}, "", fmt.Errorf("read config: %w", err)
+		}
+	}
+	cfg, err := loadSource(data, path, getenv)
+	if err != nil {
+		return Config{}, "", err
+	}
+	effective, err := json.Marshal(cfg)
+	if err != nil {
+		return Config{}, "", err
+	}
+	h := sha256.New()
+	h.Write([]byte("stackstead-config-fingerprint-v1\x00"))
+	// Length framing distinguishes empty/missing source and prevents concatenation
+	// ambiguity. Config has no maps, so JSON field order is deterministic.
+	if path == "" {
+		h.Write([]byte{0})
+	} else {
+		h.Write([]byte{1})
+	}
+	var size [8]byte
+	binary.BigEndian.PutUint64(size[:], uint64(len(data)))
+	h.Write(size[:])
+	h.Write(data)
+	binary.BigEndian.PutUint64(size[:], uint64(len(effective)))
+	h.Write(size[:])
+	h.Write(effective)
+	return cfg, hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func loadSource(data []byte, path string, getenv func(string) string) (Config, error) {
 	cfg := Defaults()
 	if path != "" {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return Config{}, fmt.Errorf("read config: %w", err)
-		}
 		if err := rejectBareDurations(data); err != nil {
 			return Config{}, fmt.Errorf("parse config %s: %w", path, err)
 		}

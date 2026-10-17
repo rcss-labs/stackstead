@@ -13,7 +13,8 @@ import (
 )
 
 // Restore installs a verified snapshot while holding the stopped-server lock.
-// failedDir must not exist. Failed DB/WAL/SHM bytes are retained there untouched
+// failedDir must not exist and must be on the same filesystem as dataDir.
+// Failed DB/WAL/SHM bytes are retained there untouched
 // for diagnosis; opening/checkpointing a failed migration could alter them.
 func Restore(ctx context.Context, dataDir, src, failedDir string) error {
 	if err := RefuseLiveDestination(dataDir, src); err != nil {

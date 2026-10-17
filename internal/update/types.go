@@ -99,6 +99,8 @@ type ServiceState struct {
 	PID        int    `json:"pid"`
 }
 type DBSnapshot struct {
+	Size         int64  `json:"size"`
+	Budget       int64  `json:"budget"`
 	InstanceID   string `json:"instanceID"`
 	Path         string `json:"path"`
 	SHA256       string `json:"sha256"`
