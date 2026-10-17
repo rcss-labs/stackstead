@@ -120,6 +120,9 @@ func (j *Journal) writeRegistration(reg Registration) error {
 		return err
 	}
 	defer lock.Close()
+	if err = j.requireIdle(); err != nil {
+		return err
+	}
 	b, err := json.Marshal(reg)
 	if err != nil {
 		return err

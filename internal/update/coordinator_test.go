@@ -17,15 +17,15 @@ func beginFixture(t *testing.T) (*Coordinator, *transactionRuntime) {
 	reg.UpdateEnabled = true
 	reg.Identity.Version = "1.0.0"
 	reg.Instances[0].ID = "app"
-	if e := c.journal.writeRegistration(reg); e != nil {
-		t.Fatal(e)
-	}
 	active, _ := json.Marshal(j.WorkerSHA256)
 	if e := c.journal.store.atomic("workers", "active.json", active, 0600); e != nil {
 		t.Fatal(e)
 	}
 	j.Phase = PhaseCancelled
 	if e := c.journal.Save(j); e != nil {
+		t.Fatal(e)
+	}
+	if e := c.journal.writeRegistration(reg); e != nil {
 		t.Fatal(e)
 	}
 	releases, _, _ := releaseFixture(t)

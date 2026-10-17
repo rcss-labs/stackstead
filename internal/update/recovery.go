@@ -58,6 +58,13 @@ func (c *Coordinator) Recover(ctx context.Context, id string) error {
 		return e
 	}
 	defer l.Close()
+	pending, e := c.journal.PendingJob()
+	if e != nil {
+		return e
+	}
+	if pending != nil && pending.InstallationID != id {
+		return ErrBusy
+	}
 	j, e := c.journal.Load(id)
 	if errors.Is(e, os.ErrNotExist) {
 		return nil

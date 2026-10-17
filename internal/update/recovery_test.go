@@ -261,7 +261,14 @@ func (r *startupRuntime) StartProbation(ctx context.Context, p Plan, b Probation
 }
 func TestRecoveryStartupNegotiatesDuringRealRecovery(t *testing.T) {
 	c, r, j := transactionFixture(t)
-	if e := c.journal.writeRegistration(j.Plan.Registration); e != nil {
+	lock, e := c.journal.TryLock("install")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = lock.SaveRegistration(j.Plan.Registration); e != nil {
+		t.Fatal(e)
+	}
+	if e = lock.Close(); e != nil {
 		t.Fatal(e)
 	}
 	j.Phase = PhaseInstalling

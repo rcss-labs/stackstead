@@ -93,6 +93,19 @@ func SelectWorker(root string, job *Job) (string, error) {
 	return j.selectWorker(job)
 }
 func (j *Journal) selectWorker(job *Job) (string, error) {
+	pending, err := j.PendingJob()
+	if err != nil {
+		return "", err
+	}
+	if pending != nil {
+		if job != nil && (job.ID != pending.ID || job.InstallationID != pending.InstallationID || job.WorkerSHA256 != pending.WorkerSHA256) {
+			return "", ErrRecoveryRequired
+		}
+		if job != nil && job.Protocol != JournalProtocol {
+			return "", ErrIncompatible
+		}
+		return j.worker(pending.WorkerSHA256)
+	}
 	if job != nil {
 		if job.Protocol != JournalProtocol {
 			return "", ErrIncompatible
@@ -139,6 +152,17 @@ func (j *Journal) worker(digest string) (string, error) {
 func SetActiveWorker(root, digest string) error {
 	j, err := OpenJournal(root)
 	if err != nil {
+		return err
+	}
+	return j.setActiveWorker(digest)
+}
+func (j *Journal) setActiveWorker(digest string) error {
+	reservation, err := j.TryExternalReservation()
+	if err != nil {
+		return err
+	}
+	defer reservation.Close()
+	if _, err = j.worker(digest); err != nil {
 		return err
 	}
 	l, err := j.acquireLock("worker-locks", "pins")

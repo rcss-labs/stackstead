@@ -24,6 +24,7 @@ type InstallationLock struct {
 	journal *Journal
 	id      string
 	file    *os.File
+	global  *InstallationLock
 }
 
 func OpenJournal(root string) (*Journal, error) {
@@ -34,12 +35,22 @@ func OpenJournal(root string) (*Journal, error) {
 	return &Journal{root: root, store: s}, nil
 }
 
-// TryLock is nonblocking. Acquire installation locks before the workers lock.
+// TryLock is nonblocking. Lock order is global, installation, then worker pins.
 func (j *Journal) TryLock(id string) (*InstallationLock, error) {
 	if !safeID.MatchString(id) {
 		return nil, ErrUnauthorized
 	}
-	return j.acquireLock("locks", id)
+	global, err := j.acquireLock("global", "update")
+	if err != nil {
+		return nil, err
+	}
+	l, err := j.acquireLock("locks", id)
+	if err != nil {
+		global.Close()
+		return nil, err
+	}
+	l.global = global
+	return l, nil
 }
 func (j *Journal) acquireLock(directory, id string) (*InstallationLock, error) {
 	d, err := j.store.directory(directory, true)
@@ -67,6 +78,13 @@ func (l *InstallationLock) Close() error {
 	}
 	err := l.file.Close()
 	l.file = nil
+	if l.global != nil {
+		globalErr := l.global.Close()
+		l.global = nil
+		if err == nil {
+			err = globalErr
+		}
+	}
 	return err
 }
 func (l *InstallationLock) Save(job Job) error {
@@ -107,6 +125,9 @@ func (j *Journal) Load(id string) (Job, error) {
 	if err != nil {
 		return Job{}, err
 	}
+	return decodeJob(id, b)
+}
+func decodeJob(id string, b []byte) (Job, error) {
 	var e journalEnvelope
 	if json.Unmarshal(b, &e) != nil {
 		return Job{}, ErrRecoveryRequired

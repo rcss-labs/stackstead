@@ -169,6 +169,7 @@ func TestRollbackFailureRequiresRecovery(t *testing.T) {
 func TestRecoveryServesStartupWhileHoldingInstallLock(t *testing.T) {
 	c, _, job := transactionFixture(t)
 	job.Phase = PhaseVerifying
+	job.Plan.States = []ServiceState{{InstanceID: "app", Running: true}}
 	job.Probation = Probation{JobID: "job", Nonce: "boot", Expected: job.Plan.Target.Identity}
 	_ = c.journal.Save(job)
 	l, e := c.journal.TryLock("install")

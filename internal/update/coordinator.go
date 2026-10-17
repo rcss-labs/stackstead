@@ -61,6 +61,13 @@ func (c *Coordinator) Status(ctx context.Context, id string) (UpdateStatus, erro
 	} else if !errors.Is(e, os.ErrNotExist) {
 		return UpdateStatus{}, e
 	}
+	pending, e := c.journal.PendingJob()
+	if e != nil {
+		return UpdateStatus{}, e
+	}
+	if pending != nil && pending.InstallationID != id {
+		s.Capability = CapabilityBusy
+	}
 	c.mu.Lock()
 	candidate := c.candidates[id]
 	c.mu.Unlock()
@@ -124,6 +131,13 @@ func (c *Coordinator) Begin(_ context.Context, id string, request BeginRequest) 
 			l.Close()
 		}
 	}()
+	old, e = c.journal.Load(id)
+	if e == nil && request.IdempotencyKey != "" && old.IdempotencyKey == request.IdempotencyKey {
+		return view(old), nil
+	}
+	if e = c.journal.requireIdle(); e != nil {
+		return JobView{}, e
+	}
 	old, e = c.journal.Load(id)
 	if e == nil && (!terminal(old.Phase) || old.ReleasePending) {
 		return JobView{}, ErrBusy
@@ -234,6 +248,22 @@ func (c *Coordinator) Startup(_ context.Context, id, instance string) (*Probatio
 	}
 	if !found {
 		return nil, ErrUnauthorized
+	}
+	if !terminal(j.Phase) || j.ReleasePending {
+		states := 0
+		running := false
+		for _, state := range j.Plan.States {
+			if state.InstanceID == instance {
+				states++
+				running = state.Running
+			}
+		}
+		if states != 1 {
+			return nil, ErrRecoveryRequired
+		}
+		if !running {
+			return nil, ErrBusy
+		}
 	}
 	switch j.Phase {
 	case PhaseRecoveryRequired:
