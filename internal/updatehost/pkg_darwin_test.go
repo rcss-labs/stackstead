@@ -336,3 +336,48 @@ func TestPKGRefusesAmbiguousNativeReceiptOwnership(t *testing.T) {
 		t.Fatalf("read-only validation needs active context: %v", e)
 	}
 }
+
+func TestPKGRejectsDestinationAliasesAndUnexpectedPayloadPaths(t *testing.T) {
+	for _, path := range []string{
+		"/System/Volumes/Data/Library/Application Support/StacksteadUpdater/workers/active",
+		"/system/volumes/data/library/application support/stacksteadupdater/workers/active",
+		"/Volumes/Boot/Library/Application Support/StacksteadUpdater/bootstrap/v1/worker",
+		"/System/Volumes/Data/usr/local/bin/stackstead",
+		"/usr/local/share/stackstead/unexpected-file",
+		"/usr/local/bin/unexpected-file",
+		"/usr/local/share/stackstead/install.sh/descendant",
+	} {
+		t.Run(path, func(t *testing.T) {
+			d, r, p := pkgFixture()
+			proof := d.payload
+			d.payload = func(ctx context.Context, p update.Plan, a update.VerifiedArtifact) (pkgPayloadProof, error) {
+				v, e := proof(ctx, p, a)
+				v.PayloadPaths = append(v.PayloadPaths, path)
+				return v, e
+			}
+			if e := d.Validate(context.Background(), p, p.TargetArtifact); !errors.Is(e, update.ErrIncompatible) || pkgInstalls(r) != 0 {
+				t.Fatalf("unapproved destination accepted: %v", e)
+			}
+		})
+	}
+}
+
+func TestPKGAcceptsOnlyKnownPayloadLayoutAndAncestors(t *testing.T) {
+	d, r, p := pkgFixture()
+	proof := d.payload
+	d.payload = func(ctx context.Context, p update.Plan, a update.VerifiedArtifact) (pkgPayloadProof, error) {
+		v, e := proof(ctx, p, a)
+		v.PayloadPaths = []string{
+			"/usr", "/usr/local", "/usr/local/bin", "/usr/local/bin/stackstead",
+			"/usr/local/share", "/usr/local/share/stackstead",
+			"/usr/local/share/stackstead/install.sh",
+			"/usr/local/share/stackstead/launchagent.plist.in",
+			"/usr/local/share/stackstead/config.example.yaml",
+			"/usr/local/share/stackstead/LICENSE",
+		}
+		return v, e
+	}
+	if e := d.Validate(context.Background(), p, p.TargetArtifact); e != nil || pkgInstalls(r) != 0 {
+		t.Fatalf("known current builder layout rejected: %v", e)
+	}
+}

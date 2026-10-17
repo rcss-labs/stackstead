@@ -16,6 +16,10 @@ const pkgPrivateRoot = "/Library/Application Support/StacksteadUpdater"
 
 // Task 13's trusted producer must prove a complete bounded canonical inventory
 // without links/special files and inspect app code only after dropping credentials.
+// Before stop and again immediately before installer uses paths, composition must
+// prove actual destination ancestry and stability with no-follow/mode/Darwin ACL
+// checks. Writable ancestry cannot be made safe by a descriptor installer cannot
+// use; refuse setup when this cannot be proved. Lexical inventory is not that proof.
 // These values describe evidence from the exact verified artifact, not a blessing.
 type pkgExecutableProof struct {
 	Identity      update.Identity
@@ -34,6 +38,8 @@ type pkgAdapter struct {
 	payload pkgPayloadVerifier
 	// Task 16 must prove suppression of user setup/helper replacement for all
 	// registered UIDs, bound to this plan and the selected target/rollback artifact.
+	// Composition must also prove destination stability immediately before the
+	// native installer command, which resolves paths rather than anchored FDs.
 	managed func(context.Context, update.Plan, update.VerifiedArtifact) error
 }
 
@@ -105,7 +111,7 @@ func (d *pkgAdapter) prove(ctx context.Context, p update.Plan, a update.Verified
 	size := 0
 	for _, path := range proof.PayloadPaths {
 		size += len(path)
-		if size > commandOutputLimit || !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsAny(path, "\x00\r\n\t") || seen[path] || path == "/" || strings.EqualFold(path, pkgPrivateRoot) || strings.HasPrefix(strings.ToLower(path), strings.ToLower(pkgPrivateRoot)+"/") {
+		if size > commandOutputLimit || !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsAny(path, "\x00\r\n\t") || seen[path] || !pkgPayloadDestination(path) {
 			return update.ErrIncompatible
 		}
 		seen[path] = true
@@ -115,6 +121,24 @@ func (d *pkgAdapter) prove(ctx context.Context, p update.Plan, a update.Verified
 	}
 	return nil
 }
+
+// Match only the current Makefile PKG layout, including its directory entries.
+// A private-tree denylist cannot enumerate filesystem aliases (such as the Data
+// volume). Task 13 must add explicit helper leaves with tests when packaging them;
+// no arbitrary descendants or alternative spellings are accepted here.
+func pkgPayloadDestination(path string) bool {
+	switch path {
+	case "/usr", "/usr/local", "/usr/local/bin", "/usr/local/bin/stackstead",
+		"/usr/local/share", "/usr/local/share/stackstead",
+		"/usr/local/share/stackstead/install.sh",
+		"/usr/local/share/stackstead/launchagent.plist.in",
+		"/usr/local/share/stackstead/config.example.yaml",
+		"/usr/local/share/stackstead/LICENSE":
+		return true
+	}
+	return false
+}
+
 func pkgFields(out string, keys ...string) (map[string]string, error) {
 	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
 	if len(lines) != len(keys) {
