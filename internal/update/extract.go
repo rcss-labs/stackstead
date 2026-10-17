@@ -13,6 +13,16 @@ import (
 // archive ownership, mode, path, link or special-file semantics reach the host.
 // Callers provide a new private staging directory, never an installation path.
 func extractTar(source io.Reader, destination string) error {
+	return extractTarBudget(source, destination, artifactLimit)
+}
+
+// extractTarBudget bounds all decompressed bytes, including records tar.Next
+// consumes internally, framing and trailer bytes. The smaller budget seam lets
+// tests exercise the exact production path without expanding 512 MiB.
+func extractTarBudget(source io.Reader, destination string, budget int64) error {
+	if budget < 1 || budget > artifactLimit {
+		return incompatible("invalid extraction budget")
+	}
 	st, err := os.Lstat(destination)
 	if err != nil {
 		return err
@@ -25,7 +35,10 @@ func extractTar(source io.Reader, destination string) error {
 		return incompatible("invalid gzip artifact")
 	}
 	defer gz.Close()
-	tr := tar.NewReader(gz)
+	// One lookahead byte distinguishes exact-limit EOF from exhaustion. Never
+	// give tar.Reader direct access to the unbounded decompressor.
+	expanded := &io.LimitedReader{R: gz, N: budget + 1}
+	tr := tar.NewReader(expanded)
 	allowed := map[string]bool{"stackstead": true, "stackstead-updater": true, "stackstead-updater-bootstrap": true, "stackstead-update.json": true, "install.sh": true, "config.example.yaml": true, "README.md": true, "LICENSE": true, "stackstead.service": true, "launchagent.plist.in": true}
 	seen := map[string]bool{}
 	var size int64
@@ -58,10 +71,10 @@ func extractTar(source io.Reader, destination string) error {
 	if !seen["stackstead"] {
 		return incompatible("missing application payload")
 	}
-	// Consume the gzip footer so corrupted/trailing compressed data cannot hide
-	// behind the tar end markers. The decompressed total remains bounded.
-	extra, err := io.Copy(io.Discard, io.LimitReader(gz, artifactLimit-size+1))
-	if err != nil || extra > artifactLimit-size {
+	// Validate the gzip footer and account for bytes after tar's end markers
+	// through the same whole-stream budget used during metadata parsing.
+	_, err = io.Copy(io.Discard, expanded)
+	if err != nil || expanded.N == 0 {
 		return incompatible("invalid archive trailer")
 	}
 	return nil
