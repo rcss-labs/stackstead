@@ -776,3 +776,35 @@ func TestIsBusyCheckpointError(t *testing.T) {
 		t.Errorf("real busy error not classified: %v", busyErr)
 	}
 }
+
+func TestBackupRestorePreservesActionLog(t *testing.T) {
+	h := newLocalHost(t, true)
+	insert := func(target string) {
+		t.Helper()
+		db, err := store.OpenExisting(h.dbPath, store.OpenOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		if _, err := db.Exec(`INSERT INTO action_log(ts,username,kind,scope,target,result) VALUES(1,'admin','storage.delete','host',?,'deleted')`, target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert("volume/original")
+	snap := snapshot(t, h)
+	insert("volume/later")
+	wantCode(t, runLocal(newTestEnv(t, nil), "db", "restore", snap, "--yes", "--config", h.cfgPath), ExitOK)
+	db, err := store.OpenExisting(h.dbPath, store.OpenOptions{ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var n int
+	var target string
+	if err := db.QueryRow(`SELECT COUNT(*), MIN(target) FROM action_log`).Scan(&n, &target); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || target != "volume/original" {
+		t.Fatalf("restored actions = %d %q", n, target)
+	}
+}

@@ -38,19 +38,24 @@ type sampleStore interface {
 	Prune(ctx context.Context, olderThan time.Time) (int64, error)
 }
 
+// PruneStep runs additional retention work after the metrics prune. Each step
+// owns its retention cutoff and must respect context cancellation.
+type PruneStep func(context.Context) error
+
 type subscriber struct{ ch chan Sample }
 
 // Sampler periodically reads stats of every running container, stores the
 // compose ones in one batch per tick and fans them all out to live subscribers. Store failures
 // only raise the Degraded flag; they never affect anything else.
 type Sampler struct {
-	store     sampleStore
-	lister    ContainerLister
-	stats     StatsSource
-	interval  time.Duration
-	retention time.Duration
-	log       *slog.Logger
-	now       func() time.Time
+	store       sampleStore
+	lister      ContainerLister
+	stats       StatsSource
+	interval    time.Duration
+	retention   time.Duration
+	extraPrunes []PruneStep
+	log         *slog.Logger
+	now         func() time.Time
 
 	tickOverride <-chan time.Time // tests: manual tick trigger
 	tickDone     func()           // tests: called after each tick body
@@ -64,7 +69,10 @@ type Sampler struct {
 	lastPrune    time.Time
 }
 
-func NewSampler(st *Store, lister ContainerLister, stats StatsSource, interval, retention time.Duration, logger *slog.Logger, now func() time.Time) *Sampler {
+// NewSampler copies optional extra prune steps at construction. They run
+// sequentially at startup and hourly, even when the metrics prune fails.
+// Errors and panics are warned independently so later steps still run.
+func NewSampler(st *Store, lister ContainerLister, stats StatsSource, interval, retention time.Duration, logger *slog.Logger, now func() time.Time, extraPrunes ...PruneStep) *Sampler {
 	if now == nil {
 		now = time.Now
 	}
@@ -73,7 +81,8 @@ func NewSampler(st *Store, lister ContainerLister, stats StatsSource, interval, 
 	}
 	return &Sampler{
 		store: st, lister: lister, stats: stats, interval: interval, retention: retention,
-		log: logger, now: now, subs: map[string]map[*subscriber]struct{}{},
+		extraPrunes: append([]PruneStep(nil), extraPrunes...),
+		log:         logger, now: now, subs: map[string]map[*subscriber]struct{}{},
 	}
 }
 
@@ -267,6 +276,20 @@ func (s *Sampler) prune(ctx context.Context) {
 	s.lastPrune = now
 	if _, err := s.store.Prune(ctx, now.Add(-s.retention)); err != nil && ctx.Err() == nil {
 		s.log.Warn("metrics: prune failed", "err", err)
+	}
+	for i, step := range s.extraPrunes {
+		s.runPruneStep(ctx, i, step)
+	}
+}
+
+func (s *Sampler) runPruneStep(ctx context.Context, index int, step PruneStep) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			s.log.Warn("metrics: extra prune panicked", "step", index, "panic", recovered)
+		}
+	}()
+	if err := step(ctx); err != nil && ctx.Err() == nil {
+		s.log.Warn("metrics: extra prune failed", "step", index, "err", err)
 	}
 }
 

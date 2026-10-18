@@ -62,6 +62,20 @@ var migrations = []string{
 		key   TEXT NOT NULL PRIMARY KEY,
 		value TEXT NOT NULL
 	);`,
+	`CREATE TABLE action_log (
+		id INTEGER PRIMARY KEY,
+		ts INTEGER NOT NULL,
+		username TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		scope TEXT NOT NULL,
+		target TEXT NOT NULL,
+		detail TEXT NOT NULL DEFAULT '',
+		bytes INTEGER,
+		result TEXT NOT NULL,
+		operation_id TEXT NOT NULL DEFAULT ''
+	);
+	CREATE INDEX action_log_ts ON action_log(ts);
+	CREATE INDEX action_log_kind_ts ON action_log(kind, ts);`,
 }
 
 // preMigration checks run inside the migration's transaction, before its SQL.

@@ -704,3 +704,60 @@ func TestSubscribeEmptyProjectReceivesNothing(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 }
+
+func TestExtraPruneStepsAreIsolatedAndHourly(t *testing.T) {
+	st, db := newStore(t)
+	clk := &clock{t: base}
+	var logs strings.Builder
+	calls := make(chan string, 12)
+	s := metrics.NewSampler(st, &fakeLister{}, &fakeStats{}, time.Second, time.Hour, slog.New(slog.NewTextHandler(&logs, nil)), clk.now,
+		func(ctx context.Context) error { calls <- "error"; return errors.New("extra prune failed") },
+		func(ctx context.Context) error { calls <- "panic"; panic("extra prune panic") },
+		func(ctx context.Context) error { calls <- "success"; return nil },
+	)
+	ticks := make(chan time.Time)
+	done := make(chan struct{})
+	s.UseTicks(ticks)
+	s.OnTickDone(func() { done <- struct{}{} })
+	ctx, cancel := context.WithCancel(context.Background())
+	fin := make(chan struct{})
+	go func() { defer close(fin); s.Run(ctx) }()
+	t.Cleanup(func() { cancel(); <-fin })
+	for _, want := range []string{"error", "panic", "success"} {
+		select {
+		case got := <-calls:
+			if got != want {
+				t.Fatalf("step %s want %s", got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("prune not called")
+		}
+	}
+	ticks <- base
+	<-done
+	if len(calls) != 0 {
+		t.Fatal("pruned before hour")
+	}
+	// Even the metrics prune failing must not prevent the later callbacks.
+	if _, err := db.Exec("DROP TABLE metric_samples"); err != nil {
+		t.Fatal(err)
+	}
+	clk.add(time.Hour)
+	ticks <- base
+	<-done
+	for _, want := range []string{"error", "panic", "success"} {
+		select {
+		case got := <-calls:
+			if got != want {
+				t.Fatalf("step %s want %s", got, want)
+			}
+		default:
+			t.Fatal("hourly step missing")
+		}
+	}
+	cancel()
+	<-fin
+	if got := logs.String(); strings.Count(got, "level=WARN") != 5 || !strings.Contains(got, "extra prune failed") || !strings.Contains(got, "panic") {
+		t.Fatalf("warnings: %s", got)
+	}
+}

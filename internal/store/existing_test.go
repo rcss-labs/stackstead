@@ -343,8 +343,14 @@ func TestQuickCheckReportsCorruption(t *testing.T) {
 	}
 	defer bad.Close()
 	problems, err := store.QuickCheck(context.Background(), bad)
-	if err != nil || len(problems) == 0 {
-		t.Fatalf("QuickCheck = %v, %v; want problem rows", problems, err)
+	// Depending on which B-tree the damaged page belongs to, SQLite reports
+	// corruption as problem rows or aborts quick_check with SQLITE_CORRUPT.
+	if err != nil {
+		if !strings.Contains(err.Error(), "database disk image is malformed (11)") {
+			t.Fatalf("QuickCheck = %v; want a corruption diagnostic", err)
+		}
+	} else if len(problems) == 0 {
+		t.Fatal("QuickCheck reported no corruption")
 	}
 }
 
