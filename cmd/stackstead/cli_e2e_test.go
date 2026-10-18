@@ -581,3 +581,46 @@ func TestE2ECLIDocker(t *testing.T) {
 		t.Errorf("containers of %s remain after rm: %v", name, left)
 	}
 }
+
+// TestE2EUpdateStatus proves serve wires the update checker: the route exists,
+// the dev-build version never triggers a fetch, and update_check: false reaches
+// the checker. Neither case touches the network (e2e-test is not a release).
+func TestE2EUpdateStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name, extraConfig, wantState string
+	}{
+		{"enabled", "", "unknown"},
+		{"disabled", "update_check: false\n", "disabled"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newCLIRig(t, "")
+			r.initHost()
+			if tc.extraConfig != "" {
+				f, err := os.OpenFile(r.cfg, os.O_APPEND|os.O_WRONLY, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := f.WriteString("\n" + tc.extraConfig); err != nil {
+					t.Fatal(err)
+				}
+				f.Close()
+			}
+			r.startServer()
+			password := rand.Text() + rand.Text()
+			r.want(0, password+"\n", "admin", "set-password", "--config", r.cfg, "--password-stdin")
+			api := newClient(t, r.base)
+			api.expect(204, "POST", "/api/login", map[string]string{"username": "admin", "password": password})
+
+			var st struct{ State, Current, Installer, Command string }
+			if err := json.Unmarshal(api.expect(200, "GET", "/api/settings/update", nil), &st); err != nil {
+				t.Fatal(err)
+			}
+			if st.State != tc.wantState || st.Current != "e2e-test" || st.Installer != "script" {
+				t.Errorf("status = %+v, want state %q, current e2e-test, installer script", st, tc.wantState)
+			}
+			if !strings.HasSuffix(st.Command, "stackstead upgrade") {
+				t.Errorf("command = %q, want it to end in %q", st.Command, "stackstead upgrade")
+			}
+		})
+	}
+}

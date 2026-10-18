@@ -27,6 +27,7 @@ import (
 	"github.com/rcss-labs/stackstead/internal/stacks"
 	"github.com/rcss-labs/stackstead/internal/state"
 	"github.com/rcss-labs/stackstead/internal/store"
+	"github.com/rcss-labs/stackstead/internal/update"
 	"github.com/rcss-labs/stackstead/internal/version"
 	"github.com/rcss-labs/stackstead/web"
 )
@@ -154,9 +155,13 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	cache := state.New(dockerEngine, logger, state.Backoff{})
 	metricsStore := metrics.NewStore(db, time.Now)
 	sampler := metrics.NewSampler(metricsStore, cache, dockerEngine, cfg.MetricsInterval, cfg.MetricsRetention, logger, time.Now)
+	checker, err := newUpdateChecker(cfg, logger)
+	if err != nil {
+		return err
+	}
 	// A service context separate from the signal context: background work
 	// must outlive the signal until HTTP and operations have drained.
-	bg := startBackground(context.Background(), cache.Run, sampler.Run)
+	bg := startBackground(context.Background(), cache.Run, sampler.Run, checker.Run)
 	defer bg.stop(time.Second) // safety net for early returns; the normal path stops it in order below
 
 	ops := stacks.NewOps(cfg.OperationTimeout, time.Now)
@@ -205,6 +210,7 @@ func serve(ctx context.Context, env *Env, args []string) error {
 			MetricsInterval:  cfg.MetricsInterval,
 			MetricsRetention: cfg.MetricsRetention,
 			Closing:          closing,
+			Updates:          checker,
 			Version:          version.Get().Version,
 			Host:             collector,
 			Interfaces:       host.InterfaceLister{ProcRoot: "/proc", GOOS: runtime.GOOS},
@@ -252,6 +258,33 @@ func serve(ctx context.Context, env *Env, args []string) error {
 		}
 		return err
 	}, ops.Shutdown, bg)
+}
+
+// newUpdateChecker builds the release checker. The server always uses the
+// default release source; only update_check turns it off. A disabled checker
+// or a dev build never touches the network.
+func newUpdateChecker(cfg config.Config, logger *slog.Logger) (*update.Checker, error) {
+	current := version.Get().Version
+	source, err := update.NewSource(update.DefaultBaseURL, "stackstead/"+current)
+	if err != nil {
+		return nil, fmt.Errorf("update source: %w", err)
+	}
+	exe := update.Executable()
+	exists := func(path string) bool { _, err := os.Stat(path); return err == nil }
+	if cfg.UpdateCheck {
+		logger.Info("update checks enabled")
+	} else {
+		logger.Info("update checks disabled")
+	}
+	return update.NewChecker(update.CheckerOptions{
+		Source:  source,
+		Enabled: cfg.UpdateCheck,
+		Current: current,
+		Kind:    update.Detect(runtime.GOOS, exe, exists),
+		GOOS:    runtime.GOOS,
+		Exe:     exe,
+		Logger:  logger,
+	}), nil
 }
 
 // background runs long-lived goroutines (status cache, metrics sampler)
