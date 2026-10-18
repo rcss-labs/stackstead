@@ -135,23 +135,12 @@ type VolumeUsage struct {
 // 1.45; on older engines, or when the typed call is rejected with HTTP 400,
 // it falls back to the full /system/df.
 func (c *Client) VolumesDiskUsage(ctx context.Context) (VolumeUsage, error) {
-	body, err := c.dfBody(ctx)
+	snapshot, err := c.DiskUsage(ctx, DFVolumes)
 	if err != nil {
 		return VolumeUsage{}, err
 	}
-	var raw struct {
-		Volumes []struct {
-			UsageData *struct {
-				RefCount int64
-				Size     int64
-			}
-		}
-	}
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return VolumeUsage{}, fmt.Errorf("decode system df: %w", err)
-	}
-	u := VolumeUsage{Count: len(raw.Volumes)}
-	for _, v := range raw.Volumes {
+	u := VolumeUsage{Count: len(snapshot.Volumes)}
+	for _, v := range snapshot.Volumes {
 		if v.UsageData == nil {
 			continue
 		}
@@ -163,20 +152,6 @@ func (c *Client) VolumesDiskUsage(ctx context.Context) (VolumeUsage, error) {
 		}
 	}
 	return u, nil
-}
-
-func (c *Client) dfBody(ctx context.Context) ([]byte, error) {
-	v, err := c.negotiatedVersion(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if typedDF, _ := parseVersion("1.45"); !v.less(typedDF) {
-		body, err := c.getWithin(ctx, "/system/df?type=volume", c.callerBound(ctx))
-		if err == nil || !strings.Contains(err.Error(), "HTTP 400") {
-			return body, err
-		}
-	}
-	return c.getWithin(ctx, "/system/df", c.callerBound(ctx))
 }
 
 // callerBound is the deadline for the slow, background-only calls (system df,
@@ -730,4 +705,108 @@ func storageResult(err error, notFound error) error {
 		return fmt.Errorf("%w: %w", notFound, ae)
 	}
 	return err
+}
+
+// Build-cache ID filtering remains disabled until a separate verified change.
+const buildPruneByIDMinAPIVersion = "1.48"
+
+// DiskUsage reads one category, falling back to all categories on older engines.
+// Slow reads honor the caller's deadline rather than the short client timeout.
+func (c *Client) DiskUsage(ctx context.Context, kind DFKind) (DFSnapshot, error) {
+	switch kind {
+	case DFImages, DFContainers, DFVolumes, DFBuildCache:
+	default:
+		return DFSnapshot{}, fmt.Errorf("invalid disk usage kind %q", kind)
+	}
+	v, err := c.negotiatedVersion(ctx)
+	if err != nil {
+		return DFSnapshot{}, err
+	}
+	kinds := []DFKind{DFImages, DFContainers, DFVolumes, DFBuildCache}
+	var body []byte
+	typedDF, _ := parseVersion("1.45")
+	if !v.less(typedDF) {
+		body, err = c.getWithin(ctx, "/system/df?type="+url.QueryEscape(string(kind)), c.callerBound(ctx))
+		var action *ActionError
+		if err != nil && (!errors.As(err, &action) || action.Status != http.StatusBadRequest) {
+			return DFSnapshot{}, err
+		}
+		if err == nil {
+			kinds = []DFKind{kind}
+		}
+	}
+	if len(kinds) == 4 {
+		body, err = c.getWithin(ctx, "/system/df", c.callerBound(ctx))
+		if err != nil {
+			return DFSnapshot{}, err
+		}
+	}
+	var snapshot DFSnapshot
+	if err := json.Unmarshal(body, &snapshot); err != nil {
+		return DFSnapshot{}, fmt.Errorf("decode system df: %w", err)
+	}
+	snapshot.Kinds = kinds
+	if len(kinds) == 1 {
+		if kind != DFImages {
+			snapshot.Images = nil
+		}
+		if kind != DFContainers {
+			snapshot.Containers = nil
+		}
+		if kind != DFVolumes {
+			snapshot.Volumes = nil
+		}
+		if kind != DFBuildCache {
+			snapshot.BuildCache = nil
+		}
+	}
+	return snapshot, nil
+}
+
+// BuildPruneByID compares API versions only; it never probes a prune endpoint.
+func (c *Client) BuildPruneByID(ctx context.Context) (bool, error) {
+	return c.buildPruneByID(ctx, buildPruneByIDMinAPIVersion)
+}
+func (c *Client) buildPruneByID(ctx context.Context, minimum string) (bool, error) {
+	v, err := c.negotiatedVersion(ctx)
+	if err != nil {
+		return false, err
+	}
+	minVersion, ok := parseVersion(minimum)
+	if !ok {
+		return false, fmt.Errorf("invalid build prune API version %q", minimum)
+	}
+	return !v.less(minVersion), nil
+}
+
+// PruneBuildCache prunes all unused records for nil ids, or filters by exact
+// IDs when supplied. A nonnil empty slice is a no-op, including negotiation.
+// Callers must check BuildPruneByID before presenting a filtered prune as exact.
+func (c *Client) PruneBuildCache(caller context.Context, ids []string) (int64, error) {
+	if ids != nil && len(ids) == 0 {
+		return 0, nil
+	}
+	ctx, cancel := context.WithTimeout(caller, 10*time.Minute)
+	defer cancel()
+	v, err := c.apiVersion(caller, ctx)
+	if err != nil {
+		return 0, err
+	}
+	query := url.Values{"all": {"true"}}
+	if ids != nil {
+		filters, err := json.Marshal(map[string][]string{"id": ids})
+		if err != nil {
+			return 0, fmt.Errorf("encode prune filters: %w", err)
+		}
+		query.Set("filters", string(filters))
+	}
+	response, err := c.request(caller, ctx, http.MethodPost, "/v"+v+"/build/prune?"+query.Encode())
+	if err != nil {
+		return 0, err
+	}
+	var result struct{ SpaceReclaimed int64 }
+	if err := json.Unmarshal(response.body, &result); err != nil {
+		return 0, fmt.Errorf("decode build prune: %w", err)
+	}
+	return result.SpaceReclaimed, nil
 }

@@ -363,3 +363,47 @@ type apiVolume struct {
 func (r apiVolume) toVolume() Volume {
 	return Volume{Name: r.Name, Driver: r.Driver, Scope: r.Scope, Mountpoint: r.Mountpoint, CreatedAt: r.CreatedAt, Labels: r.Labels, OptionType: r.Options.Type}
 }
+
+// DFKind selects one Docker disk-usage category.
+type DFKind string
+
+const (
+	DFImages     DFKind = "image"
+	DFContainers DFKind = "container"
+	DFVolumes    DFKind = "volume"
+	DFBuildCache DFKind = "build-cache"
+)
+
+// DFSnapshot marks populated categories explicitly, including empty categories.
+// A nil size means Docker did not report a size; negative sizes mean unknown.
+type DFSnapshot struct {
+	Kinds      []DFKind
+	Images     []DFImage
+	Containers []DFContainer
+	Volumes    []DFVolume
+	BuildCache []DFBuildCacheRecord
+}
+
+type DFImage struct {
+	ID               string
+	Size, SharedSize *int64
+}
+type DFContainer struct {
+	ID     string
+	SizeRw *int64
+}
+type DFVolume struct {
+	Name      string
+	UsageData *DFVolumeUsage
+}
+type DFVolumeUsage struct {
+	Size, RefCount int64
+}
+type DFBuildCacheRecord struct {
+	ID, Type, Description string
+	Size                  *int64
+	InUse, Shared         bool
+	CreatedAt             time.Time
+	LastUsedAt            *time.Time
+	UsageCount            int64
+}

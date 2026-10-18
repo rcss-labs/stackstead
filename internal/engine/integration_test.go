@@ -135,3 +135,92 @@ func TestLogsStream(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildCachePruneByID may discover that an engine ignores the ID filter.
+// Explicitly opt in only with a disposable daemon: it can prune all unused cache.
+func TestBuildCachePruneByID(t *testing.T) {
+	if os.Getenv("STACKSTEAD_ISOLATED_BUILD_PRUNE") != "1" {
+		t.Skip("requires STACKSTEAD_ISOLATED_BUILD_PRUNE=1 and a disposable DOCKER_HOST")
+	}
+	host := os.Getenv("DOCKER_HOST")
+	if !strings.HasPrefix(host, "unix://") || strings.TrimPrefix(host, "unix://") == "" {
+		t.Fatal("explicit unix DOCKER_HOST required; never use socket discovery for prune")
+	}
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker CLI unavailable")
+	}
+	run := func(args ...string) (string, error) {
+		cmd := exec.Command("docker", args...)
+		out, err := cmd.CombinedOutput()
+		return strings.TrimSpace(string(out)), err
+	}
+	if out, err := run("buildx", "inspect", "--bootstrap"); err != nil {
+		t.Skipf("no builder: %v: %s", err, out)
+	}
+	eng := engine.New(strings.TrimPrefix(host, "unix://"), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	version, err := eng.Version(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capability, err := eng.BuildPruneByID(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Docker %s; advertised by-ID capability=%v", version, capability)
+	records := func() map[string]bool {
+		t.Helper()
+		df, err := eng.DiskUsage(ctx, engine.DFBuildCache)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids := map[string]bool{}
+		for _, record := range df.BuildCache {
+			ids[record.ID] = true
+		}
+		return ids
+	}
+	build := func() string {
+		t.Helper()
+		before := records()
+		dir := t.TempDir()
+		suffix := filepath.Base(dir)
+		tag := "stackstead-cache-it-" + strings.ToLower(suffix)
+		if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM scratch\nCOPY payload /payload\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "payload"), []byte(dir), 0600); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { run("image", "rm", tag) })
+		if out, err := run("build", "--no-cache", "--progress=plain", "-t", tag, dir); err != nil {
+			t.Fatalf("build: %v: %s", err, out)
+		}
+		if out, err := run("image", "rm", tag); err != nil {
+			t.Fatalf("remove test image: %v: %s", err, out)
+		}
+		for id := range records() {
+			if !before[id] {
+				return id
+			}
+		}
+		t.Fatal("builder produced no engine-visible build-cache record")
+		return ""
+	}
+	first := build()
+	second := build()
+	if first == second {
+		t.Fatal("builds did not produce distinct records")
+	}
+	reclaimed, pruneErr := eng.PruneBuildCache(ctx, []string{first})
+	remaining := records()
+	t.Logf("filtered prune target=%s other=%s reclaimed=%d targetRemaining=%v otherRemaining=%v error=%v", first, second, reclaimed, remaining[first], remaining[second], pruneErr)
+	if pruneErr != nil || remaining[first] || !remaining[second] {
+		if capability {
+			t.Fatalf("advertised by-ID prune failed preservation: %v", pruneErr)
+		}
+		t.Skipf("Docker %s does not demonstrate exact ID filtering; capability correctly remains disabled", version)
+	}
+	t.Logf("Docker %s honored ID filter in this isolated test; enabling capability requires a separate verified commit", version)
+}

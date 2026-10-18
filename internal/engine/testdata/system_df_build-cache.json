@@ -1,0 +1,15 @@
+{
+  "BuildCache": [
+    {
+      "ID": "cache",
+      "Type": "regular",
+      "Description": "RUN true",
+      "Size": 50,
+      "InUse": true,
+      "Shared": true,
+      "CreatedAt": "2026-10-18T01:00:00Z",
+      "LastUsedAt": "2026-10-18T02:00:00Z",
+      "UsageCount": 3
+    }
+  ]
+}

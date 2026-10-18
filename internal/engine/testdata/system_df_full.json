@@ -1,0 +1,43 @@
+{
+  "Images": [
+    {
+      "Id": "img",
+      "Size": 100,
+      "SharedSize": 40
+    },
+    {
+      "Id": "unknown"
+    }
+  ],
+  "Containers": [
+    {
+      "Id": "container",
+      "SizeRw": 20
+    }
+  ],
+  "Volumes": [
+    {
+      "Name": "vol",
+      "UsageData": {
+        "Size": 30,
+        "RefCount": 0
+      }
+    },
+    {
+      "Name": "unknown"
+    }
+  ],
+  "BuildCache": [
+    {
+      "ID": "cache",
+      "Type": "regular",
+      "Description": "RUN true",
+      "Size": 50,
+      "InUse": true,
+      "Shared": true,
+      "CreatedAt": "2026-10-18T01:00:00Z",
+      "LastUsedAt": "2026-10-18T02:00:00Z",
+      "UsageCount": 3
+    }
+  ]
+}

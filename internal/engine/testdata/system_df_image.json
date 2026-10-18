@@ -1,0 +1,12 @@
+{
+  "Images": [
+    {
+      "Id": "img",
+      "Size": 100,
+      "SharedSize": 40
+    },
+    {
+      "Id": "unknown"
+    }
+  ]
+}
