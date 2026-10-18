@@ -1,0 +1,1 @@
+{"Name":"demo-data","Driver":"local","Scope":"local","Mountpoint":"/var/lib/docker/volumes/demo-data/_data","CreatedAt":"2026-10-18T12:34:56Z","Labels":{"owner":"demo"},"Options":{"type":"nfs","o":"fixture-options-secret","device":"fixture-device-secret"}}

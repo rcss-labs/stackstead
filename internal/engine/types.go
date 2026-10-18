@@ -25,11 +25,12 @@ type Port struct {
 
 // Container is the subset of the Engine API container summary Stackstead reads.
 type Container struct {
-	ID, Name, State, Status, Image string // Name has no leading "/"
-	Labels                         map[string]string
-	Ports                          []Port
-	Networks                       map[string]string // network name -> IPv4 address
-	Created                        time.Time         // zero when Docker reports none
+	ID, Name, State, Status, Image, ImageID string // Name has no leading "/"
+	Labels                                  map[string]string
+	Mounts                                  []Mount
+	Ports                                   []Port
+	Networks                                map[string]string // network name -> IPv4 address
+	Created                                 time.Time         // zero when Docker reports none
 }
 
 // Project returns the compose project the container belongs to, or "".
@@ -70,8 +71,8 @@ func (c Container) ExitCode() (code int, ok bool) {
 
 // Mount is one container mount.
 type Mount struct {
-	Type, Source, Destination string
-	ReadOnly                  bool
+	Type, Name, Source, Destination string
+	ReadOnly                        bool
 }
 
 // ContainerInspect is the safe subset of a container's inspect output:
@@ -128,6 +129,8 @@ type apiContainer struct {
 	ID              string `json:"Id"`
 	Names           []string
 	Image           string
+	ImageID         string
+	Mounts          []apiMount
 	Created         int64 // unix seconds
 	State           string
 	Status          string
@@ -204,10 +207,7 @@ type apiInspect struct {
 		RestartPolicy struct{ Name string }
 		Memory        int64
 	}
-	Mounts []struct {
-		Type, Source, Destination string
-		RW                        bool
-	}
+	Mounts          []apiMount
 	NetworkSettings struct {
 		Ports    map[string][]struct{ HostIp, HostPort string }
 		Networks map[string]struct{ IPAddress string }
@@ -261,7 +261,105 @@ func (r apiInspect) toInspect() ContainerInspect {
 		out.Networks[name] = n.IPAddress
 	}
 	for _, m := range r.Mounts {
-		out.Mounts = append(out.Mounts, Mount{Type: m.Type, Source: m.Source, Destination: m.Destination, ReadOnly: !m.RW})
+		out.Mounts = append(out.Mounts, m.toMount())
 	}
 	return out
+}
+
+// Image is the storage inventory subset of a Docker image summary.
+type Image struct {
+	ID                    string
+	RepoTags, RepoDigests []string
+	Created               time.Time
+	Size                  int64
+	Labels                map[string]string
+}
+
+// ImageInspect contains image details without environment, command or entrypoint.
+// User is internal metadata and must never be included in route responses.
+type ImageInspect struct {
+	Image
+	User, OS, Architecture, Variant string
+	LayerCount                      int
+}
+
+// ImageDeleteResult records Docker's individual untag and delete results.
+type ImageDeleteResult struct{ Untagged, Deleted []string }
+
+// Volume is the safe subset of Docker volume metadata. Other driver options
+// can contain credentials and are deliberately never decoded.
+type Volume struct {
+	Name, Driver, Scope, Mountpoint string
+	CreatedAt                       time.Time
+	Labels                          map[string]string
+	OptionType                      string
+}
+
+// VolumeInspect shares the safe volume inventory shape.
+type VolumeInspect = Volume
+
+type apiMount struct {
+	Type, Name, Source, Destination string
+	RW                              bool
+}
+
+func (m apiMount) toMount() Mount {
+	name := ""
+	if m.Type == "volume" {
+		name = m.Name
+	}
+	return Mount{Type: m.Type, Name: name, Source: m.Source, Destination: m.Destination, ReadOnly: !m.RW}
+}
+
+type apiImage struct {
+	ID                    string `json:"Id"`
+	RepoTags, RepoDigests []string
+	Created               int64
+	Size                  int64
+	Labels                map[string]string
+}
+
+func (r apiImage) toImage() Image {
+	image := Image{ID: r.ID, RepoTags: imageTags(r.RepoTags), RepoDigests: r.RepoDigests, Size: r.Size, Labels: r.Labels}
+	if r.Created > 0 {
+		image.Created = time.Unix(r.Created, 0).UTC()
+	}
+	return image
+}
+func imageTags(tags []string) []string {
+	out := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if tag != "<none>:<none>" && tag != "<none>" && tag != "" {
+			out = append(out, tag)
+		}
+	}
+	return out
+}
+
+type apiImageInspect struct {
+	ID                    string `json:"Id"`
+	RepoTags, RepoDigests []string
+	Created               time.Time
+	Size                  int64
+	Config                struct {
+		Labels map[string]string
+		User   string
+	}
+	OS, Architecture, Variant string
+	RootFS                    struct{ Layers []string }
+}
+
+func (r apiImageInspect) toInspect() ImageInspect {
+	return ImageInspect{Image: Image{ID: r.ID, RepoTags: imageTags(r.RepoTags), RepoDigests: r.RepoDigests, Created: r.Created, Size: r.Size, Labels: r.Config.Labels}, User: r.Config.User, OS: r.OS, Architecture: r.Architecture, Variant: r.Variant, LayerCount: len(r.RootFS.Layers)}
+}
+
+type apiVolume struct {
+	Name, Driver, Scope, Mountpoint string
+	CreatedAt                       time.Time
+	Labels                          map[string]string
+	Options                         struct{ Type string }
+}
+
+func (r apiVolume) toVolume() Volume {
+	return Volume{Name: r.Name, Driver: r.Driver, Scope: r.Scope, Mountpoint: r.Mountpoint, CreatedAt: r.CreatedAt, Labels: r.Labels, OptionType: r.Options.Type}
 }

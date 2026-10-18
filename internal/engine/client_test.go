@@ -838,7 +838,7 @@ func TestInspectContainerDecodes(t *testing.T) {
 		t.Errorf("networks: %+v", got.Networks)
 	}
 	wantMounts := []Mount{
-		{Type: "volume", Source: "/var/lib/docker/volumes/pgdata/_data", Destination: "/var/lib/postgresql/data"},
+		{Type: "volume", Name: "pgdata", Source: "/var/lib/docker/volumes/pgdata/_data", Destination: "/var/lib/postgresql/data"},
 		{Type: "bind", Source: "/etc/ssl", Destination: "/certs", ReadOnly: true},
 	}
 	if !reflect.DeepEqual(got.Mounts, wantMounts) {

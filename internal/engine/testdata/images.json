@@ -1,0 +1,1 @@
+[{"Id":"sha256:img","RepoTags":["nginx:1.25","<none>:<none>"],"RepoDigests":["nginx@sha256:digest"],"Created":1760000000,"Size":1234,"Labels":{"owner":"demo"}},{"Id":"sha256:dangling","RepoTags":["<none>:<none>"],"Size":42}]

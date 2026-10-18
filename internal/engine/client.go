@@ -52,8 +52,8 @@ const (
 	maxBodyBytes   = 32 << 20
 )
 
-// Client talks to the Docker Engine API. Every request is bounded by the
-// client's timeout, even when the caller's context has no deadline.
+// Client talks to the Docker Engine API. Every request has a deadline,
+// using the client timeout unless a method specifies its own bound.
 type Client struct {
 	http    *http.Client
 	timeout time.Duration
@@ -214,12 +214,15 @@ func (c *Client) Containers(ctx context.Context) ([]Container, error) {
 	}
 	out := make([]Container, 0, len(raw))
 	for _, r := range raw {
-		ct := Container{ID: r.ID, Image: r.Image, State: r.State, Status: r.Status, Labels: r.Labels}
+		ct := Container{ID: r.ID, Image: r.Image, ImageID: r.ImageID, State: r.State, Status: r.Status, Labels: r.Labels}
 		if r.Created > 0 {
 			ct.Created = time.Unix(r.Created, 0).UTC()
 		}
 		if len(r.Names) > 0 {
 			ct.Name = strings.TrimPrefix(r.Names[0], "/")
+		}
+		for _, m := range r.Mounts {
+			ct.Mounts = append(ct.Mounts, m.toMount())
 		}
 		for _, p := range r.Ports {
 			ct.Ports = append(ct.Ports, Port(p))
@@ -604,6 +607,127 @@ func networkResult(err error) error {
 	var ae *ActionError
 	if errors.As(err, &ae) && ae.Status == http.StatusNotFound {
 		return fmt.Errorf("%w: %w", ErrNetworkNotFound, ae)
+	}
+	return err
+}
+
+// ErrImageNotFound identifies Docker 404 answers about an image.
+var ErrImageNotFound = errors.New("docker engine: no such image")
+
+// ErrVolumeNotFound identifies Docker 404 answers about a volume.
+var ErrVolumeNotFound = errors.New("docker engine: no such volume")
+
+// Images lists all local images, dropping Docker's placeholder tags.
+func (c *Client) Images(ctx context.Context) ([]Image, error) {
+	body, err := c.get(ctx, "/images/json")
+	if err != nil {
+		return nil, err
+	}
+	var raw []apiImage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("decode images: %w", err)
+	}
+	out := make([]Image, 0, len(raw))
+	for _, r := range raw {
+		out = append(out, r.toImage())
+	}
+	return out, nil
+}
+
+// InspectImage reads safe image details. User is retained for internal use only.
+func (c *Client) InspectImage(ctx context.Context, id string) (ImageInspect, error) {
+	body, err := c.get(ctx, "/images/"+url.PathEscape(id)+"/json")
+	if err != nil {
+		return ImageInspect{}, storageResult(err, ErrImageNotFound)
+	}
+	var raw apiImageInspect
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return ImageInspect{}, fmt.Errorf("decode image: %w", err)
+	}
+	return raw.toInspect(), nil
+}
+
+// Volumes lists volumes without credential-bearing driver options.
+func (c *Client) Volumes(ctx context.Context) ([]Volume, error) {
+	body, err := c.get(ctx, "/volumes")
+	if err != nil {
+		return nil, err
+	}
+	var raw struct{ Volumes []apiVolume }
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("decode volumes: %w", err)
+	}
+	out := make([]Volume, 0, len(raw.Volumes))
+	for _, r := range raw.Volumes {
+		out = append(out, r.toVolume())
+	}
+	return out, nil
+}
+
+// InspectVolume reads volume metadata and only the type driver option.
+func (c *Client) InspectVolume(ctx context.Context, name string) (VolumeInspect, error) {
+	body, err := c.get(ctx, "/volumes/"+url.PathEscape(name))
+	if err != nil {
+		return VolumeInspect{}, storageResult(err, ErrVolumeNotFound)
+	}
+	var raw apiVolume
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return VolumeInspect{}, fmt.Errorf("decode volume: %w", err)
+	}
+	return raw.toVolume(), nil
+}
+
+// RemoveImage removes exactly the given reference without forcing. Docker can
+// untag one reference or delete image layers; both outcomes are returned.
+func (c *Client) RemoveImage(ctx context.Context, ref string) (ImageDeleteResult, error) {
+	body, err := c.deleteStorage(ctx, "/images/"+strings.ReplaceAll(url.PathEscape(ref), ":", "%3A"))
+	if err != nil {
+		return ImageDeleteResult{}, storageResult(err, ErrImageNotFound)
+	}
+	var raw []struct{ Untagged, Deleted string }
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return ImageDeleteResult{}, fmt.Errorf("decode image deletion: %w", err)
+	}
+	out := ImageDeleteResult{Untagged: make([]string, 0), Deleted: make([]string, 0)}
+	for _, r := range raw {
+		if r.Untagged != "" {
+			out.Untagged = append(out.Untagged, r.Untagged)
+		}
+		if r.Deleted != "" {
+			out.Deleted = append(out.Deleted, r.Deleted)
+		}
+	}
+	return out, nil
+}
+
+// RemoveVolume removes exactly the named volume without forcing.
+func (c *Client) RemoveVolume(ctx context.Context, name string) error {
+	_, err := c.deleteStorage(ctx, "/volumes/"+url.PathEscape(name))
+	return storageResult(err, ErrVolumeNotFound)
+}
+
+// deleteStorage gives removals their own bound, shared by negotiation and the
+// request, while preserving an earlier caller deadline.
+func (c *Client) deleteStorage(caller context.Context, path string) ([]byte, error) {
+	if err := caller.Err(); err != nil {
+		return nil, fmt.Errorf("docker engine request: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(caller, 60*time.Second)
+	defer cancel()
+	v, err := c.apiVersion(caller, ctx)
+	if err != nil {
+		return nil, err
+	}
+	response, err := c.request(caller, ctx, http.MethodDelete, "/v"+v+path)
+	if err != nil {
+		return nil, err
+	}
+	return response.body, nil
+}
+func storageResult(err error, notFound error) error {
+	var ae *ActionError
+	if errors.As(err, &ae) && ae.Status == http.StatusNotFound {
+		return fmt.Errorf("%w: %w", notFound, ae)
 	}
 	return err
 }

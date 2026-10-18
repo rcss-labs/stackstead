@@ -1,0 +1,1 @@
+[{"Id":"container","Image":"stale:tag","ImageID":"sha256:img","State":"exited","Mounts":[{"Type":"volume","Name":"demo-data","Source":"/volumes/data","Destination":"/data","RW":true},{"Type":"bind","Source":"/srv/config","Destination":"/config","RW":false}]}]
