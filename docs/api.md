@@ -42,7 +42,25 @@ All routes except health, setup and login need a session cookie. Errors are
 | `POST /api/password` | change the signed-in user's password (`{current, new}`; 204) |
 | `GET /api/settings/metrics-token` | whether a scrape token exists, `{configured}` (never the token) |
 | `POST`/`DELETE /api/settings/metrics-token` | create or rotate, or revoke, the Prometheus scrape token |
+| `GET /api/settings/update` | the cached update status: `{current, installer, command, state, latest, notesURL, checkedAt, error}`; see the update status notes below |
+| `POST /api/settings/update/check` | check now (JSON body `{}`); answers the status; checks less than 60 seconds apart answer the cached status |
 | `GET /metrics` | Prometheus exposition, bearer token auth instead of a session |
+
+Update status:
+
+- `state` is `up-to-date`, `available`, `failed` (the last check could not read
+  the release source and no earlier success is cached), `disabled`
+  (`update_check: false`) or `unknown` (a development build, which cannot be
+  compared). `latest`, `notesURL` and `checkedAt` are empty or absent until a
+  check has succeeded; after a later failure the last success is kept and
+  `error` says why the latest check failed: `network`, `timeout`, `http` or
+  `malformed`.
+- `current` is the server's version without the leading `v`. `command` is the
+  terminal command for this machine (`sudo /usr/bin/stackstead upgrade`).
+  Nothing in the request chooses a version, URL or installer, and the API
+  installs nothing: upgrades run only from the terminal.
+- The server checks once a day, and once an hour after a failure. Both routes
+  are absent when the server was built without the checker.
 
 Notes on the stacks API:
 

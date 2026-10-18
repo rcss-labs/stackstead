@@ -56,6 +56,7 @@ without a platform to maintain.
 
 ## What you get
 
+- **Update notice.** Settings shows when a newer release exists and the terminal command to install it; `stackstead upgrade` verifies and installs it. Turn the daily check off with `update_check: false`.
 - **Networks.** Create LAN (macvlan/ipvlan) and bridge networks from the UI, give services static IPs on them, and see which containers use each network.
 - **A live overview.** Every stack and service on the machine, its status,
   health and running containers, updated the moment Docker reports a change.
@@ -128,7 +129,8 @@ The script downloads the latest release, verifies it against the release's `SHA2
 the URL to finish setup. Pin a version with `... | sudo sh -s -- --version vX.Y.Z`.
 Running it again upgrades in place and never touches your config, data or stacks.
 Releases are not signed yet; the checksum guards against corrupt downloads, and you can
-compare `SHA256SUMS` by hand.
+compare `SHA256SUMS` by hand. `stackstead upgrade` follows the same rule.
+Later, `sudo stackstead upgrade` updates it; Settings tells you when a release is out.
 
 - **Debian, Ubuntu, Fedora, Rocky and friends:** download the `.deb` or `.rpm` from the
   [releases page](https://github.com/rcss-labs/stackstead/releases) and run

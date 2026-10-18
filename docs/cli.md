@@ -93,11 +93,11 @@ that the cookie travels in clear text. Redirects to another host are refused.
 | 0 | success (for a waited operation: it succeeded) |
 | 1 | runtime error: 5xx, I/O, unexpected response, config or database problem in `health` |
 | 2 | usage: bad flags or arguments, no command, a prompt needed but stdin is not a terminal |
-| 3 | authentication or permission: no context, 401 (the stored session is cleared), 403, refused as root |
+| 3 | authentication or permission: no context, 401 (the stored session is cleared), 403, refused as root; for `upgrade`: it needs root |
 | 4 | not found: 404, unknown context, no database |
-| 5 | conflict: 409 (busy, stale hash, exists), another server holds the lock, target exists without `--force` |
-| 6 | validation: invalid input, invalid config, weak or mismatched password |
-| 7 | unavailable: 503, connection refused, Docker or compose down in `health` |
+| 5 | conflict: 409 (busy, stale hash, exists), another server holds the lock, target exists without `--force`; for `upgrade`: a downgrade or reinstall without `--force`, a development build, the dpkg lock held |
+| 6 | validation: invalid input, invalid config, weak or mismatched password; for `upgrade`: checksum mismatch, asset missing from `SHA256SUMS`, unreadable `SHA256SUMS` |
+| 7 | unavailable: 503, connection refused, Docker or compose down in `health`; for `upgrade`: the release source cannot be reached |
 | 8 | rate limited (the message says how long to wait) |
 | 9 | the waited operation ended `failed`, `cancelled` or `timed_out` |
 | 130 | interrupted |
@@ -123,6 +123,7 @@ file in the data directory. They never create or migrate the database; only
 | `admin set-password [--username U] [--password-stdin\|--password-file F]` | online-safe | create the admin or reset its password |
 | `admin revoke-sessions` | online-safe | sign every session out |
 | `admin metrics-token status\|rotate\|clear` | online-safe | manage the `/metrics` token |
+| `upgrade [--check] [--version vX.Y.Z] [--force] [--yes] [--base-url URL] [-o json]` | any | download the release, verify it against `SHA256SUMS` and run the native installer; `--check` only reports; see [Upgrading](#upgrading) |
 
 `serve` and `db restore` take an exclusive lock on `<data_dir>/stackstead.lock`.
 The other admin commands do not take it, so **do not run them while a
@@ -148,6 +149,59 @@ the server once.
 
 **Metrics token.** `admin metrics-token rotate -o json` prints the new token
 once. A running server picks up a rotate or clear within 5 seconds.
+
+## Upgrading
+
+`stackstead upgrade` needs no config file. It works out how this host was
+installed (install script, `.deb`, `.rpm` or macOS `.pkg`), downloads the
+matching asset from the latest GitHub release, checks it against that
+release's `SHA256SUMS`, and hands it to the native installer. Nothing is
+changed before the checksum passes. It prints a backup tip and asks for
+confirmation (`--yes` skips the prompt; without a terminal it is required).
+
+| Flag | Effect |
+| --- | --- |
+| `--check` | only report the installed and latest versions and the command to run; with `-o json` it prints the same object as `GET /api/settings/update`. Exit 0 whether or not an update exists. Cannot be combined with `--force` or `--yes` |
+| `--version vX.Y.Z` | install that release instead of the latest |
+| `--force` | reinstall the same version, or downgrade (script installs only), or install over a development build |
+| `--yes` | do not ask for confirmation |
+| `--base-url URL` | release source for mirrors and tests: `https://`, or `http://` to a loopback host. Prints a warning, because it replaces the default `https://github.com/rcss-labs/stackstead` |
+
+What runs, always as one fixed command with no shell:
+
+| Installed with | Command |
+| --- | --- |
+| script | the downloaded, verified `install.sh --version vX.Y.Z --prefix <prefix>` (the prefix is where `stackstead` lives, normally `/usr/local`) |
+| `.deb` | `apt-get install -y <file>.deb` (refuses with exit 5 if another dpkg or apt holds the lock) |
+| `.rpm` | `dnf install -y <file>.rpm`, or `rpm -U` when `dnf` is not installed |
+| `.pkg` | `installer -pkg <file>.pkg -target /` |
+
+Run it as root on Linux and for the macOS `.pkg`. For a script install on macOS
+run it as your own user (`/usr/local/bin/stackstead upgrade`); `install.sh`
+asks for `sudo` itself. If you run it without the needed rights it exits 3 and
+prints the exact command to use.
+
+`upgrade` never restarts anything itself; the installer does. The script and
+the packages restart the service only if it was running (a stopped or disabled
+service stays that way), and the macOS installers kick the LaunchAgent. On Linux
+without systemd, `install.sh` prints a note to restart under your own
+supervisor. When you upgrade the host that serves the web UI, the page
+reconnects by itself after the restart.
+
+Package downgrades are not done by `upgrade`: it exits 5 and prints the
+download, checksum and `apt-get --allow-downgrades` or `rpm -U --oldpackage`
+commands for you to run. Script installs downgrade with `--force`.
+
+**Database.** The service migrates its database forward the first time it
+starts on a newer version. That cannot be undone by installing the older
+binary: a service that finds a schema newer than itself refuses to start until
+you restore a backup made before the upgrade (`db restore`, see above). Take a
+backup first; `upgrade` prints the command.
+
+Exit codes follow the table above. When it runs `install.sh`, that script's
+own codes are mapped (verification 6, source unreachable 7, needs a user
+account on macOS 3); a failure of `apt-get`, `dnf`, `rpm` or `installer` is
+exit 1 with the tool's name and status.
 
 ## Service unit notes
 

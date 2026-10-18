@@ -53,6 +53,9 @@ The git tag `vX.Y.Z` (or `vX.Y.Z-rc.N`) becomes artifact version `X.Y.Z` (`X.Y.Z
    SHA256SUMS
    ```
 
+   The asset names above are a contract: `stackstead upgrade` derives them from the version, OS and
+   architecture and looks them up in `SHA256SUMS`. Renaming one breaks upgrades for every installed host.
+
 4. **Verify the checksums.** `make verify-release` checks every line of `dist/SHA256SUMS` and fails on a file in
    `dist/` that the sums do not list.
 5. **Lint the packages.** `make package-lint` runs `lintian --fail-on error,warning` on the debs and
@@ -78,6 +81,8 @@ The git tag `vX.Y.Z` (or `vX.Y.Z-rc.N`) becomes artifact version `X.Y.Z` (`X.Y.Z
    The script's one-liner uses `releases/latest/download/`, which GitHub points at the newest non-prerelease. Check
    the release page afterwards: every file from step 3 is there, and
    `curl -fsSL .../releases/download/vX.Y.Z/SHA256SUMS | sha256sum -c --ignore-missing` passes on a downloaded copy.
+   Then run `stackstead upgrade --check` on a host with an older version and expect it to report vX.Y.Z (not for `-rc`
+   releases: `latest` skips prereleases).
 
 ### Release notes template
 

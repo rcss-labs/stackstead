@@ -31,6 +31,22 @@ access is equivalent to root. Treat the Stackstead login like a root password.
   `/proc/net/route` only for routing information.
 - The optional Prometheus endpoint has its own bearer token. It is shown once,
   and only its SHA-256 is stored.
+- Update check: once a day (once an hour after a failure, and when you press
+  Check now in Settings) the server makes one HTTPS request to
+  `https://github.com/rcss-labs/stackstead/releases/latest/download/SHA256SUMS`
+  to show "update available". It sends only `User-Agent: stackstead/<version>`
+  and your IP address as any request does. Redirects are followed only to
+  GitHub's own hosts. Set `update_check: false` (or `STACKSTEAD_UPDATE_CHECK=0`)
+  on air-gapped hosts; Settings then shows "checks off". Nothing is ever
+  downloaded or installed by the server or the browser.
+- `stackstead upgrade` runs only from a terminal. It verifies the downloaded
+  asset against the release's `SHA256SUMS` before using it, with the same
+  limit as the install script: the sums come from the same release page, so
+  this catches corruption and wrong files, not a compromised publisher
+  (releases are not signed yet). As root it runs the installer by absolute
+  path with a fixed `PATH`, never through a shell, from a fresh temporary
+  directory it removes afterwards. `--base-url` replaces the source (HTTPS or
+  loopback HTTP only) and prints a warning.
 
 ## Remote access
 

@@ -134,10 +134,38 @@ the unit file itself.
 
 ## Upgrade
 
-- Script: run it again (or with `--version`). A newer version replaces the binary and unit and restarts
-  the service; an older one needs `--force`.
-- Packages: install the newer `.deb` / `.rpm`. The config and database are untouched and the service is restarted once.
-  A service you disabled stays disabled.
+Releases after 0.2.0 include `stackstead upgrade`, which does it for every install type. Settings shows when a newer release
+exists and the exact command for this machine.
+
+| Installed with | Run |
+|---|---|
+| script, Linux | `sudo /usr/local/bin/stackstead upgrade` |
+| script, macOS | `/usr/local/bin/stackstead upgrade` (as your user, no `sudo`; `install.sh` asks for it when needed) |
+| `.deb` | `sudo stackstead upgrade` (runs `apt-get install`) |
+| `.rpm` | `sudo stackstead upgrade` (runs `dnf install`, or `rpm -U` without dnf) |
+| `.pkg` | `sudo /usr/local/bin/stackstead upgrade` (runs `installer`) |
+
+`stackstead upgrade --check` only reports the latest version. `--version vX.Y.Z` picks a release. Before
+anything is installed the asset is verified against the release's `SHA256SUMS`, which has the same limits as
+the install script (see [Verifying a download by hand](#verifying-a-download-by-hand)). See
+[cli.md](cli.md#upgrading) for flags and exit codes.
+
+- **Back up first.** `sudo -u stackstead stackstead db backup /var/backups/stackstead-$(date +%Y%m%d).db`
+  (macOS: `stackstead db backup ~/stackstead.db`). The service migrates its database forward on first start,
+  and installing an older binary afterwards does not undo that.
+- **Restart.** The installer restarts the service, once, and only if it was running; a service you disabled
+  stays disabled. Without systemd (Alpine) nothing is started: restart it under your own supervisor.
+  The web UI reconnects on its own.
+- **Config.** `config.yaml` is kept. An edited config is never replaced. When a new package changes the packaged config, the `.deb`
+  keeps yours and writes the new one next to it as `config.yaml.dpkg-dist`; the `.rpm` does the same with `.rpmnew`.
+- **Downgrades.** The script needs `--force` (`sudo stackstead upgrade --version vX.Y.Z --force`). `.deb` and
+  `.rpm` downgrades are manual: `upgrade` prints the commands (`apt-get install --allow-downgrades ./file.deb`,
+  `rpm -U --oldpackage file.rpm`). A downgrade across a database change leaves a service that refuses to
+  start until you restore the backup (`db restore`).
+- **Without `upgrade`.** 0.2.0 and earlier do not have the command: run the install script (or install
+  the newer `.deb` / `.rpm` / `.pkg`) once, the old way. Running the script again, or installing a newer
+  package, still works and does the same thing.
+- **Turning the check off.** Set `update_check: false` (see [security.md](security.md)).
 
 ## Uninstall and purge
 
