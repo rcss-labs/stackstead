@@ -470,8 +470,8 @@ func TestSubCacheNullBeforeFirstRefresh(t *testing.T) {
 	}
 	<-r.docker.volumesIn
 	close(r.docker.volumesGate)
-	r.c.volumes.wait()
-	r.c.restarts.wait()
+	waitForRefresh(t, r.c.volumes)
+	waitForRefresh(t, r.c.restarts)
 
 	r.clock.Advance(5 * time.Second)
 	s = r.c.Snapshot(context.Background())
@@ -488,8 +488,8 @@ func TestSubCacheServesStaleAndRefreshesOnce(t *testing.T) {
 	ctx := context.Background()
 	r.docker.volumes = engine.VolumeUsage{Count: 1}
 	r.c.Snapshot(ctx)
-	r.c.volumes.wait()
-	r.c.restarts.wait()
+	waitForRefresh(t, r.c.volumes)
+	waitForRefresh(t, r.c.restarts)
 	r.clock.Advance(5 * time.Second)
 	if s := r.c.Snapshot(ctx); s.Volumes == nil || s.Volumes.Count != 1 {
 		t.Fatalf("volumes = %+v", s.Volumes)
@@ -523,7 +523,7 @@ func TestSubCacheServesStaleAndRefreshesOnce(t *testing.T) {
 		}
 	}
 	close(gate)
-	r.c.volumes.wait()
+	waitForRefresh(t, r.c.volumes)
 	if got := r.docker.volumesCalls.Load(); got != 2 {
 		t.Fatalf("VolumesDiskUsage called %d times, want 2", got)
 	}
@@ -563,7 +563,7 @@ func TestRestartCounting(t *testing.T) {
 	r := restartRig(t)
 	ctx := context.Background()
 	r.c.Snapshot(ctx)
-	r.c.restarts.wait()
+	waitForRefresh(t, r.c.restarts)
 	r.clock.Advance(5 * time.Second)
 	s := r.c.Snapshot(ctx)
 	if s.Restarts24h == nil {
@@ -595,7 +595,7 @@ func TestRestartCountsExposed(t *testing.T) {
 	if got := r.c.RestartCounts(); got != nil {
 		t.Fatalf("before first refresh = %v, want nil", got)
 	}
-	r.c.restarts.wait()
+	waitForRefresh(t, r.c.restarts)
 	got := r.c.RestartCounts()
 	want := map[string]int{"fresh": 0, "loop": 2, "manual": 1, "manual2": 1}
 	if len(got) != len(want) {
@@ -703,8 +703,8 @@ func TestBackgroundRefreshesUseRefreshTimeout(t *testing.T) {
 	r.conts.list = []engine.Container{{State: "running"}}
 	r.c.cfg.RefreshTimeout = 20 * time.Second
 	r.c.Snapshot(context.Background())
-	r.c.volumes.wait()
-	r.c.restarts.wait()
+	waitForRefresh(t, r.c.volumes)
+	waitForRefresh(t, r.c.restarts)
 	r.docker.mu.Lock()
 	vb, eb := r.docker.volumesBudget, r.docker.eventsBudget
 	r.docker.mu.Unlock()
@@ -728,8 +728,8 @@ func TestVolumesRefreshEveryTenMinutesRestartsEveryMinute(t *testing.T) {
 	snap := func(advance time.Duration) {
 		r.clock.Advance(advance)
 		r.c.Snapshot(ctx)
-		r.c.volumes.wait()
-		r.c.restarts.wait()
+		waitForRefresh(t, r.c.volumes)
+		waitForRefresh(t, r.c.restarts)
 	}
 	snap(0)
 	snap(6 * time.Second) // past the 5 s snapshot cache

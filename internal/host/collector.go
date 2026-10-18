@@ -10,6 +10,7 @@ import (
 
 	"github.com/rcss-labs/stackstead/internal/engine"
 	"github.com/rcss-labs/stackstead/internal/metrics"
+	"github.com/rcss-labs/stackstead/internal/stale"
 )
 
 const (
@@ -152,9 +153,9 @@ type restartScan struct {
 // request when they are stale.
 type Collector struct {
 	cfg      Config
-	snap     *cached[Snapshot]
-	volumes  *cached[engine.VolumeUsage]
-	restarts *cached[restartScan]
+	snap     *stale.Value[Snapshot]
+	volumes  *stale.Value[engine.VolumeUsage]
+	restarts *stale.Value[restartScan]
 
 	// Previous readings. Only touched inside the snapshot load, which the
 	// single-flight in snap runs one at a time.
@@ -219,9 +220,9 @@ func New(cfg Config) *Collector {
 	}
 	return &Collector{
 		cfg:      cfg,
-		snap:     newCached[Snapshot](cfg.Now),
-		volumes:  newCached[engine.VolumeUsage](cfg.Now),
-		restarts: newCached[restartScan](cfg.Now),
+		snap:     stale.New[Snapshot](cfg.Now),
+		volumes:  stale.New[engine.VolumeUsage](cfg.Now),
+		restarts: stale.New[restartScan](cfg.Now),
 	}
 }
 
