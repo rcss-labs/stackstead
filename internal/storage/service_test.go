@@ -13,9 +13,10 @@ import (
 )
 
 type serviceEngine struct {
-	images atomic.Int32
-	list   func(context.Context) error
-	df     func(context.Context, engine.DFKind) (engine.DFSnapshot, error)
+	containers []engine.Container
+	images     atomic.Int32
+	list       func(context.Context) error
+	df         func(context.Context, engine.DFKind) (engine.DFSnapshot, error)
 }
 
 func (e *serviceEngine) Images(ctx context.Context) ([]engine.Image, error) {
@@ -27,8 +28,10 @@ func (e *serviceEngine) Images(ctx context.Context) ([]engine.Image, error) {
 	}
 	return []engine.Image{{ID: "image"}}, nil
 }
-func (e *serviceEngine) Volumes(context.Context) ([]engine.Volume, error)       { return nil, nil }
-func (e *serviceEngine) Containers(context.Context) ([]engine.Container, error) { return nil, nil }
+func (e *serviceEngine) Volumes(context.Context) ([]engine.Volume, error) { return nil, nil }
+func (e *serviceEngine) Containers(context.Context) ([]engine.Container, error) {
+	return e.containers, nil
+}
 func (e *serviceEngine) DiskUsage(ctx context.Context, k engine.DFKind) (engine.DFSnapshot, error) {
 	return e.df(ctx, k)
 }
@@ -222,7 +225,7 @@ func TestServiceDeclarationsUseLiveStateAndKeepRegisteredProtection(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if in.RegisteredProjects["registered"] != "app" || in.Stacks[0].State != "stopped" || in.Stacks[0].Known {
+	if in.RegisteredProjects["registered"] != "app" || in.Stacks[0].State != "not-deployed" || in.Stacks[0].Known {
 		t.Fatalf("inputs=%+v", in)
 	}
 }
@@ -408,4 +411,118 @@ func TestServiceRecoversAllKindsAfterDiscoveryFailure(t *testing.T) {
 		}
 		return true
 	})
+}
+
+func TestServiceListPanicReturnsErrorAndReleasesFlight(t *testing.T) {
+	var calls atomic.Int32
+	e := &serviceEngine{df: typedDF, list: func(context.Context) error {
+		if calls.Add(1) == 1 {
+			panic("list exploded")
+		}
+		return nil
+	}}
+	s := newTestService(e, time.Now)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := s.Inputs(ctx); err == nil || errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("panic must return loader error: %v", err)
+	}
+	if in, err := s.Inputs(ctx); err != nil || len(in.Images) != 1 {
+		t.Fatalf("retry after panic: %+v %v", in, err)
+	}
+	if e.images.Load() != 2 {
+		t.Fatalf("list flight not retried: %d", e.images.Load())
+	}
+}
+func TestServiceDFPanicPreservesReadingReleasesFlightAndRecovers(t *testing.T) {
+	for _, warm := range []bool{false, true} {
+		t.Run(map[bool]string{false: "discovery", true: "cached"}[warm], func(t *testing.T) {
+			var calls atomic.Int32
+			panicCall := int32(1)
+			if warm {
+				panicCall = 2
+			}
+			e := &serviceEngine{df: func(context.Context, engine.DFKind) (engine.DFSnapshot, error) {
+				if calls.Add(1) == panicCall {
+					panic("df exploded")
+				}
+				return engine.DFSnapshot{Kinds: dfKinds, Volumes: []engine.DFVolume{{Name: "v", UsageData: &engine.DFVolumeUsage{Size: 42}}}}, nil
+			}}
+			s := newTestService(e, time.Now)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			var loaded time.Time
+			if warm {
+				if _, err := s.FreshDF(ctx, engine.DFImages); err != nil {
+					t.Fatal(err)
+				}
+				loaded = s.DFReadings()[engine.DFImages].LoadedAt
+			}
+			if _, err := s.FreshDF(ctx, engine.DFImages); err == nil || errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("panic must release waiter with loader error: %v", err)
+			}
+			for k, r := range s.DFReadings() {
+				if r.Refreshing || r.Error == "" || r.LoadedAt != loaded {
+					t.Fatalf("kind %s after panic: %+v", k, r)
+				}
+			}
+			if warm {
+				if v, ok := s.VolumeSummary(); !ok || v.Size != 42 {
+					t.Fatalf("panic lost prior sizes: %+v %v", v, ok)
+				}
+			}
+			if n := calls.Load(); n != panicCall {
+				t.Fatalf("panic refresh hammered df: %d", n)
+			}
+			s.Refresh()
+			s.DFReadings()
+			waitService(t, func() bool {
+				for _, r := range s.DFReadings() {
+					if r.Refreshing || r.Error != "" || r.LoadedAt.IsZero() {
+						return false
+					}
+				}
+				return true
+			})
+			if n := calls.Load(); n != panicCall+1 {
+				t.Fatalf("recovery calls=%d", n)
+			}
+		})
+	}
+}
+func TestServiceStackStateUsesDeclaredServicesAndCurrentContainers(t *testing.T) {
+	ct := func(project, service, state string) engine.Container {
+		return engine.Container{State: state, Labels: map[string]string{"com.docker.compose.project": project, "com.docker.compose.service": service}}
+	}
+	cases := []struct {
+		name       string
+		containers []engine.Container
+		want       string
+	}{
+		{"undeployed", nil, "not-deployed"},
+		{"other project", []engine.Container{ct("other", "web", "running")}, "not-deployed"},
+		{"existing stopped", []engine.Container{ct("app", "web", "exited"), ct("app", "db", "created")}, "stopped"},
+		{"mixed", []engine.Container{ct("app", "web", "running"), ct("app", "db", "exited")}, "partial"},
+		{"missing service", []engine.Container{ct("app", "web", "running")}, "partial"},
+		{"duplicate cannot stand in for missing", []engine.Container{ct("app", "web", "running"), ct("app", "web", "running")}, "partial"},
+		{"running", []engine.Container{ct("app", "web", "running"), ct("app", "db", "running")}, "running"},
+		{"recreated old exited", []engine.Container{ct("app", "web", "exited"), ct("app", "web", "running"), ct("app", "db", "running")}, "running"},
+		{"orphan does not replace missing", []engine.Container{ct("app", "orphan", "running")}, "partial"},
+		{"stopped orphan does not break running", []engine.Container{ct("app", "web", "running"), ct("app", "db", "running"), ct("app", "orphan", "exited")}, "running"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := &serviceEngine{df: typedDF, containers: tc.containers}
+			s := NewService(ServiceConfig{Engine: e, Registry: serviceRegistry{{Name: "app", Project: "app"}}, Declarations: serviceDeclarations(func(context.Context, stacks.Entry) StackDeclarations {
+				return StackDeclarations{Name: "app", Project: "app", Known: true, Images: []DeclaredImage{{Service: "web"}, {Service: "db"}}}
+			})})
+			in, err := s.Inputs(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := in.Stacks[0].State; got != tc.want {
+				t.Fatalf("state=%q want %q", got, tc.want)
+			}
+		})
+	}
 }

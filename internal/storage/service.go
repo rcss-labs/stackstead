@@ -122,9 +122,13 @@ func (s *Service) Inputs(ctx context.Context) (Inputs, error) {
 		return Inputs{}, ctx.Err()
 	}
 }
-func (s *Service) loadLists(ctx context.Context) (Inputs, error) {
-	var in Inputs
-	var err error
+func (s *Service) loadLists(ctx context.Context) (in Inputs, err error) {
+	defer func() {
+		if recover() != nil {
+			in = Inputs{}
+			err = errors.New("storage list loader panicked")
+		}
+	}()
 	if in.Images, err = s.cfg.Engine.Images(ctx); err != nil {
 		return in, err
 	}
@@ -150,17 +154,48 @@ func (s *Service) loadLists(ctx context.Context) (Inputs, error) {
 			d = s.cfg.Declarations.Get(ctx, e)
 		}
 		// The declaration cache deliberately does not retain live state.
-		d.State = "stopped"
-		for _, c := range in.Containers {
-			if c.Project() == e.Project && c.State == "running" {
-				d.State = "running"
-				break
-			}
-		}
+		d.State = declarationState(e.Project, d, in.Containers)
 		in.Stacks = append(in.Stacks, d)
 	}
 	return in, nil
 }
+
+// declarationState counts services rather than container instances, matching
+// stack status when recreated containers include both exited and running copies.
+func declarationState(project string, d StackDeclarations, containers []engine.Container) string {
+	expected := map[string]bool{}
+	for _, image := range d.Images {
+		expected[image.Service] = true
+	}
+	running := map[string]bool{}
+	deployed, active := false, false
+	for _, c := range containers {
+		if project == "" || c.Project() != project {
+			continue
+		}
+		deployed = true
+		if len(d.Images) == 0 {
+			expected[c.ComposeService()] = true
+		}
+		if c.State == "running" {
+			running[c.ComposeService()] = true
+			active = true
+		}
+	}
+	if !deployed {
+		return "not-deployed"
+	}
+	if !active {
+		return "stopped"
+	}
+	for service := range expected {
+		if !running[service] {
+			return "partial"
+		}
+	}
+	return "running"
+}
+
 func (s *Service) Inventory(ctx context.Context) (Inventory, error) {
 	in, err := s.Inputs(ctx)
 	if err != nil {
@@ -235,7 +270,15 @@ func (s *Service) startLocked(kind engine.DFKind) *dfFlight {
 func (s *Service) loadDF(kind engine.DFKind, f *dfFlight) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.DFTimeout)
 	defer cancel()
-	snap, err := s.cfg.Engine.DiskUsage(ctx, kind)
+	snap, err := func() (snapshot engine.DFSnapshot, err error) {
+		defer func() {
+			if recover() != nil {
+				snapshot = engine.DFSnapshot{}
+				err = errors.New("storage disk usage loader panicked")
+			}
+		}()
+		return s.cfg.Engine.DiskUsage(ctx, kind)
+	}()
 	if err == nil {
 		found := false
 		for _, k := range snap.Kinds {
