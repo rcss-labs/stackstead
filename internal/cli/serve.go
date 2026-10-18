@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rcss-labs/stackstead/internal/actionlog"
 	"github.com/rcss-labs/stackstead/internal/alerts"
 	"github.com/rcss-labs/stackstead/internal/api"
 	"github.com/rcss-labs/stackstead/internal/auth"
@@ -26,6 +27,7 @@ import (
 	"github.com/rcss-labs/stackstead/internal/metrics"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 	"github.com/rcss-labs/stackstead/internal/state"
+	"github.com/rcss-labs/stackstead/internal/storage"
 	"github.com/rcss-labs/stackstead/internal/store"
 	"github.com/rcss-labs/stackstead/internal/update"
 	"github.com/rcss-labs/stackstead/internal/version"
@@ -154,7 +156,11 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	// stack service, the sampler and the observability routes.
 	cache := state.New(dockerEngine, logger, state.Backoff{})
 	metricsStore := metrics.NewStore(db, time.Now)
-	sampler := metrics.NewSampler(metricsStore, cache, dockerEngine, cfg.MetricsInterval, cfg.MetricsRetention, logger, time.Now)
+	actions := actionlog.NewStore(db, time.Now)
+	sampler := metrics.NewSampler(metricsStore, cache, dockerEngine, cfg.MetricsInterval, cfg.MetricsRetention, logger, time.Now, func(ctx context.Context) error {
+		_, err := actions.Prune(ctx, time.Now().Add(-365*24*time.Hour))
+		return err
+	})
 	checker, err := newUpdateChecker(cfg, logger)
 	if err != nil {
 		return err
@@ -164,9 +170,11 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	bg := startBackground(context.Background(), cache.Run, sampler.Run, checker.Run)
 	defer bg.stop(time.Second) // safety net for early returns; the normal path stops it in order below
 
+	registry := stacks.NewRegistry(db, time.Now)
+	storageSvc := storage.NewService(storage.ServiceConfig{Engine: dockerEngine, Registry: registry, Declarations: storage.NewDeclarationCache(buildRunner(cfg), logger), Now: time.Now})
 	ops := stacks.NewOps(cfg.OperationTimeout, time.Now)
 	stackSvc := stacks.NewService(stacks.Deps{
-		Registry:     stacks.NewRegistry(db, time.Now),
+		Registry:     registry,
 		Ops:          ops,
 		Compose:      runner,
 		Engine:       dockerEngine,
@@ -185,7 +193,7 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	// both cache for 5 s and start no goroutines.
 	collector := host.New(host.Config{
 		ProcRoot: "/proc", SysRoot: "/sys", StacksDir: cfg.StacksDir,
-		Docker: dockerEngine, Sampler: sampler, Containers: cache,
+		Docker: dockerEngine, Sampler: sampler, Containers: cache, Volumes: storageSvc,
 		Statfs: host.OSStatfs{}, Now: time.Now, Hostname: os.Hostname, GOOS: runtime.GOOS,
 	})
 	alertsEngine := alerts.NewEngine(stackSvc, cache, collector, cache, sampler, time.Now)

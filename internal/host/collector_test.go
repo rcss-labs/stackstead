@@ -746,3 +746,29 @@ func TestVolumesRefreshEveryTenMinutesRestartsEveryMinute(t *testing.T) {
 		t.Fatalf("volumes not refreshed after 10 min: %d calls", v)
 	}
 }
+
+type suppliedVolumes struct{ calls atomic.Int32 }
+
+func (v *suppliedVolumes) VolumeSummary() (engine.VolumeUsage, bool) {
+	n := v.calls.Add(1)
+	return engine.VolumeUsage{Count: int(n), Size: uint64(n) * 100, Dangling: 1}, true
+}
+func TestCollectorUsesSuppliedVolumeCacheWithoutOwnTenMinuteCache(t *testing.T) {
+	base := time.Now()
+	var elapsed atomic.Int64
+	source := &suppliedVolumes{}
+	docker := &fakeDocker{}
+	c := New(Config{Docker: docker, Containers: &fakeContainers{}, Volumes: source, ProcRoot: t.TempDir(), Now: func() time.Time { return base.Add(time.Duration(elapsed.Load())) }})
+	first := c.Snapshot(context.Background())
+	if first.Volumes == nil || first.Volumes.Size != 100 {
+		t.Fatalf("first volumes=%+v", first.Volumes)
+	}
+	elapsed.Store(int64(6 * time.Second))
+	second := c.Snapshot(context.Background())
+	if second.Volumes == nil || second.Volumes.Size != 200 {
+		t.Fatalf("second volumes=%+v", second.Volumes)
+	}
+	if n := docker.volumesCalls.Load(); n != 0 {
+		t.Fatalf("collector ran its own df %d times", n)
+	}
+}

@@ -43,6 +43,11 @@ type ContainerSource interface {
 	Containers(ctx context.Context) ([]engine.Container, error)
 }
 
+// VolumeSource supplies the shared storage volume cache without waiting for df.
+type VolumeSource interface {
+	VolumeSummary() (engine.VolumeUsage, bool)
+}
+
 // Statfser reports free and total bytes of the filesystem holding path.
 type Statfser interface {
 	Statfs(path string) (free, total uint64, err error)
@@ -53,6 +58,7 @@ type Statfser interface {
 type Config struct {
 	ProcRoot, SysRoot, StacksDir string
 	Docker                       DockerAPI
+	Volumes                      VolumeSource
 	Sampler                      SamplerLatest
 	Containers                   ContainerSource
 	Statfs                       Statfser
@@ -276,7 +282,14 @@ func (c *Collector) collect(ctx context.Context) Snapshot {
 	s.Disk = c.disk()
 
 	if dockerUp {
-		if v, ok := c.volumes.GetStale(volumesMaxAge, c.loadVolumes); ok {
+		var v engine.VolumeUsage
+		var ok bool
+		if c.cfg.Volumes != nil {
+			v, ok = c.cfg.Volumes.VolumeSummary()
+		} else {
+			v, ok = c.volumes.GetStale(volumesMaxAge, c.loadVolumes)
+		}
+		if ok {
 			s.Volumes = &Volumes{Count: v.Count, Size: v.Size, Dangling: v.Dangling}
 		}
 		if scan, ok := c.restarts.GetStale(restartsMaxAge, c.loadRestarts); ok {
