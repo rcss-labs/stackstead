@@ -97,6 +97,7 @@ func TestEffectiveReportsSources(t *testing.T) {
 		{Key: "operation_timeout", Value: "15m", Source: "default"},
 		{Key: "docker_socket", Value: "/var/run/docker.sock", Source: "default"},
 		{Key: "shutdown_grace", Value: "30s", Source: "default"},
+		{Key: "update_check", Value: "true", Source: "default"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Effective =\n%+v\nwant\n%+v", got, want)
@@ -185,5 +186,36 @@ func TestEffectiveNullValueIsDefault(t *testing.T) {
 	}
 	if got[0].Source != "default" || got[1].Source != "file" {
 		t.Errorf("listen/stacks_dir sources = %q/%q, want default/file", got[0].Source, got[1].Source)
+	}
+}
+
+func TestTemplateUpdateCheckLine(t *testing.T) {
+	const commentBlock = "# Once a day the server fetches the latest release's SHA256SUMS from\n" +
+		"# https://github.com/rcss-labs/stackstead to show \"update available\" in Settings.\n" +
+		"# Set to false on air-gapped hosts. Nothing is ever installed automatically.\n"
+
+	defaults, err := config.Template(config.Defaults())
+	if err != nil {
+		t.Fatalf("Template: %v", err)
+	}
+	if !strings.Contains(string(defaults), commentBlock+"# update_check: true\n") {
+		t.Errorf("default output missing commented update_check block:\n%s", defaults)
+	}
+
+	cfg := config.Defaults()
+	cfg.UpdateCheck = false
+	off, err := config.Template(cfg)
+	if err != nil {
+		t.Fatalf("Template: %v", err)
+	}
+	if !strings.Contains(string(off), commentBlock+"update_check: false\n") {
+		t.Errorf("output missing active update_check: false line:\n%s", off)
+	}
+	loaded, err := config.Load(writeConfig(t, string(off)), env(nil))
+	if err != nil {
+		t.Fatalf("Load of rendered template: %v\n%s", err, off)
+	}
+	if loaded.UpdateCheck {
+		t.Errorf("rendered file loaded UpdateCheck = true, want false")
 	}
 }

@@ -25,6 +25,7 @@ type Config struct {
 	OperationTimeout time.Duration `yaml:"operation_timeout"`
 	DockerSocket     string        `yaml:"docker_socket"`
 	ShutdownGrace    time.Duration `yaml:"shutdown_grace"`
+	UpdateCheck      bool          `yaml:"update_check"`
 }
 
 func Defaults() Config {
@@ -37,6 +38,7 @@ func Defaults() Config {
 		OperationTimeout: 15 * time.Minute,
 		DockerSocket:     "/var/run/docker.sock",
 		ShutdownGrace:    30 * time.Second,
+		UpdateCheck:      true,
 	}
 }
 
@@ -117,6 +119,13 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 			*dst = d
 		}
 	}
+	if v := getenv("STACKSTEAD_UPDATE_CHECK"); v != "" {
+		enabled, err := parseSwitch(v)
+		if err != nil {
+			return fmt.Errorf("STACKSTEAD_UPDATE_CHECK: %w", err)
+		}
+		cfg.UpdateCheck = enabled
+	}
 	if v := getenv("STACKSTEAD_ALLOWED_ROOTS"); v != "" {
 		cfg.AllowedRoots = nil
 		for _, root := range strings.Split(v, ",") {
@@ -126,6 +135,18 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 		}
 	}
 	return nil
+}
+
+// parseSwitch accepts true/false or 1/0 in any letter case. Anything else is
+// an error so a typo in an on/off setting cannot silently fall back.
+func parseSwitch(value string) (bool, error) {
+	switch strings.ToLower(value) {
+	case "true", "1":
+		return true, nil
+	case "false", "0":
+		return false, nil
+	}
+	return false, fmt.Errorf("want true, false, 1 or 0, got %q", value)
 }
 
 func (c Config) validate() error {

@@ -41,6 +41,7 @@ func TestLoadWithoutFileUsesDefaults(t *testing.T) {
 		OperationTimeout: 15 * time.Minute,
 		DockerSocket:     "/var/run/docker.sock",
 		ShutdownGrace:    30 * time.Second,
+		UpdateCheck:      true,
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("got  %+v\nwant %+v", cfg, want)
@@ -149,5 +150,47 @@ func TestLoadMissingFileFails(t *testing.T) {
 	_, err := config.Load(filepath.Join(t.TempDir(), "missing.yaml"), env(nil))
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("err = %v, want fs.ErrNotExist", err)
+	}
+}
+
+func TestUpdateCheckDefaultsOn(t *testing.T) {
+	cfg, err := config.Load("", env(nil))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.UpdateCheck {
+		t.Errorf("UpdateCheck = false, want true by default")
+	}
+}
+
+func TestUpdateCheckFromYAML(t *testing.T) {
+	cfg, err := config.Load(writeConfig(t, "update_check: false\n"), env(nil))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.UpdateCheck {
+		t.Errorf("UpdateCheck = true, want false from file")
+	}
+}
+
+func TestUpdateCheckFromEnv(t *testing.T) {
+	for _, value := range []string{"0", "false", "TRUE"} {
+		t.Run(value, func(t *testing.T) {
+			cfg, err := config.Load("", env(map[string]string{"STACKSTEAD_UPDATE_CHECK": value}))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			want := value == "TRUE"
+			if cfg.UpdateCheck != want {
+				t.Errorf("UpdateCheck = %v, want %v", cfg.UpdateCheck, want)
+			}
+		})
+	}
+}
+
+func TestUpdateCheckEnvRejectsOtherValues(t *testing.T) {
+	_, err := config.Load("", env(map[string]string{"STACKSTEAD_UPDATE_CHECK": "maybe"}))
+	if err == nil || !strings.Contains(err.Error(), "STACKSTEAD_UPDATE_CHECK") {
+		t.Errorf("err = %v, want error naming STACKSTEAD_UPDATE_CHECK", err)
 	}
 }

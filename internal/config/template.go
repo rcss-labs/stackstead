@@ -51,6 +51,7 @@ func Template(cfg Config) ([]byte, error) {
 		"OperationTimeout":  formatDuration(cfg.OperationTimeout),
 		"DockerSocketLine":  optional("docker_socket", yamlScalar(cfg.DockerSocket), yamlScalar(def.DockerSocket)),
 		"ShutdownGraceLine": optional("shutdown_grace", formatDuration(cfg.ShutdownGrace), formatDuration(def.ShutdownGrace)),
+		"UpdateCheckLine":   optional("update_check", strconv.FormatBool(cfg.UpdateCheck), strconv.FormatBool(def.UpdateCheck)),
 	}
 	var buf bytes.Buffer
 	if err := configTemplate.Execute(&buf, view); err != nil {
@@ -126,6 +127,7 @@ func Effective(cfg Config, path string, getenv func(string) string) ([]Setting, 
 		{"operation_timeout", formatDuration(cfg.OperationTimeout)},
 		{"docker_socket", cfg.DockerSocket},
 		{"shutdown_grace", formatDuration(cfg.ShutdownGrace)},
+		{"update_check", strconv.FormatBool(cfg.UpdateCheck)},
 	}
 	settings := make([]Setting, len(values))
 	for i, v := range values {

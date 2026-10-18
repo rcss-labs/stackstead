@@ -27,3 +27,8 @@ operation_timeout: 15m
 # How long a cancelled or shutdown-interrupted operation gets after SIGTERM
 # before it is killed.
 # shutdown_grace: 30s
+
+# Once a day the server fetches the latest release's SHA256SUMS from
+# https://github.com/rcss-labs/stackstead to show "update available" in Settings.
+# Set to false on air-gapped hosts. Nothing is ever installed automatically.
+# update_check: true
