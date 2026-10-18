@@ -96,4 +96,4 @@ tests do not need it).
 
 ## Design documents
 
-The v1 design and the implementation plans live in `docs/superpowers/`.
+Design specs for features not built yet live in `docs/superpowers/specs/`. Specs and plans for shipped features are removed once implemented; find them in git history (`git log --diff-filter=D -- docs/superpowers`).
