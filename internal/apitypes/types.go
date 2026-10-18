@@ -567,3 +567,16 @@ type NetworkCreateRequest struct {
 	IPvlanMode string `json:"ipvlanMode"`
 	Internal   bool   `json:"internal"`
 }
+
+// UpdateStatus is the update-notice state: GET /api/settings/update, the
+// checker's Status(), and `stackstead upgrade --check -o json`.
+type UpdateStatus struct {
+	Current   string    `json:"current"`
+	Installer string    `json:"installer"`
+	Command   string    `json:"command"`
+	State     string    `json:"state"`
+	Latest    string    `json:"latest"`
+	NotesURL  string    `json:"notesURL"`
+	CheckedAt time.Time `json:"checkedAt,omitempty"`
+	Error     string    `json:"error"`
+}

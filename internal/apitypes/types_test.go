@@ -126,6 +126,7 @@ func TestJSONTagsMatchContract(t *testing.T) {
 		{"ContainerRow", populated[apitypes.ContainerRow](), "cpu,createdAt,exitCode,health,id,image,managed,mem,memLimit,name,networks,ports,project,restarts24h,service,stack,state,status"},
 		{"ContainerDetail", populated[apitypes.ContainerDetail](), "exitCode,finishedAt,health,id,image,labels,managed,memoryLimit,mounts,name,networks,ports,project,restartPolicy,restarts24h,service,stack,startedAt,state,status"},
 		{"TopEntry", populated[apitypes.TopEntry](), "container,project,service,value"},
+		{"UpdateStatus", populated[apitypes.UpdateStatus](), "checkedAt,command,current,error,installer,latest,notesURL,state"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
