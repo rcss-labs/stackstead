@@ -133,6 +133,9 @@ type releaseOpts struct {
 	Sign         bool // add SHA256SUMS.sig made with the release key (the key in allowed_signers)
 	SignOtherKey bool // add SHA256SUMS.sig made with a key that is NOT in allowed_signers
 	OmitFromSums bool // leave the linux tarballs out of SHA256SUMS
+	// Packages maps an asset name (stackstead_<ver>_<arch>.deb, ...) to a local file. Each asset
+	// is added, with its SHA256SUMS line, to the release whose version appears in the asset name.
+	Packages map[string]string
 }
 
 func (r *run) signersFile() string { return filepath.Join(r.Dir, "allowed_signers") }
@@ -251,6 +254,14 @@ func fakeRelease(t *testing.T, r *run, version string, bins map[string]string, o
 		if !(opts.OmitFromSums && goos == "linux") {
 			lines = append(lines, hexSum(data)+"  "+name)
 		}
+	}
+	for asset, file := range opts.Packages {
+		if !strings.Contains(asset, "_"+version+"_") && !strings.Contains(asset, "-"+version+"-") {
+			continue
+		}
+		data := readFile(t, file)
+		writeFile(t, filepath.Join(vdir, asset), data, 0o644)
+		lines = append(lines, hexSum(data)+"  "+asset)
 	}
 	installSh := common["install.sh"]
 	writeFile(t, filepath.Join(vdir, "install.sh"), installSh, 0o755)

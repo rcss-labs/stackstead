@@ -948,6 +948,7 @@ type scenario struct {
 	r         *run
 	base      string
 	container string
+	bin       string // installed stackstead for the upgrade tests; "" means /usr/local/bin/stackstead
 }
 
 func newScenario(t *testing.T, distro string, o scenarioOpts) *scenario {
@@ -1048,6 +1049,23 @@ func appendToTarballs(t *testing.T, www string) {
 			t.Fatal(err)
 		}
 		_, _ = fh.WriteString("tampered after the checksums were written\n")
+		_ = fh.Close()
+	}
+}
+
+// tamperInstallSh alters the install.sh asset of every release after SHA256SUMS was written.
+func tamperInstallSh(t *testing.T, www string) {
+	t.Helper()
+	files, _ := filepath.Glob(filepath.Join(www, "releases", "download", "v*", "install.sh"))
+	if len(files) == 0 {
+		t.Fatal("no install.sh assets to alter")
+	}
+	for _, f := range files {
+		fh, err := os.OpenFile(f, os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = fh.WriteString("\n# tampered after the checksums were written\n")
 		_ = fh.Close()
 	}
 }

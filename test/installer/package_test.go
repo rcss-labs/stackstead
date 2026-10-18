@@ -3,7 +3,6 @@
 package installer_test
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -39,9 +38,6 @@ func TestMain(m *testing.M) {
 	for _, f := range extraCleanups {
 		f()
 	}
-	if pkgRoot != "" {
-		_ = os.RemoveAll(pkgRoot)
-	}
 	os.Exit(code)
 }
 
@@ -52,49 +48,52 @@ func TestMain(m *testing.M) {
 func testPackages(t *testing.T) string {
 	t.Helper()
 	pkgOnce.Do(func() {
-		// cleared only when everything below completed, so a t.Fatal inside the
-		// Once cannot leave later tests running on a partial package set
-		pkgErr = errors.New("package build did not complete")
-		r := newRun(t)
-		arch := dockerArch(t)
-		pkgArch = arch
-		root, err := os.MkdirTemp("", "stackstead-pkgs-")
-		if err != nil {
-			pkgErr = err
-			return
-		}
-		pkgRoot = root
-		for _, v := range []string{pkgV1, pkgV2} {
-			bin := filepath.Join(root, "bin-"+v)
-			if err := os.MkdirAll(bin, 0o755); err != nil {
-				pkgErr = err
-				return
-			}
-			writeFile(t, filepath.Join(bin, "stackstead-linux-"+arch), readFile(t, buildFakeServer(t, r, arch, v)), 0o755)
-			dist := filepath.Join(root, v)
-			if out, err := lintMake(t, "packages", "DIST="+dist, "BIN="+bin, "VERSION=v"+v, "ALLOW_DEV_RELEASE=1", "PKG_ARCHES="+arch); err != nil {
-				pkgErr = fmt.Errorf("make packages v%s: %v\n%s", v, err, out)
-				return
-			}
-			_ = os.RemoveAll(bin)
-			_ = filepath.Walk(dist, func(p string, info os.FileInfo, err error) error {
-				if err == nil {
-					if info.IsDir() {
-						_ = os.Chmod(p, 0o755)
-					} else {
-						_ = os.Chmod(p, 0o644)
-					}
-				}
-				return nil
-			})
-		}
-		_ = os.Chmod(root, 0o755)
-		pkgErr = nil
+		pkgRoot, pkgErr = buildPackagesWith(t, []string{pkgV1, pkgV2}, buildFakeServer)
 	})
 	if pkgErr != nil {
 		t.Fatalf("building the test packages: %v", pkgErr)
 	}
 	return pkgRoot
+}
+
+// buildPackagesWith builds <root>/<version>/{deb,rpm} for every version with
+// `make packages` around the binary that build returns, and returns root. The
+// caller keeps the result in its own sync.Once; the first error is returned,
+// never a partial set.
+func buildPackagesWith(t *testing.T, versions []string, build func(t *testing.T, r *run, arch, version string) string) (string, error) {
+	t.Helper()
+	r := newRun(t)
+	arch := dockerArch(t)
+	pkgArch = arch
+	root, err := os.MkdirTemp("", "stackstead-pkgs-")
+	if err != nil {
+		return "", err
+	}
+	extraCleanups = append(extraCleanups, func() { _ = os.RemoveAll(root) })
+	for _, v := range versions {
+		bin := filepath.Join(root, "bin-"+v)
+		if err := os.MkdirAll(bin, 0o755); err != nil {
+			return "", err
+		}
+		writeFile(t, filepath.Join(bin, "stackstead-linux-"+arch), readFile(t, build(t, r, arch, v)), 0o755)
+		dist := filepath.Join(root, v)
+		if out, err := lintMake(t, "packages", "DIST="+dist, "BIN="+bin, "VERSION=v"+v, "ALLOW_DEV_RELEASE=1", "PKG_ARCHES="+arch); err != nil {
+			return "", fmt.Errorf("make packages v%s: %v\n%s", v, err, out)
+		}
+		_ = os.RemoveAll(bin)
+		_ = filepath.Walk(dist, func(p string, info os.FileInfo, err error) error {
+			if err == nil {
+				if info.IsDir() {
+					_ = os.Chmod(p, 0o755)
+				} else {
+					_ = os.Chmod(p, 0o644)
+				}
+			}
+			return nil
+		})
+	}
+	_ = os.Chmod(root, 0o755)
+	return root, nil
 }
 
 // pkgPath is where the package of this family and version sits inside a container.

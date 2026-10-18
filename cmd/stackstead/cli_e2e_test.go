@@ -10,10 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -622,5 +624,49 @@ func TestE2EUpdateStatus(t *testing.T) {
 				t.Errorf("command = %q, want it to end in %q", st.Command, "stackstead upgrade")
 			}
 		})
+	}
+}
+
+// TestE2EUpgrade runs the real binary's upgrade against a local release source. The binary is a
+// dev build (e2e-test), so --check reports "unknown" and a real upgrade is refused before any
+// privilege check or download, which keeps this test identical on every platform.
+func TestE2EUpgrade(t *testing.T) {
+	var mu sync.Mutex
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		mu.Lock()
+		paths = append(paths, req.URL.Path)
+		mu.Unlock()
+		if req.URL.Path == "/releases/latest/download/SHA256SUMS" {
+			fmt.Fprintf(w, "%s  stackstead_9.9.9_linux_amd64.tar.gz\n%s  install.sh\n", strings.Repeat("a", 64), strings.Repeat("b", 64))
+			return
+		}
+		http.NotFound(w, req)
+	}))
+	defer srv.Close()
+	r := newCLIRig(t, "")
+
+	var st struct{ State, Current, Latest, Installer string }
+	r.jsonOf(0, "", &st, "upgrade", "--check", "-o", "json", "--base-url", srv.URL)
+	if st.Latest != "9.9.9" || st.State != "unknown" || st.Current != "e2e-test" {
+		t.Errorf("upgrade --check = %+v, want latest 9.9.9, state unknown, current e2e-test", st)
+	}
+
+	mu.Lock()
+	before := len(paths)
+	mu.Unlock()
+	code, out, errOut := r.run("", "upgrade", "--yes", "--base-url", srv.URL)
+	if code != 5 {
+		t.Errorf("upgrade --yes on a dev build: exit %d, want 5\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if !strings.Contains(errOut, "development build") {
+		t.Errorf("stderr = %q, want the development build refusal", errOut)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, p := range paths[before:] {
+		if p != "/releases/latest/download/SHA256SUMS" {
+			t.Errorf("the refused upgrade fetched %s; only the release listing may be read", p)
+		}
 	}
 }
