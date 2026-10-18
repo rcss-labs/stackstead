@@ -12,3 +12,7 @@ stackstead: non-standard-dir-perm
 stackstead: non-standard-file-perm
 # nfpm emits a License field in the control file; it is informational only.
 stackstead: unknown-field License
+# stackstead only stats its own file list (/var/lib/dpkg/info/stackstead.list) to tell a deb install
+# from a script install, and `stackstead upgrade` probes the dpkg frontend lock (F_SETLK, released at
+# once) so it can report "busy" instead of racing apt; it never reads or writes the dpkg database.
+stackstead: uses-dpkg-database-directly [usr/bin/stackstead]
