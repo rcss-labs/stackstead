@@ -5,17 +5,26 @@
   <p>Build, run, and troubleshoot Docker Compose stacks from one browser tab.</p>
 
   <p>
-    <img src="https://img.shields.io/badge/Docker%20Compose-native-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker Compose native">
-    <img src="https://img.shields.io/badge/deploy-self--hosted-10B981?style=for-the-badge" alt="Self-hosted">
-    <img src="https://img.shields.io/badge/install-single%20binary-6366F1?style=for-the-badge" alt="Single binary">
-    <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-F59E0B?style=for-the-badge" alt="Linux and macOS">
+    <a href="https://github.com/rcss-labs/stackstead/releases/latest"><img src="https://img.shields.io/github/v/release/rcss-labs/stackstead?style=for-the-badge&label=release" alt="Latest release"></a>
+    <a href="https://github.com/rcss-labs/stackstead/releases/latest"><img src="https://img.shields.io/github/release-date/rcss-labs/stackstead?style=for-the-badge&label=released" alt="Release date"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-3DA639?style=for-the-badge" alt="Licence: AGPL-3.0"></a>
+    <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/rcss-labs/stackstead?style=for-the-badge&logo=go&logoColor=white" alt="Go version"></a>
+    <a href="https://github.com/rcss-labs/stackstead/releases"><img src="https://img.shields.io/github/downloads/rcss-labs/stackstead/total?style=for-the-badge&label=downloads" alt="Total downloads"></a>
+  </p>
+
+  <p>
+    <a href="docs/install.md"><img src="https://img.shields.io/badge/Docker%20Compose-native-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker Compose native"></a>
+    <a href="docs/security.md"><img src="https://img.shields.io/badge/deploy-self--hosted-10B981?style=for-the-badge" alt="Self-hosted"></a>
+    <a href="docs/install.md"><img src="https://img.shields.io/badge/install-single%20binary-6366F1?style=for-the-badge" alt="Single binary"></a>
+    <a href="docs/install.md#choose-a-format"><img src="https://img.shields.io/badge/platform-Linux%20amd64%20%7C%20arm64%20%7C%20macOS-F59E0B?style=for-the-badge" alt="Linux amd64 and arm64, macOS universal"></a>
   </p>
 
   <p>
     <a href="#install"><strong>Get started</strong></a> ·
     <a href="#what-you-get">Explore features</a> ·
     <a href="docs/install.md">Installation guide</a> ·
-    <a href="docs/cli.md">CLI reference</a>
+    <a href="docs/cli.md">CLI reference</a> ·
+    <a href="docs/README.md">Documentation</a>
   </p>
 </div>
 
@@ -118,6 +127,8 @@ database of its own.
 
 ## Install
 
+Latest release: **[0.3.0](https://github.com/rcss-labs/stackstead/releases/tag/v0.3.0)**.
+
 One command on a Linux server (systemd) or a Mac:
 
 ```bash
@@ -130,7 +141,12 @@ the URL to finish setup. Pin a version with `... | sudo sh -s -- --version vX.Y.
 Running it again upgrades in place and never touches your config, data or stacks.
 Releases are not signed yet; the checksum guards against corrupt downloads, and you can
 compare `SHA256SUMS` by hand. `stackstead upgrade` follows the same rule.
-Later, `sudo stackstead upgrade` updates it; Settings tells you when a release is out.
+
+**Upgrading.** From 0.3.0 on, `stackstead upgrade` updates any install type (script,
+`.deb`, `.rpm`, `.pkg`); `stackstead upgrade --check` only reports, and Settings shows the exact command
+for your machine. Back up first with `stackstead db backup`. 0.2.0 and earlier do not have the
+command: install 0.3.0 once the old way (run the script again, or install the newer package). See
+[Upgrade](docs/install.md#upgrade).
 
 - **Debian, Ubuntu, Fedora, Rocky and friends:** download the `.deb` or `.rpm` from the
   [releases page](https://github.com/rcss-labs/stackstead/releases) and run
@@ -152,6 +168,15 @@ from another machine you also need the one-time setup token from
 is root-equivalent on the host, so keep it on localhost or behind a TLS proxy.
 Paths, private registries, unit drop-ins, uninstall and purge are in
 [docs/install.md](docs/install.md).
+
+### What's new in 0.3.0
+
+- **Update notice.** Settings shows when a newer release exists, with the command to install it.
+  The daily check can be turned off (`update_check: false`).
+- **`stackstead upgrade`.** Downloads the release, verifies it against `SHA256SUMS` and runs the
+  installer that matches how this host was installed.
+
+Full notes: [v0.3.0 release](https://github.com/rcss-labs/stackstead/releases/tag/v0.3.0).
 
 ## Build from source
 
@@ -217,6 +242,8 @@ progress. Full reference: [docs/cli.md](docs/cli.md).
 
 ## Documentation
 
+- [Documentation hub](docs/README.md): every doc by task and audience, with
+  section links, plus the designs for features not built yet.
 - [API and observability reference](docs/api.md): every endpoint, log
   streaming and resume, metrics history, Prometheus setup.
 - [Installing](docs/install.md): the script, packages, the macOS installer,
@@ -230,9 +257,13 @@ progress. Full reference: [docs/cli.md](docs/cli.md).
 
 ## Status
 
-Stackstead is young and under active development. The web UI, stack
-management, logs, metrics, a command-line client and installers for Linux and
-macOS are in place.
+Stackstead is young and under active development; the current release is
+[0.3.0](https://github.com/rcss-labs/stackstead/releases/tag/v0.3.0). The web UI, stack management, logs, metrics,
+a command-line client, installers for Linux (amd64, arm64) and macOS (universal),
+and in-place upgrades with `stackstead upgrade` are in place. Releases are built
+and published by hand: they are unsigned and verified with `SHA256SUMS`, and there
+is no CI yet. Designs for the next features are in
+[`docs/superpowers/specs/`](docs/superpowers/specs/).
 
 ## Licence
 
