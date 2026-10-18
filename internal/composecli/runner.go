@@ -29,7 +29,7 @@ const (
 var ErrComposeUnavailable = errors.New("docker compose is not available")
 
 // ExitError reports a non-zero exit. Output holds the last ~200 lines of
-// merged stdout/stderr.
+// merged stdout/stderr for Run, or stderr alone for captured commands.
 type ExitError struct {
 	Code   int
 	Output string
@@ -85,16 +85,26 @@ func (r *Runner) Config(ctx context.Context, file string) error {
 	return r.Run(ctx, file, []string{"config", "--quiet"}, nil)
 }
 
+// ConfigJSON returns the resolved Compose configuration as JSON. On failure,
+// errors include only stderr and never the potentially secret-bearing stdout.
+func (r *Runner) ConfigJSON(ctx context.Context, file string) ([]byte, error) {
+	stdout, _, err := r.capture(ctx, filepath.Dir(file), composeArgs(file, []string{"config", "--format", "json"}))
+	if err != nil {
+		return nil, err
+	}
+	return []byte(stdout), nil
+}
+
 // ProjectName returns the project name compose derives for the file.
 func (r *Runner) ProjectName(ctx context.Context, file string) (string, error) {
-	stdout, _, err := r.capture(ctx, filepath.Dir(file), composeArgs(file, []string{"config", "--format", "json"}))
+	stdout, err := r.ConfigJSON(ctx, file)
 	if err != nil {
 		return "", err
 	}
 	var doc struct {
 		Name string `json:"name"`
 	}
-	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+	if err := json.Unmarshal(stdout, &doc); err != nil {
 		return "", fmt.Errorf("parse compose config: %w", err)
 	}
 	if doc.Name == "" {
@@ -144,7 +154,7 @@ func (r *Runner) capture(ctx context.Context, dir string, args []string) (string
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		tail := &tailBuffer{}
-		splitLines(strings.NewReader(stderr.String()+stdout.String()), tail.add)
+		splitLines(strings.NewReader(stderr.String()), tail.add)
 		return "", "", &ExitError{Code: exitErr.ExitCode(), Output: tail.String()}
 	}
 	return stdout.String(), stderr.String(), err

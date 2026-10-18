@@ -1,0 +1,1 @@
+{"name":"media","services":{"web":{"build":{"context":"."},"environment":{"DB_PASSWORD":"hunter2"}},"api":{"image":"registry/api:v2","build":{}},"db":{"image":"postgres:17"},"empty":{}},"volumes":{"db":{},"named":{"name":"explicit"},"shared":{"external":true,"name":"shared_data"}},"secrets":{"password":{"file":"hunter2"}}}
