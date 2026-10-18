@@ -2,6 +2,7 @@ package storage
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -315,5 +316,34 @@ func TestClassifyDigestDeclarationsDeduplicateAndKeepInputs(t *testing.T) {
 	got.Volumes[0].Labels[composeProjectLabel] = "changed"
 	if in.Images[0].RepoTags[0] != "nginx:latest" || in.Images[0].RepoDigests[0] != "docker.io/library/nginx@sha256:abc" || in.Volumes[0].Labels[composeProjectLabel] != "media" {
 		t.Fatal("classification mutated input")
+	}
+}
+
+func TestClassifyTagAndDigestDeclarations(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	for _, tc := range []struct {
+		name, reference, repoDigest string
+		want                        bool
+	}{
+		{"tag and digest", "nginx:1.27@" + digest, "docker.io/library/nginx@" + digest, true},
+		{"registry port with tag", "localhost:5000/web:1.27@" + digest, "localhost:5000/web@" + digest, true},
+		{"registry port without tag", "localhost:5000/web@" + digest, "localhost:5000/web@" + digest, true},
+		{"different port", "localhost:5001/web:1.27@" + digest, "localhost:5000/web@" + digest, false},
+		{"different digest", "nginx:1.27@sha256:" + strings.Repeat("b", 64), "docker.io/library/nginx@" + digest, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Classify(Inputs{Images: []engine.Image{{ID: "i", RepoTags: []string{"nginx:1.27"}, RepoDigests: []string{tc.repoDigest}}}, Stacks: []StackDeclarations{{Name: "media", Project: "media", State: "stopped", Known: true, Images: []DeclaredImage{{Service: "web", Reference: tc.reference}}}}})
+			declarations := got.Images[0].DeclaredBy
+			if !tc.want {
+				if len(declarations) != 0 {
+					t.Fatalf("declarations=%+v want none", declarations)
+				}
+				return
+			}
+			want := []Declaration{{Stack: "media", Service: "web", Ref: tc.reference, StackState: "stopped"}}
+			if !reflect.DeepEqual(declarations, want) {
+				t.Fatalf("declarations=%+v want %+v", declarations, want)
+			}
+		})
 	}
 }

@@ -206,10 +206,13 @@ func compareSize(a, b *int64, aName, bName, aID, bID string) int {
 }
 
 // normalizeReference expands Docker Hub's familiar names without treating a
-// registry's port as an image tag. Digest references never gain :latest.
+// registry's port as an image tag. Digests identify content independently of tags.
 func normalizeReference(ref string) string {
 	name, digest, hasDigest := strings.Cut(ref, "@")
 	slash := strings.LastIndex(name, "/")
+	if tag := strings.LastIndex(name, ":"); hasDigest && tag > slash {
+		name = name[:tag]
+	}
 	if !hasDigest && strings.LastIndex(name, ":") <= slash {
 		name += ":latest"
 	}
