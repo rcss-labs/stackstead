@@ -577,6 +577,6 @@ type UpdateStatus struct {
 	State     string    `json:"state"`
 	Latest    string    `json:"latest"`
 	NotesURL  string    `json:"notesURL"`
-	CheckedAt time.Time `json:"checkedAt,omitempty"`
+	CheckedAt time.Time `json:"checkedAt,omitzero"`
 	Error     string    `json:"error"`
 }

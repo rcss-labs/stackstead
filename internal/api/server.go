@@ -63,6 +63,8 @@ type Options struct {
 	ContainerEngine ContainerEngineAPI
 	// NetworkEngine backs network routes when Stacks is also set.
 	NetworkEngine NetworkEngineAPI
+	// Updates backs /api/settings/update; the routes exist only when it is set.
+	Updates UpdateAPI
 }
 
 type server struct {
@@ -118,6 +120,9 @@ func New(opts Options) http.Handler {
 		s.registerNetworkRoutes(mux)
 	}
 	s.registerDashboardRoutes(mux)
+	if opts.Updates != nil {
+		s.registerUpdateRoutes(mux)
+	}
 	if opts.Stacks != nil && opts.Observe != nil {
 		s.registerContainerRoutes(mux)
 		if opts.ContainerEngine != nil {
