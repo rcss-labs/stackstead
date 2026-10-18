@@ -84,6 +84,19 @@ describe('request', () => {
     expect(fake.calls.map((c) => c.body)).toEqual([{}, {}]);
   });
 
+  it('updateStatus GETs /api/settings/update', async () => {
+    fake = installFakeFetch({ 'GET /api/settings/update': { body: { state: 'unknown' } } });
+    expect(await api.updateStatus()).toEqual({ state: 'unknown' });
+    expect(fake.calls[0].method).toBe('GET');
+  });
+
+  it('checkUpdate POSTs /api/settings/update/check with {}', async () => {
+    fake = installFakeFetch({ 'POST /api/settings/update/check': { body: { state: 'up-to-date' } } });
+    expect(await api.checkUpdate()).toEqual({ state: 'up-to-date' });
+    expect(fake.calls[0].body).toEqual({});
+    expect(fake.calls[0].headers.get('content-type')).toBe('application/json');
+  });
+
   it('sends no body and no content-type on DELETE', async () => {
     fake = installFakeFetch({ 'DELETE /api/stacks/web?volumes=true': { status: 202, body: { id: '1' } } });
     await api.remove('web', true);

@@ -322,6 +322,21 @@ export interface MetricsTokenStatus {
   configured: boolean;
 }
 
+export type UpdateState = 'available' | 'up-to-date' | 'failed' | 'disabled' | 'unknown';
+
+/** GET /api/settings/update and POST /api/settings/update/check: the same shape (apitypes.UpdateStatus). */
+export interface UpdateStatus {
+  current: string;
+  installer: 'script' | 'deb' | 'rpm' | 'pkg';
+  command: string;
+  state: UpdateState;
+  latest: string;
+  notesURL: string;
+  checkedAt?: string;
+  /** One of network|timeout|http|malformed, or empty. Unknown slugs are tolerated. */
+  error: '' | 'network' | 'timeout' | 'http' | 'malformed' | string;
+}
+
 export interface MetricsToken {
   token: string;
 }

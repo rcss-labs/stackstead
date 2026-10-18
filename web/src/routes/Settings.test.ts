@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as session from '../lib/api/session';
 import { initAppearance, setDensity, setTheme } from '../lib/stores/appearance';
 import { toasts } from '../lib/stores/toasts';
-import { installFakeFetch, type FakeFetch } from '../vitest-setup';
+import { installFakeFetch, type FakeFetch, type Routes } from '../vitest-setup';
 import Settings from './Settings.svelte';
 
 let fake: FakeFetch;
@@ -24,9 +24,34 @@ afterEach(() => {
 
 const STATUS = '/api/settings/metrics-token';
 
+// The update card loads on every Settings render; give it a quiet default answer.
+const UPDATE_STATUS = {
+  current: '0.2.0',
+  installer: 'script',
+  command: '/usr/local/bin/stackstead upgrade',
+  state: 'up-to-date',
+  latest: '0.2.0',
+  notesURL: '',
+  checkedAt: '2026-10-18T09:00:00Z',
+  error: '',
+};
+const installSettingsFetch = (routes: Routes) =>
+  installFakeFetch({ 'GET /api/settings/update': { body: UPDATE_STATUS }, ...routes });
+
+describe('Settings update card', () => {
+  it('renders the update card under System status', async () => {
+    fake = installSettingsFetch({ [`GET ${STATUS}`]: { body: { configured: false } } });
+    render(Settings);
+    expect(await screen.findByRole('region', { name: 'Software update' })).toBeTruthy();
+    expect(await screen.findByText('up to date')).toBeTruthy();
+    const headings = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent);
+    expect(headings.indexOf('Software update')).toBe(headings.indexOf('System status') + 1);
+  });
+});
+
 describe('Settings metrics token', () => {
   it('not configured: explains /metrics 404 and offers Create only', async () => {
-    fake = installFakeFetch({ [`GET ${STATUS}`]: { body: { configured: false } } });
+    fake = installSettingsFetch({ [`GET ${STATUS}`]: { body: { configured: false } } });
     render(Settings);
     expect(await screen.findByRole('button', { name: 'Create token' })).toBeTruthy();
     expect(screen.getByText(/404/)).toBeTruthy();
@@ -36,7 +61,7 @@ describe('Settings metrics token', () => {
   });
 
   it('configured: offers Rotate and Disable', async () => {
-    fake = installFakeFetch({ [`GET ${STATUS}`]: { body: { configured: true } } });
+    fake = installSettingsFetch({ [`GET ${STATUS}`]: { body: { configured: true } } });
     render(Settings);
     expect(await screen.findByRole('button', { name: 'Rotate token' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Disable' })).toBeTruthy();
@@ -45,7 +70,7 @@ describe('Settings metrics token', () => {
 
   it('failed status fetch shows an error with Retry, not a guess', async () => {
     let n = 0;
-    fake = installFakeFetch({
+    fake = installSettingsFetch({
       [`GET ${STATUS}`]: () => (++n === 1 ? { status: 500, body: { error: 'boom' } } : { body: { configured: false } }),
     });
     const user = userEvent.setup();
@@ -57,7 +82,7 @@ describe('Settings metrics token', () => {
   });
 
   it('create shows the token once, with a snippet, and hides it for good when saved', async () => {
-    fake = installFakeFetch({
+    fake = installSettingsFetch({
       [`GET ${STATUS}`]: { body: { configured: false } },
       [`POST ${STATUS}`]: { status: 200, body: { token: TOKEN } },
     });
@@ -83,7 +108,7 @@ describe('Settings metrics token', () => {
   });
 
   it('leaving the page clears the token from the DOM', async () => {
-    fake = installFakeFetch({
+    fake = installSettingsFetch({
       [`GET ${STATUS}`]: { body: { configured: false } },
       [`POST ${STATUS}`]: { status: 200, body: { token: TOKEN } },
     });
@@ -96,7 +121,7 @@ describe('Settings metrics token', () => {
   });
 
   it('rotate requires confirmation and warns the old token stops working', async () => {
-    fake = installFakeFetch({
+    fake = installSettingsFetch({
       [`GET ${STATUS}`]: { body: { configured: true } },
       [`POST ${STATUS}`]: { status: 200, body: { token: TOKEN } },
     });
@@ -115,7 +140,7 @@ describe('Settings metrics token', () => {
   });
 
   it('disable requires confirmation then flips to not configured', async () => {
-    fake = installFakeFetch({
+    fake = installSettingsFetch({
       [`GET ${STATUS}`]: { body: { configured: true } },
       [`DELETE ${STATUS}`]: { status: 204 },
     });
@@ -129,7 +154,7 @@ describe('Settings metrics token', () => {
   });
 
   it('a failed create shows an error and no token', async () => {
-    fake = installFakeFetch({
+    fake = installSettingsFetch({
       [`GET ${STATUS}`]: { body: { configured: false } },
       [`POST ${STATUS}`]: { status: 500, body: { error: 'disk full' } },
     });
@@ -143,7 +168,7 @@ describe('Settings metrics token', () => {
 
 describe('Settings status and account', () => {
   it('renders status values from the live store and refreshes on demand', async () => {
-    fake = installFakeFetch({ [`GET ${STATUS}`]: { body: { configured: false } } });
+    fake = installSettingsFetch({ [`GET ${STATUS}`]: { body: { configured: false } } });
     const liveMod = await import('../lib/stores/live');
     const fetchStatus = vi.fn().mockResolvedValue({ docker: 'ok', compose: 'v2.29.1', events: 'connected', metricsDegraded: false });
     const open = vi.fn((o: { onStatus: (s: string) => void }) => {
@@ -165,7 +190,7 @@ describe('Settings status and account', () => {
   });
 
   it('logout calls the session action and warns when it may not have completed', async () => {
-    fake = installFakeFetch({ [`GET ${STATUS}`]: { body: { configured: false } } });
+    fake = installSettingsFetch({ [`GET ${STATUS}`]: { body: { configured: false } } });
     vi.spyOn(session, 'logout').mockResolvedValue({ ok: false });
     const user = userEvent.setup();
     render(Settings);
@@ -177,14 +202,14 @@ describe('Settings status and account', () => {
 
 describe('Settings v2 cards', () => {
   it('docker reads unknown, not unavailable, before any status arrives', async () => {
-    fake = installFakeFetch({ [`GET ${STATUS}`]: { body: { configured: false } } });
+    fake = installSettingsFetch({ [`GET ${STATUS}`]: { body: { configured: false } } });
     render(Settings);
     expect(screen.getByTestId('status-docker').textContent).toContain('unknown');
     expect(screen.getByTestId('status-docker').textContent).not.toContain('unavailable');
   });
 
   it('appearance buttons reflect and set the theme and density', async () => {
-    fake = installFakeFetch({ [`GET ${STATUS}`]: { body: { configured: false } } });
+    fake = installSettingsFetch({ [`GET ${STATUS}`]: { body: { configured: false } } });
     const dispose = initAppearance({ root: document.createElement('html'), storage: () => null });
     try {
       setTheme('dark');
@@ -209,7 +234,7 @@ describe('Settings v2 cards', () => {
   });
 
   it('system status shows docker version and metrics interval', async () => {
-    fake = installFakeFetch({ [`GET ${STATUS}`]: { body: { configured: false } } });
+    fake = installSettingsFetch({ [`GET ${STATUS}`]: { body: { configured: false } } });
     const liveMod = await import('../lib/stores/live');
     const fetchStatus = vi.fn().mockResolvedValue({
       docker: 'ok',

@@ -19,6 +19,7 @@ import type {
   MetricsSummary,
   MetricsToken,
   MetricsTokenStatus,
+  UpdateStatus,
   Network,
   Operation,
   OperationDetail,
@@ -217,6 +218,8 @@ export const api = {
   alerts: () => get<Alert[]>('/api/alerts'),
   metricsSummary: (window?: SummaryWindow) => get<MetricsSummary>(`/api/metrics/summary${query({ window })}`),
 
+  updateStatus: () => get<UpdateStatus>('/api/settings/update'),
+  checkUpdate: () => post<UpdateStatus>('/api/settings/update/check'),
   metricsTokenStatus: () => get<MetricsTokenStatus>('/api/settings/metrics-token'),
   createMetricsToken: () => post<MetricsToken>('/api/settings/metrics-token'),
   deleteMetricsToken: () => request<void>('DELETE', '/api/settings/metrics-token').then((r) => r.data),

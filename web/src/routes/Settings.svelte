@@ -8,6 +8,7 @@
   import CopyButton from '../lib/components/CopyButton.svelte';
   import Spinner from '../lib/components/Spinner.svelte';
   import PasswordForm from '../lib/settings/PasswordForm.svelte';
+  import UpdateCard from '../lib/settings/UpdateCard.svelte';
   import { density, setDensity, setTheme, theme, type Density, type ThemeChoice } from '../lib/stores/appearance';
   import { live, refreshStatus } from '../lib/stores/live';
   import { toasts } from '../lib/stores/toasts';
@@ -133,6 +134,8 @@
       <div><Button variant="secondary" size="sm" onclick={() => void refreshStatus()}>Refresh</Button></div>
     </div>
   </section>
+
+  <UpdateCard />
 
   <section class="card" aria-labelledby="metrics-h">
     <header>
