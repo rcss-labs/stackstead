@@ -96,7 +96,7 @@ func TestRootHelpIsGroupedServerRemoteHostAdmin(t *testing.T) {
 	for _, c := range []struct{ heading, next, cmd string }{
 		{"Server:", "Remote:", "serve"}, {"Server:", "Remote:", "version"},
 		{"Remote:", "Host admin:", "stacks"}, {"Remote:", "Host admin:", "login"}, {"Remote:", "Host admin:", "logs"},
-		{"Host admin:", "", "db"}, {"Host admin:", "", "admin"}, {"Host admin:", "", "health"}, {"Host admin:", "", "config"},
+		{"Host admin:", "", "db"}, {"Host admin:", "", "admin"}, {"Host admin:", "", "health"}, {"Host admin:", "", "upgrade"}, {"Host admin:", "", "config"},
 	} {
 		if !strings.Contains(section(c.heading, c.next), "\n  "+c.cmd+" ") {
 			t.Errorf("%q is not listed under %s:\n%s", c.cmd, c.heading, out)

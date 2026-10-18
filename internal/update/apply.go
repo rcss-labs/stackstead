@@ -35,7 +35,8 @@ func (e *DowngradeError) Error() string {
 func (e *DowngradeError) Is(target error) bool { return target == ErrDowngradeManual }
 
 // Commands is pure: it maps a plan to one fixed argv (no shell) and extra
-// environment. Package downgrades are refused even with Force.
+// environment. Tools are absolute paths: root must not resolve them through a
+// user-controlled PATH. Package downgrades are refused even with Force.
 func Commands(p Plan) (argv []string, extraEnv []string, err error) {
 	if !filepath.IsAbs(p.Asset) {
 		return nil, nil, fmt.Errorf("installer asset %q is not an absolute path", p.Asset)
@@ -50,7 +51,7 @@ func Commands(p Plan) (argv []string, extraEnv []string, err error) {
 		if p.Prefix == "" {
 			return nil, nil, ErrLayout
 		}
-		argv = []string{"sh", p.Asset, "--version", "v" + p.Version.String(), "--prefix", p.Prefix}
+		argv = []string{"/bin/sh", p.Asset, "--version", "v" + p.Version.String(), "--prefix", p.Prefix}
 		if p.Force {
 			argv = append(argv, "--force")
 		}
@@ -62,7 +63,10 @@ func Commands(p Plan) (argv []string, extraEnv []string, err error) {
 		if downgrade {
 			return nil, nil, &DowngradeError{Command: "apt-get install -y --allow-downgrades " + shellQuote(p.Asset)}
 		}
-		argv = []string{"apt-get", "install", "-y"}
+		// force-confold keeps an operator-edited config (the new one lands as
+		// .dpkg-dist); without it dpkg prompts and aborts on a closed stdin.
+		argv = []string{"/usr/bin/apt-get", "install", "-y",
+			"-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold"}
 		if p.Force && same {
 			argv = append(argv, "--reinstall")
 		}
@@ -72,13 +76,13 @@ func Commands(p Plan) (argv []string, extraEnv []string, err error) {
 		case downgrade:
 			return nil, nil, &DowngradeError{Command: "rpm -U --oldpackage " + shellQuote(p.Asset)}
 		case p.Force && same:
-			return []string{"rpm", "-U", "--replacepkgs", p.Asset}, nil, nil
+			return []string{"/usr/bin/rpm", "-U", "--replacepkgs", p.Asset}, nil, nil
 		case p.HaveDNF:
-			return []string{"dnf", "install", "-y", p.Asset}, nil, nil
+			return []string{"/usr/bin/dnf", "install", "-y", p.Asset}, nil, nil
 		}
-		return []string{"rpm", "-U", p.Asset}, nil, nil
+		return []string{"/usr/bin/rpm", "-U", p.Asset}, nil, nil
 	case KindPkg:
-		return []string{"installer", "-pkg", p.Asset, "-target", "/"}, nil, nil
+		return []string{"/usr/sbin/installer", "-pkg", p.Asset, "-target", "/"}, nil, nil
 	}
 	return nil, nil, fmt.Errorf("unknown installer kind %q", p.Kind)
 }

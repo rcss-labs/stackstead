@@ -77,15 +77,15 @@ func TestUpgradeCommandQuotesOddPaths(t *testing.T) {
 }
 
 func TestPrefixOf(t *testing.T) {
-	if got, err := prefixOf("/usr/local/bin/stackstead"); err != nil || got != "/usr/local" {
+	if got, err := PrefixOf("/usr/local/bin/stackstead"); err != nil || got != "/usr/local" {
 		t.Errorf("got %q, %v; want /usr/local", got, err)
 	}
-	if got, err := prefixOf("/home/me/.local/bin/stackstead"); err != nil || got != "/home/me/.local" {
+	if got, err := PrefixOf("/home/me/.local/bin/stackstead"); err != nil || got != "/home/me/.local" {
 		t.Errorf("got %q, %v; want /home/me/.local", got, err)
 	}
 	for _, bad := range []string{"/opt/stackstead", "/usr/local/sbin/stackstead", "/usr/local/bin/other", "stackstead", ""} {
-		if _, err := prefixOf(bad); !errors.Is(err, ErrLayout) {
-			t.Errorf("prefixOf(%q) err = %v, want ErrLayout", bad, err)
+		if _, err := PrefixOf(bad); !errors.Is(err, ErrLayout) {
+			t.Errorf("PrefixOf(%q) err = %v, want ErrLayout", bad, err)
 		}
 	}
 }

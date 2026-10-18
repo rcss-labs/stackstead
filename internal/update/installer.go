@@ -62,8 +62,8 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// prefixOf maps <prefix>/bin/stackstead to <prefix>.
-func prefixOf(exe string) (string, error) {
+// PrefixOf maps <prefix>/bin/stackstead to <prefix>.
+func PrefixOf(exe string) (string, error) {
 	bin := filepath.Dir(exe)
 	if !filepath.IsAbs(exe) || filepath.Base(exe) != "stackstead" || filepath.Base(bin) != "bin" {
 		return "", ErrLayout

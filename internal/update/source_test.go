@@ -339,3 +339,22 @@ func TestDownloadRefusesExistingFile(t *testing.T) {
 		t.Error("existing file modified")
 	}
 }
+
+// A slow link must not be cut by the per-request timeout that protects the
+// small SHA256SUMS fetch: only ctx bounds a download.
+func TestDownloadIsNotBoundByRequestTimeout(t *testing.T) {
+	content := []byte(strings.Repeat("x", 3000))
+	sums := line(debName, content)
+	s, srv := newTestSource(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for i := 0; i < 3; i++ {
+			w.Write(content[i*1000 : (i+1)*1000])
+			w.(http.Flusher).Flush()
+			time.Sleep(150 * time.Millisecond)
+		}
+	}))
+	s.client.Timeout = 200 * time.Millisecond
+	rel := Release{Version: mustVer(t, "0.3.0"), Sums: []byte(sums), base: srv.URL}
+	if _, err := s.Download(context.Background(), rel, debName, t.TempDir()); err != nil {
+		t.Fatalf("slow download failed: %v", err)
+	}
+}

@@ -6,8 +6,8 @@ import (
 	"syscall"
 )
 
-// dpkgFrontendLocked probes the lock apt itself takes, without blocking.
-func dpkgFrontendLocked() (bool, error) {
+// DpkgFrontendLocked probes the lock apt itself takes, without blocking.
+func DpkgFrontendLocked() (bool, error) {
 	return dpkgFrontendLockedAt("/var/lib/dpkg/lock-frontend")
 }
 

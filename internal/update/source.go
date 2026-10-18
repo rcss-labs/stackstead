@@ -24,6 +24,7 @@ const (
 	documentLimit  int64 = 1 << 20
 	assetLimit     int64 = 512 << 20
 	requestTimeout       = 20 * time.Second
+	dialTimeout          = 10 * time.Second
 	maxRedirects         = 10
 )
 
@@ -36,7 +37,8 @@ var (
 // Source resolves releases from one base URL and downloads verified assets.
 type Source struct {
 	base       string
-	client     *http.Client
+	client     *http.Client // small documents: bounded by requestTimeout
+	dlClient   *http.Client // assets: bounded by ctx and the transport's phase timeouts only
 	ua         string
 	docLimit   int64
 	assetLimit int64
@@ -80,26 +82,29 @@ func NewSource(baseURL, userAgent string) (*Source, error) {
 	if u.Scheme == "http" {
 		loopbackOrigin = u.Host
 	}
-	s.client = &http.Client{
-		Timeout: requestTimeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= maxRedirects {
-				return errors.New("too many release redirects")
-			}
-			if req.URL.User != nil {
-				return errors.New("unsafe release redirect")
-			}
-			sameLoopback := loopbackOrigin != "" && req.URL.Scheme == "http" && req.URL.Host == loopbackOrigin
-			trusted := req.URL.Scheme == "https" && req.URL.Port() == "" && redirectHosts[req.URL.Hostname()]
-			if !sameLoopback && !trusted {
-				return errors.New("untrusted release redirect")
-			}
-			req.Header.Del("Authorization")
-			req.Header.Del("Proxy-Authorization")
-			req.Header.Del("Cookie")
-			return nil
-		},
+	checkRedirect := func(req *http.Request, via []*http.Request) error {
+		if len(via) >= maxRedirects {
+			return errors.New("too many release redirects")
+		}
+		if req.URL.User != nil {
+			return errors.New("unsafe release redirect")
+		}
+		sameLoopback := loopbackOrigin != "" && req.URL.Scheme == "http" && req.URL.Host == loopbackOrigin
+		trusted := req.URL.Scheme == "https" && req.URL.Port() == "" && redirectHosts[req.URL.Hostname()]
+		if !sameLoopback && !trusted {
+			return errors.New("untrusted release redirect")
+		}
+		req.Header.Del("Authorization")
+		req.Header.Del("Proxy-Authorization")
+		req.Header.Del("Cookie")
+		return nil
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}).DialContext
+	transport.TLSHandshakeTimeout = dialTimeout
+	transport.ResponseHeaderTimeout = requestTimeout
+	s.client = &http.Client{Transport: transport, Timeout: requestTimeout, CheckRedirect: checkRedirect}
+	s.dlClient = &http.Client{Transport: transport, CheckRedirect: checkRedirect}
 	return s, nil
 }
 
@@ -186,13 +191,13 @@ func (r Release) AssetName(kind Kind, goos, goarch string) (string, error) {
 	return "", fmt.Errorf("unknown installer kind %q", kind)
 }
 
-func (s *Source) get(ctx context.Context, rawURL string) (*http.Response, error) {
+func (s *Source) get(ctx context.Context, client *http.Client, rawURL string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", s.ua)
-	resp, err := s.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +209,7 @@ func (s *Source) get(ctx context.Context, rawURL string) (*http.Response, error)
 }
 
 func (s *Source) fetchDocument(ctx context.Context, rawURL string) ([]byte, error) {
-	resp, err := s.get(ctx, rawURL)
+	resp, err := s.get(ctx, s.client, rawURL)
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +232,7 @@ func (s *Source) Download(ctx context.Context, r Release, name, dir string) (str
 	if err != nil {
 		return "", err
 	}
-	resp, err := s.get(ctx, r.base+"/releases/download/v"+r.Version.String()+"/"+name)
+	resp, err := s.get(ctx, s.dlClient, r.base+"/releases/download/v"+r.Version.String()+"/"+name)
 	if err != nil {
 		return "", err
 	}
