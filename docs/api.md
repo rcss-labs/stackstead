@@ -60,7 +60,8 @@ Update status:
   Nothing in the request chooses a version, URL or installer, and the API
   installs nothing: upgrades run only from the terminal.
 - The server checks once a day, and once an hour after a failure. Both routes
-  are absent when the server was built without the checker.
+  are always present on a running server; with `update_check: false` they
+  answer `state: disabled`.
 
 Notes on the stacks API:
 

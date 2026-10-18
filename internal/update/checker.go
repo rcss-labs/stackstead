@@ -2,6 +2,7 @@ package update
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
@@ -60,8 +61,9 @@ func NewChecker(o CheckerOptions) *Checker {
 		o.Logger = slog.New(slog.DiscardHandler)
 	}
 	c := &Checker{opts: o, current: strings.TrimPrefix(o.Current, "v")}
-	_, err := Parse(c.current)
-	c.isRelease = err == nil
+	v, err := Parse(c.current)
+	// A build after its tag (v0.2.0-3-gabcdef) is a development build.
+	c.isRelease = err == nil && !v.IsPost
 
 	command := UpgradeCommand(o.Kind, o.GOOS, o.Exe)
 	if len(command) > maxCommandBytes || !printableASCII(command) {
@@ -160,6 +162,9 @@ func (c *Checker) CheckNow(ctx context.Context) apitypes.UpdateStatus {
 // check performs one fetch and records the outcome; callers hold checkMu.
 func (c *Checker) check(ctx context.Context) bool {
 	rel, err := c.opts.Source.Latest(ctx)
+	if errors.Is(err, context.Canceled) {
+		return false // shutdown or a gone caller says nothing about the release source
+	}
 	now := c.opts.Now()
 
 	c.mu.Lock()

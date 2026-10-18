@@ -44,7 +44,7 @@ access is equivalent to root. Treat the Stackstead login like a root password.
   limit as the install script: the sums come from the same release page, so
   this catches corruption and wrong files, not a compromised publisher
   (releases are not signed yet). As root it runs the installer by absolute
-  path with a fixed `PATH`, never through a shell, from a fresh temporary
+  path with a fixed `PATH`, never through a shell command line, from a fresh temporary
   directory it removes afterwards. `--base-url` replaces the source (HTTPS or
   loopback HTTP only) and prints a warning.
 

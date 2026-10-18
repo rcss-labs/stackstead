@@ -26,12 +26,14 @@ func (s *server) handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUpdateCheck asks for a fresh check; the body must be a JSON object with
-// no fields, like every other mutation. The checker rate-limits itself.
+// no fields, like every other mutation. The checker rate-limits itself. The
+// check outlives the request: a browser that gives up must not leave a
+// cancelled attempt recorded as a failure for everyone.
 func (s *server) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &struct{}{}) {
 		return
 	}
-	writeUpdateStatus(w, s.opts.Updates.CheckNow(r.Context()))
+	writeUpdateStatus(w, s.opts.Updates.CheckNow(context.WithoutCancel(r.Context())))
 }
 
 func writeUpdateStatus(w http.ResponseWriter, st apitypes.UpdateStatus) {

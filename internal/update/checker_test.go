@@ -153,6 +153,42 @@ func TestCheckerDevBuildNeverFetches(t *testing.T) {
 	}
 }
 
+func TestCheckerPostTagBuildNeverFetches(t *testing.T) {
+	h := newHarness(t, "v0.2.0-3-gabcdef", true, "0.3.0")
+	done := make(chan struct{})
+	go func() { h.c.Run(context.Background()); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return for a post-tag build")
+	}
+	st := h.c.CheckNow(context.Background())
+	if h.srv.hits.Load() != 0 {
+		t.Errorf("requests = %d, want 0", h.srv.hits.Load())
+	}
+	if st.State != "unknown" || st.Current != "0.2.0-3-gabcdef" {
+		t.Errorf("status = %+v", st)
+	}
+}
+
+func TestCheckNowCancelledContextIsNotRecorded(t *testing.T) {
+	h := newHarness(t, "0.2.0", true, "0.3.0")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	st := h.c.CheckNow(ctx)
+	if st.Error != "" || st.State != "unknown" {
+		t.Errorf("status = %+v, want no recorded failure", st)
+	}
+	if h.logs.Len() != 0 {
+		t.Errorf("logged: %s", h.logs)
+	}
+	// A cancelled attempt must not start the 60 s rate-limit window either.
+	h.c.CheckNow(context.Background())
+	if n := h.srv.hits.Load(); n != 1 {
+		t.Errorf("requests = %d, want 1", n)
+	}
+}
+
 func TestCheckerCurrentDropsLeadingV(t *testing.T) {
 	h := newHarness(t, "v0.2.0", true, "0.3.0")
 	if got := h.c.Status().Current; got != "0.2.0" {

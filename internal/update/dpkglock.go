@@ -6,9 +6,21 @@ import (
 	"syscall"
 )
 
-// DpkgFrontendLocked probes the lock apt itself takes, without blocking.
+// DpkgFrontendLocked probes the locks dpkg and apt take, without blocking:
+// lock-frontend (apt) and lock (dpkg itself).
 func DpkgFrontendLocked() (bool, error) {
-	return dpkgFrontendLockedAt("/var/lib/dpkg/lock-frontend")
+	return dpkgLocksHeldAt("/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock")
+}
+
+// dpkgLocksHeldAt reports whether any of the lock files is held.
+func dpkgLocksHeldAt(paths ...string) (bool, error) {
+	for _, path := range paths {
+		held, err := dpkgFrontendLockedAt(path)
+		if err != nil || held {
+			return held, err
+		}
+	}
+	return false, nil
 }
 
 func dpkgFrontendLockedAt(path string) (bool, error) {

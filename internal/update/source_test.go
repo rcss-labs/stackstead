@@ -227,6 +227,26 @@ func TestReleasePinned(t *testing.T) {
 	}
 }
 
+func TestAssetNamePrereleasePackages(t *testing.T) {
+	rel := Release{Version: mustParse(t, "1.2.3-rc.1")}
+	cases := []struct {
+		kind         Kind
+		goos, goarch string
+		want         string
+	}{
+		{KindScript, "linux", "amd64", "install.sh"},
+		{KindDeb, "linux", "amd64", "stackstead_1.2.3~rc.1_amd64.deb"},
+		{KindRPM, "linux", "arm64", "stackstead-1.2.3~rc.1-1.aarch64.rpm"},
+		{KindPkg, "darwin", "arm64", "stackstead_1.2.3-rc.1_darwin.pkg"},
+	}
+	for _, c := range cases {
+		got, err := rel.AssetName(c.kind, c.goos, c.goarch)
+		if err != nil || got != c.want {
+			t.Errorf("%v %s/%s = %q, %v; want %q", c.kind, c.goos, c.goarch, got, err, c.want)
+		}
+	}
+}
+
 func TestAssetName(t *testing.T) {
 	rel := Release{Version: mustParse(t, "0.3.0")}
 	cases := []struct {

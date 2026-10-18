@@ -29,10 +29,20 @@ var (
 	upgradeLookPath   = func(name string) (string, error) { return lookInDirs(fixedToolDirs, name) }
 	upgradeLocked     = update.DpkgFrontendLocked
 	upgradeRunner     = runInstaller
-	upgradeTempDir    = func() (string, error) { return os.MkdirTemp("", "stackstead-upgrade.") }
+	upgradeTempDir    = defaultUpgradeTempDir
 	upgradeGOOS       = runtime.GOOS
 	upgradeGOARCH     = runtime.GOARCH
 )
+
+// defaultUpgradeTempDir is where the asset lands. Root uses /tmp, never a
+// TMPDIR from the environment (sudo may keep a user-writable one).
+func defaultUpgradeTempDir() (string, error) {
+	parent := ""
+	if geteuid() == 0 {
+		parent = "/tmp"
+	}
+	return os.MkdirTemp(parent, "stackstead-upgrade.")
+}
 
 func upgradeCommand() *Command {
 	var f upgradeFlags
@@ -60,9 +70,9 @@ func upgradeCommand() *Command {
 }
 
 // withV renders a version as vX.Y.Z; text that is not a release version
-// (a development build) stays as it is.
+// (a development build, including one after its tag) stays as it is.
 func withV(s string) string {
-	if v, err := update.Parse(s); err == nil {
+	if v, err := update.Parse(s); err == nil && !v.IsPost {
 		return "v" + v.String()
 	}
 	return s
@@ -113,8 +123,8 @@ func runUpgrade(ctx context.Context, env *Env, g *globalFlags, f upgradeFlags) e
 	}
 	target := "v" + rel.Version.String()
 	curV, curErr := update.Parse(cur)
-	haveCur := curErr == nil
-	order := 0 // installed relative to target: 1 means installed is newer
+	haveCur := curErr == nil && !curV.IsPost // a build after its tag is a development build
+	order := 0                               // installed relative to target: 1 means installed is newer
 	if haveCur {
 		order = update.Compare(curV, rel.Version)
 	}
@@ -338,7 +348,7 @@ func checkStatus(cur string, kind update.Kind, goos, exe string, rel update.Rele
 		Command:   update.UpgradeCommand(kind, goos, exe),
 		State:     "unknown",
 	}
-	if v, perr := update.Parse(cur); perr == nil {
+	if v, perr := update.Parse(cur); perr == nil && !v.IsPost {
 		st.Current = v.String()
 	}
 	if err != nil {
@@ -346,7 +356,7 @@ func checkStatus(cur string, kind update.Kind, goos, exe string, rel update.Rele
 		return st
 	}
 	st.Latest, st.NotesURL = rel.Version.String(), rel.NotesURL()
-	if v, perr := update.Parse(cur); perr == nil {
+	if v, perr := update.Parse(cur); perr == nil && !v.IsPost {
 		st.State = "up-to-date"
 		if update.Compare(v, rel.Version) < 0 {
 			st.State = "available"

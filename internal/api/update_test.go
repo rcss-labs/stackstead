@@ -13,14 +13,20 @@ import (
 )
 
 type fakeUpdates struct {
-	status     apitypes.UpdateStatus
-	checkCalls int
+	status        apitypes.UpdateStatus
+	checkCalls    int
+	checkCtxErr   error
+	cancelRequest context.CancelFunc
 }
 
 func (f *fakeUpdates) Status() apitypes.UpdateStatus { return f.status }
 
-func (f *fakeUpdates) CheckNow(context.Context) apitypes.UpdateStatus {
+func (f *fakeUpdates) CheckNow(ctx context.Context) apitypes.UpdateStatus {
 	f.checkCalls++
+	if f.cancelRequest != nil {
+		f.cancelRequest() // the browser goes away while the check runs
+	}
+	f.checkCtxErr = ctx.Err()
 	return f.status
 }
 
@@ -86,6 +92,22 @@ func TestUpdateStatusBody(t *testing.T) {
 		if _, ok := raw[key]; !ok {
 			t.Errorf("key %q missing: %s", key, rec.Body)
 		}
+	}
+}
+
+// A browser that gives up mid-check must not turn the shared check into a
+// recorded "network" failure.
+func TestUpdateCheckIgnoresClientCancellation(t *testing.T) {
+	fake := &fakeUpdates{status: sampleUpdateStatus()}
+	env, cookie := updatesEnv(t, fake)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fake.cancelRequest = cancel
+	env.do(t, "POST", "/api/settings/update/check", "{}", withCookie(cookie), func(r *http.Request) {
+		*r = *r.WithContext(ctx)
+	})
+	if fake.checkCalls != 1 || fake.checkCtxErr != nil {
+		t.Errorf("checkCalls = %d, ctx err = %v; the check must not see the request's cancellation", fake.checkCalls, fake.checkCtxErr)
 	}
 }
 

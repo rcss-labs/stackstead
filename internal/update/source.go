@@ -169,6 +169,8 @@ func (r Release) NotesURL() string {
 // contract with the release build (see deploy/release/RELEASING.md).
 func (r Release) AssetName(kind Kind, goos, goarch string) (string, error) {
 	ver := r.Version.String()
+	// Packages spell a pre-release with "~" so it sorts before the final release.
+	pkgVer := strings.Replace(ver, "-", "~", 1)
 	switch kind {
 	case KindScript:
 		return "install.sh", nil
@@ -176,13 +178,13 @@ func (r Release) AssetName(kind Kind, goos, goarch string) (string, error) {
 		if goarch != "amd64" && goarch != "arm64" {
 			return "", fmt.Errorf("no deb for architecture %q", goarch)
 		}
-		return "stackstead_" + ver + "_" + goarch + ".deb", nil
+		return "stackstead_" + pkgVer + "_" + goarch + ".deb", nil
 	case KindRPM:
 		switch goarch {
 		case "amd64":
-			return "stackstead-" + ver + "-1.x86_64.rpm", nil
+			return "stackstead-" + pkgVer + "-1.x86_64.rpm", nil
 		case "arm64":
-			return "stackstead-" + ver + "-1.aarch64.rpm", nil
+			return "stackstead-" + pkgVer + "-1.aarch64.rpm", nil
 		}
 		return "", fmt.Errorf("no rpm for architecture %q", goarch)
 	case KindPkg:

@@ -1,13 +1,16 @@
 package update
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -186,5 +189,60 @@ func TestDpkgFrontendLockedUnlocked(t *testing.T) {
 	got, err := dpkgFrontendLockedAt(path)
 	if got || err != nil {
 		t.Errorf("got %v, %v; want false, nil", got, err)
+	}
+}
+
+func holdLock(t *testing.T, path string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.Close() })
+	lock := syscall.Flock_t{Type: syscall.F_WRLCK}
+	if err := syscall.FcntlFlock(f.Fd(), syscall.F_SETLK, &lock); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A lock held by another process is simulated with a lock on a second
+// descriptor in a child; fcntl locks are per process, so use a helper process.
+func TestDpkgLocksEitherHeldIsBusy(t *testing.T) {
+	if os.Getenv("STACKSTEAD_HOLD_LOCK") != "" {
+		holdLock(t, os.Getenv("STACKSTEAD_HOLD_LOCK"))
+		os.Stdout.WriteString("held\n")
+		io.Copy(io.Discard, os.Stdin) // hold until the parent closes stdin
+		return
+	}
+	for _, held := range []string{"lock", "lock-frontend"} {
+		t.Run(held, func(t *testing.T) {
+			dir := t.TempDir()
+			frontend, lock := filepath.Join(dir, "lock-frontend"), filepath.Join(dir, "lock")
+			for _, p := range []string{frontend, lock} {
+				if err := os.WriteFile(p, nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cmd := exec.Command(os.Args[0], "-test.run=^TestDpkgLocksEitherHeldIsBusy$")
+			cmd.Env = append(os.Environ(), "STACKSTEAD_HOLD_LOCK="+filepath.Join(dir, held))
+			stdin, _ := cmd.StdinPipe()
+			stdout, _ := cmd.StdoutPipe()
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() { stdin.Close(); cmd.Wait() }()
+			if line, _ := bufio.NewReader(stdout).ReadString('\n'); line != "held\n" {
+				t.Fatalf("helper did not take the lock: %q", line)
+			}
+			got, err := dpkgLocksHeldAt(frontend, lock)
+			if !got || err != nil {
+				t.Errorf("with %s held: got %v, %v; want true, nil", held, got, err)
+			}
+		})
+	}
+	dir := t.TempDir()
+	got, err := dpkgLocksHeldAt(filepath.Join(dir, "lock-frontend"), filepath.Join(dir, "lock"))
+	if got || err != nil {
+		t.Errorf("absent files: got %v, %v; want false, nil", got, err)
 	}
 }

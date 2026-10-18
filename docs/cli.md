@@ -172,7 +172,7 @@ What runs, always as one fixed command with no shell:
 | Installed with | Command |
 | --- | --- |
 | script | the downloaded, verified `install.sh --version vX.Y.Z --prefix <prefix>` (the prefix is where `stackstead` lives, normally `/usr/local`) |
-| `.deb` | `apt-get install -y <file>.deb` (refuses with exit 5 if another dpkg or apt holds the lock) |
+| `.deb` | `apt-get install -y <file>.deb` (refuses with exit 5 if another dpkg or apt holds the lock; an edited config file is kept, as the dpkg options `--force-confdef --force-confold` are set) |
 | `.rpm` | `dnf install -y <file>.rpm`, or `rpm -U` when `dnf` is not installed |
 | `.pkg` | `installer -pkg <file>.pkg -target /` |
 

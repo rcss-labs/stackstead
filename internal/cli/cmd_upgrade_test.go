@@ -318,6 +318,68 @@ func TestUpgradeCheckDevBuild(t *testing.T) {
 	}
 }
 
+func TestUpgradeCheckPostTagBuild(t *testing.T) {
+	r := newUpgradeRig(t)
+	version.Version = "v0.2.0-3-gabcdef"
+	r.wantExit(0, r.args("--check", "-o", "json")...)
+	var st apitypes.UpdateStatus
+	if err := json.Unmarshal([]byte(r.te.Out.String()), &st); err != nil {
+		t.Fatal(err)
+	}
+	if st.State != "unknown" || st.Current != "0.2.0-3-gabcdef" || st.Latest != "0.3.0" {
+		t.Errorf("post-tag build status = %+v", st)
+	}
+
+	r2 := newUpgradeRig(t)
+	version.Version = "v0.2.0-3-gabcdef"
+	r2.wantExit(0, r2.args("--check")...)
+	out := r2.te.Out.String()
+	if !strings.Contains(out, "installed: v0.2.0-3-gabcdef\n") || !strings.Contains(out, "development build (v0.2.0-3-gabcdef)") {
+		t.Errorf("version must be shown raw:\n%s", out)
+	}
+}
+
+func TestUpgradePostTagBuildNeedsForce(t *testing.T) {
+	r := newUpgradeRig(t)
+	version.Version = "v0.2.0-3-gabcdef"
+	got := r.wantExit(ExitConflict, r.args("--yes")...)
+	if !strings.Contains(got, "this is a development build (v0.2.0-3-gabcdef); use --force to install v0.3.0 over it") {
+		t.Errorf("message = %q", got)
+	}
+	if len(r.runs) != 0 {
+		t.Error("runner called")
+	}
+	r2 := newUpgradeRig(t)
+	version.Version = "v0.2.0-3-gabcdef"
+	r2.wantExit(0, r2.args("--yes", "--force")...)
+	if len(r2.runs) != 1 {
+		t.Error("--force must install over a post-tag build")
+	}
+	if out := r2.te.Out.String(); !strings.Contains(out, "(was v0.2.0-3-gabcdef)") {
+		t.Errorf("output = %q", out)
+	}
+}
+
+func TestUpgradeTempDirParent(t *testing.T) {
+	old := geteuid
+	t.Cleanup(func() { geteuid = old })
+	t.Setenv("TMPDIR", t.TempDir())
+	for _, c := range []struct {
+		euid int
+		want string
+	}{{0, "/tmp"}, {1000, os.Getenv("TMPDIR")}} {
+		geteuid = func() int { return c.euid }
+		dir, err := defaultUpgradeTempDir()
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.Remove(dir)
+		if got := filepath.Dir(dir); got != c.want {
+			t.Errorf("euid %d: parent = %s, want %s", c.euid, got, c.want)
+		}
+	}
+}
+
 func TestUpgradeCheckRejectsForceAndYes(t *testing.T) {
 	for _, flag := range []string{"--force", "--yes"} {
 		r := newUpgradeRig(t)
