@@ -1,7 +1,7 @@
 # Stackstead Volume and mount diagnostics — Design
 
 **Date:** 2026-10-18
-**Status:** Draft, awaiting review. Adds mount diagnostics: for every bind mount, named volume and tmpfs of a stack's services (and of any container), show what is mounted where, flag the mistakes that make containers fail with "permission denied", "not a directory" or silently empty data, and offer guarded fixes (mkdir, chown, chmod). Implemented by Plans V1 (diagnostics) and V2 (fixes); numbers are assigned when the plans are written. Builds on `2026-10-14-stackstead-v1-design.md`, `2026-10-15-stackstead-containers-design.md` and `2026-10-15-stackstead-networks-multiservice-design.md`.
+**Status:** Draft, awaiting review. Adds mount diagnostics: for every bind mount, named volume and tmpfs of a stack's services (and of any container), show what is mounted where, flag the mistakes that make containers fail with "permission denied", "not a directory" or silently empty data, and offer guarded fixes (mkdir, chown, chmod). Implemented by Plan 13 (`docs/superpowers/plans/2026-10-19-stackstead-13-volume-diagnostics.md`, diagnostics) and Plan 14 (`docs/superpowers/plans/2026-10-19-stackstead-14-volume-fixes.md`, fixes, depends on Plan 13). The storage inventory spec this document cites has shipped (storage screen, `action_log`, `engine.InspectVolume`/`InspectImage`); the plans list where its references diverge from the shipped code. Builds on `2026-10-14-stackstead-v1-design.md`, `2026-10-15-stackstead-containers-design.md` and `2026-10-15-stackstead-networks-multiservice-design.md`.
 
 ## 1. Purpose
 
