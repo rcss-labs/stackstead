@@ -7,7 +7,8 @@ import { bootstrapSession, session } from '$lib/api/session';
 import { needsAttention } from '$lib/stacks/summary';
 import { startHost } from '$lib/stores/host';
 import { changes, live, startLive, stopLive } from '$lib/stores/live';
-import { startStacks, stacks } from '$lib/stores/stacks';
+import { startRunningOps } from '$lib/stores/runningOps';
+import { operationsRefresh, startStacks, stacks } from '$lib/stores/stacks';
 import { toasts } from '$lib/stores/toasts';
 import { Banner } from './components/Banner';
 import { Button } from './components/Button';
@@ -66,7 +67,7 @@ function AppFrame() {
   useSessionGuard({ booted, loggingOut });
   // Owned here, not in the signed-in frame, so the toast region (outside the frame) goes through it too.
   const guard = useUnsavedGuard({ navigate, loggingOut });
-  const runningOps = useRunningOps(authenticated);
+  const runningOps = useRunningOps();
   useDocumentTitle(findRoute(pathname), authenticated);
 
   // Live updates, the stack list and the host poller live exactly as long as the session.
@@ -75,7 +76,9 @@ function AppFrame() {
     startLive({ fetchStatus: api.status });
     const stopStacks = startStacks({ list: api.stacks, changes });
     const releaseHost = startHost({ host: api.host });
+    const stopRunningOps = startRunningOps({ list: api.runningOperations, changes, refresh: operationsRefresh });
     return () => {
+      stopRunningOps();
       releaseHost();
       stopStacks();
       stopLive();
