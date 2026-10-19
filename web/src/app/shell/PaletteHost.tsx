@@ -14,12 +14,13 @@ export interface PaletteHostProps {
   open: boolean;
   runningOps: Operation[];
   onClose: () => void;
+  onNavigate?: (href: string) => void;
   /** Fetches the palette module; tests substitute a failing one. */
   load?: () => Promise<PaletteModule>;
 }
 
 /** Mounts the lazily loaded command palette on its first open and keeps it mounted afterwards. */
-export function PaletteHost({ open, runningOps, onClose, load = loadPalette }: PaletteHostProps) {
+export function PaletteHost({ open, runningOps, onClose, onNavigate, load = loadPalette }: PaletteHostProps) {
   const [requested, setRequested] = useState(false);
   // React.lazy remembers a rejected import, so a failed load gets a fresh lazy component for the next open.
   const [Palette, setPalette] = useState(() => lazy(load));
@@ -36,7 +37,7 @@ export function PaletteHost({ open, runningOps, onClose, load = loadPalette }: P
   return (
     <ErrorBoundary fallback={null} onError={onLoadError}>
       <Suspense fallback={null}>
-        <Palette open={open} runningOps={runningOps} onClose={onClose} />
+        <Palette open={open} runningOps={runningOps} onClose={onClose} onNavigate={onNavigate} />
       </Suspense>
     </ErrorBoundary>
   );

@@ -5,7 +5,7 @@ import { api } from '$lib/api/client';
 import type { Operation } from '$lib/api/types';
 import { effectiveTheme, setTheme } from '$lib/stores/appearance';
 import { live } from '$lib/stores/live';
-import { stacks } from '$lib/stores/stacks';
+import { refreshRunningOps, stacks } from '$lib/stores/stacks';
 import { toasts } from '$lib/stores/toasts';
 import { Dialog } from '../components/Dialog';
 import { Led } from '../components/Led';
@@ -20,9 +20,11 @@ export interface CommandPaletteProps {
   /** The app's running operations; a stack with one is busy. */
   runningOps: Operation[];
   onClose: () => void;
+  /** Follows a navigate command; the app passes its unsaved-changes guard. Defaults to the router. */
+  onNavigate?: (href: string) => void;
 }
 
-export default function CommandPalette({ open, runningOps, onClose }: CommandPaletteProps) {
+export default function CommandPalette({ open, runningOps, onClose, onNavigate }: CommandPaletteProps) {
   const uid = useId();
   const navigate = useNavigate();
   const { items } = useStore(stacks);
@@ -63,13 +65,14 @@ export default function CommandPalette({ open, runningOps, onClose }: CommandPal
       return;
     }
     onClose();
-    if (command.kind === 'navigate') navigate(command.to);
+    if (command.kind === 'navigate') (onNavigate ?? navigate)(command.to);
     else setTheme(theme === 'dark' ? 'light' : 'dark');
   }
 
   async function runAction(stack: string, action: Parameters<typeof api.act>[1]) {
     try {
       const op = await api.act(stack, action);
+      refreshRunningOps(); // the top-bar pill and busy state come from the app's running operations
       toasts.push({
         kind: 'info',
         message: `${action} · ${stack}`,

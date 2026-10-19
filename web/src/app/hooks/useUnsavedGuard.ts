@@ -15,6 +15,8 @@ export interface UnsavedGuardOptions {
 export interface UnsavedGuard {
   /** Put on the layout: a link click that would leave a page with unsaved editor changes asks first. */
   onClickCapture: (event: MouseEvent) => void;
+  /** Navigation from outside the guarded frame (palette, toasts): asks first when there are unsaved changes. */
+  go: (href: string) => void;
   pendingHref: string | undefined;
   pendingLogout: boolean;
   requestLogout: () => void;
@@ -53,6 +55,13 @@ export function useUnsavedGuard({ navigate, loggingOut }: UnsavedGuardOptions): 
     setPendingHref(url.pathname + url.search + url.hash);
   }
 
+  function go(href: string) {
+    const url = new URL(href, window.location.href);
+    const samePage = url.pathname === window.location.pathname && url.search === window.location.search;
+    if (dirty && !samePage) setPendingHref(url.pathname + url.search + url.hash);
+    else navigate(href);
+  }
+
   function requestLogout() {
     if (dirty) setPendingLogout(true);
     else void handleLogout();
@@ -73,5 +82,5 @@ export function useUnsavedGuard({ navigate, loggingOut }: UnsavedGuardOptions): 
     setPendingLogout(false);
   }
 
-  return { onClickCapture, pendingHref, pendingLogout, requestLogout, leave, cancel };
+  return { onClickCapture, go, pendingHref, pendingLogout, requestLogout, leave, cancel };
 }

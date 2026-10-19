@@ -12,6 +12,7 @@ import { get } from '$lib/store';
 import { rearmUnauthorized } from '$lib/api/client';
 import { expireSession, session } from '$lib/api/session';
 import { stopLive } from '$lib/stores/live';
+import { stacks } from '$lib/stores/stacks';
 import { setUnsavedChanges } from '$lib/stores/guard';
 import { toasts } from '$lib/stores/toasts';
 import { installFakeFetch, installFakeStream, type FakeFetch, type FakeResponse, type FakeStream } from '../vitest-setup';
@@ -46,6 +47,10 @@ beforeEach(() => {
     'GET /api/operations?state=running': () => ({ body: running }),
     'POST /api/logout': { status: 204 },
     'POST /api/login': { status: 204 },
+    'POST /api/stacks/web/actions/restart': () => {
+      running = [{ id: 'op1', stack: 'web', action: 'restart', state: 'running', startedAt: '2026-10-19T10:00:00Z' }];
+      return { body: running[0] };
+    },
   });
   stream = installFakeStream({ '/api/events': [] });
 });
@@ -488,5 +493,84 @@ describe('App command palette', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
     expect(await screen.findByRole('dialog', { name: 'Command palette' })).toBeTruthy();
+  });
+});
+
+const webStack = {
+  name: 'web',
+  path: '/srv/web/compose.yaml',
+  project: 'web',
+  origin: 'managed',
+  status: 'running',
+  serviceCount: 2,
+  running: 2,
+  health: { healthy: 0, unhealthy: 0, starting: 0, none: 0, failed: 0 },
+  ports: [],
+};
+
+async function openPalette() {
+  fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+  return screen.findByRole('dialog', { name: 'Command palette' });
+}
+
+describe('App command palette actions and the unsaved-changes guard', () => {
+  it('re-checks running operations after an action so the pill shows and the stack is busy', async () => {
+    stacksRes = { body: [webStack] };
+    at('/');
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Stacks' });
+    await waitFor(() => expect(get(stacks).items).toHaveLength(1));
+    const runs = () => fake.calls.filter((c) => c.path === '/api/operations?state=running').length;
+    await sleep(500); // let the initial fetch settle
+    const before = runs();
+    const u = user();
+    await openPalette();
+    await u.type(screen.getByRole('combobox'), 'restart web');
+    await u.keyboard('{Enter}');
+    await waitFor(() => expect(runs()).toBeGreaterThan(before), { timeout: 2000 });
+    // One running operation reads "<action> · <stack>" in the top-bar pill.
+    await waitFor(() => expect(screen.getAllByRole('status').some((el) => el.textContent?.includes('restart · web'))).toBe(true), { timeout: 2000 });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await openPalette();
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'restart web' } });
+    const option = screen.getByRole('option', { name: /Restart web/ });
+    expect(option.getAttribute('aria-disabled')).toBe('true');
+    expect(within(option).getByText('an operation is already running')).toBeTruthy();
+  });
+
+  it('a Go to entry asks before leaving unsaved changes, and navigates when clean', async () => {
+    at('/');
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Stacks' });
+    act(() => setUnsavedChanges(true));
+    const u = user();
+    await openPalette();
+    await u.click(screen.getByRole('option', { name: /Settings/ }));
+    expect(await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeTruthy();
+    expect(loc().path).toBe('/');
+    await u.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Cancel' }));
+    act(() => setUnsavedChanges(false));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    await openPalette();
+    await u.click(screen.getByRole('option', { name: /Settings/ }));
+    await waitFor(() => expect(loc().path).toBe('/settings'));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it("a toast's View link asks before leaving unsaved changes, and navigates when clean", async () => {
+    at('/');
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Stacks' });
+    act(() => setUnsavedChanges(true));
+    act(() => void toasts.push({ kind: 'info', message: 'restart · web', timeoutMs: 0, link: { label: 'View', href: '/settings?tab=x' } }));
+    const u = user();
+    await u.click(screen.getByRole('link', { name: 'View' }));
+    expect(await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeTruthy();
+    expect(loc().path).toBe('/');
+    await u.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Cancel' }));
+    act(() => setUnsavedChanges(false));
+    await u.click(screen.getByRole('link', { name: 'View' }));
+    await waitFor(() => expect(loc().path).toBe('/settings'));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 });

@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
-import type { ReactNode, RefObject } from 'react';
+import type { ReactNode } from 'react';
 import { BrowserRouter, Route, Routes, useLocation, useNavigate } from 'react-router';
 import { api, onUnauthorized } from '$lib/api/client';
 import type { Operation } from '$lib/api/types';
@@ -22,6 +22,7 @@ import { useSessionGuard, useSessionLost } from './hooks/useSessionGuard';
 import { useStore } from './hooks/useStore';
 import { useGlobalShortcut } from './hooks/useGlobalShortcut';
 import { useUnsavedGuard } from './hooks/useUnsavedGuard';
+import type { UnsavedGuard } from './hooks/useUnsavedGuard';
 import { ROUTES, findRoute } from './routes';
 import { PaletteHost } from './shell/PaletteHost';
 import { Shell } from './shell/Shell';
@@ -42,6 +43,7 @@ export function App() {
 function AppFrame() {
   const { state } = useStore(session);
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   // The session store may hold a previous state; nothing is decided until this page load has asked the server.
   const [booted, setBooted] = useState(false);
   const bootStarted = useRef(false);
@@ -62,6 +64,8 @@ function AppFrame() {
   }, [sessionLost]);
 
   useSessionGuard({ booted, loggingOut });
+  // Owned here, not in the signed-in frame, so the toast region (outside the frame) goes through it too.
+  const guard = useUnsavedGuard({ navigate, loggingOut });
   const runningOps = useRunningOps(authenticated);
   useDocumentTitle(findRoute(pathname), authenticated);
 
@@ -97,25 +101,24 @@ function AppFrame() {
       </main>
     );
   } else {
-    page = <SignedInFrame runningOps={runningOps} loggingOut={loggingOut} />;
+    page = <SignedInFrame runningOps={runningOps} guard={guard} />;
   }
 
   return (
     <>
       {page}
-      <Toasts />
+      <Toasts onNavigate={guard.go} />
     </>
   );
 }
 
 interface SignedInFrameProps {
   runningOps: Operation[];
-  loggingOut: RefObject<boolean>;
+  guard: UnsavedGuard;
 }
 
 /** The shell, banners and the single main landmark; mounted only while signed in. */
-function SignedInFrame({ runningOps, loggingOut }: SignedInFrameProps) {
-  const navigate = useNavigate();
+function SignedInFrame({ runningOps, guard }: SignedInFrameProps) {
   const { pathname } = useLocation();
   const { username } = useStore(session);
   const liveState = useStore(live);
@@ -123,7 +126,6 @@ function SignedInFrame({ runningOps, loggingOut }: SignedInFrameProps) {
   const mainRef = useRef<HTMLElement>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   useGlobalShortcut(() => setPaletteOpen(true));
-  const guard = useUnsavedGuard({ navigate, loggingOut });
   useFocusOnNavigate(mainRef);
 
   const banners: ReactNode[] = [];
@@ -189,7 +191,7 @@ function SignedInFrame({ runningOps, loggingOut }: SignedInFrameProps) {
         onConfirm={guard.leave}
         onCancel={guard.cancel}
       />
-      <PaletteHost open={paletteOpen} runningOps={runningOps} onClose={() => setPaletteOpen(false)} />
+      <PaletteHost open={paletteOpen} runningOps={runningOps} onClose={() => setPaletteOpen(false)} onNavigate={guard.go} />
     </>
   );
 }
