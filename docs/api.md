@@ -267,10 +267,17 @@ running container.
   `exited`, `removed` (all replicas gone) and `nodata`. With several
   replicas the worst state wins: `exited` > `unhealthy` > `restarting` >
   `starting` > `healthy`/`running` > `removed` > `nodata`. `restarts` counts
-  `die` followed by `start` in the window, once per restart, whether from
-  `docker restart` or a restart policy. History starts with the first run of
-  this version and is kept for `metrics_retention`. Refetch on the stack's
-  `change` event. An unknown stack is 404.
+  distinct `die` followed by `start` pairs in the window, once per restart,
+  whether from `docker restart` or a restart policy; restarts that happen
+  while Stackstead is down are not counted. History starts with the first
+  run of this version and is kept for `metrics_retention`, except that each
+  live container's current state is kept however old it is. Services with no
+  recorded rows are omitted: the client knows the stack's services and
+  renders the missing ones as `nodata`. A service whose containers were all
+  removed shows `removed` until its rows age out, so clients should
+  intersect `services` with the stack's current services. A container
+  recreated while Stackstead was down is marked `removed` at the next
+  startup. Refetch on the stack's `change` event. An unknown stack is 404.
 - **Events.** `GET /api/events` sends `status` (`events`, `metricsDegraded`)
   when it connects or changes, and `change` (`project`, `seq`) when a
   project's containers changed; refetch the affected stack on `change`. It
