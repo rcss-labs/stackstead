@@ -102,6 +102,16 @@ appearing after load unmounts the console and closes it. The console height
 persists under `stackstead.logsHeight`. `?tab=logs` (and the service pane's
 `Logs` button) expands the console on the chosen service.
 
+The stack detail's Metrics tab (four per-service charts) and the compose editor
+load uPlot and CodeMirror on first use; both stay lazy chunks (`uPlot.esm`,
+`cm`) pinned out of the entry by the shape test in `web/src/bundle.test.ts`. The
+Config tab slices the service's block from the raw compose file
+(`composeText.serviceBlock`) and falls back to the formatted config. `Edit YAML`
+(from the Config tab or the Compose file item) opens the compose editor, which
+reports `dirty` to the screen; the screen alone feeds `setUnsavedChanges`, and
+every in-page navigation (rail, chips, timeline, tabs, header actions) goes
+through `guarded()`, so leaving with unsaved edits asks first.
+
 ## Tests
 
 ```bash

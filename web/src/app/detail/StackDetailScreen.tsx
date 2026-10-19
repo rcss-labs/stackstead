@@ -16,9 +16,11 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import { useStore } from '../hooks/useStore';
 import { ComposeEditor } from './ComposeEditor';
 import { ComposeView } from './ComposeView';
+import { ConfigTab } from './ConfigTab';
 import { DetailHeader } from './DetailHeader';
 import { HealthTimeline } from './HealthTimeline';
 import { LogConsole } from './LogConsole';
+import { MetricsTab } from './MetricsTab';
 import { OperationsPane } from './OperationsPane';
 import { ServiceChips, ServiceRail } from './ServiceRail';
 import { ServicePane } from './ServicePane';
@@ -75,8 +77,8 @@ export function StackDetailScreen({ name }: { name: string }) {
   // Both loaders are idempotent; they run again when a refetch replaces the detail because that clears the
   // cpu-hour cache (the controller refreshes a requested compose file itself).
   useEffect(() => {
-    if (item.kind === 'compose') void ctl.loadCompose();
-  }, [ctl, item.kind, detail]);
+    if (item.kind === 'compose' || (item.kind === 'service' && serviceTab === 'config')) void ctl.loadCompose();
+  }, [ctl, item.kind, serviceTab, detail]);
   const overviewService = selectedService && serviceTab === 'overview' ? selectedService.name : undefined;
   useEffect(() => {
     if (overviewService) void ctl.loadCpuHour(overviewService);
@@ -225,7 +227,35 @@ export function StackDetailScreen({ name }: { name: string }) {
               }}
               latestCpu={latest.get(selectedService.name)?.cpu}
               cpuHour={cpuHour.get(selectedService.name)}
-            />
+            >
+              {(tab) =>
+                tab === 'metrics' ? (
+                  <MetricsTab
+                    key={selectedService.name}
+                    stackName={name}
+                    service={selectedService.name}
+                    live={liveMetrics}
+                    metricsDegraded={liveState.metricsDegraded}
+                    metricsIntervalSeconds={liveState.metricsIntervalSeconds}
+                    metricsRetentionSeconds={liveState.metricsRetentionSeconds}
+                    allServices={detail.services.map((s) => s.name)}
+                  />
+                ) : tab === 'config' ? (
+                  <ConfigTab
+                    service={selectedService}
+                    compose={compose}
+                    error={composeError}
+                    onRetry={() => void ctl.loadCompose()}
+                    onEditYaml={() =>
+                      guarded(() => {
+                        location.go(location.hrefFor({ kind: 'compose' }));
+                        setEditRequested(true);
+                      })
+                    }
+                  />
+                ) : null
+              }
+            </ServicePane>
           ) : item.kind === 'compose' ? (
             <ComposeView
               detail={detail}

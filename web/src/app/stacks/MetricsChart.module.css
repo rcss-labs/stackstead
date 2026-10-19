@@ -1,0 +1,60 @@
+.chart {
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+
+.caption {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.total {
+  font-family: var(--mono);
+  color: var(--muted);
+}
+
+.plot {
+  width: 100%;
+}
+
+.plot :global(.u-legend) {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.unavailable {
+  margin: 8px 0 0;
+  color: var(--danger);
+}
+
+.details {
+  margin-top: 8px;
+  font-size: 0.85rem;
+}
+
+.table {
+  margin-top: 8px;
+  border-collapse: collapse;
+}
+
+.table th,
+.table td {
+  padding: 2px 12px 2px 0;
+  text-align: left;
+}
+
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
