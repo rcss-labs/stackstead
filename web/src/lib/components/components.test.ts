@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { createRawSnippet } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -113,6 +113,24 @@ describe('Dialog', () => {
     expect(document.activeElement).not.toBe(first);
     await user.keyboard('{Escape}');
     expect(onclose).toHaveBeenCalledTimes(1);
+    await rerender({ open: false });
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+    opener.remove();
+  });
+
+  it('restores focus to a clicked opener that never took focus (Safari and Firefox on macOS)', async () => {
+    const user = userEvent.setup();
+    const opener = document.createElement('button');
+    opener.textContent = 'Open';
+    document.body.append(opener);
+    (document.activeElement as HTMLElement | null)?.blur();
+    await fireEvent.click(opener);
+    expect(document.activeElement).toBe(document.body);
+    const { rerender } = render(Dialog, { open: false, title: 'T', onclose: () => {}, children: body });
+    await rerender({ open: true });
+    const dlg = screen.getByRole('dialog');
+    await waitFor(() => expect(dlg.contains(document.activeElement)).toBe(true));
+    await user.keyboard('{Escape}');
     await rerender({ open: false });
     await waitFor(() => expect(document.activeElement).toBe(opener));
     opener.remove();
