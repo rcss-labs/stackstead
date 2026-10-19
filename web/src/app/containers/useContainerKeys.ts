@@ -15,7 +15,9 @@ function isIgnored(event: KeyboardEvent): boolean {
   if (event.ctrlKey || event.metaKey || event.altKey) return true;
   const target = event.target instanceof Element ? event.target : null;
   if (!target) return false;
-  if (target.closest('input, textarea, select, dialog, [role="log"], [contenteditable]:not([contenteditable="false"]), [role="dialog"], [role="alertdialog"]')) return true;
+  if (target.closest('input, textarea, select, dialog, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [role="alertdialog"]')) return true;
+  // The focused log scroller keeps its own keys, but Escape still closes the peek that contains it.
+  if (event.key !== 'Escape' && target.closest('[role="log"]')) return true;
   return event.key === 'Enter' && target.closest('a, button') !== null;
 }
 
@@ -29,6 +31,9 @@ export function useContainerKeys(options: ContainerKeysOptions): void {
     function onKeyDown(event: KeyboardEvent) {
       const { enabled, count, focusIndex, onMove, onToggle, onRestart, onClose } = latest.current;
       if (!enabled || event.defaultPrevented || isIgnored(event)) return;
+      // Arrows move the row focus only from inside the table, so the page scrolls normally elsewhere; j / k stay page-wide.
+      const inTable = event.target instanceof Element && event.target.closest('[role="table"]') !== null;
+      if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && !inTable) return;
       switch (event.key) {
         case 'j':
         case 'ArrowDown':

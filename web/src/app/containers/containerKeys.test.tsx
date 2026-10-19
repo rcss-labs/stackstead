@@ -13,15 +13,19 @@ vi.mock('$lib/stores/live', async (orig) => {
   const { writable } = await import('$lib/store');
   const store = writable(liveState.value);
   const changes = writable<{ project: string; seq: number; resync?: true } | null>(null);
+  const pushedChanges = changes;
   return {
     ...(await orig<typeof import('$lib/stores/live')>()),
     live: { subscribe: store.subscribe },
     changes: { subscribe: changes.subscribe },
     refreshStatus: vi.fn(),
     __set: store.set,
+    __changes: pushedChanges,
   };
 });
 const setLiveState = (v: Record<string, unknown>) => act(() => (liveModule as unknown as { __set: (v: unknown) => void }).__set(v));
+
+const pushChange = (seq: number) => act(() => (liveModule as unknown as { __changes: { set: (v: unknown) => void } }).__changes.set({ project: '', seq, resync: true }));
 
 const stubWidth = () => vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }));
 const letStoresRelease = () => new Promise((r) => setTimeout(r, 5));
@@ -155,6 +159,71 @@ describe('Container keys', () => {
     expect(document.activeElement).toBe(log);
     expect(focusedName()).toBe('a');
     expect(screen.getByRole('region', { name: 'Logs of a' })).toBeTruthy();
+  });
+
+  it('keeps the ring and the actions on the same container when a refetch re-sorts the list above it', async () => {
+    let body = [row('a'), row('b'), row('c')];
+    const user = mount({ body }, {});
+    fetchFake.restore();
+    fetchFake = installFakeFetch({
+      'GET /api/containers': () => ({ body }),
+      'POST /api/containers/b00000000000/restart': { body: row('b') },
+    });
+    await screen.findByRole('link', { name: 'a' });
+    await user.keyboard('j');
+    expect(focusedName()).toBe('b');
+    body = [row('a'), row('b'), row('c'), row('p', { state: 'exited', exitCode: 1 })];
+    pushChange(1);
+    await waitFor(() => expect(bodyRows().map((r) => r.getAttribute('data-container'))[0]).toBe('p'));
+    expect(focusedName()).toBe('b');
+    await user.keyboard('{Enter}');
+    await screen.findByRole('region', { name: 'Logs of b' });
+    await user.keyboard('{Escape}');
+    await user.keyboard('r');
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog.textContent).toContain('b');
+    expect(dialog.textContent).not.toContain('Restart p');
+  });
+
+  it('falls back to a clamped index when the focused container disappears', async () => {
+    let body = [row('a'), row('b'), row('c')];
+    const user = mount({ body });
+    fetchFake.restore();
+    fetchFake = installFakeFetch({ 'GET /api/containers': () => ({ body }) });
+    await screen.findByRole('link', { name: 'a' });
+    await user.keyboard('jj');
+    expect(focusedName()).toBe('c');
+    body = [row('a'), row('b')];
+    pushChange(1);
+    await waitFor(() => expect(bodyRows()).toHaveLength(2));
+    expect(focusedName()).toBe('b');
+  });
+
+  it('Escape closes the peek even from inside its log region, while other keys stay with the log', async () => {
+    const user = mount(abc());
+    await screen.findByRole('link', { name: 'a' });
+    act(() => rowOf('a').focus());
+    await user.keyboard('{Enter}');
+    const log = (await screen.findByRole('region', { name: 'Logs of a' })).querySelector('[role="log"]') as HTMLElement;
+    act(() => log.focus());
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('region', { name: /^Logs of/ })).toBeNull();
+  });
+
+  it('arrow keys move the row focus only from inside the table; j and k work anywhere', async () => {
+    const user = mount(abc());
+    await screen.findByRole('link', { name: 'a' });
+    const chip = screen.getByRole('button', { name: /^Running/ });
+    act(() => chip.focus());
+    await user.keyboard('{ArrowDown}');
+    expect(focusedName()).toBe('a');
+    await user.keyboard('j');
+    expect(focusedName()).toBe('b');
+    act(() => rowOf('b').focus());
+    await user.keyboard('{ArrowDown}');
+    expect(focusedName()).toBe('c');
+    await user.keyboard('{ArrowUp}');
+    expect(focusedName()).toBe('b');
   });
 
   it('Enter on the name link and on the toggle button is left to the element', async () => {

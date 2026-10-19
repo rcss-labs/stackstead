@@ -27,7 +27,9 @@ const CHIPS: { id: ContainerChip; label: string }[] = [
 export function ContainersScreen() {
   const [chip, setChip] = useState<ContainerChip>('all');
   const [query, setQuery] = useState('');
-  const [focusIndex, setFocusIndex] = useState(0);
+  // Focus follows the container, not its position, so a live re-sort never moves the ring to another container.
+  const [focusId, setFocusId] = useState<string | undefined>();
+  const [fallbackIndex, setFallbackIndex] = useState(0);
   // Container name whose log peek is open; names survive a container being recreated under a new id.
   const [openPeek, setOpenPeek] = useState<string | undefined>();
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
@@ -43,21 +45,26 @@ export function ContainersScreen() {
   const all = rows ?? [];
   const counts = chipCounts(all);
   const visible = filterContainers(sortContainers(all), chip, query);
-  // Clamp so a shrinking list never leaves the roving tab stop on a row that is gone.
-  const focused = Math.min(focusIndex, Math.max(visible.length - 1, 0));
+  // When the focused container left the list, clamp the last index so the roving tab stop never sits on a gone row.
+  const idIndex = focusId === undefined ? -1 : visible.findIndex((c) => c.id === focusId);
+  const focused = idIndex >= 0 ? idIndex : Math.min(fallbackIndex, Math.max(visible.length - 1, 0));
+  function focusRow(index: number) {
+    setFocusId(visible[index]?.id);
+    setFallbackIndex(index);
+  }
   const { confirming, confirm, cancel } = actions;
 
-  // Keep state honest about the list: no stale focus index, and no peek for a container that is no longer shown.
+  // Keep state honest about the list: the remembered position tracks the focused row, and no peek stays open for a container that is no longer shown.
   useEffect(() => {
-    if (focusIndex !== focused) setFocusIndex(focused);
-  }, [focusIndex, focused]);
+    if (fallbackIndex !== focused) setFallbackIndex(focused);
+  }, [fallbackIndex, focused]);
   const peekIsVisible = openPeek === undefined || visible.some((c) => c.name === openPeek);
   useEffect(() => {
     if (!peekIsVisible) setOpenPeek(undefined);
   }, [peekIsVisible]);
 
   function togglePeek(index: number) {
-    setFocusIndex(index);
+    focusRow(index);
     setOpenPeek((cur) => (cur === visible[index]?.name ? undefined : visible[index]?.name));
   }
 
@@ -66,7 +73,7 @@ export function ContainersScreen() {
     count: visible.length,
     focusIndex: focused,
     onMove: (index) => {
-      setFocusIndex(index);
+      focusRow(index);
       const el = rowRefs.current.get(visible[index].id);
       el?.focus();
       el?.scrollIntoView?.({ block: 'nearest' });
@@ -98,7 +105,8 @@ export function ContainersScreen() {
             {CHIPS.map(({ id, label }) => (
               <Chip key={id} pressed={chip === id} count={counts[id]} tone={id === 'problems' ? 'danger' : undefined} onClick={() => {
                   setChip(id);
-                  setFocusIndex(0);
+                  setFocusId(undefined);
+                  setFallbackIndex(0);
                 }}>
                 {label}
               </Chip>
@@ -158,7 +166,7 @@ export function ContainersScreen() {
                       open={openPeek === c.name}
                       peekId={`peek-${c.id}`}
                       mobile={mobile}
-                      onFocus={setFocusIndex}
+                      onFocus={focusRow}
                       onToggle={() => togglePeek(i)}
                       rowRef={(el) => {
                         if (el) rowRefs.current.set(c.id, el);
