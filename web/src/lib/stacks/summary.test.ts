@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ContainerInfo, ServiceDetail, StackSummary } from '$lib/api/types';
-import { chipCounts, filterStacks, healthCell, portChips, serviceState } from './summary';
+import { attentionCount, chipCounts, filterStacks, healthCell, needsAttention, portChips, serviceState } from './summary';
 
 const zero = { healthy: 0, unhealthy: 0, starting: 0, none: 0, failed: 0 };
 const stack = (name: string, over: Partial<StackSummary> = {}): StackSummary => ({
@@ -90,5 +90,25 @@ describe('serviceState', () => {
     ['no containers', [], 'muted', 'No containers'],
   ] as const)('%s', (_, containers, tone, text) => {
     expect(serviceState(svc([...containers]))).toEqual({ tone, text });
+  });
+});
+
+describe('needsAttention', () => {
+  const s = (status: StackSummary['status'], h: Partial<typeof zero> = {}) => stack('x', { status, health: { ...zero, ...h } });
+
+  it.each([
+    ['running all healthy', s('running', { healthy: 2 }), false],
+    ['partial', s('partial'), true],
+    ['unhealthy > 0', s('running', { unhealthy: 1 }), true],
+    ['failed > 0', s('running', { failed: 1 }), true],
+    ['stopped', s('stopped'), false],
+    ['unavailable', s('unavailable'), true],
+  ])('%s', (_label, item, expected) => {
+    expect(needsAttention([item])).toBe(expected);
+  });
+
+  it('attentionCount counts matching stacks', () => {
+    expect(attentionCount([s('running'), s('partial'), s('unavailable'), s('stopped')])).toBe(2);
+    expect(needsAttention([])).toBe(false);
   });
 });
