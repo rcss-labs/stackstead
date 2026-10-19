@@ -127,6 +127,21 @@ closes the others, `discardAndLeave` closes both, and the pane's `Logs` button
 is not guarded because it leaves the editor open. The editors add nothing to the
 entry; the add panel and service editor ride in the lazy `StackDetail` chunk.
 
+The React containers screens live under `web/src/app/containers/`. The list is
+the unchanged `lib/containers/list.ts` controller through `useContainerList`;
+actions share `useContainerAction` and one confirm dialog per page (also behind
+the `r` key). The inline peek opens one `useLogStream` with `tail: 8` per open
+row and closes it when the row closes, is hidden by a filter, or the page is
+left; the detail's Logs tab reuses `LogConsole` with a container source. Both
+screens ride in the lazy `ContainerList` / `ContainerDetail` chunks, and
+`bundle.test.ts` pins that nothing of theirs is eager (no eager chunk named
+after them, entry at most 106 kB gz, and no container-screen strings in the
+eager chunks). Because Rolldown stops merging entry-reachable shared chunks into
+the entry once two lazy routes share modules (about +2 kB gz of glue),
+`vite.app.config.ts` has an eager `codeSplitting` group that puts every module
+reachable from the entry into one `app` chunk, which keeps the entry under that
+106 kB ceiling.
+
 ## Tests
 
 ```bash

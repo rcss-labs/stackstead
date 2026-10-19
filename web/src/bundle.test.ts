@@ -115,4 +115,29 @@ describe('react app build shape', () => {
     for (const name of lazyNames) expect(lazy).toContain(name);
     expect(verdict(sizes)).toEqual([]);
   });
+
+  it.skipIf(!existsSync(manifestPath))('keeps the container screens and the log console out of the eager entry', () => {
+    const sizes = measure(dist);
+    const lazyFiles = sizes.lazy.map((l: { file: string }) => l.file);
+    const eagerFiles = readdirSync(join(dist, 'assets'))
+      .filter((f) => f.endsWith('.js'))
+      .map((f) => `assets/${f}`)
+      .filter((f) => !lazyFiles.includes(f));
+    expect(eagerFiles.map(chunkName).some((name) => /Container|LogConsole|Peek/i.test(name))).toBe(false);
+    expect(sizes.entry).toBeLessThanOrEqual(106 * 1024);
+
+    // The eager code is one merged chunk (codeSplitting group in vite.app.config.ts), so a chunk name cannot reveal
+    // container code folded into it; a string literal unique to each lazy screen can.
+    const screens = [
+      { chunk: 'ContainerList', marker: 'Could not load containers' },
+      { chunk: 'ContainerDetail', marker: 'This container no longer exists' },
+    ];
+    const read = (file: string) => readFileSync(join(dist, file), 'utf8');
+    for (const { chunk, marker } of screens) {
+      const lazyChunk = lazyFiles.find((f: string) => chunkName(f) === chunk);
+      expect(lazyChunk, `${chunk} is a lazy chunk`).toBeDefined();
+      expect(read(lazyChunk as string), `${chunk} carries its screen`).toContain(marker);
+      for (const file of eagerFiles) expect(read(file), `${file} must not contain ${chunk} code`).not.toContain(marker);
+    }
+  });
 });
