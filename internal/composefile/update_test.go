@@ -326,3 +326,14 @@ func TestUpdateJoiningUndeclaredNetworkCreatesNetworksBlock(t *testing.T) {
 		t.Fatalf("got:\n%s", got)
 	}
 }
+
+func TestUpdateNeverDeclaresTheImplicitDefaultNetwork(t *testing.T) {
+	src := "services:\n  web:\n    image: nginx:1.27\n    networks:\n      - default\n"
+	got := update(t, src, "web", func(c *ServiceConfig) {
+		c.Networks = []NetworkAttachment{{Name: "default"}, {Name: "backend"}}
+	})
+	want := "networks:\n  backend:\n    external: true\n"
+	if !strings.HasSuffix(got, want) || strings.Contains(got, "default:\n    external") {
+		t.Fatalf("got:\n%s", got)
+	}
+}

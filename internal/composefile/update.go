@@ -123,7 +123,8 @@ func undeclaredNetworkEdits(root *yaml.Node, attached []NetworkAttachment) []edi
 	declared := mappingValue(root, "networks")
 	var edits []edit
 	for _, net := range attached {
-		if mappingValue(declared, net.Name) == nil {
+		// "default" is compose's implicit network; declaring it external breaks `up`.
+		if net.Name != "default" && mappingValue(declared, net.Name) == nil {
 			edits = append(edits, edit{path: []string{"networks", net.Name}, value: mapNode("external", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})})
 		}
 	}

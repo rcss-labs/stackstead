@@ -212,3 +212,13 @@ func TestRemoveServicePrefersKnownDependenciesToUnsupportedListShapes(t *testing
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestAddServiceNeverDeclaresTheImplicitDefaultNetwork(t *testing.T) {
+	got, err := mustParse(t, "services:\n  web:\n    image: nginx:1.27\n").AddService("cache", ServiceConfig{Image: "redis:7", Networks: []NetworkAttachment{{Name: "default"}, {Name: "backend"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(string(got.Bytes()), "networks:\n  backend:\n    external: true\n") || strings.Contains(string(got.Bytes()), "default:\n    external") {
+		t.Fatalf("got:\n%s", got.Bytes())
+	}
+}
