@@ -136,14 +136,15 @@ describe('stack detail service pane and compose view', () => {
   });
 
   it('asks for the hour of cpu again after a refetch', async () => {
-    startLive({ fetchStatus: () => fetch('/api/status').then((r) => r.json()) });
     mountDetail(h, '/stacks/web');
     await screen.findByRole('heading', { level: 2, name: 'app' });
-    await waitFor(() => expect(get(changes)?.resync).toBe(true));
+    await waitFor(() => expect(cpuCalls()).toHaveLength(1));
+    // Live starts once the page is subscribed, so its resync is a refetch and not a value replayed on subscribe.
+    startLive({ fetchStatus: () => fetch('/api/status').then((r) => r.json()) });
     const stackGets = () => h.calls('GET', '/api/stacks/web');
-    await waitFor(() => expect(stackGets()).toBe(2)); // initial + resync on open
-    await waitFor(() => expect(cpuCalls().length).toBeGreaterThanOrEqual(1));
-    await new Promise((r) => setTimeout(r, 30));
+    await waitFor(() => expect(stackGets()).toBe(2)); // initial + resync
+    // The first load and the resync's refetch each ask once; only then is the count stable.
+    await waitFor(() => expect(cpuCalls()).toHaveLength(2));
     const before = cpuCalls().length;
     h.stream.push('/api/events', 'event: change\ndata: {"project":"web","seq":9}\n\n');
     await waitFor(() => expect(stackGets()).toBe(3));

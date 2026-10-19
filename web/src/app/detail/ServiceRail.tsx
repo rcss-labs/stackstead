@@ -67,7 +67,8 @@ export function ServiceRail({ services, selected, operationsCount, latest, onSel
               <span className={styles.nameBlock}>
                 <span className={styles.name}>{service.name}</span>{' '}
                 <span className={styles.state} data-tone={state.tone}>
-                  {state.text}
+                  {/* The design shows the container status alone; health already shows in the LED. */}
+                  {service.containers[0]?.status ?? state.text}
                 </span>
               </span>{' '}
               <span className={styles.cpu}>
@@ -95,7 +96,8 @@ export function ServiceRail({ services, selected, operationsCount, latest, onSel
           onClick={() => onSelect({ kind: 'compose' })}
         >
           <StackItemIcon d={FILE_ICON} />
-          <span className={styles.itemLabel}>Compose file</span>
+          <span className={styles.itemLabel}>Compose file</span>{' '}
+          <span className={styles.aux}>yaml</span>
         </button>
         <button
           type="button"

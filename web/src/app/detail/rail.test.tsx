@@ -35,8 +35,10 @@ describe('service rail', () => {
     renderRail();
     const rail = within(nav());
     expect(rail.getByRole('button', { name: /^app\b/ }).textContent).toContain('Up 2 minutes');
-    expect(rail.getByRole('button', { name: /^db\b/ }).textContent).toContain('healthy · Up 2 minutes');
-    expect(rail.getByRole('button', { name: /^Compose file/ })).toBeTruthy();
+    // The state line is the container status alone, as in the design; health shows in the LED.
+    expect(rail.getByRole('button', { name: /^db\b/ }).textContent).toContain('Up 2 minutes');
+    expect(rail.getByRole('button', { name: /^db\b/ }).textContent).not.toContain('healthy');
+    expect(rail.getByRole('button', { name: /^Compose file/ }).textContent).toBe('Compose file yaml');
     const operations = rail.getByRole('button', { name: /^Operations/ });
     expect(operations.textContent).toBe('Operations 2');
     expect(operations.getAttribute('data-item')).toBe('operations');
