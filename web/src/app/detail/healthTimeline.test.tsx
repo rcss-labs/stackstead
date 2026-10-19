@@ -35,7 +35,9 @@ describe('health timeline', () => {
   it('renders one lane per service in order with the legend', () => {
     mount();
     const buttons = within(region()).getAllByRole('button');
-    expect(buttons.map((b) => b.textContent)).toEqual(['app', 'db↻ 3']);
+    expect(buttons.map((b) => b.getAttribute('aria-pressed'))).toEqual(['false', 'false']);
+    expect(screen.getByRole('button', { name: 'app' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'db, restarted 3 times' })).toBeTruthy();
     expect(region().textContent).toContain('healthyrestartunhealthydown');
     expect(region().textContent).toContain('−60m');
   });
@@ -66,7 +68,7 @@ describe('health timeline', () => {
 
   it('the bar is an image with a readable summary', () => {
     mount();
-    expect(screen.getByRole('img', { name: 'db: healthy 55 min, unhealthy 5 min' })).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'db: healthy 55 min, unhealthy 5 min, restarted 3 times' })).toBeTruthy();
     expect(screen.getByRole('img', { name: 'app: healthy 60 min' })).toBeTruthy();
   });
 
@@ -74,6 +76,21 @@ describe('health timeline', () => {
     mount();
     expect(screen.getByTitle('restarted 3 times in the last 60 min').textContent).toBe('↻ 3');
     expect(screen.queryAllByTitle(/restarted/)).toHaveLength(1);
+  });
+
+  it('announces restarts in the bar summary and says once for a single restart', () => {
+    mount({
+      history: {
+        ...history,
+        services: [
+          { service: 'app', restarts: 1, runs: [{ state: 'healthy', from: NOW - 3600, to: NOW }] },
+          history.services[1]!,
+        ],
+      },
+    });
+    expect(screen.getByRole('button', { name: 'app, restarted once' })).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'db: healthy 55 min, unhealthy 5 min, restarted 3 times' })).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'app: healthy 60 min, restarted once' })).toBeTruthy();
   });
 
   it('is not a live region', () => {

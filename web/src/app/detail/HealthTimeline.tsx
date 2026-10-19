@@ -10,9 +10,15 @@ export interface HealthTimelineProps {
 
 const LABEL_ID = 'health-timeline-label';
 
-/** "db: healthy 55 min, unhealthy 5 min": the lane's runs as text for the bar image. */
+function restartsText(restarts: number): string {
+  return restarts === 1 ? 'restarted once' : `restarted ${restarts} times`;
+}
+
+/** "db: healthy 55 min, unhealthy 5 min, restarted 3 times": the lane's runs and restarts as text for the bar image. */
 function laneSummary(lane: TimelineLane): string {
-  return `${lane.service}: ${lane.segments.map((s) => s.title.replace(' · ', ' ')).join(', ')}`;
+  const runs = lane.segments.map((s) => `${s.state === 'nodata' ? 'no data' : s.state} ${Math.max(1, Math.round(s.weight / 60))} min`);
+  if (lane.restarts > 0) runs.push(restartsText(lane.restarts));
+  return `${lane.service}: ${runs.join(', ')}`;
 }
 
 export function HealthTimeline({ lanes, selected, onSelect }: HealthTimelineProps) {
@@ -55,9 +61,12 @@ function LaneRow({ lane, selected, onSelect }: { lane: TimelineLane; selected: b
       >
         <span className={styles.service}>{lane.service}</span>
         {lane.restarts > 0 && (
-          <span className={styles.restarts} title={`restarted ${lane.restarts} times in the last 60 min`}>
-            ↻ {lane.restarts}
-          </span>
+          <>
+            <span className={styles.restarts} title={`restarted ${lane.restarts} times in the last 60 min`} aria-hidden="true">
+              ↻ {lane.restarts}
+            </span>
+            <span className={styles.visuallyHidden}>, {restartsText(lane.restarts)}</span>
+          </>
         )}
       </button>
       <div className={styles.bar} role="img" aria-label={laneSummary(lane)}>
