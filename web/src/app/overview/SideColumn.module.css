@@ -174,5 +174,7 @@
   .column { flex-basis: 100%; }
   .name,
   .what { line-height: 40px; }
+  /* Inline so the ellipsis on .what keeps working; padding grows the hit area to 40px. */
+  .subject { padding: 13px 0; }
   .events { gap: 0; }
 }

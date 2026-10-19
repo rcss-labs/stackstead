@@ -75,9 +75,9 @@ pins that shape (run it after a build) so a stray static import fails early.
 The React overview is the only eager screen. Its data comes from the shared
 `stacks`, `host` and `runningOps` stores plus the dashboard controller
 (alerts, metrics summary, storage), and its events from the live `events` store;
-the only filter state is the query; no store is mirrored in React state. After the side column landed the
-entry measured 102.6 kB gz (ceiling 115, gate 110), so the side column stays in
-the entry and nothing inside the screen is lazy.
+the only filter state is the query; no store is mirrored in React state. After
+the side column landed the entry measured 102.6 kB gz (ceiling 115, gate 110),
+so the side column stays in the entry and nothing inside the screen is lazy.
 
 ## Tests
 
