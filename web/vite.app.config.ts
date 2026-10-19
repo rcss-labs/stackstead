@@ -1,8 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
-
-const NON_PAGE_PREFIXES = ['/api', '/metrics', '/@', '/src', '/node_modules'];
+import { isAppNavigation } from './src/app/devFallback';
 
 // Dev only: client-side routes (/stacks/web, /settings) must answer with app.html.
 function appHtmlFallback(): Plugin {
@@ -11,13 +10,7 @@ function appHtmlFallback(): Plugin {
     apply: 'serve',
     configureServer(server) {
       server.middlewares.use((req, _res, next) => {
-        const path = (req.url ?? '').split('?')[0] ?? '';
-        const lastSegment = path.split('/').pop() ?? '';
-        const isNavigation =
-          req.method === 'GET' &&
-          (req.headers.accept ?? '').includes('text/html') &&
-          !NON_PAGE_PREFIXES.some((prefix) => path.startsWith(prefix)) &&
-          !lastSegment.includes('.');
+        const isNavigation = isAppNavigation(req.method ?? '', req.headers.accept, req.url ?? '');
         if (isNavigation) req.url = '/app.html';
         next();
       });
