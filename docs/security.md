@@ -83,3 +83,22 @@ session at once, so a stolen cookie dies with the change. A wrong current
 password answers 403 (not 401, which the UI treats as "session gone") and
 counts against the same per-IP limiter as logins (429 when exceeded). The UI
 never echoes either password.
+
+## Storage cleanup
+
+Signed-in users can delete unused images, volumes and build cache. Deleting a
+volume permanently destroys its data. Typed confirmation prevents mistakes;
+it does not restrict a signed-in user, whose Docker access is root-equivalent.
+Every cleanup requires an authenticated JSON plan and confirmation. The server
+rechecks ownership, use and identity before removing each exact item without
+force. Stack-declared and registered-project-labelled volumes stay protected
+when stopped; images used by any container and volumes in use are refused.
+Unknown stack declarations block otherwise unprotected volume cleanup, and a
+volume without a creation timestamp is refused. The build-cache fallback is
+explicitly **not exact**, because Docker can prune all currently unused cache.
+
+The persistent action log records who deleted or skipped which item, the time,
+result and estimated bytes (actual aggregate bytes for fallback cache pruning).
+Compose interpolation output is never stored, returned or logged; image env,
+command and entrypoint and volume driver options are omitted. Names, labels,
+tags and Docker messages are rendered as text. See [Storage](api.md#storage).

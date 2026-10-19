@@ -75,6 +75,8 @@ without a platform to maintain.
 - **Every container, not only stacks.** A host-wide Containers screen with
   problems first, live CPU and memory, logs one click away, and start, stop
   and restart for containers that are not in a stack.
+- **Storage.** See what uses disk and clean up safely, with previews and an
+  action log.
 - **Forms instead of YAML.** Image or Dockerfile, ports, volumes, environment
   variables, networks and static IPs, CPU and memory limits, restart policy
   and healthcheck. Port and IP clashes are checked before anything is

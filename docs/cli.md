@@ -8,7 +8,7 @@ The `stackstead` binary is both the server and a complete command-line tool.
 - **Server:** `serve`, `version`.
 - **Remote:** talk to a running server over its HTTP API from any machine:
   `login`, `logout`, `context`, `whoami`, `status`, `stacks`, `ops`, `logs`,
-  `metrics`, `events`, `networks`, `settings`.
+  `metrics`, `events`, `networks`, `storage`, `settings`.
 - **Host admin:** run on the server's host, next to the files:
   `config`, `db`, `admin`, `health`.
 
@@ -65,6 +65,33 @@ Details worth knowing:
 - **`-o json`** prints the API's JSON. Streaming commands print one JSON object
   per line (`{"event", "id", "data"}`).
 - **Interrupt.** Ctrl-C ends a stream with exit code 130 and no error dump.
+
+### Storage
+
+`stackstead storage df [-o table|json]` shows KIND, COUNT, SIZE, RECLAIMABLE
+and AS OF for images, container layers, volumes and build cache. Unknown sizes
+are `—`; JSON prints the overview API response.
+
+`stackstead storage prune <images|volumes|build-cache> [--preview] [--yes] [--detach]`
+prints the proposed items, protected items, warnings and reclaim estimate.
+`--preview` exits 0 without deleting anything. Without it, type the displayed
+phrase exactly on a terminal; only the trailing input newline is stripped.
+Without a terminal, `--yes` is required (exit 2). It confirms that specific
+plan. Empty plans print `nothing to clean` and exit 0. `--detach` returns the
+operation ID; otherwise output streams until completion. Host operations are
+shown as `host` in `ops ls`, `ops show` and operation output.
+
+Images means dangling images only; volumes means unused, unprotected volumes.
+Stopped registered stacks' declared volumes remain protected. If declarations
+are unknown or a volume has no creation timestamp, safe cleanup is refused.
+Build-cache fallback says **not exact**: Docker removes whatever cache is
+unused at confirmation time, which may differ from the expected preview.
+
+Storage exits: 5 for conflicts/protected targets, 6 for a wrong typed phrase,
+7 for unavailable Docker or size/declaration data, 8 for rate limiting, and 9
+for a waited operation that fails, is cancelled or times out. Other codes
+follow the table below. See [Storage API](api.md#storage) for cache ages,
+identity checks, build-cache modes and action-log byte estimates.
 
 ### Contexts and credentials
 

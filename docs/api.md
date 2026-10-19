@@ -135,6 +135,90 @@ Removing a stack never deletes files: the compose file and its folder stay on
 disk, and volumes are removed only when `volumes=true`. Stopping Stackstead
 never stops containers.
 
+## Storage
+
+The Storage screen (`/storage`) has Overview, Images, Volumes and Build cache
+tabs, plus image and volume detail pages. Container writable layers are shown
+for information; cleanup never removes containers.
+
+| Method and path | Response or purpose |
+| --- | --- |
+| `GET /api/storage` | `images`, `containers`, `volumes`, `buildCache` totals, five `topContainers`, and `declarationsUnknown` stack names |
+| `GET /api/storage/images` | `{images, totals}` |
+| `GET /api/storage/images/{id}` | image plus architecture, OS, layer count and labels; use 12–64 hex ID characters without `sha256:`; ambiguous prefixes give 409 |
+| `GET /api/storage/volumes` | `{volumes, totals}` |
+| `GET /api/storage/volumes/{name}` | volume plus mountpoint and labels |
+| `GET /api/storage/build-cache` | `{records, totals}` |
+| `POST /api/storage/refresh` | `{}` starts background size refresh; 202 `{startedAt}`; within 60 seconds, 429 `{error, retryAfter}` with `Retry-After` |
+| `POST /api/storage/plans` | preview the exact proposed cleanup; 201 plan |
+| `GET /api/storage/plans/{id}` | read an unconsumed, unexpired plan |
+| `POST /api/storage/plans/{id}/confirm` | `{confirm: "<exact phrase>"}`; 202 operation |
+| `GET /api/actions?kind=storage.&scope=host&limit=50` | newest persistent storage actions; available even when Docker is down |
+
+All routes require a session. Mutations require JSON. Lists share a 2-second
+cache and answer without waiting for disk usage. Each kind's totals has `count`,
+nullable `size` and `reclaimable`, nullable `sizesAt`, `refreshing` and `error`.
+Unknown bytes are `null`, not zero. Size snapshots refresh in the background:
+images and container layers every minute, volumes every 5 minutes, build cache
+every 10 minutes. The dashboard Volumes tile shares the same 5-minute volume
+cache. A stale successful snapshot remains visible during refresh or failure;
+`sizesAt` describes the last successful reading.
+
+Images show tags/digests, container consumers, declarations, dangling status and
+sizes. Volumes show driver, scope, project, labels, consumers, declarations,
+protection and size metadata. Detail responses omit image environment, command
+and entrypoint and volume driver options. Declarations come from each registered
+stack's single compose file and adjacent `.env`; interpolated compose output is
+never returned.
+
+Plan bodies are `{kind:"image", ref:"tag-or-id"}` or
+`{kind:"volume", name:"volume-name"}` for one item; bulk bodies are
+`{kind:"images", selection:"dangling"}`, `{kind:"volumes", selection:"unused"}`
+or `{kind:"build-cache", selection:"unused"}`. Tagged images are excluded from
+bulk cleanup. A single tag removes that reference, leaving other tags intact.
+
+The plan includes `id`, `createdAt`, `expiresAt`, `items`, `protected`, `warnings`,
+`reclaim:{min,max,exact}` and `confirmPhrase`. Plans expire after 5 minutes, live
+only in memory and are consumed on confirmation; at most 32 are retained. Copy
+`confirmPhrase` byte for byte, including whitespace. Wrong phrases give 400 with
+`fields:[{field:"confirm",message:...}]`; missing/expired plans give 404;
+protected/in-use targets, empty plans and busy cleanup give 409. Docker or fresh
+size-reading failures give 503. Plans require a fresh size reading bounded to
+60 seconds; stale browsing sizes cannot authorize cleanup.
+
+Volumes declared by registered stacks remain protected even after those stacks
+are stopped. Registered compose-project labels also protect volumes. If any
+stack's declarations are unknown, otherwise unprotected volume plans fail closed
+with 503 naming the stacks; repair their compose configuration before retrying.
+Volumes without a creation timestamp cannot be identified safely and are refused.
+Images used by any container, including stopped containers, and volumes in use
+cannot be deleted. These checks run again for each item; changed identities,
+new declarations or unknown declarations cause skips. Docker removals never
+force deletion. Items created after an exact preview are outside that plan.
+
+Build cache has two paths. The by-ID capability starts **off**; enabling it
+requires a separate real-engine preservation check. With it enabled, cleanup
+sends only the rechecked record IDs. Otherwise the plan has `mode:"all-unused"`
+and `reclaim.exact:false`: its list is **expected items**, and confirmation can
+remove all build cache unused at that later moment, including records outside
+the preview. The UI and CLI label this fallback **not exact** beside the phrase.
+Docker's aggregate reclaimed bytes are emitted once. By-ID action rows record
+per-record plan estimates, never copies of the aggregate reclaimed bytes;
+fallback writes one `build-cache/all-unused` row with the actual aggregate.
+
+Cleanup uses the existing operation routes, streams and cancellation. Host
+operations have `"stack":""` and `"action":"storage-cleanup"`; the UI/CLI
+show `host`. Cancellation stops before the next item. Item failures are logged
+and make the operation fail; changed items are skipped with reasons.
+
+The action route returns rows with `id`, `ts`, `username`, `kind`, `scope`,
+`target`, `detail`, nullable `bytes`, `result` and `operationId`. `kind` is a
+literal lowercase prefix, `scope` an exact match, and `limit` is 1–500 (default
+50). Single cleanup uses `storage.delete`, bulk cleanup `storage.prune`, scope
+`host`; results are `deleted`, `untagged`, `skipped` or `failed`. Image/volume
+bytes are plan estimates. Rows persist for 365 days and are pruned hourly.
+A failed log write is reported in operation output but cannot undo a deletion.
+
 ## Observability
 
 Stackstead follows Docker's event stream to keep container status current, so
@@ -230,7 +314,7 @@ never block a request.
 The snapshot is collected at most once every 5 seconds. `volumes` and
 `restarts24h` (a 24-hour scan of `start` events: the first start of a
 container is not a restart) are refreshed in the background, `volumes` at
-most every 10 minutes and `restarts24h` at most every 60 seconds, and are
+most every 5 minutes and `restarts24h` at most every 60 seconds, and are
 `null` until the first refresh finishes. A failed refresh is not retried
 before its interval has passed. `restarts24h` and the `restart_loop` alert
 only see the container events Docker still holds in memory, which on a busy

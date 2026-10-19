@@ -60,6 +60,7 @@ Installers and the host layout: the script, `.deb`/`.rpm`, the macOS `.pkg`, and
 The `stackstead` binary as a server, a remote client and a host admin tool.
 
 - [Remote commands](cli.md#remote-commands): `login`, `stacks`, `ops`, `logs`, `metrics`, `events`, `networks`, `settings` and more, with [Contexts and credentials](cli.md#contexts-and-credentials) and [TLS](cli.md#tls).
+- [Storage](cli.md#storage): disk usage, cleanup previews, typed confirmation and exit codes.
 - [Exit codes](cli.md#exit-codes)
 - [Host administration](cli.md#host-administration): `config`, `db` (backup and restore), `admin`, `health`.
 - [Upgrading](cli.md#upgrading): `stackstead upgrade` flags, what it runs per install type, database caveats.
@@ -70,6 +71,7 @@ The `stackstead` binary as a server, a remote client and a host admin tool.
 The JSON API behind the web UI, and how Stackstead observes Docker.
 
 - [API overview](api.md#api-overview): routes, authentication, error format.
+- [Storage](api.md#storage): inventory, cleanup plans, build-cache modes and persistent action history.
 - [Observability](api.md#observability): event stream, log streaming and resume, metrics history.
 - [Dashboard data](api.md#dashboard-data), [Containers](api.md#containers), [Networks](api.md#networks).
 - [What is stored](api.md#what-is-stored) and [Prometheus](api.md#prometheus): retention, sampling limits, the `/metrics` endpoint and its token.
@@ -79,6 +81,7 @@ The JSON API behind the web UI, and how Stackstead observes Docker.
 What Stackstead exposes and how to run it safely.
 
 - [The short version](security.md#the-short-version): Docker access is root-equivalent; authentication, CSP, what the API discloses, the update check and its privacy.
+- [Storage cleanup](security.md#storage-cleanup): permanent volume deletion, protections and action logging.
 - [Remote access](security.md#remote-access): TLS reverse proxy settings and the HTTP/1.1 connection limit.
 - [First-run setup](security.md#first-run-setup) and [Password change](security.md#password-change).
 
@@ -103,7 +106,6 @@ For contributors.
 | [Image updates](superpowers/specs/2026-10-18-stackstead-image-updates-design.md) | Detect newer digests or tags, show what changed, and update one service or a stack, with a way back. |
 | [Notifications](superpowers/specs/2026-10-18-stackstead-notifications-design.md) | Telegram or webhook notifications for unhealthy services, restart loops, failed operations and low disk. |
 | [Reachability checks](superpowers/specs/2026-10-18-stackstead-reachability-checks-design.md) | Scheduled HTTP, TCP and DNS checks beyond Docker healthchecks, with history and alerts. |
-| [Storage inventory](superpowers/specs/2026-10-18-stackstead-storage-inventory-design.md) | A Storage screen for images, volumes, build cache and layers, with exact cleanup plans, an action log and CLI commands. |
 | [Volume and mount diagnostics](superpowers/specs/2026-10-18-stackstead-volume-diagnostics-design.md) | Per-mount diagnostics that flag the mistakes behind "permission denied" and silently empty data. |
 
 ## Quick reference
