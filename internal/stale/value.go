@@ -39,7 +39,7 @@ func New[T any](now func() time.Time) *Value[T] {
 // waiting caller gives up with ctx.Err() when its own context ends.
 func (c *Value[T]) Get(ctx context.Context, maxAge time.Duration, load func(context.Context) (T, error)) (T, error) {
 	c.mu.Lock()
-	if c.has && c.now().Sub(c.loadedAt) < maxAge {
+	if c.has && !c.invalidated && c.now().Sub(c.loadedAt) < maxAge {
 		v := c.val
 		c.mu.Unlock()
 		return v, nil
@@ -56,6 +56,7 @@ func (c *Value[T]) Get(ctx context.Context, maxAge time.Duration, load func(cont
 	}
 	f := &flight[T]{done: make(chan struct{})}
 	c.inflight = f
+	c.invalidated = false
 	c.mu.Unlock()
 
 	// Finish the flight even if load panics, so waiters are never stranded.
@@ -108,6 +109,9 @@ func (c *Value[T]) finish(f *flight[T], v T, err error, background bool) {
 	if err == nil {
 		c.val, c.has = v, true
 		c.loadedAt = c.now()
+	} else if !background {
+		// A failed forced read cannot make its previous cached value fresh again.
+		c.invalidated = true
 	}
 	c.lastError = err
 	if background || err == nil {
@@ -132,8 +136,8 @@ func (c *Value[T]) Metadata() Metadata {
 	return Metadata{LoadedAt: c.loadedAt, Refreshing: c.inflight != nil, LastError: c.lastError}
 }
 
-// Invalidate makes the next stale read start a background load, preserving the
-// previous value. Invalidation during a load remains pending until the next read.
+// Invalidate makes the next read reload, preserving the previous value for
+// stale readers. Invalidation during a load remains pending until the next read.
 func (c *Value[T]) Invalidate() {
 	c.mu.Lock()
 	c.invalidated = true

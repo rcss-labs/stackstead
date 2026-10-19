@@ -308,3 +308,61 @@ func TestSuccessfulFreshGetRefreshesStaleAge(t *testing.T) {
 		t.Fatal("stale read reloaded a freshly fetched value")
 	}
 }
+
+func TestInvalidateForcesGetAndPreservesInvalidationDuringFlight(t *testing.T) {
+	c := New[int](time.Now)
+	load := func(context.Context) (int, error) { return 1, nil }
+	if _, err := c.Get(context.Background(), time.Minute, load); err != nil {
+		t.Fatal(err)
+	}
+	c.Invalidate()
+	started, release, finished := make(chan struct{}), make(chan struct{}), make(chan int, 1)
+	go func() {
+		v, _ := c.Get(context.Background(), time.Minute, func(context.Context) (int, error) { close(started); <-release; return 2, nil })
+		finished <- v
+	}()
+	select {
+	case <-started:
+	case got := <-finished:
+		t.Fatalf("invalidated Get returned old value %d", got)
+	}
+	c.Invalidate()
+	close(release)
+	if got := <-finished; got != 2 {
+		t.Fatal(got)
+	}
+	v, err := c.Get(context.Background(), time.Minute, func(context.Context) (int, error) { return 3, nil })
+	if err != nil || v != 3 {
+		t.Fatalf("mid-flight invalidation lost: %d %v", v, err)
+	}
+	v, err = c.Get(context.Background(), time.Minute, func(context.Context) (int, error) { t.Error("reload after invalidation consumed"); return 4, nil })
+	if err != nil || v != 3 {
+		t.Fatal(v, err)
+	}
+}
+
+func TestFailedInvalidatedGetDoesNotRestoreFreshEligibility(t *testing.T) {
+	clock := newFakeClock()
+	c := New[int](clock.Now)
+	if _, err := c.Get(context.Background(), time.Minute, func(context.Context) (int, error) { return 7, nil }); err != nil {
+		t.Fatal(err)
+	}
+	loaded := c.Metadata().LoadedAt
+	c.Invalidate()
+	calls := 0
+	failure := errors.New("load failed")
+	load := func(context.Context) (int, error) { calls++; return 0, failure }
+	for range 2 {
+		if _, err := c.Get(context.Background(), time.Minute, load); !errors.Is(err, failure) {
+			t.Fatalf("cached old value after failed refresh: %v", err)
+		}
+	}
+	if calls != 2 || !c.Metadata().LoadedAt.Equal(loaded) {
+		t.Fatal(calls, c.Metadata())
+	}
+	got, ok := c.GetStale(time.Minute, func() (int, error) { return 0, failure })
+	if !ok || got != 7 {
+		t.Fatal(got, ok)
+	}
+	c.wait()
+}

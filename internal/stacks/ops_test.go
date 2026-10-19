@@ -576,3 +576,26 @@ func TestAllListsOperationsAcrossStacks(t *testing.T) {
 		t.Fatalf("All = %v", states)
 	}
 }
+
+func TestHostOperationIndependentOfStack(t *testing.T) {
+	o := NewOps(time.Minute, fixedNow)
+	host, err := o.Start("", "storage-cleanup", blockingFn(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = o.Start("", "storage-cleanup", blockingFn(nil)); !errors.Is(err, ErrBusy) {
+		t.Fatal(err)
+	}
+	stack, err := o.Start("media", "up", blockingFn(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host.Stack != "" || host.Action != "storage-cleanup" || len(o.All()) != 2 {
+		t.Fatal(host, o.All())
+	}
+	o.Cancel(host.ID)
+	o.Cancel(stack.ID)
+	if waitDone(t, o, host.ID).State != OpCancelled || waitDone(t, o, stack.ID).State != OpCancelled {
+		t.Fatal("cancellation failed")
+	}
+}

@@ -171,8 +171,8 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	defer bg.stop(time.Second) // safety net for early returns; the normal path stops it in order below
 
 	registry := stacks.NewRegistry(db, time.Now)
-	storageSvc := storage.NewService(storage.ServiceConfig{Engine: dockerEngine, Registry: registry, Declarations: storage.NewDeclarationCache(buildRunner(cfg), logger), Now: time.Now})
 	ops := stacks.NewOps(cfg.OperationTimeout, time.Now)
+	storageSvc := storage.NewService(storage.ServiceConfig{Engine: dockerEngine, Registry: registry, Declarations: storage.NewDeclarationCache(buildRunner(cfg), logger), Now: time.Now, Ops: ops, Actions: actions})
 	stackSvc := stacks.NewService(stacks.Deps{
 		Registry:     registry,
 		Ops:          ops,

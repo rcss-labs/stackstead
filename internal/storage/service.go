@@ -31,6 +31,8 @@ type DeclarationSource interface {
 // seconds for lists and sixty seconds for df. Now defaults to time.Now.
 type ServiceConfig struct {
 	Engine                 InventoryEngine
+	Ops                    *stacks.Ops
+	Actions                ActionWriter
 	Registry               StackRegistry
 	Declarations           DeclarationSource
 	Now                    func() time.Time
@@ -61,6 +63,7 @@ type Service struct {
 	pending    map[engine.DFKind]bool
 	refreshAt  time.Time
 	refreshed  bool
+	plans      []Plan
 }
 
 func NewService(cfg ServiceConfig) *Service {
@@ -90,25 +93,7 @@ func (s *Service) Inputs(ctx context.Context) (Inputs, error) {
 	}, 1)
 	go func() {
 		in, err := s.lists.Get(context.Background(), 2*time.Second, func(context.Context) (Inputs, error) {
-			loadCtx, cancel := context.WithTimeout(context.Background(), s.cfg.ListTimeout)
-			defer cancel()
-			done := make(chan struct {
-				in  Inputs
-				err error
-			}, 1)
-			go func() {
-				in, err := s.loadLists(loadCtx)
-				done <- struct {
-					in  Inputs
-					err error
-				}{in, err}
-			}()
-			select {
-			case v := <-done:
-				return v.in, v.err
-			case <-loadCtx.Done():
-				return Inputs{}, loadCtx.Err()
-			}
+			return s.freshLists(context.Background())
 		})
 		result <- struct {
 			in  Inputs
@@ -120,6 +105,24 @@ func (s *Service) Inputs(ctx context.Context) (Inputs, error) {
 		return r.in, r.err
 	case <-ctx.Done():
 		return Inputs{}, ctx.Err()
+	}
+}
+
+// freshLists bypasses the shared list cache while bounding dependency cleanup.
+func (s *Service) freshLists(ctx context.Context) (Inputs, error) {
+	loadCtx, cancel := context.WithTimeout(ctx, s.cfg.ListTimeout)
+	defer cancel()
+	type result struct {
+		in  Inputs
+		err error
+	}
+	done := make(chan result, 1)
+	go func() { in, err := s.loadLists(loadCtx); done <- result{in, err} }()
+	select {
+	case r := <-done:
+		return r.in, r.err
+	case <-loadCtx.Done():
+		return Inputs{}, loadCtx.Err()
 	}
 }
 func (s *Service) loadLists(ctx context.Context) (in Inputs, err error) {
