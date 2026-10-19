@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { filterContainers, chipCounts, sortContainers, type ContainerChip } from '$lib/containers/list';
 import { ICONS } from '$lib/shell/icons';
 import { Banner } from '../components/Banner';
@@ -9,9 +9,11 @@ import { PanelLabel } from '../components/PanelLabel';
 import { Spinner } from '../components/Spinner';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { ContainerConfirmDialog } from './ContainerActions';
+import { ContainerPeek } from './ContainerPeek';
 import { ContainerRow } from './ContainerRow';
 import styles from './ContainersScreen.module.css';
 import { useContainerAction } from './useContainerAction';
+import { useContainerKeys } from './useContainerKeys';
 import { useContainerList } from './useContainerList';
 
 const CHIPS: { id: ContainerChip; label: string }[] = [
@@ -26,14 +28,13 @@ export function ContainersScreen() {
   const [chip, setChip] = useState<ContainerChip>('all');
   const [query, setQuery] = useState('');
   const [focusIndex, setFocusIndex] = useState(0);
-  // Container name whose log peek is open; the peek itself arrives with the keyboard work.
+  // Container name whose log peek is open; names survive a container being recreated under a new id.
   const [openPeek, setOpenPeek] = useState<string | undefined>();
-  const rowEls = useRef<(HTMLDivElement | null)[]>([]);
-  const peekBase = useId();
+  const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const mobile = useIsMobile();
 
   const list = useContainerList();
-  const { confirming, confirm, cancel } = useContainerAction((_row, fresh) => {
+  const actions = useContainerAction((_row, fresh) => {
     if (fresh) list.patch(fresh);
     list.refresh();
   });
@@ -44,6 +45,37 @@ export function ContainersScreen() {
   const visible = filterContainers(sortContainers(all), chip, query);
   // Clamp so a shrinking list never leaves the roving tab stop on a row that is gone.
   const focused = Math.min(focusIndex, Math.max(visible.length - 1, 0));
+  const { confirming, confirm, cancel } = actions;
+
+  // Keep state honest about the list: no stale focus index, and no peek for a container that is no longer shown.
+  useEffect(() => {
+    if (focusIndex !== focused) setFocusIndex(focused);
+  }, [focusIndex, focused]);
+  const peekIsVisible = openPeek === undefined || visible.some((c) => c.name === openPeek);
+  useEffect(() => {
+    if (!peekIsVisible) setOpenPeek(undefined);
+  }, [peekIsVisible]);
+
+  function togglePeek(index: number) {
+    setFocusIndex(index);
+    setOpenPeek((cur) => (cur === visible[index]?.name ? undefined : visible[index]?.name));
+  }
+
+  useContainerKeys({
+    enabled: rows !== undefined,
+    count: visible.length,
+    focusIndex: focused,
+    onMove: (index) => {
+      setFocusIndex(index);
+      const el = rowRefs.current.get(visible[index].id);
+      el?.focus();
+      el?.scrollIntoView?.({ block: 'nearest' });
+    },
+    onToggle: () => visible.length > 0 && togglePeek(focused),
+    // A stack-managed container has no Restart of its own; the stack page owns it.
+    onRestart: () => visible[focused]?.managed !== 'stack' && visible.length > 0 && actions.request(visible[focused], 'restart'),
+    onClose: () => setOpenPeek(undefined),
+  });
 
   return (
     <section className={styles.page}>
@@ -65,7 +97,10 @@ export function ContainersScreen() {
         <div className={styles.filters}>
           <div className={styles.chips}>
             {CHIPS.map(({ id, label }) => (
-              <Chip key={id} pressed={chip === id} count={counts[id]} tone={id === 'problems' ? 'danger' : undefined} onClick={() => setChip(id)}>
+              <Chip key={id} pressed={chip === id} count={counts[id]} tone={id === 'problems' ? 'danger' : undefined} onClick={() => {
+                  setChip(id);
+                  setFocusIndex(0);
+                }}>
                 {label}
               </Chip>
             ))}
@@ -116,20 +151,32 @@ export function ContainersScreen() {
               </div>
               <div role="rowgroup">
                 {visible.map((c, i) => (
-                  <ContainerRow
-                    key={c.id}
-                    row={c}
-                    index={i}
-                    focused={i === focused}
-                    open={openPeek === c.name}
-                    peekId={`${peekBase}-peek-${c.id}`}
-                    mobile={mobile}
-                    onFocus={setFocusIndex}
-                    onToggle={() => setOpenPeek((cur) => (cur === c.name ? undefined : c.name))}
-                    rowRef={(el) => {
-                      rowEls.current[i] = el;
-                    }}
-                  />
+                  <Fragment key={c.id}>
+                    <ContainerRow
+                      row={c}
+                      index={i}
+                      focused={i === focused}
+                      open={openPeek === c.name}
+                      peekId={`peek-${c.id}`}
+                      mobile={mobile}
+                      onFocus={setFocusIndex}
+                      onToggle={() => togglePeek(i)}
+                      rowRef={(el) => {
+                        if (el) rowRefs.current.set(c.id, el);
+                        else rowRefs.current.delete(c.id);
+                      }}
+                    />
+                    {openPeek === c.name && (
+                      <ContainerPeek
+                        key={`peek-${c.id}`}
+                        row={c}
+                        id={`peek-${c.id}`}
+                        mobile={mobile}
+                        reason={actions.reasonFor(c)}
+                        onRequest={(action) => actions.request(c, action)}
+                      />
+                    )}
+                  </Fragment>
                 ))}
               </div>
             </div>
