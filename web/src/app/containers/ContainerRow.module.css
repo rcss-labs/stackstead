@@ -1,9 +1,9 @@
 .row {
   display: grid;
-  grid-template-columns: 8px minmax(200px, 1.6fr) 130px minmax(140px, 1.2fr) 150px 70px 64px 76px 50px 32px;
+  grid-template-columns: 8px minmax(160px, 1.6fr) 130px minmax(110px, 1.2fr) 150px 70px 64px 76px 50px 32px;
   align-items: center;
   gap: 12px;
-  min-width: 900px;
+  min-width: 986px;
   padding: 9px 14px;
   border-bottom: 1px solid var(--hi);
   font-size: 12.5px;
