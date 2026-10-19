@@ -97,6 +97,16 @@ func (e *cleanupEngine) InspectVolume(_ context.Context, name string) (engine.Vo
 	return engine.Volume{}, engine.ErrVolumeNotFound
 }
 func (e *cleanupEngine) RemoveImage(ctx context.Context, ref string) (engine.ImageDeleteResult, error) {
+	// Docker refuses an unforced delete by id while the image has more than one tag.
+	e.mu.Lock()
+	for _, i := range e.images {
+		if (i.ID == ref || strings.TrimPrefix(i.ID, "sha256:") == ref) && len(i.RepoTags) > 1 {
+			e.removed = append(e.removed, ref)
+			e.mu.Unlock()
+			return engine.ImageDeleteResult{}, errors.New("conflict: unable to delete " + ref + " (must be forced) - image is referenced in multiple repositories")
+		}
+	}
+	e.mu.Unlock()
 	err := e.remove(ref)
 	return engine.ImageDeleteResult{}, err
 }
@@ -231,6 +241,31 @@ func TestCleanupSingleRefusalsAndWarnings(t *testing.T) {
 	p := plan(t, s, PlanRequest{Kind: "image", Ref: "nginx:1.25"})
 	if len(p.Warnings) == 0 || !strings.Contains(p.Warnings[0], "media") {
 		t.Fatal(p)
+	}
+}
+func TestCleanupImageByIDRefusedWhileMultiplyTagged(t *testing.T) {
+	s, e, _ := cleanupFixture(t)
+	e.images = []engine.Image{{ID: "sha256:aaaaaaaaaaaa1111", RepoTags: []string{"a:1", "a:2"}}, {ID: "sha256:bbbbbbbbbbbb2222", RepoTags: []string{"b:1"}}}
+	for _, ref := range []string{"sha256:aaaaaaaaaaaa1111", "aaaaaaaaaaaa"} {
+		_, err := s.CreatePlan(context.Background(), PlanRequest{Kind: "image", Ref: ref})
+		if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "aaaaaaaaaaaa") || !strings.Contains(err.Error(), "a:1, a:2") || !strings.Contains(err.Error(), "one tag at a time") {
+			t.Fatal(ref, err)
+		}
+	}
+	// Deleting one tag, or an image with a single tag by id, is still allowed.
+	plan(t, s, PlanRequest{Kind: "image", Ref: "a:1"})
+	plan(t, s, PlanRequest{Kind: "image", Ref: "bbbbbbbbbbbb"})
+}
+func TestCleanupImageByIDSkippedWhenItGainsASecondTag(t *testing.T) {
+	s, e, _ := cleanupFixture(t)
+	e.images = []engine.Image{{ID: "sha256:bbbbbbbbbbbb2222", RepoTags: []string{"b:1"}}}
+	p := plan(t, s, PlanRequest{Kind: "image", Ref: "bbbbbbbbbbbb"})
+	e.mu.Lock()
+	e.images[0].RepoTags = []string{"b:1", "c:1"}
+	e.mu.Unlock()
+	confirm(t, s, p)
+	if len(e.removed) != 0 {
+		t.Fatal(e.removed)
 	}
 }
 func TestCleanupUnknownDeclarationsAndCreationIdentity(t *testing.T) {

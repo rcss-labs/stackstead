@@ -215,6 +215,10 @@ func (s *Service) CreatePlan(ctx context.Context, r PlanRequest) (Plan, error) {
 				ref = r.Ref
 				display = r.Ref
 			}
+			if r.Kind == "image" && ref == i.ID && len(i.Tags) > 1 {
+				// Docker refuses an unforced delete by id while the image has several tags.
+				return Plan{}, fmt.Errorf("%w: image %s has several tags (%s); delete them one tag at a time", ErrConflict, shortImageID(i.ID), strings.Join(i.Tags, ", "))
+			}
 			item := PlanItem{Kind: "image", ID: i.ID, Ref: display, Bytes: i.Size, untag: len(i.Tags) > 1 && ref != i.ID, declarations: slices.Clone(i.DeclaredBy)}
 			// fingerprint comes from the unmodified engine metadata, including sentinel tags.
 			for _, raw := range in.Images {

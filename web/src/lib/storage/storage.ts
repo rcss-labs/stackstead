@@ -37,6 +37,8 @@ export function reclaimText(reclaim: StorageReclaim): string {
 export function deleteDisabledReason(row: StorageImage | StorageVolume, dockerDown = false): string | undefined {
   if (dockerDown) return 'Docker is unavailable';
   if (row.containers.length) return `used by ${row.containers.length} container${row.containers.length === 1 ? '' : 's'}`;
+  // Docker refuses an unforced delete by id while an image has several tags, and Stackstead never forces.
+  if ('tags' in row && row.tags.length > 1) return `has several tags (${row.tags.join(', ')}) — delete its tags individually from the CLI or Docker`;
   if ('protection' in row && row.protection) {
     const declaration = row.declaredBy.find(d => d.stack === row.protection?.stack);
     return declaration ? `declared by stack ${declaration.stack} (${declaration.stackState}) — remove via the stack` : `protected by stack ${row.protection.stack} — remove via the stack`;

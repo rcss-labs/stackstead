@@ -21,6 +21,11 @@ describe('storage presentation rules', () => {
     expect(deleteDisabledReason(image({ containers: [consumer, consumer] }))).toBe('used by 2 containers');
     expect(deleteDisabledReason(image(), true)).toBe('Docker is unavailable');
   });
+  it('disables deleting an image by id while it has several tags, because Docker refuses without force', () => {
+    expect(deleteDisabledReason(image({ tags: ['a:1', 'a:2'] }))).toBe('has several tags (a:1, a:2) — delete its tags individually from the CLI or Docker');
+    expect(deleteDisabledReason(image({ tags: ['a:1'] }))).toBeUndefined();
+    expect(deleteDisabledReason(image({ tags: [], dangling: true }))).toBeUndefined();
+  });
   it.each([
     [{ min: 1024 ** 3, max: 1024 ** 3, exact: true }, 'Frees 1.0 GiB'],
     [{ min: 120 * 1024 ** 2, max: 480 * 1024 ** 2, exact: true }, 'Frees between 120.0 MiB and 480.0 MiB'],
