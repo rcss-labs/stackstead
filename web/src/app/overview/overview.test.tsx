@@ -164,13 +164,14 @@ describe('Overview', () => {
   });
 
   it('requests host, alerts, summary and storage once each at mount and stops them on unmount', async () => {
+    // Fake timers before mount so the controller's intervals are the fake ones.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     install([stack('alpha')]);
     const view = mount();
     await screen.findByRole('heading', { level: 1 });
     await waitFor(() => expect(count('/api/storage')).toBe(1));
     const once = ['/api/host', '/api/alerts', '/api/metrics/summary', '/api/storage'].map(count);
     expect(once).toEqual([1, 1, 1, 1]);
-    vi.useFakeTimers();
     view.unmount();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5);
