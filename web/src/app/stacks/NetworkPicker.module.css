@@ -6,5 +6,9 @@
 }
 
 .cols > * { flex: 1 1 12rem; }
+/* A select sizes to its longest option; let it shrink so the row cannot push into the remove button. */
+.cols,
+.cols > * { min-width: 0; }
+.cols select { width: 100%; }
 
 .note { margin: 0; color: var(--muted); font-size: 12px; }
