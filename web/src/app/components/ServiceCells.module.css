@@ -1,0 +1,17 @@
+.cells {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.cell {
+  width: 10px;
+  height: 6px;
+  border-radius: 1px;
+  background: var(--tone);
+}
+
+.cell[data-tone='success'] { --tone: var(--success); }
+.cell[data-tone='warning'] { --tone: var(--warning); }
+.cell[data-tone='danger'] { --tone: var(--danger); }
+.cell[data-tone='off'] { --tone: var(--border-strong); }

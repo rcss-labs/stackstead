@@ -1,0 +1,19 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: var(--tone-soft);
+  color: var(--tone);
+}
+
+.badge[data-tone='success'] { --tone: var(--success); --tone-soft: var(--success-soft); }
+.badge[data-tone='warning'] { --tone: var(--warning); --tone-soft: var(--warning-soft); }
+.badge[data-tone='danger'] { --tone: var(--danger); --tone-soft: var(--danger-soft); }
+.badge[data-tone='muted'] { --tone: var(--muted); --tone-soft: var(--muted-soft); }
