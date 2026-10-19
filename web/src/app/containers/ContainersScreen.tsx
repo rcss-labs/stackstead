@@ -167,7 +167,7 @@ export function ContainersScreen() {
                     />
                     {openPeek === c.name && (
                       <ContainerPeek
-                                        row={c}
+                        row={c}
                         id={`peek-${c.id}`}
                         mobile={mobile}
                         reason={actions.reasonFor(c)}
