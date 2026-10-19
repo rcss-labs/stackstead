@@ -12,6 +12,7 @@
   import Tabs from '$lib/components/Tabs.svelte';
   import { createContainerList } from '$lib/containers/list';
   import ContainerActions from '$lib/containers/ContainerActions.svelte';
+  import { imagePath } from '$lib/storage/storage';
   import { formatBytes, formatPercent } from '$lib/format';
   import { link, navigate, route } from '$lib/router';
   import LogsViewer from '$lib/stacks/LogsViewer.svelte';
@@ -146,7 +147,7 @@
         <StatusBadge status={c.state} />
         {#if c.health !== 'none'}<span class="health {c.health}"><i class="dot"></i>{c.health}</span>{/if}
         <p class="meta">
-          <span class="mono">{c.image}</span> ·
+          {#if imagePath(c.imageId)}<a class="mono" href={imagePath(c.imageId)} use:link>{c.image}</a>{:else}<span class="mono">{c.image}</span>{/if} ·
           {#if c.managed === 'stack'}
             stack <a href={`/stacks/${encodeURIComponent(c.stack)}`} use:link>{c.stack}</a>
           {:else if c.managed === 'compose'}
@@ -209,7 +210,7 @@
                   </dd>
                   <dt>Mounts</dt>
                   <dd>
-                    {#each d.mounts as m (m.destination)}<div class="mono">{m.type} {m.source} → {m.destination}{m.readOnly ? ' (ro)' : ''}</div>{:else}—{/each}
+                    {#each d.mounts as m (m.destination)}<div class="mono">{m.type} {#if m.type === 'volume' && m.name}<a href={`/storage/volumes/${encodeURIComponent(m.name)}`} use:link>{m.name}</a>{:else}{m.source}{/if} → {m.destination}{m.readOnly ? ' (ro)' : ''}</div>{:else}—{/each}
                   </dd>
                 </dl>
                 {#if Object.keys(d.labels).length > 0}

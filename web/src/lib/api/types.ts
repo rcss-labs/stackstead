@@ -38,6 +38,7 @@ export interface ContainerRow {
   id: string;
   name: string;
   image: string;
+  imageId: string;
   state: string;
   status: string;
   health: ContainerHealth;
@@ -61,6 +62,7 @@ export interface ContainerRow {
 
 export interface ContainerMount {
   type: string;
+  name: string;
   source: string;
   destination: string;
   readOnly: boolean;
@@ -72,6 +74,7 @@ export interface ContainerDetail {
   id: string;
   name: string;
   image: string;
+  imageId: string;
   state: string;
   status: string;
   health: ContainerHealth;
@@ -469,4 +472,170 @@ export interface DockerEvent {
   time: string;
   exitCode?: number;
   health?: 'healthy' | 'unhealthy';
+}
+
+/** Storage lists always return arrays; unknown measurements remain null. */
+export interface StorageConsumer {
+  containerId: string;
+  name: string;
+  state: string;
+  project: string;
+  service: string;
+  stack: string;
+}
+
+export interface StorageDeclaration {
+  stack: string;
+  service: string;
+  ref: string;
+  stackState: string;
+}
+
+export interface StorageProtection {
+  reason: string;
+  stack: string;
+}
+
+export interface StorageImage {
+  id: string;
+  tags: string[];
+  digests: string[];
+  created: string;
+  size: number | null;
+  sharedSize: number | null;
+  containers: StorageConsumer[];
+  declaredBy: StorageDeclaration[];
+  dangling: boolean;
+  status: string;
+}
+
+export interface StorageVolume {
+  name: string;
+  driver: string;
+  scope: string;
+  project: string;
+  createdAt: string;
+  labels: Record<string, string>;
+  size: number | null;
+  refCount: number | null;
+  sizesPending: boolean;
+  containers: StorageConsumer[];
+  declaredBy: StorageDeclaration[];
+  protection: StorageProtection | null;
+  status: string;
+}
+
+export interface StorageBuildRecord {
+  id: string;
+  type: string;
+  description: string;
+  size: number | null;
+  inUse: boolean;
+  shared: boolean;
+  createdAt: string;
+  lastUsedAt: string | null;
+  usageCount: number;
+}
+
+export interface StorageKindTotals {
+  count: number;
+  size: number | null;
+  reclaimable: number | null;
+  sizesAt: string | null;
+  refreshing: boolean;
+  error: string;
+}
+
+export interface StorageOverview {
+  images: StorageKindTotals;
+  containers: StorageKindTotals;
+  volumes: StorageKindTotals;
+  buildCache: StorageKindTotals;
+  topContainers: {
+    name: string;
+    stack: string;
+    sizeRw: number | null;
+  }[];
+  declarationsUnknown: string[];
+}
+
+export interface StorageImages {
+  images: StorageImage[];
+  totals: StorageKindTotals;
+}
+
+export interface StorageVolumes {
+  volumes: StorageVolume[];
+  totals: StorageKindTotals;
+}
+
+export interface StorageBuildCache {
+  records: StorageBuildRecord[];
+  totals: StorageKindTotals;
+}
+
+export interface StorageReclaim {
+  min: number | null;
+  max: number | null;
+  exact: boolean;
+}
+
+export interface StoragePlanRequest {
+  kind: string;
+  selection?: string;
+  ref?: string;
+  name?: string;
+}
+
+export interface StoragePlanItem {
+  kind: string;
+  id: string;
+  ref: string;
+  bytes: number | null;
+}
+
+export interface StorageProtectedItem {
+  kind: string;
+  id: string;
+  ref: string;
+  reason: string;
+  stack: string;
+  stackState: string;
+}
+
+export interface StoragePlan {
+  id: string;
+  kind: string;
+  mode?: string;
+  createdAt: string;
+  expiresAt: string;
+  items: StoragePlanItem[];
+  protected: StorageProtectedItem[];
+  warnings: string[];
+  reclaim: StorageReclaim;
+  confirmPhrase: string;
+}
+
+export interface StorageImageDetail extends StorageImage {
+  architecture: string;
+  os: string;
+  layers: number;
+  labels: Record<string, string>;
+}
+
+export interface StorageVolumeDetail extends StorageVolume {
+  mountpoint: string;
+}
+
+export interface ActionEntry {
+  id: number;
+  ts: string;
+  username: string;
+  kind: string;
+  scope: string;
+  target: string;
+  detail: string;
+  bytes: number | null;
+  result: string;
+  operationId: string;
 }

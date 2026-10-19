@@ -382,3 +382,21 @@ describe('network endpoints', () => {
     expect(fake.calls[0].body).toBeUndefined();
   });
 });
+
+it('uses storage wrapper routes and action-log filters; keeps refresh rate-limit body', async () => {
+  fake = installFakeFetch({
+    'GET /api/storage': { body: { images: {} } },
+    'GET /api/storage/images': { body: { images: [], totals: {} } },
+    'GET /api/storage/volumes': { body: { volumes: [], totals: {} } },
+    'GET /api/storage/build-cache': { body: { records: [], totals: {} } },
+    'GET /api/actions?kind=storage.&limit=20': { body: [] },
+    'POST /api/storage/refresh': { status: 429, body: { error: 'Wait for the current reading', retryAfter: 42 } },
+  });
+  expect(await api.storageOverview()).toEqual({ images: {} });
+  expect(await api.storageImages()).toEqual({ images: [], totals: {} });
+  expect(await api.storageVolumes()).toEqual({ volumes: [], totals: {} });
+  expect(await api.storageBuildCache()).toEqual({ records: [], totals: {} });
+  expect(await api.recentActions({ kind: 'storage.', limit: 20 })).toEqual([]);
+  await expect(api.refreshStorage()).rejects.toMatchObject({ status: 429, message: 'Wait for the current reading', body: { retryAfter: 42 } });
+  expect(fake.calls.at(-1)?.body).toEqual({});
+});

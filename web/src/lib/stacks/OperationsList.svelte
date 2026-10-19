@@ -35,13 +35,18 @@
     {#each operations as o (o.id)}
       {@const look = operationStateLook(o.state)}
       <li>
-        <a href={href(o.id)} use:link aria-current={o.id === selected ? 'true' : undefined} class="row">
+        {#snippet content()}
           <span class="action">{o.action}</span>
           <span class="state {look.tone}"><span class="dot" aria-hidden="true"></span>{look.label}</span>
-          <span class="cmd">docker compose {o.action}</span>
+          <span class="cmd">{o.stack ? `docker compose ${o.action}` : 'host'}</span>
           <RelativeTime iso={o.startedAt} />
           <span class="duration">{duration(o)}</span>
-        </a>
+        {/snippet}
+        {#if o.stack}
+          <a href={href(o.id)} use:link aria-current={o.id === selected ? 'true' : undefined} class="row">{@render content()}</a>
+        {:else}
+          <div class="row">{@render content()}</div>
+        {/if}
       </li>
     {/each}
   </ul>
@@ -67,7 +72,7 @@
   }
   .row:hover { background: var(--hover); }
   .row[aria-current='true'] { background: var(--accent-soft); }
-  .action { font-family: var(--mono); font-weight: 500; }
+  .action { overflow-wrap: anywhere; font-family: var(--mono); font-weight: 500; }
   .state { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em; color: var(--tone); white-space: nowrap; }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--tone); flex: none; }
   .success { --tone: var(--success); }

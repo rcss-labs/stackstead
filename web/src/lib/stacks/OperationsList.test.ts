@@ -58,3 +58,8 @@ describe('OperationsList', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+it('renders a host storage operation without a stack link or compose command', () => {
+  render(OperationsList, { operations: [{ ...finished, stack: '', action: 'storage-cleanup' }], href });
+  expect(screen.getByText('host')).toBeTruthy(); expect(screen.queryByRole('link')).toBeNull(); expect(screen.queryByText(/docker compose/)).toBeNull();
+});

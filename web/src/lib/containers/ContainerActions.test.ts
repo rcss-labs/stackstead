@@ -25,6 +25,7 @@ const row = (over: Partial<ContainerRow> = {}): ContainerRow => ({
   id: 'abc123def456',
   name: 'redis',
   image: 'redis:7',
+  imageId: '',
   state: 'running',
   status: 'Up 1 hour',
   health: 'none',

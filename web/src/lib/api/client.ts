@@ -1,5 +1,7 @@
 import type {
   Action,
+  ActionEntry, StorageOverview, StorageImages, StorageVolumes, StorageBuildCache,
+  StorageImageDetail, StorageVolumeDetail, StoragePlan, StoragePlanRequest,
   AddServiceRequest,
   ChangePasswordRequest,
   ContainerDetail,
@@ -167,6 +169,19 @@ export const api = {
   container: (id: string) => get<ContainerDetail>(`/api/containers/${seg(id)}`),
   containerAction: (id: string, action: 'start' | 'stop' | 'restart') =>
     post<ContainerRow | undefined>(`/api/containers/${seg(id)}/${seg(action)}`), // 204 when the action removed the container
+
+  storageOverview: () => get<StorageOverview>('/api/storage'),
+  storageImages: () => get<StorageImages>('/api/storage/images'),
+  storageVolumes: () => get<StorageVolumes>('/api/storage/volumes'),
+  storageBuildCache: () => get<StorageBuildCache>('/api/storage/build-cache'),
+  storageImage: (id: string) => get<StorageImageDetail>(`/api/storage/images/${seg(id)}`),
+  storageVolume: (name: string) => get<StorageVolumeDetail>(`/api/storage/volumes/${seg(name)}`),
+  createStoragePlan: (body: StoragePlanRequest) => post<StoragePlan>('/api/storage/plans', body),
+  storagePlan: (id: string) => get<StoragePlan>(`/api/storage/plans/${seg(id)}`),
+  confirmStoragePlan: (id: string, confirm: string) => post<Operation>(`/api/storage/plans/${seg(id)}/confirm`, { confirm }),
+  refreshStorage: () => post<{ startedAt: string }>('/api/storage/refresh'),
+  recentActions: (params: { kind?: string; scope?: string; limit?: number } = {}) =>
+    get<ActionEntry[]>(`/api/actions${query({ kind: params.kind, scope: params.scope, limit: params.limit?.toString() })}`),
 
   stacks: () => get<StackSummary[]>('/api/stacks'),
   stack: (name: string) => get<StackDetail>(`/api/stacks/${seg(name)}`),

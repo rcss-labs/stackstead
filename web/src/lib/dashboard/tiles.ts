@@ -92,6 +92,7 @@ export function hostTiles(h: HostSnapshot): TileModel[] {
     const v = h.volumes;
     tiles.push({
       id: 'volumes',
+      href: '/storage?tab=volumes',
       label: 'Volumes',
       value: formatBytes(v.size),
       sub: v.dangling > 0 ? `${v.count} · ${v.dangling} dangling` : `${v.count} volumes`,

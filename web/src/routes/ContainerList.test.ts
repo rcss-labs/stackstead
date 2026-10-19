@@ -16,6 +16,7 @@ const row = (name: string, over: Partial<ContainerRow> = {}): ContainerRow => ({
   id: name.padEnd(12, '0').slice(0, 12),
   name,
   image: 'nginx:1',
+  imageId: '',
   state: 'running',
   status: 'Up 1 hour',
   health: 'none',

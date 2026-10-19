@@ -26,6 +26,7 @@ const row = (over: Partial<ContainerRow> = {}): ContainerRow => ({
   id: ID,
   name: 'redis',
   image: 'redis:7',
+  imageId: '',
   state: 'running',
   status: 'Up 1 hour',
   health: 'none',
@@ -47,6 +48,7 @@ const detail = (over: Partial<Detail> = {}): Detail => ({
   id: FULL_ID,
   name: 'redis',
   image: 'redis:7',
+  imageId: '',
   state: 'running',
   status: 'Up 1 hour',
   health: 'none',
@@ -61,7 +63,7 @@ const detail = (over: Partial<Detail> = {}): Detail => ({
   managed: 'none',
   ports: ['6379/tcp'],
   networks: { bridge: '172.17.0.2' },
-  mounts: [{ type: 'volume', source: 'redis-data', destination: '/data', readOnly: false }],
+  mounts: [{ type: 'volume', name: 'redis-data', source: 'redis-data', destination: '/data', readOnly: false }],
   labels: { 'com.example.owner': 'me', 'com.docker.compose.project': 'shop' },
   memoryLimit: null,
   ...over,
@@ -146,7 +148,7 @@ describe('ContainerDetail', () => {
     await screen.findByText('unless-stopped');
     expect(screen.getByText('6379/tcp')).toBeTruthy();
     expect(screen.getByText(/bridge → 172\.17\.0\.2/)).toBeTruthy();
-    expect(screen.getByText(/volume redis-data → \/data/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'redis-data' }).closest('div')?.textContent).toContain('volume redis-data → /data');
     expect(screen.getByText('2')).toBeTruthy(); // restarts 24h
   });
 
@@ -330,4 +332,13 @@ describe('ContainerDetail', () => {
     await screen.findByRole('heading', { level: 1, name: 'redis' });
     await screen.findByText(/boom/);
   });
+});
+
+it('links image by immutable id and volume by mount name, leaving binds as text', async () => {
+  listRes = { body: [row({ imageId: 'sha256:' + 'f'.repeat(64) })] };
+  detailRes = { body: detail({ mounts: [{ type: 'volume', name: 'actual-volume', source: '/var/lib/docker/volumes/other/_data', destination: '/data', readOnly: false }, { type: 'bind', name: '', source: '/host/path', destination: '/host', readOnly: true }] }) };
+  render(ContainerDetail, { name: 'redis' });
+  expect((await screen.findByRole('link', { name: 'redis:7' })).getAttribute('href')).toBe('/storage/images/' + 'f'.repeat(12));
+  expect((await screen.findByRole('link', { name: 'actual-volume' })).getAttribute('href')).toBe('/storage/volumes/actual-volume');
+  expect(screen.queryByRole('link', { name: '/host/path' })).toBeNull();
 });

@@ -403,3 +403,10 @@ describe('App banners', () => {
     expect(screen.queryByText(/unreachable|not found|degraded/i, { selector: 'strong' })).toBeNull();
   });
 });
+
+it('renders Storage at /storage with title and current rail', async () => {
+  at('/storage'); render(App);
+  expect(await screen.findByRole('heading', { level: 1, name: 'Storage' })).toBeTruthy();
+  await waitFor(() => expect(document.title).toBe('Storage · Stackstead'));
+  expect(screen.getByRole('link', { name: 'Storage' }).getAttribute('aria-current')).toBe('page');
+});

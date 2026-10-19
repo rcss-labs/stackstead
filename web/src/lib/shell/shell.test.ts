@@ -197,3 +197,14 @@ describe('TopBar', () => {
     expect(screen.getByText('compose unavailable')).toBeTruthy();
   });
 });
+
+it('marks Storage current below its route after Networks, with disk icon and detail breadcrumbs', () => {
+  render(Rail, { onlogout: () => {}, current: '/storage/images/abcdef123456' });
+  const links = screen.getAllByRole('link'); const labels = links.map(a => a.getAttribute('aria-label'));
+  const storage = screen.getByRole('link', { name: 'Storage' });
+  expect(labels.indexOf('Storage')).toBe(labels.indexOf('Networks') + 1);
+  expect(storage.getAttribute('aria-current')).toBe('page'); expect(storage.querySelector('path')?.getAttribute('d')).toBeTruthy();
+  expect(breadcrumb('/storage')).toEqual([{ label: 'Storage' }]);
+  expect(breadcrumb('/storage/images/abc')).toEqual([{ label: 'Storage', href: '/storage' }, { label: 'Images', href: '/storage?tab=images' }, { label: 'abc', mono: true }]);
+  expect(breadcrumb('/storage/volumes/media_db')).toEqual([{ label: 'Storage', href: '/storage' }, { label: 'Volumes', href: '/storage?tab=volumes' }, { label: 'media_db', mono: true }]);
+});

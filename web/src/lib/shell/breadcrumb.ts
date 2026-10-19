@@ -18,6 +18,9 @@ const decode = (segment: string) => {
 
 /** Breadcrumb trail for a route path; the last crumb is the current page. */
 export function breadcrumb(path: string): Crumb[] {
+  if (path === '/storage') return [{ label: 'Storage' }];
+  const storage = /^\/storage\/(images|volumes)\/([^/]+)$/.exec(path);
+  if (storage) return [{ label: 'Storage', href: '/storage' }, { label: storage[1] === 'images' ? 'Images' : 'Volumes', href: `/storage?tab=${storage[1]}` }, { label: decode(storage[2]), mono: true }];
   if (path === '/') return [{ label: 'Stacks' }];
   if (path === '/settings') return [{ label: 'Settings' }];
   if (path === '/stacks/new') return [stacks, { label: 'New stack' }];
