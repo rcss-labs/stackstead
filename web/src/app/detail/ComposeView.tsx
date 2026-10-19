@@ -13,7 +13,7 @@ export interface ComposeViewProps {
   onRetry: () => void;
   /** Where the Edit YAML control goes. */
   editSlot?: ReactNode;
-  /** The compose editor; while present it replaces the read-only text (and its own parse-error banner). */
+  /** The compose editor; while present it replaces the read-only text. */
   editor?: ReactNode;
 }
 
@@ -26,7 +26,7 @@ export function ComposeView({ detail, compose, error, onRetry, editSlot, editor 
         <span className={styles.spacer} />
         {editSlot}
       </header>
-      {!editor && detail.parseError && (
+      {detail.parseError && (
         <Banner kind="warning" title="This file cannot be edited with forms">
           Edit it as text; the forms return once it parses.
         </Banner>

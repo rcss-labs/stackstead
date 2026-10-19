@@ -3,7 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from '$lib/store';
 import { unsavedChanges } from '$lib/stores/guard';
-import { installFakeFetch } from '../../vitest-setup';
+import { startLive } from '$lib/stores/live';
+import { installFakeFetch, installFakeStream } from '../../vitest-setup';
 
 // Keep the plain textarea: the CodeMirror chunk is exercised in the YamlEditor and DiffView tests.
 vi.mock('$lib/stacks/cm', () => ({
@@ -19,9 +20,12 @@ import { App } from '../App';
 import { installHarness, mountDetail, removeHarness, stackDetail, type Harness } from './detailTestKit';
 
 let h: Harness;
+let onPut: (() => void) | undefined;
 beforeEach(() => {
+  onPut = undefined;
   h = installHarness();
   h.composeRes = { body: { content: 'services: {}\n', hash: 'c1' } };
+  h.stream.restore(); // unwind in reverse order of installation
   h.fake.restore();
   h.fake = installFakeFetch({
     'GET /api/stacks/web': () => h.stackRes,
@@ -29,7 +33,10 @@ beforeEach(() => {
     'GET /api/stacks/web/health?span=60m': { body: { from: 0, to: 3600, services: [] } },
     'GET /api/stacks/web/metrics': { body: { points: [] } },
     'GET /api/stacks/web/compose': () => h.composeRes,
-    'PUT /api/stacks/web/compose': { body: { hash: 'c2' } },
+    'PUT /api/stacks/web/compose': () => {
+      onPut?.();
+      return { body: { hash: 'c2' } };
+    },
     'POST /api/stacks/web/actions/up': { body: h.operations[0] },
     'GET /api/status': { body: { docker: 'ok', compose: '2.29.0', events: 'connected', metricsDegraded: false } },
     'GET /api/stacks': { body: [] },
@@ -37,6 +44,13 @@ beforeEach(() => {
     'GET /api/me': { body: { username: 'admin' } },
     'GET /api/setup/status': { body: { needsSetup: false } },
     'GET /api/host': { body: {} },
+  });
+  // The wider fake fetch replaced the one the stream fake wraps, so the stream fake is installed again on top.
+  h.stream = installFakeStream({
+    '/api/events': [],
+    '/api/stacks/web/logs': [],
+    '/api/stacks/web/metrics/live': [],
+    '/api/operations/op1/stream': [],
   });
 });
 afterEach(async () => {
@@ -86,6 +100,55 @@ describe('compose editor on the stack page', () => {
     expect(screen.queryByRole('button', { name: 'Edit YAML' })).toBeNull();
     expect(rail().queryByRole('button', { name: /^app\b/ })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Edit app' })).toBeNull();
+  });
+
+  it('saving a fixed file on a parse-error stack keeps the editor and offers Apply', async () => {
+    h.stackRes = { body: stackDetail({ status: 'unavailable', parseError: 'yaml: line 3: bad', services: [] }) };
+    onPut = () => (h.stackRes = { body: stackDetail() });
+    mountDetail(h, '/stacks/web');
+    await waitFor(() => expect(textbox().value).toBe('services: {}\n'));
+    edit('services: {}\n# fixed\n');
+    await user().click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('button', { name: 'Apply' })).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull()); // the page has refetched and parsed
+    await new Promise((r) => setTimeout(r, 200));
+    expect(textbox()).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeTruthy();
+  });
+
+  it('a refetch that clears the parse error keeps a dirty draft in the editor', async () => {
+    h.stackRes = { body: stackDetail({ status: 'unavailable', parseError: 'yaml: line 3: bad', services: [] }) };
+    mountDetail(h, '/stacks/web');
+    await waitFor(() => expect(textbox().value).toBe('services: {}\n'));
+    edit('services: {}\n# mine\n');
+    startLive({ fetchStatus: () => fetch('/api/status').then((r) => r.json()) });
+    await waitFor(() => expect(h.stream.requests.some((r) => r.path.startsWith('/api/events'))).toBe(true));
+    h.stackRes = { body: stackDetail() }; // fixed on disk meanwhile
+    h.stream.push('/api/events', 'event: change\ndata: {"project":"web","seq":1}\n\n');
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(textbox().value).toBe('services: {}\n# mine\n');
+    expect(get(unsavedChanges)).toBe(true);
+  });
+
+  it('shows one parse-error alert, the page banner', async () => {
+    h.stackRes = { body: stackDetail({ status: 'unavailable', parseError: 'yaml: line 3: bad', services: [] }) };
+    mountDetail(h, '/stacks/web');
+    await screen.findByRole('textbox', { name: 'Compose file' });
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+  });
+
+  it('leaving the compose item clears the dirty flag before the editor is reopened', async () => {
+    await openDirtyEditor();
+    const seen: boolean[] = [];
+    const stop = unsavedChanges.subscribe((v) => seen.push(v));
+    h.goTo('/stacks/web?tab=operations');
+    await waitFor(() => expect(get(unsavedChanges)).toBe(false));
+    seen.length = 0;
+    h.goTo('/stacks/web?tab=compose');
+    await user().click(await screen.findByRole('button', { name: 'Edit YAML' }));
+    await screen.findByRole('textbox', { name: 'Compose file' });
+    stop();
+    expect(seen).not.toContain(true);
   });
 
   it('a missing compose file shows the message and no editor', async () => {
@@ -159,6 +222,10 @@ describe('compose editor on the stack page', () => {
     await user().click(within(dlg).getByRole('button', { name: 'Cancel' }));
     expect(window.location.pathname).toBe('/stacks/web');
     expect(textbox().value).toBe('services: {}\n# edit\n');
+    await user().click(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Containers' }));
+    await user().click(within(await dialog()).getByRole('button', { name: 'Discard changes' }));
+    await waitFor(() => expect(window.location.pathname).toBe('/containers'));
+    expect(get(unsavedChanges)).toBe(false);
   });
 
   it('history navigation away from a dirty compose editor does not leave a stale unsaved flag', async () => {

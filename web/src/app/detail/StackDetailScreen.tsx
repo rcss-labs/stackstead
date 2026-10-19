@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import type { Action } from '$lib/api/types';
 import { timelineLanes } from '$lib/stacks/timeline';
 import { lifecycleDisabledReason } from '$lib/stacks/lifecycle';
@@ -48,6 +48,7 @@ export function StackDetailScreen({ name }: { name: string }) {
   const [pendingLeave, setPendingLeave] = useState<(() => void) | undefined>();
   const mobile = useIsMobile();
   const [query] = useSearchParams();
+  const navigate = useNavigate();
   const [logsOpen, setLogsOpen] = useState(!mobile);
   const [logService, setLogService] = useState<string | undefined>();
   const consoleSlot = useRef<HTMLDivElement>(null);
@@ -92,6 +93,14 @@ export function StackDetailScreen({ name }: { name: string }) {
   useEffect(() => {
     setUnsavedChanges(dirty);
   }, [dirty]);
+  // A parse error opens the raw editor and latches edit mode: once the file is fixed (saved here or on disk)
+  // the parse error clears, but the editor, its Apply button and any draft must stay until the user leaves.
+  useEffect(() => {
+    if (!onCompose || !rawOnly) return;
+    setEditRequested(true);
+    // Compose is only the default item while the file fails to parse; pin it in the URL so a fix keeps it selected.
+    if (query.get('tab') !== 'compose') void navigate(location.hrefFor({ kind: 'compose' }), { replace: true });
+  }, [onCompose, rawOnly, query, navigate, location]);
   // Leaving the compose item ends edit mode; a held draft is gone with the editor.
   useEffect(() => {
     if (!onCompose) {
@@ -236,7 +245,6 @@ export function StackDetailScreen({ name }: { name: string }) {
                   <ComposeEditor
                     key={name}
                     stackName={name}
-                    parseError={parseError}
                     composePath={detail.path}
                     onDirtyChange={setComposeDirty}
                     onSaved={() => void ctl.load()}
