@@ -22,6 +22,7 @@ import (
 	"github.com/rcss-labs/stackstead/internal/composecli"
 	"github.com/rcss-labs/stackstead/internal/config"
 	"github.com/rcss-labs/stackstead/internal/engine"
+	"github.com/rcss-labs/stackstead/internal/history"
 	"github.com/rcss-labs/stackstead/internal/host"
 	"github.com/rcss-labs/stackstead/internal/lockfile"
 	"github.com/rcss-labs/stackstead/internal/metrics"
@@ -157,17 +158,24 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	cache := state.New(dockerEngine, logger, state.Backoff{})
 	metricsStore := metrics.NewStore(db, time.Now)
 	actions := actionlog.NewStore(db, time.Now)
-	sampler := metrics.NewSampler(metricsStore, cache, dockerEngine, cfg.MetricsInterval, cfg.MetricsRetention, logger, time.Now, func(ctx context.Context) error {
-		_, err := actions.Prune(ctx, time.Now().Add(-365*24*time.Hour))
-		return err
-	})
+	hist := history.NewStore(db)
+	recorder := history.NewRecorder(cache, hist, logger, time.Now)
+	sampler := metrics.NewSampler(metricsStore, cache, dockerEngine, cfg.MetricsInterval, cfg.MetricsRetention, logger, time.Now,
+		func(ctx context.Context) error {
+			_, err := actions.Prune(ctx, time.Now().Add(-365*24*time.Hour))
+			return err
+		},
+		func(ctx context.Context) error {
+			_, err := hist.Prune(ctx, time.Now().Add(-cfg.MetricsRetention))
+			return err
+		})
 	checker, err := newUpdateChecker(cfg, logger)
 	if err != nil {
 		return err
 	}
 	// A service context separate from the signal context: background work
 	// must outlive the signal until HTTP and operations have drained.
-	bg := startBackground(context.Background(), cache.Run, sampler.Run, checker.Run)
+	bg := startBackground(context.Background(), cache.Run, recorder.Run, sampler.Run, checker.Run)
 	defer bg.stop(time.Second) // safety net for early returns; the normal path stops it in order below
 
 	registry := stacks.NewRegistry(db, time.Now)
@@ -226,6 +234,7 @@ func serve(ctx context.Context, env *Env, args []string) error {
 			Interfaces:       host.InterfaceLister{ProcRoot: "/proc", GOOS: runtime.GOOS},
 			Alerts:           alertsEngine,
 			Summary:          api.SummarySources{Store: metricsStore, Sampler: sampler},
+			History:          hist,
 			Restarts:         collector,
 			ContainerEngine:  dockerEngine,
 			NetworkEngine:    dockerEngine,
