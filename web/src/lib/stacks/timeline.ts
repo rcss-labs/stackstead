@@ -49,9 +49,33 @@ export function timelineTone(state: HealthState): TimelineTone {
   }
 }
 
+/** "5 min": whole minutes, never below one so a short run still reads as present. */
+export function minutesText(seconds: number): string {
+  return `${Math.max(1, Math.round(seconds / 60))} min`;
+}
+
+export function stateLabel(state: HealthState): string {
+  return state === 'nodata' ? 'no data' : state;
+}
+
+export function restartsText(restarts: number): string {
+  return restarts === 1 ? 'restarted once' : `restarted ${restarts} times`;
+}
+
 export function segmentTitle(state: HealthState, seconds: number): string {
-  const minutes = Math.max(1, Math.round(seconds / 60));
-  return `${state === 'nodata' ? 'no data' : state} · ${minutes} min`;
+  return `${stateLabel(state)} · ${minutesText(seconds)}`;
+}
+
+/**
+ * "db: healthy 55 min, unhealthy 5 min, restarted 3 times": total time per state (in order of first
+ * appearance) and the restart count, so a crash-looping lane stays one short sentence.
+ */
+export function laneSummary(lane: TimelineLane): string {
+  const totals = new Map<HealthState, number>();
+  for (const s of lane.segments) totals.set(s.state, (totals.get(s.state) ?? 0) + s.weight);
+  const parts = Array.from(totals, ([state, seconds]) => `${stateLabel(state)} ${minutesText(seconds)}`);
+  if (lane.restarts > 0) parts.push(restartsText(lane.restarts));
+  return `${lane.service}: ${parts.join(', ')}`;
 }
 
 function segment(state: HealthState, from: number, to: number): TimelineSegment {

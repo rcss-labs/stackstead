@@ -101,10 +101,10 @@
   color: var(--faint);
 }
 
-[data-tone='success'] { --tone: var(--success); }
-[data-tone='warning'] { --tone: var(--warning); }
-[data-tone='danger'] { --tone: var(--danger); }
-[data-tone='down'] { --tone: var(--border-strong); }
+.card [data-tone='success'] { --tone: var(--success); }
+.card [data-tone='warning'] { --tone: var(--warning); }
+.card [data-tone='danger'] { --tone: var(--danger); }
+.card [data-tone='down'] { --tone: var(--border-strong); }
 
 .bar span[data-tone='nodata'] {
   background: transparent;

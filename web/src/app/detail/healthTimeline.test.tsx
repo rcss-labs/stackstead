@@ -89,8 +89,22 @@ describe('health timeline', () => {
       },
     });
     expect(screen.getByRole('button', { name: 'app, restarted once' })).toBeTruthy();
+    expect(screen.getByTitle('restarted once in the last 60 min').textContent).toBe('↻ 1');
     expect(screen.getByRole('img', { name: 'db: healthy 55 min, unhealthy 5 min, restarted 3 times' })).toBeTruthy();
     expect(screen.getByRole('img', { name: 'app: healthy 60 min, restarted once' })).toBeTruthy();
+  });
+
+  it('a crash-looping lane summarises time per state instead of listing every run', () => {
+    // Ten 6-minute cycles: 4 min running, 2 min restarting.
+    const runs = Array.from({ length: 10 }, (_, i) => {
+      const start = NOW - 3600 + i * 360;
+      return [
+        { state: 'running' as const, from: start, to: start + 240 },
+        { state: 'restarting' as const, from: start + 240, to: start + 360 },
+      ];
+    }).flat();
+    mount({ history: { from: NOW - 3600, to: NOW, services: [{ service: 'app', restarts: 10, runs }] }, services: ['app'] });
+    expect(screen.getByRole('img', { name: 'app: running 40 min, restarting 20 min, restarted 10 times' }).children).toHaveLength(20);
   });
 
   it('is not a live region', () => {
