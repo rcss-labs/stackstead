@@ -16,6 +16,18 @@ export function imageCounts(rows: StorageImage[]): Record<ImageChip, number> {
 export function volumeCounts(rows: StorageVolume[]): Record<VolumeChip, number> {
   return { all: rows.length, 'in-use': rows.filter(r => volumeMatches(r, 'in-use')).length, unused: rows.filter(r => volumeMatches(r, 'unused')).length, protected: rows.filter(r => volumeMatches(r, 'protected')).length };
 }
+/** Cached candidate sizes give bounds, not an exact promise of freed disk space. */
+export function imageReclaimRange(candidates: StorageImage[]): string {
+  let min = 0;
+  let max = 0;
+  for (const image of candidates) {
+    if (image.size === null || image.sharedSize === null) return 'reclaim unknown';
+    min += Math.max(0, image.size - image.sharedSize);
+    max += image.size;
+  }
+  return `~${formatBytes(min)}–${formatBytes(max)}`;
+}
+
 export function reclaimText(reclaim: StorageReclaim): string {
   if (reclaim.min === null || reclaim.max === null) return 'Reclaimable size unknown';
   if (!reclaim.exact) return `Frees about ${formatBytes(reclaim.max)} (not exact)`;

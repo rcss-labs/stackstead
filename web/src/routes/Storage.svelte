@@ -13,7 +13,7 @@
   import { changes, live } from '$lib/stores/live';
   import { operationsRefresh } from '$lib/stores/stacks';
   import { createStorageRefresh } from '$lib/storage/controller';
-  import { deleteDisabledReason, filterImages, filterVolumes, imageChips, imageCounts, imagePath, sizeText, volumeChips, volumeCounts, type ImageChip, type VolumeChip } from '$lib/storage/storage';
+  import { deleteDisabledReason, filterImages, filterVolumes, imageChips, imageCounts, imagePath, imageReclaimRange, sizeText, volumeChips, volumeCounts, type ImageChip, type VolumeChip } from '$lib/storage/storage';
 
   const tabs = [{ id: 'overview', label: 'Overview' }, { id: 'images', label: 'Images' }, { id: 'volumes', label: 'Volumes' }, { id: 'build-cache', label: 'Build cache' }];
   const tab = $derived(tabs.find(t => t.id === $route.query.get('tab'))?.id ?? 'overview');
@@ -48,6 +48,8 @@
   const images = $derived($data?.images?.images ?? []);
   const volumes = $derived($data?.volumes?.volumes ?? []);
   const imageCount = $derived(imageCounts(images));
+  const danglingCandidates = $derived(images.filter(image => image.dangling && !image.containers.length));
+  const danglingReclaim = $derived(imageReclaimRange(danglingCandidates));
   const volumeCount = $derived(volumeCounts(volumes));
   const shownImages = $derived(filterImages(images, imageChip, search));
   const shownVolumes = $derived(filterVolumes(volumes, volumeChip, search));
@@ -147,7 +149,7 @@
           </section>
         {:else if selected === 'images' && $data.images}
           <div class="toolbar"><div class="chips" role="group" aria-label="Filter images">{#each imageChips as chip}<button type="button" aria-pressed={imageChip === chip.id} onclick={() => imageChip = chip.id}>{chip.label} <span class="mono">{imageCount[chip.id]}</span></button>{/each}</div><label class="search">Search images<input type="search" aria-label="Search images" bind:value={search} /></label></div>
-          <div class="summary">{@render sizes($data.images.totals)}<Button variant="danger" disabledReason={dockerDown ? 'Docker is unavailable' : cleanupUnavailable}>Clean up dangling images ({imageCount.dangling})</Button></div>
+          <div class="summary">{@render sizes($data.images.totals)}<div class="image-cleanup"><Button variant="danger" disabledReason={dockerDown ? 'Docker is unavailable' : cleanupUnavailable}><span>Clean up dangling images ({danglingCandidates.length} · {danglingReclaim})</span></Button></div></div>
           {#if shownImages.length}<div class="card"><!-- svelte-ignore a11y_no_redundant_roles -->
 <table role="table" aria-label="Images"><!-- svelte-ignore a11y_no_redundant_roles -->
 <thead role="rowgroup"><!-- svelte-ignore a11y_no_redundant_roles -->
@@ -236,6 +238,9 @@
   .layers { margin: 0; padding: 0; list-style: none; }
   .layers li { display: flex; flex-wrap: wrap; gap: var(--space-3); padding: var(--space-2) 0; overflow-wrap: anywhere; }
   .layers li > :last-child { margin-left: auto; }
+  .image-cleanup { min-width: 0; max-width: 100%; }
+  .image-cleanup :global(button) { height: auto; min-height: 30px; max-width: 100%; }
+  .image-cleanup span { white-space: normal; overflow-wrap: anywhere; }
   .chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
   .chips button { border: 1px solid var(--border); background: var(--surface); color: var(--muted); border-radius: var(--radius-pill); padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; }
   .chips button[aria-pressed='true'] { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); }

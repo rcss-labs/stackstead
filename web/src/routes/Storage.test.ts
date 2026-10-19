@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import type { StorageImage } from '$lib/api/types';
 import { navigate } from '$lib/router';
 import { consumer, image, volume } from '$lib/storage/fixtures';
 import { installFakeFetch, type FakeFetch } from '../vitest-setup';
@@ -7,12 +8,14 @@ import Storage from './Storage.svelte';
 const totals = { count: 3, size: null, reclaimable: null, sizesAt: null, refreshing: true, error: '' };
 const overview = { images: totals, containers: totals, volumes: totals, buildCache: totals, topContainers: [{ name: 'db', stack: 'media', sizeRw: 1024 }], declarationsUnknown: ['media'] };
 let fake: FakeFetch;
+let imageRows: StorageImage[];
 let refresh: { status?: number; body: unknown };
 beforeEach(() => {
+  imageRows = [image(), image({ id: 'sha256:' + 'b'.repeat(64), tags: [], dangling: true, status: 'dangling' })];
   navigate('/storage'); refresh = { body: { startedAt: new Date().toISOString() } };
   fake = installFakeFetch({
     'GET /api/storage': { body: overview },
-    'GET /api/storage/images': { body: { images: [image(), image({ id: 'sha256:' + 'b'.repeat(64), tags: [], dangling: true, status: 'dangling' })], totals } },
+    'GET /api/storage/images': () => ({ body: { images: imageRows, totals } }),
     'GET /api/storage/volumes': { body: { volumes: [volume(), volume({ name: 'free', protection: null, declaredBy: [] }), volume({ name: 'used', protection: null, declaredBy: [], containers: [consumer] })], totals } },
     'GET /api/storage/build-cache': { body: { records: [{ id: 'cache', type: 'regular', description: 'builder cache', size: 1024, inUse: false, shared: true, createdAt: '2026-01-01T00:00:00Z', lastUsedAt: null, usageCount: 1 }], totals } },
     'GET /api/actions?kind=storage.&limit=20': { body: [{ id: 1, ts: '2026-01-01T00:00:00Z', username: 'admin', kind: 'storage.delete', scope: 'host', target: 'old-image', detail: '<script>bad</script>', bytes: null, result: 'succeeded', operationId: 'op' }] },
@@ -58,4 +61,25 @@ it('preserves the server 429 message and retry cooldown', async () => {
   refresh = { status: 429, body: { error: 'Size reading already requested; try later', retryAfter: 42 } }; render(Storage);
   const button = await screen.findByRole('button', { name: 'Recalculate' }); await fireEvent.click(button);
   expect(await screen.findByText('Size reading already requested; try later')).toBeTruthy(); await waitFor(() => expect(button.title).toMatch(/42s/));
+});
+
+const mib = 1024 ** 2;
+it.each([
+  { size: 64 * mib, sharedSize: 32 * mib, expected: '~152.0 MiB–544.0 MiB' },
+  { size: null, sharedSize: 32 * mib, expected: 'reclaim unknown' },
+  { size: 64 * mib, sharedSize: null, expected: 'reclaim unknown' },
+])('shows the dangling cleanup range or unknown for candidate measurements $size/$sharedSize', async ({ size, sharedSize, expected }) => {
+  imageRows = [
+    image({ tags: [], dangling: true, status: 'dangling', size: 480 * mib, sharedSize: 360 * mib }),
+    image({ id: 'sha256:' + 'b'.repeat(64), tags: [], dangling: true, status: 'dangling', size, sharedSize }),
+    image({ id: 'sha256:' + 'c'.repeat(64), size: 900 * mib, sharedSize: 0 }),
+    image({ id: 'sha256:' + 'd'.repeat(64), tags: [], dangling: true, status: 'in-use', containers: [consumer], size: null, sharedSize: null }),
+  ];
+  navigate('/storage?tab=images'); render(Storage);
+  const button = await screen.findByRole('button', { name: /Clean up dangling images/ });
+  expect(button.textContent).toContain(`(2 · ${expected})`);
+  await fireEvent.input(screen.getByRole('searchbox', { name: 'Search images' }), { target: { value: 'no match' } });
+  expect(button.textContent).toContain(`(2 · ${expected})`);
+  expect(button.getAttribute('aria-disabled')).toBe('true');
+  expect(fake.calls.every(call => call.method === 'GET')).toBe(true);
 });
