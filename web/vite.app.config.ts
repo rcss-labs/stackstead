@@ -28,7 +28,30 @@ export default defineConfig({
     emptyOutDir: true,
     target: 'es2022',
     manifest: true,
-    rollupOptions: { input: 'app.html', output: { chunkFileNames: 'assets/[name]-[hash].js' } },
+    rollupOptions: {
+      input: 'app.html',
+      output: {
+        chunkFileNames: 'assets/[name]-[hash].js',
+        // Rolldown stops merging entry-reachable common chunks into the entry once two lazy routes share modules
+        // (+2 kB gz of glue); naming every statically reachable module keeps all eager code in one chunk.
+        codeSplitting: {
+          groups: [
+            {
+              name: (id, ctx) => {
+                const seen = new Set<string>();
+                const eager = (m: string): boolean => {
+                  if (seen.has(m)) return false;
+                  seen.add(m);
+                  const info = ctx.getModuleInfo(m);
+                  return !!info && (info.isEntry || info.importers.some(eager));
+                };
+                return eager(id) ? 'shell' : null;
+              },
+            },
+          ],
+        },
+      },
+    },
   },
   server: {
     proxy: {
