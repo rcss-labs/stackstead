@@ -68,6 +68,14 @@ describe('statusFragments', () => {
   });
 });
 
+describe('statusFragments fully running', () => {
+  it('does not count a running stack with an unhealthy service', () => {
+    const unhealthy = stack('b', { health: { ...zero, unhealthy: 1 } });
+    const items = [stack('a'), unhealthy, bad('c'), stack('d', { status: 'stopped' })];
+    expect(statusFragments(items, undefined)).toEqual(['1 of 4 stacks fully running']);
+  });
+});
+
 describe('towerBlocks', () => {
   it('running stack 3/3 healthy → three up', () => {
     expect(towerBlocks(stack('a', { serviceCount: 3, running: 3 }))).toEqual(['up', 'up', 'up']);

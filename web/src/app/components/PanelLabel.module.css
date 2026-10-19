@@ -13,3 +13,4 @@
 .label[data-tone='danger'] { color: var(--danger); }
 .label[data-tone='warning'] { color: var(--warning); }
 .label[data-tone='success'] { color: var(--success); }
+.label[data-tone='info'] { color: var(--info); }

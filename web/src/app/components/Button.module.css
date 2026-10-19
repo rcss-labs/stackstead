@@ -58,8 +58,8 @@
 @media (max-width: 759px) {
   .btn { height: 40px; }
   .btn[data-size='sm'],
-  .btn[data-size='xs'] { height: 36px; }
+  .btn[data-size='xs'] { height: 40px; }
   .btn[data-icon='true'] { width: 40px; }
   .btn[data-icon='true'][data-size='sm'],
-  .btn[data-icon='true'][data-size='xs'] { width: 36px; }
+  .btn[data-icon='true'][data-size='xs'] { width: 40px; }
 }

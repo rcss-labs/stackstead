@@ -68,9 +68,16 @@ and not embedded in the binary until the cutover.
 React tests live beside their components as `web/src/app/**/*.test.tsx` and run
 with the rest under `make ui-test`; `npm run check:app` type-checks the React
 tree. The React entry budget is enforced by `npm run build:app`: only the shell,
-the stores and the Overview placeholder are eager, every other screen and the
+the stores and the Overview screen are eager, every other screen and the
 command palette are route-level `React.lazy` chunks, and `src/bundle.test.ts`
 pins that shape (run it after a build) so a stray static import fails early.
+
+The React overview is the only eager screen. Its data comes from the shared
+`stacks`, `host` and `runningOps` stores plus the dashboard controller
+(alerts, metrics summary, storage), and its events from the live `events` store;
+the only filter state is the query; no store is mirrored in React state. After
+the side column landed the entry measured 102.6 kB gz (ceiling 115, gate 110),
+so the side column stays in the entry and nothing inside the screen is lazy.
 
 ## Tests
 

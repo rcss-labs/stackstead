@@ -109,7 +109,7 @@ describe('App focus on navigation', () => {
   it('moves focus to the page heading after a client-side navigation, not on first load', async () => {
     at('/');
     render(<App />);
-    await screen.findByRole('heading', { name: 'Stacks' });
+    await screen.findByRole('heading', { level: 1 });
     expect(document.activeElement).toBe(document.body);
     await user().click(within(mainNav()).getByRole('link', { name: 'Settings' }));
     const h1 = await screen.findByRole('heading', { level: 1, name: 'Settings' });
@@ -134,7 +134,7 @@ describe('App focus on navigation', () => {
   it("focuses a lazy screen's heading once it renders", async () => {
     at('/');
     render(<App />);
-    await screen.findByRole('heading', { name: 'Stacks' });
+    await screen.findByRole('heading', { level: 1 });
     // No other test loads the container detail screen, so its lazy chunk is still pending here.
     await push('/containers/web');
     const h1 = await screen.findByRole('heading', { level: 1, name: 'web' });
@@ -144,7 +144,7 @@ describe('App focus on navigation', () => {
   it('collapses a burst of changes into at most two running-operations refetches', async () => {
     at('/');
     render(<App />);
-    await screen.findByRole('heading', { name: 'Stacks' });
+    await screen.findByRole('heading', { level: 1 });
     await waitFor(() => expect(stream.requests).toHaveLength(1));
     await sleep(500); // let the initial resync settle
     const runs = () => fake.calls.filter((c) => c.path === '/api/operations?state=running').length;
@@ -180,9 +180,12 @@ describe('App routing and session', () => {
   it('authenticated users get the stack list, one events connection and a status fetch', async () => {
     at('/');
     render(<App />);
-    expect(await screen.findByRole('heading', { name: 'Stacks' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1 })).toBeTruthy();
+    expect(document.title).toBe('Stacks · Stackstead');
     await waitFor(() => expect(stream.requests).toHaveLength(1));
     await waitFor(() => expect(fake.calls.some((c) => c.path === '/api/status')).toBe(true));
+    // The overview must not start a second host poller: App owns it.
+    expect(fake.calls.filter((c) => c.path === '/api/host')).toHaveLength(1);
     expect(mainNav()).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Log out' }).getAttribute('title')).toBe('admin · Log out');
   });
@@ -215,7 +218,7 @@ describe('App routing and session', () => {
   it('a 401 from any call stops the live stream and shows Login once', async () => {
     at('/');
     render(<App />);
-    await screen.findByRole('heading', { name: 'Stacks' });
+    await screen.findByRole('heading', { level: 1 });
     await waitFor(() => expect(stream.requests).toHaveLength(1));
     const signal = stream.requests[0].signal!;
     const { refreshStacks } = await import('$lib/stores/stacks');
@@ -236,7 +239,7 @@ describe('App routing and session', () => {
     running = [{ id: 'op1', stack: 'web', action: 'restart', state: 'running', startedAt: '2026-10-19T10:00:00Z' }];
     at('/');
     render(<App />);
-    await screen.findByRole('heading', { name: 'Stacks' });
+    await screen.findByRole('heading', { level: 1 });
     const { refreshStacks } = await import('$lib/stores/stacks');
     stacksRes = { status: 401, body: { error: 'unauthorized' } };
     await act(async () => {
@@ -252,7 +255,7 @@ describe('App routing and session', () => {
   it('nav links navigate through the router without a reload and mark the current page', async () => {
     at('/');
     render(<App />);
-    await screen.findByRole('heading', { name: 'Stacks' });
+    await screen.findByRole('heading', { level: 1 });
     const marker = screen.getByRole('main');
     await user().click(within(mainNav()).getByRole('link', { name: 'Settings' }));
     expect(loc().path).toBe('/settings');
@@ -291,7 +294,7 @@ describe('App routing and session', () => {
   it('confirms before a link leaves a page with unsaved changes', async () => {
     at('/');
     render(<App />);
-    await screen.findByRole('heading', { name: 'Stacks' });
+    await screen.findByRole('heading', { level: 1 });
     act(() => setUnsavedChanges(true));
     await user().click(within(mainNav()).getByRole('link', { name: 'Settings' }));
     const dlg = await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' });
@@ -318,7 +321,7 @@ describe('App session edge cases', () => {
   it('/login?next=//evil sends an authenticated user to /', async () => {
     at('/login?next=%2F%2Fevil');
     render(<App />);
-    expect(await screen.findByRole('heading', { level: 1, name: 'Stacks' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1 })).toBeTruthy();
     expect(window.location.pathname + window.location.search).toBe('/');
   });
 
@@ -354,7 +357,7 @@ describe('App session edge cases', () => {
   it('logging in again after a 401 opens exactly one new events stream', async () => {
     at('/');
     render(<App />);
-    await screen.findByRole('heading', { name: 'Stacks' });
+    await screen.findByRole('heading', { level: 1 });
     await waitFor(() => expect(stream.requests).toHaveLength(1));
     const { refreshStacks } = await import('$lib/stores/stacks');
     stacksRes = { status: 401, body: {} };
@@ -366,7 +369,7 @@ describe('App session edge cases', () => {
     await u.type(screen.getByLabelText('Username'), 'admin');
     await u.type(screen.getByLabelText('Password'), 'pw');
     await u.click(screen.getByRole('button', { name: /log in|sign in/i }));
-    await screen.findByRole('heading', { name: 'Stacks' });
+    await screen.findByRole('heading', { level: 1 });
     await sleep(100);
     expect(stream.requests).toHaveLength(2);
     expect(stream.requests[0].signal!.aborted).toBe(true);
@@ -376,7 +379,7 @@ describe('App session edge cases', () => {
   it('logout asks first when there are unsaved changes', async () => {
     at('/');
     render(<App />);
-    await screen.findByRole('heading', { name: 'Stacks' });
+    await screen.findByRole('heading', { level: 1 });
     act(() => setUnsavedChanges(true));
     await user().click(screen.getByRole('button', { name: 'Log out' }));
     const dlg = await screen.findByRole('alertdialog');
@@ -388,7 +391,7 @@ describe('App session edge cases', () => {
   it('download links are not intercepted by the unsaved-changes guard', async () => {
     at('/');
     render(<App />);
-    await screen.findByRole('heading', { name: 'Stacks' });
+    await screen.findByRole('heading', { level: 1 });
     act(() => setUnsavedChanges(true));
     const a = document.createElement('a');
     a.href = '/export.txt';
@@ -431,7 +434,7 @@ describe('App banners', () => {
   it('no banners when everything is healthy', async () => {
     at('/');
     render(<App />);
-    await screen.findByRole('heading', { name: 'Stacks' });
+    await screen.findByRole('heading', { level: 1 });
     await waitFor(() => expect(fake.calls.some((c) => c.path === '/api/status')).toBe(true));
     expect(screen.queryByText(/unreachable|not found|degraded|reconnecting/i, { selector: 'strong' })).toBeNull();
   });
@@ -535,7 +538,7 @@ describe('App command palette actions and the unsaved-changes guard', () => {
     stacksRes = { body: [webStack] };
     at('/');
     render(<App />);
-    await screen.findByRole('heading', { name: 'Stacks' });
+    await screen.findByRole('heading', { level: 1 });
     await waitFor(() => expect(get(stacks).items).toHaveLength(1));
     const runs = () => fake.calls.filter((c) => c.path === '/api/operations?state=running').length;
     await sleep(500); // let the initial fetch settle
@@ -558,7 +561,7 @@ describe('App command palette actions and the unsaved-changes guard', () => {
   it('a Go to entry asks before leaving unsaved changes, and navigates when clean', async () => {
     at('/');
     render(<App />);
-    await screen.findByRole('heading', { name: 'Stacks' });
+    await screen.findByRole('heading', { level: 1 });
     act(() => setUnsavedChanges(true));
     const u = user();
     await openPalette();
@@ -577,7 +580,7 @@ describe('App command palette actions and the unsaved-changes guard', () => {
   it("a toast's View link asks before leaving unsaved changes, and navigates when clean", async () => {
     at('/');
     render(<App />);
-    await screen.findByRole('heading', { name: 'Stacks' });
+    await screen.findByRole('heading', { level: 1 });
     act(() => setUnsavedChanges(true));
     act(() => void toasts.push({ kind: 'info', message: 'restart · web', timeoutMs: 0, link: { label: 'View', href: '/settings?tab=x' } }));
     const u = user();
