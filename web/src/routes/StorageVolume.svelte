@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { api, ApiError } from '$lib/api/client';
-  import type { StorageVolumeDetail } from '$lib/api/types';
+  import type { StorageVolumeDetail, StoragePlanRequest } from '$lib/api/types';
   import Button from '$lib/components/Button.svelte';
   import CopyButton from '$lib/components/CopyButton.svelte';
   import RelativeTime from '$lib/components/RelativeTime.svelte';
@@ -23,7 +23,7 @@
   onDestroy(() => controller.stop());
   const item = $derived($data);
   const reason = $derived(item ? deleteDisabledReason(item, $live.docker === 'unavailable' || $live.events === 'disconnected') : undefined);
-  let cleanup = $state(false);
+  let cleanup = $state<StoragePlanRequest>();
 </script>
 
 <section class="page">
@@ -33,7 +33,7 @@
       {#if item}
       <span class="tag">{item.containers.length ? 'in use' : item.protection ? 'unused · protected' : 'unused'}</span>
 
-      <Button variant="danger" disabledReason={reason} onclick={() => cleanup = true}>Delete</Button>
+      <Button variant="danger" disabledReason={reason} onclick={() => cleanup = {kind:'volume', name: item.name}}>Delete</Button>
       {/if}
   </header>
   {#if $error}<p role="alert">{$error}</p>
@@ -50,9 +50,10 @@
     <h2>Declared by</h2>
     <ul>{#each item.declaredBy as declaration}<li><a href="/stacks/{encodeURIComponent(declaration.stack)}" use:link>{declaration.stack}</a> · {declaration.service} <span class="muted">({declaration.stackState})</span></li>{:else}<li class="muted">No declarations</li>{/each}</ul>
     <details><summary>Labels</summary><dl>{#each Object.entries(item.labels) as [key, value]}<dt>{key}</dt><dd>{value}</dd>{:else}<dd class="muted">No labels</dd>{/each}</dl></details>
-    {#if cleanup}<CleanupDialog request={{kind:'volume', name: item.name}} onclose={() => cleanup = false} onfinished={() => navigate('/storage?tab=volumes')} />{/if}
   {:else if item === undefined}<p class="cluster"><Spinner /> Loading volume…</p>{/if}
 </section>
+
+{#if cleanup}<CleanupDialog request={cleanup} onclose={() => cleanup = undefined} onfinished={() => navigate('/storage?tab=volumes')} />{/if}
 
 <style>
   .page { min-width: 0; }
