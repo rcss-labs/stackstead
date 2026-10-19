@@ -21,6 +21,20 @@ function findHtmlTag(files: Record<string, string>): string[] {
     .map(([name]) => name);
 }
 
+function findRawHtml(files: Record<string, string>): string[] {
+  return Object.entries(files)
+    .filter(([name, text]) =>
+      /\.(ts|tsx)$/.test(name) ? /\bdangerouslySetInnerHTML\b/.test(text) : /\{\s*@html\b/.test(text),
+    )
+    .map(([name]) => name);
+}
+
+function findHandoffReferences(files: Record<string, string>): string[] {
+  return Object.entries(files)
+    .filter(([, text]) => text.includes('design_handoff_stackstead_react'))
+    .map(([name]) => name);
+}
+
 function findSvelteStoreImports(files: Record<string, string>): string[] {
   return Object.entries(files)
     .filter(([, text]) => /(?:\bfrom\s*|\bimport\s*\(\s*)['"]svelte\/store['"]/.test(text))
@@ -49,6 +63,24 @@ describe('guards: detectors', () => {
         'e.svelte': '<p>{\t\n  @html\ty}</p>',
       }),
     ).toEqual(['a.svelte', 'c.svelte', 'd.svelte', 'e.svelte']);
+  });
+  it('flags dangerouslySetInnerHTML in tsx and ts but not plain markup', () => {
+    expect(
+      findRawHtml({
+        'a.tsx': 'const x = <div dangerouslySetInnerHTML={{ __html: y }} />;',
+        'b.tsx': 'const x = <div>{y}</div>;',
+        'c.ts': 'const p = { dangerouslySetInnerHTML: 1 };',
+        'd.svelte': '<p>{@html x}</p>',
+      }),
+    ).toEqual(['a.tsx', 'c.ts', 'd.svelte']);
+  });
+  it('flags references to the design handoff folder', () => {
+    expect(
+      findHandoffReferences({
+        'a.tsx': "import x from '../../docs/superpowers/design_handoff_stackstead_react/x';",
+        'b.tsx': 'const x = 1;',
+      }),
+    ).toEqual(['a.tsx']);
   });
   it('flags svelte/store imports but not $lib/store', () => {
     expect(
@@ -79,6 +111,16 @@ describe('guards: repository', () => {
   it('has no {@html anywhere in src/', () => {
     const files = Object.fromEntries(sourceFiles(srcDir).map((p) => [p, readFileSync(p, 'utf8')]));
     expect(findHtmlTag(files)).toEqual([]);
+  });
+
+  it('has no dangerouslySetInnerHTML in src/', () => {
+    const files = Object.fromEntries(sourceFiles(srcDir).map((p) => [p, readFileSync(p, 'utf8')]));
+    expect(findRawHtml(files)).toEqual([]);
+  });
+
+  it('never references the design handoff folder', () => {
+    const files = Object.fromEntries(sourceFiles(srcDir).map((p) => [p, readFileSync(p, 'utf8')]));
+    expect(findHandoffReferences(files)).toEqual([]);
   });
 
   it('imports no svelte/store anywhere in src/', () => {

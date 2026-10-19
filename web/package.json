@@ -10,16 +10,23 @@
     "dev": "vite",
     "build": "vite build && node scripts/check-bundle.mjs",
     "preview": "vite preview",
-    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "check": "svelte-check --tsconfig ./tsconfig.json && npm run check:app",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "dev:app": "vite -c vite.app.config.ts",
+    "build:app": "vite build -c vite.app.config.ts && node scripts/check-bundle.mjs dist-app",
+    "check:app": "tsc --noEmit -p tsconfig.app.json"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "7.3.1",
     "@testing-library/dom": "10.4.2",
+    "@testing-library/react": "16.3.3",
     "@testing-library/svelte": "5.4.2",
     "@testing-library/user-event": "14.6.8",
     "@types/node": "22.20.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
     "jsdom": "30.1.2",
     "svelte-check": "4.7.6",
     "typescript": "6.0.3",
@@ -34,6 +41,9 @@
     "@codemirror/state": "6.7.6",
     "@codemirror/view": "6.43.14",
     "@lezer/highlight": "1.2.5",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-router": "8.4.0",
     "svelte": "5.57.2",
     "uplot": "1.6.32"
   }

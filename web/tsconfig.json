@@ -13,5 +13,6 @@
     "noEmit": true,
     "paths": { "$lib/*": ["./src/lib/*"] }
   },
-  "include": ["src/**/*.ts", "src/**/*.svelte", "vite.config.ts", "svelte.config.js"]
+  "include": ["src/**/*.ts", "src/**/*.svelte", "vite.config.ts", "svelte.config.js"],
+  "exclude": ["src/app/**"]
 }
