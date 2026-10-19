@@ -24,10 +24,13 @@
   let operation = $state<Operation>();
   let finished = $state(false);
   let field = $state<HTMLInputElement>();
+  let actions = $state<HTMLElement>();
   let generation = 0;
   let mounted = false;
   const seconds = $derived(plan ? Math.max(0, Math.ceil((Date.parse(plan.expiresAt) - now) / 1000)) : 0);
   const stale = $derived(expired || (!!plan && seconds === 0));
+  // Both lists share the dialog height so the confirm field stays on screen.
+  const sharedBudget = $derived(!!plan && plan.items.length > 0 && plan.protected.length > 0);
   const volumePlan = $derived(plan?.kind === 'volume' || plan?.kind === 'volumes');
   const canClose = $derived(!confirming && (!operation || finished));
   function close() { if (canClose) onclose(); }
@@ -44,7 +47,10 @@
       if (mounted && mine === generation) {
         checking = false;
         await tick();
-        if (mounted && mine === generation) field?.focus({ preventScroll: true });
+        if (mounted && mine === generation) {
+          // The checking branch's Close button is gone; without a confirm field, keep focus inside the dialog.
+          (field ?? actions?.querySelector<HTMLElement>('button'))?.focus({ preventScroll: true });
+        }
       }
     }
   }
@@ -97,12 +103,12 @@
       {#if !plan.items.length}<p>Nothing to clean</p>
       {:else}
         <h3 id="{uid}-items">{plan.mode === 'all-unused' ? 'Expected items' : 'Items to delete'} ({plan.items.length})</h3>
-        <div class="scroll" role="region" aria-labelledby="{uid}-items" tabindex="0"><ul>{#each plan.items as item}<li><span class="mono">{item.ref}</span><span class="mono muted">{sizeText(item.bytes)}</span></li>{/each}</ul></div>
+        <div class="scroll" class:shared={sharedBudget} role="region" aria-labelledby="{uid}-items" tabindex="0"><ul>{#each plan.items as item}<li><span class="mono">{item.ref}</span><span class="mono muted">{sizeText(item.bytes)}</span></li>{/each}</ul></div>
         <p>{reclaimText(plan.reclaim)}</p>
       {/if}
       {#if plan.protected.length}
         <h3 id="{uid}-protected">Protected ({plan.protected.length})</h3>
-        <div class="scroll" role="region" aria-labelledby="{uid}-protected" tabindex="0"><ul>{#each plan.protected as item}<li class="protected"><span class="mono">{item.ref}</span><span>{item.reason}{#if item.stack}{' · '}<a href="/stacks/{encodeURIComponent(item.stack)}" use:link>{item.stack}</a> ({stateText(item.stackState)}){/if}</span></li>{/each}</ul></div>
+        <div class="scroll" class:shared={sharedBudget} role="region" aria-labelledby="{uid}-protected" tabindex="0"><ul>{#each plan.protected as item}<li class="protected"><span class="mono">{item.ref}</span><span>{item.reason}{#if item.stack}{' · '}<a href="/stacks/{encodeURIComponent(item.stack)}" use:link>{item.stack}</a> ({stateText(item.stackState)}){/if}</span></li>{/each}</ul></div>
       {/if}
       {#each plan.warnings as warning}<p class="warning">{warning}</p>{/each}
       {#if plan.items.length}
@@ -117,7 +123,7 @@
         {/if}
       {/if}
     {/if}
-    <div class="actions">
+    <div class="actions" bind:this={actions}>
       <Button variant="secondary" disabled={confirming} onclick={close}>Close</Button>
       {#if plan?.items.length}
         {#if stale}<Button variant="secondary" onclick={check}>Re-check</Button>
@@ -133,6 +139,7 @@
   ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
   li { display: flex; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; overflow-wrap: anywhere; }
   .scroll { max-height: 40vh; overflow: auto; flex-shrink: 0; padding: var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+  .scroll.shared { max-height: 22vh; }
   .protected { color: var(--muted); }
   .mono, code { font-family: var(--mono); overflow-wrap: anywhere; }
   .muted { color: var(--muted); }

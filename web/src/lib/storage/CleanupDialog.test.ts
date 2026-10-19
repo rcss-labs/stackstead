@@ -45,6 +45,18 @@ it('focuses the described field and gates Delete on exact case and whitespace', 
 it('Escape closes before confirmation', async () => { const close = vi.fn(); open(close); await screen.findByRole('textbox'); await fireEvent.keyDown(document,{key:'Escape'}); expect(close).toHaveBeenCalledTimes(1); expect(fake.calls.some(c=>c.path.endsWith('/confirm'))).toBe(false); });
 it.each([409,503])('preserves server %s plan error with Close', async status => { response={status,body:{error:'Storage is busy; try later'}}; open(); expect(await screen.findByText('Storage is busy; try later')).toBeTruthy(); expect(screen.getByRole('button',{name:'Close'})).toBeTruthy(); expect(screen.queryByRole('textbox')).toBeNull(); });
 it('shows nothing to clean for an empty plan', async () => { plan.items=[]; open(); expect(await screen.findByText('Nothing to clean')).toBeTruthy(); expect(screen.queryByRole('button',{name:'Delete'})).toBeNull(); });
+it('keeps focus inside the dialog on Close when the check ends without a confirm field', async () => {
+  response={status:409,body:{error:'Storage is busy; try later'}}; const failed=open(); const dialog=await screen.findByRole('dialog'); await screen.findByText('Storage is busy; try later');
+  await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true)); expect(document.activeElement).toBe(screen.getByRole('button',{name:'Close'}));
+  failed.unmount(); response=undefined; plan.items=[]; plan.protected=[]; open(); const empty=await screen.findByRole('dialog'); await screen.findByText('Nothing to clean');
+  await waitFor(() => expect(empty.contains(document.activeElement)).toBe(true)); expect(document.activeElement).toBe(screen.getByRole('button',{name:'Close'}));
+});
+// jsdom cannot measure layout, so this asserts the reduced-cap class that the stylesheet turns into a lower max-height.
+it('gives the items and protected lists a shared reduced cap only when both are shown', async () => {
+  const both=open(); await screen.findByRole('textbox'); const regions=screen.getAllByRole('region'); expect(regions).toHaveLength(2);
+  for (const region of regions) expect(region.classList.contains('shared')).toBe(true);
+  both.unmount(); plan.protected=[]; open(); await screen.findByRole('textbox'); expect(screen.getByRole('region').classList.contains('shared')).toBe(false);
+});
 it('labels fallback not exact beside its phrase', async () => { plan.kind='build-cache'; plan.mode='all-unused'; plan.reclaim.exact=false; open(); const phrase=await screen.findByText(plan.confirmPhrase,{selector:'code'}); expect(phrase.parentElement?.textContent).toContain('not exact'); expect(screen.getByText('Frees about 1.0 KiB (not exact)')).toBeTruthy(); });
 it('expires at zero and re-checks with a new plan and empty field', async () => {
   vi.useFakeTimers(); plan.expiresAt=new Date(Date.now()+1000).toISOString(); open(); await vi.advanceTimersByTimeAsync(0);
