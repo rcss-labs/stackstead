@@ -62,7 +62,8 @@ function lifecycleActions(stack: StackSummary, reason: string | undefined): Pale
 
 /** Every palette entry for the current stores, filtered by the query, in group order. */
 export function paletteEntries({ query, stacks, live, busyStacks }: PaletteInput): PaletteEntry[] {
-  const pages: PaletteEntry[] = NAV.map((n) => ({
+  // Go to lists the main pages and Settings; New stack and Import are offered as actions instead.
+  const pages: PaletteEntry[] = NAV.filter((n) => n.group !== 'create').map((n) => ({
     id: `go:${n.href}`,
     group: 'Go to',
     label: n.label,
@@ -83,6 +84,7 @@ export function paletteEntries({ query, stacks, live, busyStacks }: PaletteInput
   const q = query.trim().toLowerCase();
   const actions: PaletteEntry[] = [
     { id: 'act:new-stack', group: 'Actions', label: 'New stack', command: { kind: 'navigate', to: '/stacks/new' } },
+    { id: 'act:import-stack', group: 'Actions', label: 'Import stack', command: { kind: 'navigate', to: '/stacks/import' } },
     { id: 'act:cleanup', group: 'Actions', label: 'Clean up storage', command: { kind: 'navigate', to: '/storage' } },
     { id: 'act:theme', group: 'Actions', label: 'Toggle theme', hint: 'appearance', command: { kind: 'theme' } },
   ];

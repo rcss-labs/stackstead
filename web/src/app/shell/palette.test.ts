@@ -34,12 +34,12 @@ describe('paletteEntries', () => {
       'Containers',
       'Networks',
       'Storage',
-      'New stack',
-      'Import',
       'Settings',
     ]);
     expect(list.find((e) => e.group === 'Go to')?.hint).toBe('Page');
-    expect(list.filter((e) => e.group === 'Actions').map((e) => e.label)).toEqual(['New stack', 'Clean up storage', 'Toggle theme']);
+    expect(list.filter((e) => e.group === 'Actions').map((e) => e.label)).toEqual(['New stack', 'Import stack', 'Clean up storage', 'Toggle theme']);
+    expect(list.find((e) => e.label === 'Import stack')?.command).toEqual({ kind: 'navigate', to: '/stacks/import' });
+    expect(list.filter((e) => e.label === 'New stack')).toHaveLength(1);
   });
 
   it('stack entries show n/m · status and the LED tone', () => {
