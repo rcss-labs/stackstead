@@ -217,7 +217,8 @@ describe('stack detail screen', () => {
   it('a parse error shows the message and the guidance', async () => {
     stackRes = { body: detail({ status: 'unavailable', parseError: 'yaml: line 3: mapping values are not allowed' }) };
     mount('/stacks/web');
-    const banner = await screen.findByRole('alert');
+    // A parse error opens the raw editor, whose own banner follows the page's.
+    const banner = (await screen.findAllByRole('alert'))[0]!;
     // The rail lists no services whatever the payload holds, and Compose file is the selected item.
     const rail = within(screen.getByRole('navigation', { name: 'Services' }));
     expect(rail.queryByRole('button', { name: /^app\b/ })).toBeNull();
@@ -292,7 +293,7 @@ describe('stack detail screen', () => {
   it('lifecycle buttons name the parse error as the reason', async () => {
     stackRes = { body: detail({ status: 'unavailable', parseError: 'bad yaml', services: [] }) };
     mount('/stacks/web');
-    await screen.findByRole('alert');
+    await screen.findAllByRole('alert');
     expect(screen.getByRole('button', { name: 'Up' }).getAttribute('title')).toBe('the compose file cannot be parsed');
   });
 
@@ -581,7 +582,7 @@ describe('stack detail screen', () => {
       mount('/stacks/web');
       await waitFor(() => expect(logRequests('web')).toHaveLength(1));
       act(() => setUnsavedChanges(true));
-      // dirty is not wired yet (18d); once it is, this also proves console actions skip the discard dialog.
+      // The dirty compose editor case is covered in stackDetail.guard.test.tsx.
       const before = here();
       await user().click(screen.getByRole('button', { name: 'Logs for app' }));
       expect(here()).toBe(before);

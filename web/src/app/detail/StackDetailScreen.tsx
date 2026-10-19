@@ -14,6 +14,7 @@ import { EmptyState } from '../components/EmptyState';
 import { Spinner } from '../components/Spinner';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useStore } from '../hooks/useStore';
+import { ComposeEditor } from './ComposeEditor';
 import { ComposeView } from './ComposeView';
 import { DetailHeader } from './DetailHeader';
 import { HealthTimeline } from './HealthTimeline';
@@ -80,8 +81,24 @@ export function StackDetailScreen({ name }: { name: string }) {
     if (overviewService) void ctl.loadCpuHour(overviewService);
   }, [ctl, overviewService, detail]);
 
-  // No editor can hold unsaved changes yet; the compose and service editors raise this in later plans.
-  const dirty: boolean = false;
+  // The compose editor is the only producer of unsaved changes for now (18e adds the service and add flags).
+  const parseErrorPresent = !!detail?.parseError;
+  const rawOnly = parseErrorPresent && !missingComposeFile(detail?.parseError);
+  const [editRequested, setEditRequested] = useState(false);
+  const [composeDirty, setComposeDirty] = useState(false);
+  const onCompose = item.kind === 'compose';
+  const editingCompose = onCompose && (editRequested || rawOnly);
+  const dirty = editingCompose && composeDirty;
+  useEffect(() => {
+    setUnsavedChanges(dirty);
+  }, [dirty]);
+  // Leaving the compose item ends edit mode; a held draft is gone with the editor.
+  useEffect(() => {
+    if (!onCompose) {
+      setEditRequested(false);
+      setComposeDirty(false);
+    }
+  }, [onCompose]);
   function guarded(action: () => void) {
     if (dirty) setPendingLeave(() => action);
     else action();
@@ -89,6 +106,8 @@ export function StackDetailScreen({ name }: { name: string }) {
   function discardAndLeave() {
     const action = pendingLeave;
     setPendingLeave(undefined);
+    setEditRequested(false);
+    setComposeDirty(false);
     action?.();
   }
 
@@ -199,7 +218,33 @@ export function StackDetailScreen({ name }: { name: string }) {
               cpuHour={cpuHour.get(selectedService.name)}
             />
           ) : item.kind === 'compose' ? (
-            <ComposeView detail={detail} compose={compose} error={composeError} onRetry={() => void ctl.loadCompose()} />
+            <ComposeView
+              detail={detail}
+              compose={compose}
+              error={composeError}
+              onRetry={() => void ctl.loadCompose()}
+              editSlot={
+                !editingCompose &&
+                !missingFile && (
+                  <Button variant="secondary" size="sm" onClick={() => setEditRequested(true)}>
+                    Edit YAML
+                  </Button>
+                )
+              }
+              editor={
+                editingCompose && (
+                  <ComposeEditor
+                    key={name}
+                    stackName={name}
+                    parseError={parseError}
+                    composePath={detail.path}
+                    onDirtyChange={setComposeDirty}
+                    onSaved={() => void ctl.load()}
+                    onApply={() => void ctl.act('up')}
+                  />
+                )
+              }
+            />
           ) : item.kind === 'operations' ? (
             <OperationsPane
               operations={operations}
