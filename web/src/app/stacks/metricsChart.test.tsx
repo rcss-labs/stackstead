@@ -117,6 +117,20 @@ describe('MetricsChart', () => {
     expect(disconnect).toHaveBeenCalled();
   });
 
+  it('pushes data that changed while the plot was still loading', async () => {
+    const { plot } = fakePlot();
+    let resolve!: (p: typeof plot) => void;
+    const createPlot = vi.fn(() => new Promise<typeof plot>((r) => (resolve = r)));
+    const ui = (d: SeriesSet) => <MetricsChart title="CPU" series={cpuSeries.slice(0, 1)} data={d} unit="percent" allServices={all} createPlot={createPlot} />;
+    const view = render(ui(data));
+    const next: SeriesSet = new Map([['api', [{ t: T0 + 10_000, cpu: 1, mem: 0, memLimit: 0 }]]]);
+    view.rerender(ui(next));
+    await act(async () => resolve(plot));
+    await flush();
+    expect(plot.setData).toHaveBeenCalled();
+    expect((plot.setData.mock.calls[0] as unknown as unknown[][][])[0][0]).toEqual([T0 + 10_000]);
+  });
+
   it('destroys a plot that finished creating after unmount', async () => {
     const { plot } = fakePlot();
     let resolve!: (p: typeof plot) => void;

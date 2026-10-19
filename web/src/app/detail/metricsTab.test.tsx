@@ -131,13 +131,27 @@ describe('MetricsTab', () => {
     await waitFor(() => expect(screen.getAllByRole('figure')[0]!.parentElement!.getAttribute('aria-busy')).toBeNull());
   });
 
+  it('draws the dashed Memory limit line when the service reports a limit', async () => {
+    history([point('web')]);
+    const { createPlot } = setup();
+    await screen.findByText('Memory · 1h');
+    await waitFor(() => expect(createPlot).toHaveBeenCalledTimes(4));
+    type Call = [{ series: { label?: string; dash?: number[] }[] }, unknown[][]];
+    const memory = (createPlot.mock.calls as unknown as Call[]).find(([o]) => o.series.some((s) => s.label === 'Limit'))!;
+    expect(memory[0].series.at(-1)!.dash).toBeTruthy();
+    expect(memory[1].at(-1)).toEqual([100]);
+  });
+
   it("only the selected service's points are charted", async () => {
-    history([point('web'), point('db')]);
+    history([point('web', { cpu: 3 }), point('db', { cpu: 77 })]);
     const { createPlot } = setup({ allServices: ['db', 'web'] });
     await screen.findByText('CPU · 1h');
     await waitFor(() => expect(createPlot).toHaveBeenCalledTimes(4));
     const labels = (createPlot.mock.calls as unknown as [{ series: { label?: string }[] }][]).flatMap(([o]) => o.series.map((s) => s.label));
     expect(labels).toContain('web');
     expect(labels).not.toContain('db');
+    type Call = [{ series: { label?: string }[] }, unknown[][]];
+    const cpu = (createPlot.mock.calls as unknown as Call[]).find(([o]) => o.series.length === 2 && o.series[1]!.label === 'web')!;
+    expect(cpu[1].slice(1)).toEqual([[3]]);
   });
 });

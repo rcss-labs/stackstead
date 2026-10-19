@@ -38,7 +38,7 @@ export function ConfigTab({ service, compose, error, onRetry, onEditYaml }: Conf
   return (
     <div className={styles.tab}>
       <pre className={styles.yaml}>{block ?? serviceConfigYaml(service.name, service.config)}</pre>
-      {block === undefined && <p className={styles.note}>The {service.name} block was not found in the file as written; showing the formatted configuration.</p>}
+      {block === undefined && <p className={styles.note}>Shown from the parsed configuration; the file&apos;s own text could not be isolated.</p>}
       <div>
         <Button variant="secondary" size="sm" onClick={onEditYaml}>
           Edit YAML

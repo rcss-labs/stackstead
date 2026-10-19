@@ -28,7 +28,7 @@ describe('ConfigTab', () => {
   it('falls back to the formatted config with a note when the block is missing', () => {
     setup({ service: appService({ name: 'cache', config: { image: 'redis:7', limits: {} } }) });
     expect(document.querySelector('pre')!.textContent).toContain('cache:\n  image: redis:7');
-    expect(screen.getByText(/not found in the file/)).toBeTruthy();
+    expect(screen.getByText("Shown from the parsed configuration; the file's own text could not be isolated.")).toBeTruthy();
   });
 
   it('shows a spinner then Retry on error', async () => {

@@ -1,4 +1,4 @@
-import { cleanup, screen, waitFor } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { installHarness, mountDetail, removeHarness, type Harness } from './detailTestKit';
@@ -20,7 +20,15 @@ describe('stack detail Metrics and Config tabs', () => {
     await waitFor(() => expect(h.liveRequests()).toHaveLength(1));
     await new Promise((r) => setTimeout(r, 20));
     expect(h.liveRequests()).toHaveLength(1);
-    expect(screen.queryAllByRole('figure')).toHaveLength(0); // no samples in the harness: the empty state, not charts
+    expect(screen.queryAllByRole('figure')).toHaveLength(0); // no samples seeded: the empty state
+  });
+
+  it('?tab=metrics with history renders the four charts on the real page', async () => {
+    h.metricsRes = { body: { points: [{ time: '2026-10-14T10:00:00Z', service: 'app', cpu: 3, mem: 10, memLimit: 100 }] } };
+    mountDetail(h, '/stacks/web?service=app&tab=metrics');
+    const region = await screen.findByRole('region', { name: 'Resource metrics' });
+    await waitFor(() => expect(within(region).getAllByRole('figure')).toHaveLength(4));
+    for (const title of ['CPU · 1h', 'Memory · 1h', 'Network · 1h', 'Disk I/O · 1h']) expect(within(region).getByText(title)).toBeTruthy();
   });
 
   it('legacy ?tab=metrics without a service selects the first service\'s Metrics tab', async () => {

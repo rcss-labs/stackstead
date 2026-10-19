@@ -57,6 +57,8 @@ export interface Harness {
   stackGate: Promise<void> | undefined;
   operations: Operation[];
   composeRes: FakeResponse;
+  /** Mutable: what GET /api/stacks/web/metrics answers. */
+  metricsRes: FakeResponse;
   /** Mutable: what POST /api/operations/op1/cancel answers. */
   cancelRes: FakeResponse;
   goTo: (href: string) => void;
@@ -72,6 +74,7 @@ export function installHarness(): Harness {
   h.stackRes = { body: stackDetail() };
   h.stackGate = undefined;
   h.operations = [operation({ id: 'op1' }), operation({ id: 'op2', action: 'pull', state: 'succeeded' })];
+  h.metricsRes = { body: { points: [] } };
   h.composeRes = { body: { content: 'services: {}\n', hash: 'c1' } };
   h.cancelRes = { body: operation({ id: 'op1' }) };
   h.fake = installFakeFetch({
@@ -84,7 +87,7 @@ export function installHarness(): Harness {
     'GET /api/stacks/db/operations': { body: [] },
     'GET /api/stacks/web/health?span=60m': { body: { from: 0, to: 3600, services: [] } },
     'GET /api/stacks/db/health?span=60m': { body: { from: 0, to: 3600, services: [] } },
-    'GET /api/stacks/web/metrics': { body: { points: [] } },
+    'GET /api/stacks/web/metrics': () => h.metricsRes,
     'GET /api/stacks/web/compose': () => h.composeRes,
     'POST /api/operations/op1/cancel': () => h.cancelRes,
     'GET /api/status': { body: { docker: 'ok', compose: '2.29.0', events: 'connected', metricsDegraded: false } },
