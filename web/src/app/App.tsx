@@ -7,7 +7,8 @@ import { bootstrapSession, session } from '$lib/api/session';
 import { needsAttention } from '$lib/stacks/summary';
 import { startHost } from '$lib/stores/host';
 import { changes, live, startLive, stopLive } from '$lib/stores/live';
-import { startRunningOps } from '$lib/stores/runningOps';
+import { startOperationTracker } from '$lib/stores/operationTracker';
+import { runningOps as runningOpsStore, startRunningOps } from '$lib/stores/runningOps';
 import { operationsRefresh, startStacks, stacks } from '$lib/stores/stacks';
 import { toasts } from '$lib/stores/toasts';
 import { Banner } from './components/Banner';
@@ -77,7 +78,9 @@ function AppFrame() {
     const stopStacks = startStacks({ list: api.stacks, changes });
     const releaseHost = startHost({ host: api.host });
     const stopRunningOps = startRunningOps({ list: api.runningOperations, changes, refresh: operationsRefresh });
+    const stopTracker = startOperationTracker({ runningOps: runningOpsStore, get: api.operation });
     return () => {
+      stopTracker();
       stopRunningOps();
       releaseHost();
       stopStacks();

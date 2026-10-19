@@ -5,6 +5,7 @@ import { api } from '$lib/api/client';
 import type { Operation } from '$lib/api/types';
 import { effectiveTheme, setTheme } from '$lib/stores/appearance';
 import { live } from '$lib/stores/live';
+import { trackOperation } from '$lib/stores/operationTracker';
 import { refreshRunningOps, stacks } from '$lib/stores/stacks';
 import { toasts } from '$lib/stores/toasts';
 import { Dialog } from '../components/Dialog';
@@ -72,13 +73,8 @@ export default function CommandPalette({ open, runningOps, onClose, onNavigate }
   async function runAction(stack: string, action: Parameters<typeof api.act>[1]) {
     try {
       const op = await api.act(stack, action);
+      trackOperation(op); // the tracker resolves the pending toast once the operation ends
       refreshRunningOps(); // the top-bar pill and busy state come from the app's running operations
-      toasts.push({
-        kind: 'info',
-        message: `${action} · ${stack}`,
-        pending: true,
-        link: { label: 'View', href: `/stacks/${encodeURIComponent(stack)}?tab=operations&op=${encodeURIComponent(op.id)}` },
-      });
     } catch (e) {
       toasts.push({ kind: 'danger', message: e instanceof Error ? e.message : String(e) });
     }

@@ -326,6 +326,13 @@ describe('stacks list', () => {
       await mount();
       await userEvent.setup().click(screen.getByRole('button', { name: 'Up alpha' }));
       await waitFor(() => expect(where()).toBe('/stacks/alpha?tab=operations&op=op9'));
+      expect(get(toasts)).toHaveLength(1);
+      expect(get(toasts)[0]).toMatchObject({
+        kind: 'info',
+        message: 'up · alpha',
+        pending: true,
+        link: { label: 'View', href: '/stacks/alpha?tab=operations&op=op9' },
+      });
     });
 
     it('the primary action is Restart for running and partial stacks and Up for stopped, unavailable and unknown', async () => {

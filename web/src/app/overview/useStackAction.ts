@@ -4,6 +4,7 @@ import { api, ApiError } from '$lib/api/client';
 import type { Action, StackStatus } from '$lib/api/types';
 import { lifecycleDisabledReason } from '$lib/stacks/lifecycle';
 import { live, refreshStatus } from '$lib/stores/live';
+import { trackOperation } from '$lib/stores/operationTracker';
 import { runningOps, runningStackNames } from '$lib/stores/runningOps';
 import { refreshRunningOps } from '$lib/stores/stacks';
 import { toasts } from '$lib/stores/toasts';
@@ -33,6 +34,7 @@ export function useStackAction(): StackActions {
       setActing(new Set(inFlight.current));
       try {
         const op = await api.act(name, action);
+        trackOperation(op);
         navigate(`/stacks/${encodeURIComponent(name)}?tab=operations&op=${encodeURIComponent(op.id)}`);
         refreshRunningOps();
         return true;
