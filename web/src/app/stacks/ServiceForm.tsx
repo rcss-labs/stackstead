@@ -11,6 +11,19 @@ export interface ServiceFormHandle {
   focusFirstError(): void;
 }
 
+export type BrowsePurpose = 'context' | 'dockerfile' | 'volume';
+
+export const BROWSE_TITLES: Record<BrowsePurpose, string> = {
+  context: 'Choose a build context',
+  dockerfile: 'Choose a Dockerfile',
+  volume: 'Choose a host folder',
+};
+
+export interface PortNote {
+  tone: 'danger' | 'warning' | 'success';
+  text: string;
+}
+
 export interface ServiceFormProps {
   form: ServiceFormValue;
   onChange: (form: ServiceFormValue) => void;
@@ -19,7 +32,11 @@ export interface ServiceFormProps {
   name?: string;
   onNameChange?: (name: string) => void;
   nameReadonly?: boolean;
-  onBrowse?: (mode: 'dir' | 'file', set: (path: string) => void) => void;
+  onBrowse?: (mode: 'dir' | 'file', set: (path: string) => void, purpose: BrowsePurpose) => void;
+  /** Folds environment, networks, network mode, healthcheck and resources into a disclosure with this summary. */
+  advanced?: { summary: string };
+  /** A live verdict shown beside a port row; never marks the field invalid. */
+  portNote?: (spec: string, index: number) => PortNote | undefined;
   networkPicker?: (form: ServiceFormValue, rowErrors: Record<number, string>) => ReactNode;
   onRawEditor?: () => void;
   /** Rendered beside the service name (New stack puts the stack name here). */
@@ -88,6 +105,8 @@ export function ServiceForm({
   onNameChange,
   nameReadonly = false,
   onBrowse,
+  advanced,
+  portNote,
   networkPicker,
   onRawEditor,
   lead,
@@ -97,6 +116,8 @@ export function ServiceForm({
   const radioName = useId();
   const root = useRef<HTMLDivElement>(null);
   const [pickedCustom, setPickedCustom] = useState(false);
+  const [advancedToggled, setAdvancedToggled] = useState(false);
+  const advancedOpenRendered = useRef(false);
   const customMode = pickedCustom || !MODE_PRESETS.includes(form.networkMode);
   const id = (suffix: string) => `${idPrefix}-${suffix}`;
 
@@ -127,6 +148,11 @@ export function ServiceForm({
   const paths = Object.keys(shown);
   const summary =
     paths.length > 0 ? `${paths.length} ${paths.length === 1 ? 'field has an error' : 'fields have errors'}: ${paths.map((p) => labelOf(p, form.source)).join(', ')}` : '';
+
+  // The disclosure is forced open while a hidden group holds an error, so the error stays reachable.
+  const advancedHasErrors = paths.some((path) => /^(env|networks)\[|^networkMode$|^limits\.|^healthcheck\./.test(path));
+  const advancedOpen = advancedToggled || advancedHasErrors;
+  advancedOpenRendered.current = advancedOpen;
 
   const portErrors = rowErrors(shown, 'ports');
   const volumeErrors = rowErrors(shown, 'volumes');
@@ -174,7 +200,208 @@ export function ServiceForm({
     ) : null;
   const describedBy = (group: FieldGroup) => (ro(group) ? id(`ro-${group}`) : undefined);
 
+  // Replaces the host side of a volume spec (text before the first colon) with the picked folder.
+  function setVolumeHost(index: number, hostPath: string) {
+    const current = latest.current.volumes[index] ?? '';
+    const colon = current.indexOf(':');
+    const next = colon === -1 ? `${hostPath}:` : `${hostPath}${current.slice(colon)}`;
+    onChange({ ...latest.current, volumes: latest.current.volumes.map((v, i) => (i === index ? next : v)) });
+  }
+
   const textProps = { autoComplete: 'off', spellCheck: false } as const;
+
+  const environmentGroup = (
+    <fieldset className={styles.group} aria-label="Environment" aria-describedby={describedBy('environment')}>
+      {readonlyNote('environment')}
+      <ListEditor
+        title="Environment"
+        hint="paste a .env to add many"
+        items={form.env}
+        onChange={(env) => patch({ env })}
+        addLabel="Add variable"
+        newItem={() => ({ name: '', value: '' })}
+        readonly={ro('environment')}
+        errors={envErrors}
+        row={(item, i, update) => (
+          <>
+            <input
+              type="text"
+              id={id(`env-${i}-name`)}
+              aria-label={`Variable ${i + 1} name`}
+              aria-invalid={invalid(`env[${i}].name`)}
+              readOnly={ro('environment')}
+              value={item.name}
+              placeholder="NAME"
+              onChange={(e) => update({ ...item, name: e.target.value })}
+              onPaste={(e) => pasteEnv(e, i)}
+              {...textProps}
+            />
+            <input
+              type="text"
+              id={id(`env-${i}-value`)}
+              aria-label={`Variable ${i + 1} value`}
+              aria-invalid={invalid(`env[${i}].value`)}
+              readOnly={ro('environment')}
+              value={item.value}
+              placeholder="value"
+              onChange={(e) => update({ ...item, value: e.target.value })}
+              {...textProps}
+            />
+          </>
+        )}
+      />
+    </fieldset>
+  );
+
+  const networksGroup = (
+    <fieldset className={styles.group} aria-label="Networks" aria-describedby={describedBy('networks')}>
+      {readonlyNote('networks')}
+      {networkPicker && !ro('networks') ? (
+        networkPicker(form, networkErrors)
+      ) : (
+        <ListEditor
+          title="Networks"
+          items={form.networks}
+          onChange={(networks) => patch({ networks })}
+          addLabel="Add network"
+          newItem={() => ({ name: '', ipv4Address: '' })}
+          readonly={ro('networks')}
+          errors={networkErrors}
+          row={(item, i, update) => (
+            <>
+              <input
+                type="text"
+                id={id(`networks-${i}-name`)}
+                aria-label={`Network ${i + 1} name`}
+                aria-invalid={invalid(`networks[${i}].name`)}
+                readOnly={ro('networks')}
+                value={item.name}
+                placeholder="network"
+                onChange={(e) => update({ ...item, name: e.target.value })}
+                {...textProps}
+              />
+              <input
+                type="text"
+                id={id(`networks-${i}-ip`)}
+                aria-label={`Network ${i + 1} IPv4 address`}
+                aria-invalid={invalid(`networks[${i}].ipv4Address`)}
+                readOnly={ro('networks')}
+                value={item.ipv4Address}
+                placeholder="IPv4 (optional)"
+                onChange={(e) => update({ ...item, ipv4Address: e.target.value })}
+                {...textProps}
+              />
+            </>
+          )}
+        />
+      )}
+    </fieldset>
+  );
+
+  const modeGroup = (
+    <fieldset className={styles.group} aria-label="Network mode group" aria-describedby={describedBy('network_mode')}>
+      {readonlyNote('network_mode')}
+      <Field label="Network mode" id={id('network-mode')} mono error={shown['networkMode']} readonly={ro('network_mode')}>
+        {({ readOnly, ...aria }) => (
+          <>
+            <select {...aria} disabled={readOnly} value={customMode ? 'custom' : form.networkMode} onChange={(e) => selectMode(e.target.value)}>
+              <option value="">Default</option>
+              <option value="host">host</option>
+              <option value="none">none</option>
+              <option value="bridge">bridge</option>
+              <option value="custom">Custom…</option>
+            </select>
+            {customMode && (
+              <input
+                type="text"
+                id={id('network-mode-custom')}
+                aria-label="Custom network mode"
+                aria-describedby={aria['aria-describedby']}
+                aria-invalid={aria['aria-invalid']}
+                readOnly={readOnly}
+                value={form.networkMode}
+                onChange={(e) => patch({ networkMode: e.target.value })}
+                placeholder="service:name or container:name"
+                {...textProps}
+              />
+            )}
+          </>
+        )}
+      </Field>
+    </fieldset>
+  );
+
+  const healthcheckGroup = (
+    <fieldset className={styles.group} aria-describedby={describedBy('healthcheck')}>
+      <legend className={styles.title}>Healthcheck</legend>
+      {readonlyNote('healthcheck')}
+      <label className={styles.check}>
+        <input type="checkbox" id={id('hc-enabled')} checked={form.healthcheck.enabled} disabled={ro('healthcheck')} onChange={(e) => patchHealthcheck({ enabled: e.target.checked })} />
+        Enable healthcheck
+      </label>
+      {form.healthcheck.enabled && (
+        <>
+          <Field label="Healthcheck command" id={id('hc-test')} mono error={shown['healthcheck.test']} hint="Shell command, or start with CMD for exec form" readonly={ro('healthcheck')}>
+            {(aria) => <input type="text" {...aria} value={form.healthcheck.test} onChange={(e) => patchHealthcheck({ test: e.target.value })} {...textProps} />}
+          </Field>
+          <Field label="Interval" id={id('hc-interval')} mono error={shown['healthcheck.interval']} hint="For example 30s" readonly={ro('healthcheck')}>
+            {(aria) => <input type="text" {...aria} value={form.healthcheck.interval} onChange={(e) => patchHealthcheck({ interval: e.target.value })} {...textProps} />}
+          </Field>
+          <Field label="Timeout" id={id('hc-timeout')} mono error={shown['healthcheck.timeout']} readonly={ro('healthcheck')}>
+            {(aria) => <input type="text" {...aria} value={form.healthcheck.timeout} onChange={(e) => patchHealthcheck({ timeout: e.target.value })} {...textProps} />}
+          </Field>
+          <Field label="Start period" id={id('hc-start-period')} mono error={shown['healthcheck.startPeriod']} readonly={ro('healthcheck')}>
+            {(aria) => <input type="text" {...aria} value={form.healthcheck.startPeriod} onChange={(e) => patchHealthcheck({ startPeriod: e.target.value })} {...textProps} />}
+          </Field>
+          <Field label="Retries" id={id('hc-retries')} mono error={shown['healthcheck.retries']} readonly={ro('healthcheck')}>
+            {(aria) => <input type="text" {...aria} value={form.healthcheck.retries} onChange={(e) => patchHealthcheck({ retries: e.target.value })} inputMode="numeric" autoComplete="off" />}
+          </Field>
+        </>
+      )}
+    </fieldset>
+  );
+
+  const restartGroup = (
+      <fieldset className={styles.group} aria-label="Restart policy group" aria-describedby={describedBy('restart')}>
+      {readonlyNote('restart')}
+      <Field label="Restart policy" id={id('restart')} error={shown['restart']} readonly={ro('restart')}>
+        {({ readOnly, ...aria }) => (
+          <select {...aria} disabled={readOnly} value={form.restart} onChange={(e) => patch({ restart: e.target.value })}>
+            {RESTART.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+            {!RESTART.some(([value]) => value === form.restart) && <option value={form.restart}>{form.restart}</option>}
+          </select>
+        )}
+      </Field>
+    </fieldset>
+  );
+
+  const limitsGroup = (
+      <fieldset className={`${styles.group} ${styles.limits}`} aria-label="Resources" aria-describedby={describedBy('limits')}>
+      {readonlyNote('limits')}
+      <Field label="CPUs" id={id('cpus')} mono error={shown['limits.cpus']} hint="For example 0.5" readonly={ro('limits')}>
+        {(aria) => <input type="text" {...aria} value={form.cpus} onChange={(e) => patch({ cpus: e.target.value })} inputMode="decimal" autoComplete="off" />}
+      </Field>
+      <Field label="Memory" id={id('memory')} mono error={shown['limits.memory']} hint="For example 512M or 1G" readonly={ro('limits')}>
+        {(aria) => <input type="text" {...aria} value={form.memory} onChange={(e) => patch({ memory: e.target.value })} {...textProps} />}
+      </Field>
+    </fieldset>
+  );
+
+  const limitsGroupStacked = (
+      <fieldset className={styles.group} aria-label="Resources" aria-describedby={describedBy('limits')}>
+      {readonlyNote('limits')}
+      <Field label="CPUs" id={id('cpus')} mono error={shown['limits.cpus']} hint="For example 0.5" readonly={ro('limits')}>
+        {(aria) => <input type="text" {...aria} value={form.cpus} onChange={(e) => patch({ cpus: e.target.value })} inputMode="decimal" autoComplete="off" />}
+      </Field>
+      <Field label="Memory" id={id('memory')} mono error={shown['limits.memory']} hint="For example 512M or 1G" readonly={ro('limits')}>
+        {(aria) => <input type="text" {...aria} value={form.memory} onChange={(e) => patch({ memory: e.target.value })} {...textProps} />}
+      </Field>
+    </fieldset>
+  );
 
   return (
     <div className={styles.form} ref={root}>
@@ -218,7 +445,7 @@ export function ServiceForm({
                 <div className={styles.inline}>
                   <input type="text" {...aria} value={form.buildContext} onChange={(e) => patch({ buildContext: e.target.value })} {...textProps} />
                   {onBrowse && !sourceReadOnly && (
-                    <Button variant="secondary" aria-label="Browse for build context" onClick={() => onBrowse('dir', (p) => patch({ buildContext: p }))}>
+                    <Button variant="secondary" aria-label="Browse for build context" onClick={() => onBrowse('dir', (p) => patch({ buildContext: p }), 'context')}>
                       Browse…
                     </Button>
                   )}
@@ -230,7 +457,7 @@ export function ServiceForm({
                 <div className={styles.inline}>
                   <input type="text" {...aria} value={form.dockerfile} onChange={(e) => patch({ dockerfile: e.target.value })} {...textProps} />
                   {onBrowse && !sourceReadOnly && (
-                    <Button variant="secondary" aria-label="Browse for Dockerfile" onClick={() => onBrowse('file', (p) => patch({ dockerfile: p }))}>
+                    <Button variant="secondary" aria-label="Browse for Dockerfile" onClick={() => onBrowse('file', (p) => patch({ dockerfile: p }), 'dockerfile')}>
                       Browse…
                     </Button>
                   )}
@@ -244,6 +471,8 @@ export function ServiceForm({
         )}
       </fieldset>
 
+      {advanced && restartGroup}
+
       <fieldset className={styles.group} aria-label="Ports" aria-describedby={describedBy('ports')}>
         {readonlyNote('ports')}
         <ListEditor
@@ -255,19 +484,34 @@ export function ServiceForm({
           newItem={() => ''}
           readonly={ro('ports')}
           errors={portErrors}
-          row={(item, i, update) => (
-            <input
-              type="text"
-              id={id(`ports-${i}`)}
-              aria-label={`Port ${i + 1}`}
-              aria-invalid={invalid(`ports[${i}]`)}
-              readOnly={ro('ports')}
-              value={item}
-              placeholder="8080:80"
-              onChange={(e) => update(e.target.value)}
-              {...textProps}
-            />
-          )}
+          row={(item, i, update, errorId) => {
+            const note = portNote?.(item, i);
+            const noteId = id(`ports-${i}-note`);
+            const describedByIds = [errorId, note ? noteId : undefined].filter(Boolean).join(' ');
+            return (
+              <>
+                <input
+                  type="text"
+                  id={id(`ports-${i}`)}
+                  aria-label={`Port ${i + 1}`}
+                  aria-invalid={invalid(`ports[${i}]`)}
+                  aria-describedby={describedByIds || undefined}
+                  data-check={note?.tone}
+                  readOnly={ro('ports')}
+                  value={item}
+                  placeholder="8080:80"
+                  onChange={(e) => update(e.target.value)}
+                  {...textProps}
+                />
+                {note && (
+                  <span className={styles.portNote} data-tone={note.tone} id={noteId}>
+                    <span className={styles.noteMark} aria-hidden="true" />
+                    {note.text}
+                  </span>
+                )}
+              </>
+            );
+          }}
         />
       </fieldset>
 
@@ -283,190 +527,57 @@ export function ServiceForm({
           readonly={ro('volumes')}
           errors={volumeErrors}
           row={(item, i, update) => (
-            <input
-              type="text"
-              id={id(`volumes-${i}`)}
-              aria-label={`Volume ${i + 1}`}
-              aria-invalid={invalid(`volumes[${i}]`)}
-              readOnly={ro('volumes')}
-              value={item}
-              placeholder="./data:/var/lib/data"
-              onChange={(e) => update(e.target.value)}
-              {...textProps}
-            />
-          )}
-        />
-      </fieldset>
-
-      <fieldset className={styles.group} aria-label="Environment" aria-describedby={describedBy('environment')}>
-        {readonlyNote('environment')}
-        <ListEditor
-          title="Environment"
-          hint="paste a .env to add many"
-          items={form.env}
-          onChange={(env) => patch({ env })}
-          addLabel="Add variable"
-          newItem={() => ({ name: '', value: '' })}
-          readonly={ro('environment')}
-          errors={envErrors}
-          row={(item, i, update) => (
             <>
               <input
                 type="text"
-                id={id(`env-${i}-name`)}
-                aria-label={`Variable ${i + 1} name`}
-                aria-invalid={invalid(`env[${i}].name`)}
-                readOnly={ro('environment')}
-                value={item.name}
-                placeholder="NAME"
-                onChange={(e) => update({ ...item, name: e.target.value })}
-                onPaste={(e) => pasteEnv(e, i)}
+                id={id(`volumes-${i}`)}
+                aria-label={`Volume ${i + 1}`}
+                aria-invalid={invalid(`volumes[${i}]`)}
+                readOnly={ro('volumes')}
+                value={item}
+                placeholder="./data:/var/lib/data"
+                onChange={(e) => update(e.target.value)}
                 {...textProps}
               />
-              <input
-                type="text"
-                id={id(`env-${i}-value`)}
-                aria-label={`Variable ${i + 1} value`}
-                aria-invalid={invalid(`env[${i}].value`)}
-                readOnly={ro('environment')}
-                value={item.value}
-                placeholder="value"
-                onChange={(e) => update({ ...item, value: e.target.value })}
-                {...textProps}
-              />
-            </>
-          )}
-        />
-      </fieldset>
-
-      <fieldset className={styles.group} aria-label="Networks" aria-describedby={describedBy('networks')}>
-        {readonlyNote('networks')}
-        {networkPicker && !ro('networks') ? (
-          networkPicker(form, networkErrors)
-        ) : (
-          <ListEditor
-            title="Networks"
-            items={form.networks}
-            onChange={(networks) => patch({ networks })}
-            addLabel="Add network"
-            newItem={() => ({ name: '', ipv4Address: '' })}
-            readonly={ro('networks')}
-            errors={networkErrors}
-            row={(item, i, update) => (
-              <>
-                <input
-                  type="text"
-                  id={id(`networks-${i}-name`)}
-                  aria-label={`Network ${i + 1} name`}
-                  aria-invalid={invalid(`networks[${i}].name`)}
-                  readOnly={ro('networks')}
-                  value={item.name}
-                  placeholder="network"
-                  onChange={(e) => update({ ...item, name: e.target.value })}
-                  {...textProps}
-                />
-                <input
-                  type="text"
-                  id={id(`networks-${i}-ip`)}
-                  aria-label={`Network ${i + 1} IPv4 address`}
-                  aria-invalid={invalid(`networks[${i}].ipv4Address`)}
-                  readOnly={ro('networks')}
-                  value={item.ipv4Address}
-                  placeholder="IPv4 (optional)"
-                  onChange={(e) => update({ ...item, ipv4Address: e.target.value })}
-                  {...textProps}
-                />
-              </>
-            )}
-          />
-        )}
-      </fieldset>
-
-      <fieldset className={styles.group} aria-label="Network mode group" aria-describedby={describedBy('network_mode')}>
-        {readonlyNote('network_mode')}
-        <Field label="Network mode" id={id('network-mode')} mono error={shown['networkMode']} readonly={ro('network_mode')}>
-          {({ readOnly, ...aria }) => (
-            <>
-              <select {...aria} disabled={readOnly} value={customMode ? 'custom' : form.networkMode} onChange={(e) => selectMode(e.target.value)}>
-                <option value="">Default</option>
-                <option value="host">host</option>
-                <option value="none">none</option>
-                <option value="bridge">bridge</option>
-                <option value="custom">Custom…</option>
-              </select>
-              {customMode && (
-                <input
-                  type="text"
-                  id={id('network-mode-custom')}
-                  aria-label="Custom network mode"
-                  aria-describedby={aria['aria-describedby']}
-                  aria-invalid={aria['aria-invalid']}
-                  readOnly={readOnly}
-                  value={form.networkMode}
-                  onChange={(e) => patch({ networkMode: e.target.value })}
-                  placeholder="service:name or container:name"
-                  {...textProps}
-                />
+              {onBrowse && !ro('volumes') && (
+                <Button variant="secondary" aria-label={`Browse for volume ${i + 1}`} onClick={() => onBrowse('dir', (p) => setVolumeHost(i, p), 'volume')}>
+                  Browse…
+                </Button>
               )}
             </>
           )}
-        </Field>
+        />
       </fieldset>
 
-      <fieldset className={styles.group} aria-describedby={describedBy('healthcheck')}>
-        <legend className={styles.title}>Healthcheck</legend>
-        {readonlyNote('healthcheck')}
-        <label className={styles.check}>
-          <input type="checkbox" id={id('hc-enabled')} checked={form.healthcheck.enabled} disabled={ro('healthcheck')} onChange={(e) => patchHealthcheck({ enabled: e.target.checked })} />
-          Enable healthcheck
-        </label>
-        {form.healthcheck.enabled && (
-          <>
-            <Field label="Healthcheck command" id={id('hc-test')} mono error={shown['healthcheck.test']} hint="Shell command, or start with CMD for exec form" readonly={ro('healthcheck')}>
-              {(aria) => <input type="text" {...aria} value={form.healthcheck.test} onChange={(e) => patchHealthcheck({ test: e.target.value })} {...textProps} />}
-            </Field>
-            <Field label="Interval" id={id('hc-interval')} mono error={shown['healthcheck.interval']} hint="For example 30s" readonly={ro('healthcheck')}>
-              {(aria) => <input type="text" {...aria} value={form.healthcheck.interval} onChange={(e) => patchHealthcheck({ interval: e.target.value })} {...textProps} />}
-            </Field>
-            <Field label="Timeout" id={id('hc-timeout')} mono error={shown['healthcheck.timeout']} readonly={ro('healthcheck')}>
-              {(aria) => <input type="text" {...aria} value={form.healthcheck.timeout} onChange={(e) => patchHealthcheck({ timeout: e.target.value })} {...textProps} />}
-            </Field>
-            <Field label="Start period" id={id('hc-start-period')} mono error={shown['healthcheck.startPeriod']} readonly={ro('healthcheck')}>
-              {(aria) => <input type="text" {...aria} value={form.healthcheck.startPeriod} onChange={(e) => patchHealthcheck({ startPeriod: e.target.value })} {...textProps} />}
-            </Field>
-            <Field label="Retries" id={id('hc-retries')} mono error={shown['healthcheck.retries']} readonly={ro('healthcheck')}>
-              {(aria) => <input type="text" {...aria} value={form.healthcheck.retries} onChange={(e) => patchHealthcheck({ retries: e.target.value })} inputMode="numeric" autoComplete="off" />}
-            </Field>
-          </>
-        )}
-      </fieldset>
-
-      <div className={styles.grid3}>
-        <fieldset className={styles.group} aria-label="Restart policy group" aria-describedby={describedBy('restart')}>
-          {readonlyNote('restart')}
-          <Field label="Restart policy" id={id('restart')} error={shown['restart']} readonly={ro('restart')}>
-            {({ readOnly, ...aria }) => (
-              <select {...aria} disabled={readOnly} value={form.restart} onChange={(e) => patch({ restart: e.target.value })}>
-                {RESTART.map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-                {!RESTART.some(([value]) => value === form.restart) && <option value={form.restart}>{form.restart}</option>}
-              </select>
-            )}
-          </Field>
-        </fieldset>
-        <fieldset className={`${styles.group} ${styles.limits}`} aria-label="Resources" aria-describedby={describedBy('limits')}>
-          {readonlyNote('limits')}
-          <Field label="CPUs" id={id('cpus')} mono error={shown['limits.cpus']} hint="For example 0.5" readonly={ro('limits')}>
-            {(aria) => <input type="text" {...aria} value={form.cpus} onChange={(e) => patch({ cpus: e.target.value })} inputMode="decimal" autoComplete="off" />}
-          </Field>
-          <Field label="Memory" id={id('memory')} mono error={shown['limits.memory']} hint="For example 512M or 1G" readonly={ro('limits')}>
-            {(aria) => <input type="text" {...aria} value={form.memory} onChange={(e) => patch({ memory: e.target.value })} {...textProps} />}
-          </Field>
-        </fieldset>
-      </div>
+      {advanced ? (
+        <details
+          className={styles.advanced}
+          open={advancedOpen}
+          data-forced-open={advancedHasErrors ? '' : undefined}
+          onToggle={(e) => {
+            // Only a toggle that differs from what was rendered is the user's; React's own open/close is ignored.
+            if (e.currentTarget.open !== advancedOpenRendered.current) setAdvancedToggled(e.currentTarget.open);
+          }}
+        >
+          <summary>{advanced.summary}</summary>
+          {environmentGroup}
+          {networksGroup}
+          {modeGroup}
+          {healthcheckGroup}
+          {limitsGroupStacked}
+        </details>
+      ) : (
+        <>
+          {environmentGroup}
+          {networksGroup}
+          {modeGroup}
+          {healthcheckGroup}
+          <div className={styles.grid3}>
+            {restartGroup}
+            {limitsGroup}
+          </div>
+        </>
+      )}
     </div>
   );
 }
