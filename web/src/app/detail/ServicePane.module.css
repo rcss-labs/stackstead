@@ -47,4 +47,5 @@
   .header { padding: 14px 14px 0; }
   .tabs { padding-inline: 14px; }
   .tabs [role='tabpanel'] { margin-inline: -14px; }
+  .tabs [role='tab'] { height: 40px; } /* touch target */
 }

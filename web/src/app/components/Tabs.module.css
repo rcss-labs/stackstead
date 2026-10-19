@@ -38,3 +38,8 @@
 }
 
 .panel { padding-block: var(--space-4); }
+
+/* Touch targets are at least 40px tall on narrow screens. */
+@media (max-width: 759px) {
+  .tab { height: 40px; }
+}

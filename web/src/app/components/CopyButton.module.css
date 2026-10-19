@@ -21,7 +21,8 @@
 .bad { color: var(--danger); margin-inline-start: var(--space-2); }
 .ok { color: var(--success); margin-inline-start: var(--space-2); }
 
+/* Touch targets are at least 40px on narrow screens. */
 @media (max-width: 759px) {
-  .copy { height: 36px; }
-  .copy[data-variant='icon'] { width: 36px; }
+  .copy { height: 40px; }
+  .copy[data-variant='icon'] { width: 40px; }
 }
