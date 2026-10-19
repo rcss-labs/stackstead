@@ -1,0 +1,130 @@
+.card {
+  background: var(--surface);
+  border-radius: 12px;
+  box-shadow: var(--hi);
+  padding: 12px 14px;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 14px;
+  margin-bottom: 10px;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--tone);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 5px 12px;
+  align-items: center;
+}
+
+.name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  text-align: left;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.name[data-selected='true'] {
+  color: var(--text);
+}
+
+.service {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.restarts {
+  flex: none;
+  color: var(--warning);
+  font-size: 10.5px;
+}
+
+.bar {
+  display: flex;
+  gap: 1px;
+  height: 14px;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.bar span {
+  min-width: 0;
+  background: var(--tone);
+}
+
+.axis {
+  grid-column: 2;
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+}
+
+[data-tone='success'] { --tone: var(--success); }
+[data-tone='warning'] { --tone: var(--warning); }
+[data-tone='danger'] { --tone: var(--danger); }
+[data-tone='down'] { --tone: var(--border-strong); }
+
+.bar span[data-tone='nodata'] {
+  background: transparent;
+  outline: 1px solid var(--border-strong);
+  outline-offset: -1px;
+}
+
+.bar span[data-pulse='true'] {
+  animation: timeline-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes timeline-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@media (max-width: 759px) {
+  .grid {
+    grid-template-columns: 96px minmax(0, 1fr);
+  }
+
+  .name {
+    min-height: 40px;
+  }
+}

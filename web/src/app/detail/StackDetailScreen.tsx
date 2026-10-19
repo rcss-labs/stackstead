@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import type { Action } from '$lib/api/types';
+import { timelineLanes } from '$lib/stacks/timeline';
 import { lifecycleDisabledReason } from '$lib/stacks/lifecycle';
 import { missingComposeFile } from '$lib/stacks/detailLocation';
 import { setUnsavedChanges } from '$lib/stores/guard';
@@ -12,11 +13,16 @@ import { EmptyState } from '../components/EmptyState';
 import { Spinner } from '../components/Spinner';
 import { useStore } from '../hooks/useStore';
 import { DetailHeader } from './DetailHeader';
+import { HealthTimeline } from './HealthTimeline';
 import styles from './StackDetailScreen.module.css';
+import { useDetailLocation } from './useDetailLocation';
+import { useNowSeconds } from './useNowSeconds';
 import { useStackDetail } from './useStackDetail';
 
 export function StackDetailScreen({ name }: { name: string }) {
-  const { ctl, detail, notFound, loadError, operations, acting, removing } = useStackDetail(name);
+  const { ctl, detail, notFound, loadError, operations, health, acting, removing } = useStackDetail(name);
+  const location = useDetailLocation(name, detail);
+  const nowSeconds = useNowSeconds(60_000);
   const liveState = useStore(live);
   const [retrying, setRetrying] = useState(false);
   const [pendingLeave, setPendingLeave] = useState<(() => void) | undefined>();
@@ -97,6 +103,11 @@ export function StackDetailScreen({ name }: { name: string }) {
               : 'Fix it in the Compose file; the structured editor is unavailable until it parses.'}
           </Banner>
         )}
+        <HealthTimeline
+          lanes={timelineLanes(health, detail.services.map((s) => s.name), nowSeconds)}
+          selected={location.item.kind === 'service' ? location.item.name : undefined}
+          onSelect={(service) => guarded(() => location.go(location.hrefFor({ kind: 'service', name: service })))}
+        />
       </section>
     );
   }

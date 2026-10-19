@@ -47,6 +47,7 @@ let stackRes: FakeResponse;
 let stackGate: Promise<void> | undefined;
 let postGate: Promise<void> | undefined;
 let opsRes: Operation[];
+let healthRes: FakeResponse;
 let statusRes: { docker: string; compose: string; events: string; metricsDegraded: boolean };
 let goTo: (href: string) => void;
 
@@ -56,6 +57,7 @@ beforeEach(() => {
   stackGate = undefined;
   postGate = undefined;
   opsRes = [];
+  healthRes = { body: { from: 0, to: 3600, services: [] } };
   statusRes = { docker: 'ok', compose: '2.29.0', events: 'connected', metricsDegraded: false };
   fake = installFakeFetch({
     'GET /api/stacks/web': async () => {
@@ -65,7 +67,7 @@ beforeEach(() => {
     'GET /api/stacks/db': { body: detail({ name: 'db', project: 'db', path: '/srv/stacks/db/compose.yaml' }) },
     'GET /api/stacks/web/operations': () => ({ body: opsRes }),
     'GET /api/stacks/db/operations': { body: [] },
-    'GET /api/stacks/web/health?span=60m': { body: { from: 0, to: 3600, services: [] } },
+    'GET /api/stacks/web/health?span=60m': () => healthRes,
     'GET /api/stacks/db/health?span=60m': { body: { from: 0, to: 3600, services: [] } },
     'GET /api/stacks/web/metrics': { body: { points: [] } },
     'GET /api/status': () => ({ body: statusRes }),
@@ -326,6 +328,74 @@ describe('stack detail screen', () => {
       const extra = calls('GET', p) - before[i]!;
       expect(extra, p).toBeGreaterThanOrEqual(1);
       expect(extra, p).toBeLessThanOrEqual(2);
+    });
+  });
+
+  describe('health timeline', () => {
+    const twoServices = () => {
+      const base = detail();
+      return detail({ serviceCount: 2, services: [base.services[0]!, { ...base.services[0]!, name: 'db' }] });
+    };
+    const region = () => screen.findByRole('region', { name: 'Health · last 60 min' });
+
+    it('fetches health once on load, refetches on this project\'s change and extends to now', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      healthRes = {
+        body: {
+          from: now - 3600,
+          to: now - 120,
+          services: [
+            {
+              service: 'app',
+              restarts: 0,
+              runs: [
+                { state: 'healthy', from: now - 3600, to: now - 600 },
+                { state: 'unhealthy', from: now - 600, to: now - 120 },
+              ],
+            },
+          ],
+        },
+      };
+      startLiveFromFake();
+      mount('/stacks/web');
+      const lane = within(await region());
+      const spans = await waitFor(() => {
+        const found = Array.from(lane.getByRole('img', { name: /^app: healthy .*unhealthy/ }).children) as HTMLElement[];
+        expect(found).toHaveLength(2);
+        return found;
+      });
+      const flex = parseFloat(spans[1]!.style.flex);
+      expect(flex - 480).toBeGreaterThanOrEqual(120);
+      expect(flex - 480).toBeLessThanOrEqual(122);
+      await waitFor(() => expect(get(changes)?.resync).toBe(true));
+      await waitFor(() => expect(stackGets()).toBe(2));
+      const before = calls('GET', '/api/stacks/web/health?span=60m');
+      expect(before).toBeLessThanOrEqual(2); // initial, plus at most the resync on open
+      pushChange('web', 5);
+      await waitFor(() => expect(calls('GET', '/api/stacks/web/health?span=60m')).toBe(before + 1));
+    });
+
+    it('a lane name navigates to that service\'s overview', async () => {
+      stackRes = { body: twoServices() };
+      mount('/stacks/web');
+      const lane = within(await region());
+      await user().click(lane.getByRole('button', { name: 'db' }));
+      await waitFor(() => expect(here()).toBe('/stacks/web?service=db'));
+      expect(lane.getByRole('button', { name: 'db' }).getAttribute('aria-pressed')).toBe('true');
+    });
+
+    it('renders nodata lanes while health has failed, with no error banner', async () => {
+      healthRes = { status: 500, body: { error: 'boom' } };
+      stackRes = { body: twoServices() };
+      mount('/stacks/web');
+      const lane = within(await region());
+      await waitFor(() => expect(calls('GET', '/api/stacks/web/health?span=60m')).toBe(1));
+      for (const service of ['app', 'db']) {
+        const spans = Array.from(lane.getByRole('img', { name: new RegExp(`^${service}: `) }).children) as HTMLElement[];
+        expect(spans.map((s) => s.dataset.tone)).toEqual(['nodata']);
+      }
+      expect(screen.queryByText('Showing the last loaded state')).toBeNull();
+      expect(screen.queryByText('Could not load the stack')).toBeNull();
     });
   });
 });
