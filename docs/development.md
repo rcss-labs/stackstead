@@ -94,9 +94,12 @@ toast from `runningOps` plus one `GET /api/operations/{id}`. A stack removal is
 the exception: the stack page reports its outcome itself ("Removed x" or the
 failure), so it is not tracked and shows a single toast.
 
-The stack page's log console keeps one log stream per open stack page (tail 200, follow), opened once the stack
-has loaded and closed when the page is left. Only a service change (chip, pane `Logs` button or `?tab=logs`) or Reconnect restarts it, and a collapsed console keeps it
-running (a parse error appearing after load unmounts the console and closes it), and the console height persists under `stackstead.logsHeight`. `?tab=logs` (and the service pane's
+The stack page's log console keeps one log stream per open stack page (tail 200,
+follow). It opens once the stack has loaded and closes when the page is left.
+Only a service change (chip, pane `Logs` button or `?tab=logs`) or Reconnect
+restarts it. A collapsed console keeps the stream running, and a parse error
+appearing after load unmounts the console and closes it. The console height
+persists under `stackstead.logsHeight`. `?tab=logs` (and the service pane's
 `Logs` button) expands the console on the chosen service.
 
 ## Tests
