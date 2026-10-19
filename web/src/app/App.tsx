@@ -17,8 +17,10 @@ import { useFocusOnNavigate } from './hooks/useFocusOnNavigate';
 import { useRunningOps } from './hooks/useRunningOps';
 import { useSessionGuard, useSessionLost } from './hooks/useSessionGuard';
 import { useStore } from './hooks/useStore';
+import { useGlobalShortcut } from './hooks/useGlobalShortcut';
 import { useUnsavedGuard } from './hooks/useUnsavedGuard';
 import { ROUTES, findRoute } from './routes';
+import { PaletteHost } from './shell/PaletteHost';
 import { Shell } from './shell/Shell';
 import { Toasts } from './shell/Toasts';
 import styles from './App.module.css';
@@ -113,6 +115,8 @@ function SignedInFrame({ runningOps, loggingOut }: SignedInFrameProps) {
   const liveState = useStore(live);
   const { items } = useStore(stacks);
   const mainRef = useRef<HTMLElement>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  useGlobalShortcut(() => setPaletteOpen(true));
   const guard = useUnsavedGuard({ navigate, loggingOut });
   useFocusOnNavigate(mainRef);
 
@@ -154,7 +158,7 @@ function SignedInFrame({ runningOps, loggingOut }: SignedInFrameProps) {
           onLogout={guard.requestLogout}
           runningOps={runningOps}
           attention={needsAttention(items)}
-          onOpenPalette={() => {}}
+          onOpenPalette={() => setPaletteOpen(true)}
           banners={banners.length > 0 ? <div className={styles.banners}>{banners}</div> : undefined}
         >
           <main ref={mainRef} className={styles.main}>
@@ -177,7 +181,7 @@ function SignedInFrame({ runningOps, loggingOut }: SignedInFrameProps) {
         onConfirm={guard.leave}
         onCancel={guard.cancel}
       />
-      {/* CommandPalette mounts here (Plan 16b Task 6). */}
+      <PaletteHost open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </>
   );
 }

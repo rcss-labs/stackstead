@@ -32,9 +32,11 @@ export interface DialogProps {
   describedBy?: string;
   role?: 'dialog' | 'alertdialog';
   width?: 'md' | 'lg';
+  /** 'top' pins the panel near the top of the viewport (the command palette). */
+  placement?: 'center' | 'top';
 }
 
-export function Dialog({ open, title, onClose, children, labelledBy, describedBy, role = 'dialog', width = 'md' }: DialogProps) {
+export function Dialog({ open, title, onClose, children, labelledBy, describedBy, role = 'dialog', width = 'md', placement = 'center' }: DialogProps) {
   const uid = useId();
   const titleId = labelledBy ?? `${uid}-title`;
   const panelRef = useRef<HTMLDivElement>(null);
@@ -113,7 +115,7 @@ export function Dialog({ open, title, onClose, children, labelledBy, describedBy
 
   // Rendered under <body> so the app root can be made inert.
   return createPortal(
-    <div className={styles.backdrop}>
+    <div className={styles.backdrop} data-placement={placement}>
       <div
         ref={panelRef}
         className={styles.dialog}

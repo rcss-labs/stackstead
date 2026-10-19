@@ -467,3 +467,26 @@ it('every route is lazy except the overview', () => {
     else expect(kind(route.screen), route.path).toBe(lazy);
   }
 });
+
+describe('App command palette', () => {
+  it('opens from the sidebar search button and from Ctrl+K, and is not mounted while signed out', async () => {
+    me = { status: 401, body: { error: 'unauthorized' } };
+    at('/');
+    const out = render(<App />);
+    await screen.findByLabelText('Username');
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull();
+    out.unmount();
+
+    me = { body: { username: 'admin' } };
+    at('/');
+    render(<App />);
+    await screen.findByRole('navigation', { name: 'Main' });
+    await user().click(screen.getAllByRole('button', { name: 'Search or run a command' })[0]);
+    expect(await screen.findByRole('dialog', { name: 'Command palette' })).toBeTruthy();
+    await user().keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    expect(await screen.findByRole('dialog', { name: 'Command palette' })).toBeTruthy();
+  });
+});
