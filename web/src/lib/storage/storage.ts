@@ -30,9 +30,9 @@ export function imageReclaimRange(candidates: StorageImage[]): string {
 
 export function reclaimText(reclaim: StorageReclaim): string {
   if (reclaim.min === null || reclaim.max === null) return 'Reclaimable size unknown';
+  if (reclaim.min !== reclaim.max) return `Frees between ${formatBytes(reclaim.min)} and ${formatBytes(reclaim.max)}`;
   if (!reclaim.exact) return `Frees about ${formatBytes(reclaim.max)} (not exact)`;
-  if (reclaim.min === reclaim.max) return `Frees ${formatBytes(reclaim.min)}`;
-  return `Frees between ${formatBytes(reclaim.min)} and ${formatBytes(reclaim.max)}`;
+  return `Frees ${formatBytes(reclaim.min)}`;
 }
 export function deleteDisabledReason(row: StorageImage | StorageVolume, dockerDown = false): string | undefined {
   if (dockerDown) return 'Docker is unavailable';

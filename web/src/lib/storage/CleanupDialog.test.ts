@@ -1,0 +1,77 @@
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { get } from 'svelte/store';
+import type { StoragePlan } from '$lib/api/types';
+import { operationsRefresh } from '$lib/stores/stacks';
+import { toasts } from '$lib/stores/toasts';
+import { installFakeFetch, installFakeStream, type FakeFetch, type FakeStream, type FakeResponse } from '../../vitest-setup';
+import CleanupDialog from './CleanupDialog.svelte';
+let fake: FakeFetch;
+let stream: FakeStream | undefined;
+let plan: StoragePlan;
+let response: FakeResponse | undefined;
+let confirm: FakeResponse;
+const op = { id: 'op1', stack: '', action: 'storage-cleanup', state: 'running', startedAt: '2026-01-01T00:00:00Z' };
+beforeEach(() => {
+  toasts.reset(); response = undefined;
+  plan = { id: 'p_1', kind: 'volumes', createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 300000).toISOString(), items: [{kind:'volume',id:'free',ref:'free',bytes:1024}], protected: [{kind:'volume',id:'db',ref:'db',reason:'declared by stack',stack:'media',stackState:'stopped'}], warnings: ['Check backups'], reclaim: { min:1024,max:1024,exact:true }, confirmPhrase:'delete 1 volume' };
+  confirm = { body: op };
+  fake = installFakeFetch({
+    'POST /api/storage/plans': () => response ?? { body: plan },
+    'POST /api/storage/plans/p_1/confirm': () => confirm,
+    'GET /api/operations/op1': { body: { ...op, lines: [] } },
+  });
+});
+afterEach(() => { stream?.restore(); stream = undefined; fake.restore(); toasts.reset(); vi.useRealTimers(); });
+const open = (onclose = vi.fn(), onfinished = vi.fn()) => render(CleanupDialog, { request: {kind:'volumes',selection:'unused'}, onclose, onfinished });
+it('previews bytes, protections, warnings and volume data warning without selectable protected entries', async () => {
+  open(); const dialog = await screen.findByRole('dialog');
+  await screen.findByText('Frees 1.0 KiB');
+  expect(within(dialog).getByText('free')).toBeTruthy(); expect(within(dialog).getByText('1.0 KiB')).toBeTruthy();
+  expect(within(dialog).getByText(/declared by stack/)).toBeTruthy(); expect(screen.getByRole('link',{name:'media'}).getAttribute('href')).toBe('/stacks/media');
+  expect(screen.queryByRole('checkbox')).toBeNull(); expect(screen.getByText('Check backups')).toBeTruthy();
+  expect(screen.getByText('Volumes hold data. This cannot be undone.')).toBeTruthy(); expect(screen.getByText(/Expires in 5:00/)).toBeTruthy();
+});
+it('focuses the described field and gates Delete on exact case and whitespace', async () => {
+  open(); const input = await screen.findByRole('textbox',{name:'Type delete 1 volume to confirm'});
+  await waitFor(() => expect(document.activeElement).toBe(input));
+  expect(document.getElementById(input.getAttribute('aria-describedby')!)?.textContent).toContain(plan.confirmPhrase);
+  const button = screen.getByRole('button',{name:'Delete'}); expect(button.hasAttribute('disabled')).toBe(true);
+  for (const value of ['delete 1 volume ', 'Delete 1 volume', ' delete 1 volume']) {
+    await fireEvent.input(input,{target:{value}}); expect(button.hasAttribute('disabled')).toBe(true);
+  }
+  await fireEvent.input(input,{target:{value:plan.confirmPhrase}}); expect(button.hasAttribute('disabled')).toBe(false);
+});
+it('Escape closes before confirmation', async () => { const close = vi.fn(); open(close); await screen.findByRole('textbox'); await fireEvent.keyDown(document,{key:'Escape'}); expect(close).toHaveBeenCalledTimes(1); expect(fake.calls.some(c=>c.path.endsWith('/confirm'))).toBe(false); });
+it.each([409,503])('preserves server %s plan error with Close', async status => { response={status,body:{error:'Storage is busy; try later'}}; open(); expect(await screen.findByText('Storage is busy; try later')).toBeTruthy(); expect(screen.getByRole('button',{name:'Close'})).toBeTruthy(); expect(screen.queryByRole('textbox')).toBeNull(); });
+it('shows nothing to clean for an empty plan', async () => { plan.items=[]; open(); expect(await screen.findByText('Nothing to clean')).toBeTruthy(); expect(screen.queryByRole('button',{name:'Delete'})).toBeNull(); });
+it('labels fallback not exact beside its phrase', async () => { plan.kind='build-cache'; plan.mode='all-unused'; plan.reclaim.exact=false; open(); const phrase=await screen.findByText(plan.confirmPhrase,{selector:'code'}); expect(phrase.parentElement?.textContent).toContain('not exact'); expect(screen.getByText('Frees about 1.0 KiB (not exact)')).toBeTruthy(); });
+it('expires at zero and re-checks with a new plan and empty field', async () => {
+  vi.useFakeTimers(); plan.expiresAt=new Date(Date.now()+1000).toISOString(); open(); await vi.advanceTimersByTimeAsync(0);
+  await vi.advanceTimersByTimeAsync(1000); expect(screen.queryByRole('button',{name:'Delete'})).toBeNull();
+  plan={...plan,id:'p_2',expiresAt:new Date(Date.now()+300000).toISOString()}; await fireEvent.click(screen.getByRole('button',{name:'Re-check'})); await vi.advanceTimersByTimeAsync(0);
+  expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe(''); expect(screen.getByRole('button',{name:'Delete'}).hasAttribute('disabled')).toBe(true);
+  expect(fake.calls.filter(c=>c.path==='/api/storage/plans')).toHaveLength(2);
+});
+it.each([400,404])('handles confirm %s as field error or expired plan', async status => {
+  confirm={status,body:{error:status===400?'Wrong phrase':'Plan expired',fields:[{field:'confirm',message:'Phrase must match exactly'}]}};
+  open(); const input=await screen.findByRole('textbox'); await fireEvent.input(input,{target:{value:plan.confirmPhrase}}); await fireEvent.click(screen.getByRole('button',{name:'Delete'}));
+  if(status===400) { expect(await screen.findByText('Phrase must match exactly')).toBeTruthy(); expect(input.getAttribute('aria-invalid')).toBe('true'); }
+  else expect(await screen.findByRole('button',{name:'Re-check'})).toBeTruthy();
+});
+it('streams output then emits toast, refresh signal and completion once', async () => {
+  stream=installFakeStream({'/api/operations/op1/stream':[]}); const finished=vi.fn(); const before=get(operationsRefresh); open(vi.fn(),finished);
+  const input=await screen.findByRole('textbox'); await fireEvent.input(input,{target:{value:plan.confirmPhrase}}); await fireEvent.click(screen.getByRole('button',{name:'Delete'}));
+  await screen.findByRole('log'); await waitFor(()=>expect(stream!.requests).toHaveLength(1));
+  stream.push('/api/operations/op1/stream','event: line\ndata: "deleted volume free"\n\n'); expect(await screen.findByText('deleted volume free')).toBeTruthy();
+  expect(finished).not.toHaveBeenCalled(); stream.push('/api/operations/op1/stream',`event: done\ndata: ${JSON.stringify({...op,state:'succeeded',exitCode:0})}\n\n`);
+  await waitFor(()=>expect(finished).toHaveBeenCalledTimes(1)); expect(get(operationsRefresh)).toBe(before+1); expect(get(toasts)[0].message).toContain('succeeded');
+  expect(screen.queryByText('docker compose storage-cleanup')).toBeNull();
+});
+
+it('shows checking state until the fresh plan resolves', async () => {
+  let release!: (value: FakeResponse) => void;
+  fake.restore(); fake=installFakeFetch({'POST /api/storage/plans':()=>new Promise<FakeResponse>(resolve=>release=resolve)});
+  open(); expect(await screen.findByText('Checking current state…')).toBeTruthy(); expect(screen.queryByRole('textbox')).toBeNull();
+  release({body:plan}); expect(await screen.findByRole('textbox')).toBeTruthy();expect(screen.queryByText('Checking current state…')).toBeNull();
+});

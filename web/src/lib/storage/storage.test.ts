@@ -39,3 +39,7 @@ it('searches the registered stack of consumers even when the image has no declar
   expect(filterImages([usedImage], 'all', 'REGISTERED-STACK')).toEqual([usedImage]);
   expect(filterVolumes([usedVolume], 'all', 'registered-stack')).toEqual([usedVolume]);
 });
+
+it('shows bounded image reclaim as a range even when the estimate is not exact', () => {
+  expect(reclaimText({min:120 * 1024 ** 2,max:480 * 1024 ** 2,exact:false})).toBe('Frees between 120.0 MiB and 480.0 MiB');
+});

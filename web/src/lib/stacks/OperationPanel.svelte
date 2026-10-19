@@ -99,7 +99,7 @@
 <section class="panel" aria-label="Operation output">
   <header>
     {#if $op && look}
-      <strong class="cmd">docker compose {$op.action}</strong>
+      <strong class="cmd">{$op.stack ? `docker compose ${$op.action}` : $op.action}</strong>
       <span class="state {look.tone}">{look.label}</span>
       <span class="meta">{elapsed ?? ''} · exit {$op.exitCode ?? '—'}</span>
     {:else if $unavailable}

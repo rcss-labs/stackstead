@@ -41,14 +41,14 @@ it('selects query tabs, filters with counted chips and search; invalid tab retur
   await fireEvent.click(screen.getByRole('tab', { name: 'Build cache' })); expect(window.location.search).toBe('?tab=build-cache'); expect(await screen.findByText('builder cache')).toBeTruthy();
   navigate('/storage?tab=invalid'); await screen.findAllByText('Container layers');
 });
-it('shows protected stopped volumes with stack note and no Delete; unused cleanup remains disabled until T12', async () => {
+it('shows protected stopped volumes with stack note and no Delete; unused cleanup is enabled', async () => {
   navigate('/storage?tab=volumes'); render(Storage); const name = await screen.findByRole('link', { name: 'media_db' }); const row = name.closest('tr')!;
   expect(within(row).getByText('unused · protected')).toBeTruthy(); expect(within(row).getByText(/declared by stack/)).toBeTruthy(); expect(within(row).getAllByRole('link', { name: 'media' })[0].getAttribute('href')).toBe('/stacks/media');
   expect(within(row).getAllByText(/stopped/).length).toBeGreaterThan(0); expect(within(row).queryByRole('button', { name: 'Delete' })).toBeNull();
   expect(within(row).getByText('calculating…')).toBeTruthy();
-  expect(screen.getByRole('button', { name: /Clean up unused volumes/ }).getAttribute('aria-disabled')).toBe('true');
+  expect(screen.getByRole('button', { name: /Clean up unused volumes/ }).getAttribute('aria-disabled')).toBeNull();
   expect(within(screen.getByRole('link', { name: 'used' }).closest('tr')!).queryByRole('button', { name: 'Delete' })).toBeNull();
-  expect(screen.getByRole('button', { name: 'Delete' }).getAttribute('aria-disabled')).toBe('true');
+  expect(screen.getByRole('button', { name: 'Delete' }).getAttribute('aria-disabled')).toBeNull();
 });
 it('Recalculate starts refresh, prevents another use for 60 seconds and explains why', async () => {
   vi.useFakeTimers(); render(Storage); await vi.advanceTimersByTimeAsync(0);
@@ -80,6 +80,14 @@ it.each([
   expect(button.textContent).toContain(`(2 · ${expected})`);
   await fireEvent.input(screen.getByRole('searchbox', { name: 'Search images' }), { target: { value: 'no match' } });
   expect(button.textContent).toContain(`(2 · ${expected})`);
-  expect(button.getAttribute('aria-disabled')).toBe('true');
+  expect(button.getAttribute('aria-disabled')).toBeNull();
   expect(fake.calls.every(call => call.method === 'GET')).toBe(true);
+});
+
+it('opens a fresh preview from a cleanup control and restores focus on Escape', async () => {
+  navigate('/storage?tab=images'); render(Storage);
+  const button=await screen.findByRole('button',{name:/Clean up dangling images/}); button.focus(); await fireEvent.click(button);
+  await screen.findByRole('dialog'); await screen.findByText('no fake route');
+  expect(fake.calls.find(c=>c.path==='/api/storage/plans')?.body).toEqual({kind:'images',selection:'dangling'});
+  await fireEvent.keyDown(document,{key:'Escape'}); await waitFor(()=>expect(screen.queryByRole('dialog')).toBeNull());expect(document.activeElement).toBe(button);
 });

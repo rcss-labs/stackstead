@@ -410,3 +410,20 @@ it('renders Storage at /storage with title and current rail', async () => {
   await waitFor(() => expect(document.title).toBe('Storage · Stackstead'));
   expect(screen.getByRole('link', { name: 'Storage' }).getAttribute('aria-current')).toBe('page');
 });
+
+it.each([
+  ['/storage/images/aaaaaaaaaaaa', 'Image not found', 'Images'],
+  ['/storage/volumes/missing', 'Volume not found', 'Volumes'],
+])('routes storage detail %s with title and breadcrumbs', async (path, heading, crumb) => {
+  at(path); render(App);
+  expect(await screen.findByText(heading)).toBeTruthy();
+  await waitFor(() => expect(document.title).toBe('Storage · Stackstead'));
+  expect(screen.getByRole('navigation', { name: 'Breadcrumb' }).textContent).toContain(crumb);
+});
+
+it('focuses the storage detail heading after navigation while its request is pending', async () => {
+  at('/networks');render(App);await screen.findByRole('heading',{level:1});
+  at('/storage/images/aaaaaaaaaaaa');
+  const heading=await screen.findByRole('heading',{level:1,name:/Image/});
+  await waitFor(()=>expect(document.activeElement).toBe(heading));
+});

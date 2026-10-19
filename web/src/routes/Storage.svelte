@@ -1,7 +1,8 @@
 <script lang="ts">
+  import CleanupDialog from '$lib/storage/CleanupDialog.svelte';
   import { onMount, onDestroy } from 'svelte';
   import { api, ApiError } from '$lib/api/client';
-  import type { StorageConsumer, StorageDeclaration, StorageKindTotals } from '$lib/api/types';
+  import type { StorageConsumer, StorageDeclaration, StorageKindTotals, StoragePlanRequest } from '$lib/api/types';
   import Banner from '$lib/components/Banner.svelte';
   import Button from '$lib/components/Button.svelte';
   import RelativeTime from '$lib/components/RelativeTime.svelte';
@@ -54,7 +55,7 @@
   const shownImages = $derived(filterImages(images, imageChip, search));
   const shownVolumes = $derived(filterVolumes(volumes, volumeChip, search));
   const dockerDown = $derived($live.docker === 'unavailable' || $live.events === 'disconnected');
-  const cleanupUnavailable = 'Cleanup confirmation is not available yet';
+  let cleanup = $state<StoragePlanRequest>();
   const kindError = $derived($data?.errors[tab as 'overview' | 'images' | 'volumes' | 'build-cache']);
   let recalculating = $state(false);
   let cooldownUntil = $state(0);
@@ -149,7 +150,7 @@
           </section>
         {:else if selected === 'images' && $data.images}
           <div class="toolbar"><div class="chips" role="group" aria-label="Filter images">{#each imageChips as chip}<button type="button" aria-pressed={imageChip === chip.id} onclick={() => imageChip = chip.id}>{chip.label} <span class="mono">{imageCount[chip.id]}</span></button>{/each}</div><label class="search">Search images<input type="search" aria-label="Search images" bind:value={search} /></label></div>
-          <div class="summary">{@render sizes($data.images.totals)}<div class="image-cleanup"><Button variant="danger" disabledReason={dockerDown ? 'Docker is unavailable' : cleanupUnavailable}><span>Clean up dangling images ({danglingCandidates.length} · {danglingReclaim})</span></Button></div></div>
+          <div class="summary">{@render sizes($data.images.totals)}<div class="image-cleanup"><Button variant="danger" disabledReason={dockerDown ? 'Docker is unavailable' : undefined} onclick={() => cleanup = {kind: 'images', selection: 'dangling'}}><span>Clean up dangling images ({danglingCandidates.length} · {danglingReclaim})</span></Button></div></div>
           {#if shownImages.length}<div class="card"><!-- svelte-ignore a11y_no_redundant_roles -->
 <table role="table" aria-label="Images"><!-- svelte-ignore a11y_no_redundant_roles -->
 <thead role="rowgroup"><!-- svelte-ignore a11y_no_redundant_roles -->
@@ -171,12 +172,12 @@
               <!-- svelte-ignore a11y_no_redundant_roles -->
 <td role="cell" data-label="Status"><span class="tag">{image.containers.length ? 'in use' : image.dangling ? 'dangling' : 'no containers'}</span></td>
               <!-- svelte-ignore a11y_no_redundant_roles -->
-<td role="cell" data-label="Actions"><Button variant="danger" size="sm" disabledReason={deleteDisabledReason(image, dockerDown) ?? cleanupUnavailable}>Delete</Button></td>
+<td role="cell" data-label="Actions"><Button variant="danger" size="sm" disabledReason={deleteDisabledReason(image, dockerDown)} onclick={() => cleanup = {kind: 'image', ref: image.id}}>Delete</Button></td>
             </tr>{/each}
           </tbody></table></div>{:else}<p class="muted">No images match the current filter.</p>{/if}
         {:else if selected === 'volumes' && $data.volumes}
           <div class="toolbar"><div class="chips" role="group" aria-label="Filter volumes">{#each volumeChips as chip}<button type="button" aria-pressed={volumeChip === chip.id} onclick={() => volumeChip = chip.id}>{chip.label} <span class="mono">{volumeCount[chip.id]}</span></button>{/each}</div><label class="search">Search volumes<input type="search" aria-label="Search volumes" bind:value={search} /></label></div>
-          <div class="summary">{@render sizes($data.volumes.totals)}<Button variant="danger" disabledReason={dockerDown ? 'Docker is unavailable' : cleanupUnavailable}>Clean up unused volumes</Button></div>
+          <div class="summary">{@render sizes($data.volumes.totals)}<Button variant="danger" disabledReason={dockerDown ? 'Docker is unavailable' : undefined} onclick={() => cleanup = {kind: 'volumes', selection: 'unused'}}>Clean up unused volumes</Button></div>
           {#if shownVolumes.length}<div class="card"><!-- svelte-ignore a11y_no_redundant_roles -->
 <table role="table" aria-label="Volumes"><!-- svelte-ignore a11y_no_redundant_roles -->
 <thead role="rowgroup"><!-- svelte-ignore a11y_no_redundant_roles -->
@@ -198,11 +199,11 @@
                 {#if volume.protection}{@const declaration = volume.declaredBy.find(d => d.stack === volume.protection?.stack)}<p class="protection">{declaration ? 'declared by stack' : 'protected by stack'} <a href={stackPath(volume.protection.stack)} use:link>{volume.protection.stack}</a>{#if declaration} ({declaration.stackState}){/if} — remove via the stack</p>{/if}
               </div></td>
               <!-- svelte-ignore a11y_no_redundant_roles -->
-<td role="cell" data-label="Actions">{#if !volume.protection && !volume.containers.length}<Button variant="danger" size="sm" disabledReason={deleteDisabledReason(volume, dockerDown) ?? cleanupUnavailable}>Delete</Button>{/if}</td>
+<td role="cell" data-label="Actions">{#if !volume.protection && !volume.containers.length}<Button variant="danger" size="sm" disabledReason={deleteDisabledReason(volume, dockerDown)} onclick={() => cleanup = {kind: 'volume', name: volume.name}}>Delete</Button>{/if}</td>
             </tr>{/each}
           </tbody></table></div>{:else}<p class="muted">No volumes match the current filter.</p>{/if}
         {:else if selected === 'build-cache' && $data.cache}
-          <div class="summary"><div><h2>{sizeText($data.cache.totals.size, $data.cache.totals.refreshing)} · {$data.cache.totals.count} records</h2><p class="muted">{sizeText($data.cache.totals.reclaimable)} reclaimable</p>{@render sizes($data.cache.totals)}</div><Button variant="danger" disabledReason={dockerDown ? 'Docker is unavailable' : cleanupUnavailable}>Clean up build cache</Button></div>
+          <div class="summary"><div><h2>{sizeText($data.cache.totals.size, $data.cache.totals.refreshing)} · {$data.cache.totals.count} records</h2><p class="muted">{sizeText($data.cache.totals.reclaimable)} reclaimable</p>{@render sizes($data.cache.totals)}</div><Button variant="danger" disabledReason={dockerDown ? 'Docker is unavailable' : undefined} onclick={() => cleanup = {kind: 'build-cache', selection: 'unused'}}>Clean up build cache</Button></div>
           {#if $data.cache.records.length}<div class="card"><!-- svelte-ignore a11y_no_redundant_roles -->
 <table role="table" aria-label="Build cache"><!-- svelte-ignore a11y_no_redundant_roles -->
 <thead role="rowgroup"><!-- svelte-ignore a11y_no_redundant_roles -->
@@ -223,6 +224,8 @@
     {/snippet}
   </Tabs>
 </section>
+
+{#if cleanup}<CleanupDialog request={cleanup} onclose={() => cleanup = undefined} />{/if}
 
 <style>
   .page { min-width: 0; }

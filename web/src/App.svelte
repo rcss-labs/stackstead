@@ -18,6 +18,8 @@
   import ContainerDetail from './routes/ContainerDetail.svelte';
   import ContainerList from './routes/ContainerList.svelte';
   import Storage from './routes/Storage.svelte';
+  import StorageImage from './routes/StorageImage.svelte';
+  import StorageVolume from './routes/StorageVolume.svelte';
   import NetworkList from './routes/NetworkList.svelte';
   import Login, { safeNext } from './routes/Login.svelte';
   import Settings from './routes/Settings.svelte';
@@ -35,10 +37,14 @@
   let pendingLogout = $state(false);
 
   const path = $derived($route.path);
+  const storageImageParams = $derived(matchRoute('/storage/images/:id', path));
+  const storageVolumeParams = $derived(matchRoute('/storage/volumes/:name', path));
   const stackParams = $derived(matchRoute('/stacks/:name', path));
   const containerParams = $derived(matchRoute('/containers/:name', path));
   const view = $derived.by(() => {
     if (path === '/') return 'list' as const;
+    if (storageImageParams) return 'storageImage' as const;
+    if (storageVolumeParams) return 'storageVolume' as const;
     if (path === '/storage') return 'storage' as const;
     if (path === '/networks') return 'networks' as const;
     if (path === '/containers') return 'containers' as const;
@@ -163,6 +169,8 @@
       containers: 'Containers',
       networks: 'Networks',
       storage: 'Storage',
+      storageImage: 'Storage',
+      storageVolume: 'Storage',
       settings: 'Settings',
       notfound: 'Page not found',
     };
@@ -242,6 +250,10 @@
     <main bind:this={mainEl}>
       {#if view === 'list'}
         <StackList />
+      {:else if view === 'storageImage' && storageImageParams}
+        {#key storageImageParams.id}<StorageImage id={storageImageParams.id} />{/key}
+      {:else if view === 'storageVolume' && storageVolumeParams}
+        {#key storageVolumeParams.name}<StorageVolume name={storageVolumeParams.name} />{/key}
       {:else if view === 'storage'}
         <Storage />
       {:else if view === 'networks'}
