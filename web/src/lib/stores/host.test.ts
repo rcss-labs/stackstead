@@ -1,7 +1,7 @@
 import { get } from '$lib/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HostSnapshot } from '../api/types';
-import { host, startHost } from './host';
+import { host, hostHistory, startHost } from './host';
 
 const snap = (hostname: string) => ({ hostname }) as HostSnapshot;
 
@@ -147,5 +147,79 @@ describe('host poller', () => {
     releaseA();
     await vi.advanceTimersByTimeAsync(10_000);
     expect(fetchHost).toHaveBeenCalledTimes(2);
+  });
+
+  it('a response that lands while the tab is hidden is ignored', async () => {
+    const slow = deferred<HostSnapshot>();
+    const d = fakeDoc();
+    stop = startHost({ host: () => slow.promise, doc: d.doc });
+    d.setState('hidden');
+    slow.resolve(snap('late'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(get(host)).toBeUndefined();
+    expect(get(hostHistory)).toEqual([]);
+  });
+
+  it('a fetch slower than two intervals still lands and no second one starts meanwhile', async () => {
+    const slow = deferred<HostSnapshot>();
+    const fetchHost = vi.fn(() => slow.promise);
+    stop = startHost({ host: fetchHost, doc: fakeDoc().doc });
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(fetchHost).toHaveBeenCalledTimes(1);
+    slow.resolve(snap('slow'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(get(host)?.hostname).toBe('slow');
+    fetchHost.mockImplementation(async () => snap('next'));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchHost).toHaveBeenCalledTimes(2);
+  });
+
+  describe('history', () => {
+    const sample = (second: number, over: Record<string, unknown> = {}) =>
+      ({
+        hostname: 'h',
+        sampledAt: new Date(Date.UTC(2026, 9, 19, 10, 0, second)).toISOString(),
+        cpu: { percent: second },
+        memory: { used: second * 10 },
+        network: { rxBytesPerSec: second * 100 },
+        ...over,
+      }) as unknown as HostSnapshot;
+
+    it('records one history sample per distinct sampledAt, oldest first, capped at 30', async () => {
+      let n = 0;
+      // Every sampledAt is delivered twice in a row; only distinct ones are recorded.
+      const fetchHost = vi.fn(async () => sample(Math.floor(n++ / 2)));
+      stop = startHost({ host: fetchHost, doc: fakeDoc().doc });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(get(hostHistory)).toEqual([{ t: Date.UTC(2026, 9, 19, 10, 0, 0), cpu: 0, mem: 0, rx: 0 }]);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(get(hostHistory)).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(get(hostHistory).map((s) => s.cpu)).toEqual([0, 1]);
+      await vi.advanceTimersByTimeAsync(10_000 * 80);
+      const history = get(hostHistory);
+      expect(history).toHaveLength(30);
+      const ts = history.map((s) => s.t);
+      expect(ts).toEqual([...ts].sort((a, b) => a - b));
+      expect(history[29].cpu).toBe(Math.floor((n - 1) / 2));
+    });
+
+    it('history null sections become null samples', async () => {
+      stop = startHost({ host: async () => sample(5, { cpu: null, memory: null, network: null }), doc: fakeDoc().doc });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(get(hostHistory)).toEqual([{ t: Date.UTC(2026, 9, 19, 10, 0, 5), cpu: null, mem: null, rx: null }]);
+    });
+
+    it('history is cleared when the last holder releases', async () => {
+      const d = fakeDoc();
+      const releaseA = startHost({ host: async () => sample(1), doc: d.doc });
+      const releaseB = startHost({ host: async () => sample(1), doc: d.doc });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(get(hostHistory)).toHaveLength(1);
+      releaseA();
+      expect(get(hostHistory)).toHaveLength(1);
+      releaseB();
+      expect(get(hostHistory)).toEqual([]);
+    });
   });
 });

@@ -1,34 +1,34 @@
-// Owns the list page's refresh timers (spec §11): host 10 s, summary 30 s,
-// alerts 60 s and on every change. Everything stops while the tab is hidden
+// Owns the overview's refresh timers: summary 30 s, alerts 60 s and on every change,
+// storage 60 s (optional; never on change events). The host is polled by stores/host. Everything stops while the tab is hidden
 // and resumes with an immediate fetch when it is visible again.
 import { writable, type Readable } from '$lib/store';
-import type { Alert, HostSnapshot, MetricsSummary } from '../api/types';
+import type { Alert, MetricsSummary, StorageOverview } from '../api/types';
 import { debounce } from '../stores/debounce';
 import type { LiveChange } from '../stores/live';
 
 export interface DashboardDeps {
-  host: () => Promise<HostSnapshot>;
   alerts: () => Promise<Alert[]>;
   summary: () => Promise<MetricsSummary>;
+  storage?: () => Promise<StorageOverview>;
   changes: Readable<LiveChange | null>;
   doc?: Document;
 }
 
 export interface DashboardErrors {
-  host?: string;
   alerts?: string;
   summary?: string;
+  storage?: string;
 }
 
-const HOST_MS = 10_000;
 const SUMMARY_MS = 30_000;
 const ALERTS_MS = 60_000;
+const STORAGE_MS = 60_000;
 
 export function createDashboard(deps: DashboardDeps) {
   const doc = deps.doc ?? document;
-  const hostStore = writable<HostSnapshot | undefined>(undefined);
   const alertsStore = writable<Alert[] | undefined>(undefined);
   const summaryStore = writable<MetricsSummary | undefined>(undefined);
+  const storageStore = writable<StorageOverview | undefined>(undefined);
   const errorStore = writable<DashboardErrors>({});
 
   let started = false;
@@ -39,8 +39,8 @@ export function createDashboard(deps: DashboardDeps) {
   // arrives after stop, after the tab went hidden, or after a newer fetch of the same key
   // started is dropped (value and error alike). Interval ticks skip a key that already has
   // a fetch in flight, so a slow endpoint still lands instead of being overtaken forever.
-  const generation: Record<keyof DashboardErrors, number> = { host: 0, alerts: 0, summary: 0 };
-  const busy: Record<keyof DashboardErrors, boolean> = { host: false, alerts: false, summary: false };
+  const generation: Record<keyof DashboardErrors, number> = { alerts: 0, summary: 0, storage: 0 };
+  const busy: Record<keyof DashboardErrors, boolean> = { alerts: false, summary: false, storage: false };
   const invalidateInFlight = () => {
     for (const key of Object.keys(generation) as (keyof DashboardErrors)[]) {
       generation[key]++;
@@ -66,17 +66,20 @@ export function createDashboard(deps: DashboardDeps) {
       if (mine === generation[key]) busy[key] = false;
     }
   }
-  const fetchHost = (interval = false) => load('host', deps.host, hostStore, interval);
   const fetchAlerts = (interval = false) => load('alerts', deps.alerts, alertsStore, interval);
   const fetchSummary = (interval = false) => load('summary', deps.summary, summaryStore, interval);
+
+  const fetchStorage = (interval = false) => {
+    if (deps.storage) void load('storage', deps.storage, storageStore, interval);
+  };
 
   const alertsOnChange = debounce(() => void fetchAlerts());
 
   function startTimers() {
     timers = [
-      setInterval(() => void fetchHost(true), HOST_MS),
       setInterval(() => void fetchSummary(true), SUMMARY_MS),
       setInterval(() => void fetchAlerts(true), ALERTS_MS),
+      setInterval(() => fetchStorage(true), STORAGE_MS),
     ];
   }
 
@@ -88,9 +91,9 @@ export function createDashboard(deps: DashboardDeps) {
   }
 
   function fetchAll() {
-    void fetchHost();
     void fetchAlerts();
     void fetchSummary();
+    fetchStorage();
   }
 
   function onVisibility() {
@@ -110,9 +113,9 @@ export function createDashboard(deps: DashboardDeps) {
   }
 
   return {
-    host: { subscribe: hostStore.subscribe } as Readable<HostSnapshot | undefined>,
     alerts: { subscribe: alertsStore.subscribe } as Readable<Alert[] | undefined>,
     summary: { subscribe: summaryStore.subscribe } as Readable<MetricsSummary | undefined>,
+    storage: { subscribe: storageStore.subscribe } as Readable<StorageOverview | undefined>,
     errors: { subscribe: errorStore.subscribe } as Readable<DashboardErrors>,
     start() {
       if (started) return;
@@ -131,6 +134,10 @@ export function createDashboard(deps: DashboardDeps) {
         }
         onChange(c);
       });
+    },
+    /** Fetches alerts at once (as a resync does); a no-op unless started. */
+    refreshAlerts() {
+      if (started && doc.visibilityState !== 'hidden') alertsOnChange.flush();
     },
     stop() {
       if (!started) return;

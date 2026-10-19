@@ -362,6 +362,12 @@ describe('StackList', () => {
     'GET /api/metrics/summary': { body: summary },
   });
 
+  it('requests /api/host once at mount', async () => {
+    await mount([stack('alpha')], [], dashboardFake());
+    expect(await screen.findByText('nas-01')).toBeTruthy();
+    expect(fake.calls.filter((c) => c.path === '/api/host')).toHaveLength(1);
+  });
+
   it('hostname shows after heading', async () => {
     await mount([stack('alpha')], [], dashboardFake());
     expect(await screen.findByText('nas-01')).toBeTruthy();

@@ -6,13 +6,45 @@ import type { HostSnapshot } from '../api/types';
 const hostStore = writable<HostSnapshot | undefined>(undefined);
 export const host: Readable<HostSnapshot | undefined> = { subscribe: hostStore.subscribe };
 
+/** One point of the host history (sparklines); null when the snapshot section is null. */
+export interface HostSample {
+  t: number;
+  cpu: number | null;
+  mem: number | null;
+  rx: number | null;
+}
+
+/** Five minutes at the 10 s poll interval. */
+export const HOST_HISTORY_MAX = 30;
+
+const historyStore = writable<HostSample[]>([]);
+export const hostHistory: Readable<HostSample[]> = { subscribe: historyStore.subscribe };
+
+function toSample(snapshot: HostSnapshot): HostSample {
+  return {
+    t: Date.parse(snapshot.sampledAt),
+    cpu: snapshot.cpu?.percent ?? null,
+    mem: snapshot.memory?.used ?? null,
+    rx: snapshot.network?.rxBytesPerSec ?? null,
+  };
+}
+
+function appendHistory(snapshot: HostSnapshot) {
+  const sample = toSample(snapshot);
+  historyStore.update((history) => {
+    // The server may serve the same sample twice (poll faster than its own sampling).
+    if (history.length > 0 && history[history.length - 1].t === sample.t) return history;
+    return [...history, sample].slice(-HOST_HISTORY_MAX);
+  });
+}
+
 export interface HostDeps {
   host: () => Promise<HostSnapshot>;
   doc?: Document;
   intervalMs?: number;
 }
 
-const DEFAULT_INTERVAL_MS = 10_000;
+export const HOST_POLL_INTERVAL_MS = 10_000;
 
 let teardown: (() => void) | undefined;
 let holders = 0;
@@ -38,7 +70,7 @@ export function startHost(deps: HostDeps): () => void {
 
 function beginPolling(deps: HostDeps): () => void {
   const doc = deps.doc ?? document;
-  const intervalMs = deps.intervalMs ?? DEFAULT_INTERVAL_MS;
+  const intervalMs = deps.intervalMs ?? HOST_POLL_INTERVAL_MS;
   let timer: ReturnType<typeof setInterval> | undefined;
   let generation = 0;
   let busy = false;
@@ -51,7 +83,10 @@ function beginPolling(deps: HostDeps): () => void {
     busy = true;
     try {
       const value = await deps.host();
-      if (mine === generation) hostStore.set(value);
+      if (mine === generation) {
+        hostStore.set(value);
+        appendHistory(value);
+      }
     } catch {
       // A failed fetch keeps the previous value; the next tick retries.
     } finally {
@@ -84,5 +119,6 @@ function beginPolling(deps: HostDeps): () => void {
     pause();
     doc.removeEventListener('visibilitychange', onVisibility);
     hostStore.set(undefined);
+    historyStore.set([]);
   };
 }

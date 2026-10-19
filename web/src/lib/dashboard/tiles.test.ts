@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { HostSnapshot } from '../api/types';
-import { hostTiles } from './tiles';
+import type { HostSample } from '../stores/host';
+import { hostStats, hostTiles } from './tiles';
 
 const host = (over: Partial<HostSnapshot> = {}): HostSnapshot => ({
   hostname: 'box',
@@ -100,5 +101,80 @@ describe('hostTiles', () => {
     expect(byId(host({ cpu: { percent: -3, cores: 2 } }), 'cpu')?.ratio).toBe(0);
     expect(byId(host({ memory: { used: 5, total: 0, swapUsed: 0, swapTotal: 0 } }), 'memory')?.ratio).toBe(0);
     expect(byId(host(), 'disk')?.ratio).toBeCloseTo(0.6);
+  });
+});
+
+describe('hostStats', () => {
+  const now = new Date(2026, 9, 15, 12, 0, 0);
+  const history: HostSample[] = [
+    { t: now.getTime() - 20_000, cpu: 10, mem: 100, rx: 5 },
+    { t: now.getTime() - 10_000, cpu: null, mem: 200, rx: 6 },
+  ];
+  const stat = (h: HostSnapshot, id: string) => hostStats(h, history, now).find((x) => x.id === id);
+
+  it('six stats in README order, null sections omitted', () => {
+    expect(hostStats(host(), history, now).map((x) => x.id)).toEqual(['cpu', 'memory', 'disk', 'network', 'containers', 'uptime']);
+    const ids = hostStats(host({ containers: null, network: null, uptime: null }), history, now).map((x) => x.id);
+    expect(ids).toEqual(['cpu', 'memory', 'disk']);
+  });
+
+  it('series come from history and are empty for disk, containers and uptime', () => {
+    const h = host();
+    expect(stat(h, 'cpu')?.series).toEqual([10, null]);
+    expect(stat(h, 'memory')?.series).toEqual([100, 200]);
+    expect(stat(h, 'network')?.series).toEqual([5, 6]);
+    for (const id of ['disk', 'containers', 'uptime']) expect(stat(h, id)?.series).toEqual([]);
+  });
+
+  it('cpu and memory values, aux and sub', () => {
+    const h = host({ memory: { used: 4 * 1024 ** 3, total: 16 * 1024 ** 3, swapUsed: 1024 ** 3, swapTotal: 2 * 1024 ** 3 } });
+    expect(stat(h, 'cpu')).toMatchObject({ label: 'CPU', aux: '8 cores', value: '18.0%', sub: 'load 1.42 1.10 0.90', tone: 'accent' });
+    expect(stat(h, 'memory')).toMatchObject({ aux: '16.0 GiB', value: '4.0 GiB', sub: 'swap 1.0 GiB / 2.0 GiB', tone: 'info' });
+    expect(stat(host(), 'memory')?.sub).toBe('no swap');
+    expect(stat(host({ uptime: null }), 'cpu')?.sub).toBeUndefined();
+  });
+
+  it('disk turns warning at 75 % used', () => {
+    const disk = (free: number) => host({ disk: { path: '/srv/stacks', free, total: 100 } });
+    expect(stat(disk(26), 'disk')).toMatchObject({ aux: '100 B', value: '26 B', sub: 'free · /srv/stacks 74% used', tone: 'accent' });
+    expect(stat(disk(25), 'disk')).toMatchObject({ sub: 'free · /srv/stacks 75% used', tone: 'warning' });
+  });
+
+  it('disk tone follows the rounded percentage that is shown', () => {
+    const disk = host({ disk: { path: '/srv/stacks', free: 254, total: 1000 } });
+    expect(stat(disk, 'disk')).toMatchObject({ sub: 'free · /srv/stacks 75% used', tone: 'warning' });
+  });
+
+  it('a stale sample is dropped from the series', () => {
+    const stale: HostSample = { t: now.getTime() - 31 * 10_000, cpu: 99, mem: 999, rx: 9 };
+    const fresh: HostSample = { t: now.getTime() - 30 * 10_000, cpu: 11, mem: 111, rx: 7 };
+    const stats = hostStats(host(), [stale, fresh, ...history], now);
+    expect(stats.find((x) => x.id === 'cpu')?.series).toEqual([11, 10, null]);
+    expect(stats.find((x) => x.id === 'memory')?.series).toEqual([111, 100, 200]);
+  });
+
+  it('network falls back to dashes', () => {
+    expect(stat(host(), 'network')).toMatchObject({ aux: 'eth0', value: '2.0 KiB/s', sub: '↑ 1.0 KiB/s', tone: 'info' });
+    const none = host({ network: { rxBytesPerSec: null, txBytesPerSec: null, interface: 'eth0' } });
+    expect(stat(none, 'network')).toMatchObject({ value: '—', sub: '—' });
+  });
+
+  it('containers aux is danger with bad > 0 and the sub carries restarts', () => {
+    expect(stat(host(), 'containers')).toMatchObject({ value: '8/10', sub: '3 restarts · 24h', href: '/containers', tone: 'accent' });
+    expect(stat(host(), 'containers')?.aux).toBeUndefined();
+    const sick = host({ containers: { total: 10, running: 7, exited: 2, bad: 1 }, restarts24h: null });
+    expect(stat(sick, 'containers')).toMatchObject({ aux: '1 bad', auxTone: 'danger' });
+    expect(stat(sick, 'containers')?.sub).toBeUndefined();
+  });
+
+  it('uptime sub is since <date>', () => {
+    // 90061 s = 1 d 1 h 1 m 1 s before 15 Oct 12:00 local
+    expect(stat(host(), 'uptime')).toMatchObject({ value: '1d 1h', sub: 'since 14 Oct 10:58' });
+  });
+
+  it('docker source says containers only on cpu and memory', () => {
+    const h = host({ source: 'docker' });
+    expect(stat(h, 'cpu')?.aux).toBe('containers only');
+    expect(stat(h, 'memory')?.sub).toBe('containers only');
   });
 });

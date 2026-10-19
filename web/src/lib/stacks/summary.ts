@@ -52,7 +52,7 @@ export function serviceState(svc: ServiceDetail): { tone: StateTone; text: strin
 }
 
 /** A stack needs attention when it is partial or unavailable, or has an unhealthy or failed container. */
-function stackNeedsAttention(s: StackSummary): boolean {
+export function stackNeedsAttention(s: StackSummary): boolean {
   return s.status === 'partial' || s.status === 'unavailable' || s.health.unhealthy > 0 || s.health.failed > 0;
 }
 
@@ -62,4 +62,13 @@ export function needsAttention(items: StackSummary[]): boolean {
 
 export function attentionCount(items: StackSummary[]): number {
   return items.filter(stackNeedsAttention).length;
+}
+
+const attentionRank = (s: StackSummary) => (s.status === 'unavailable' ? 0 : s.status === 'partial' ? 1 : 2);
+
+/** Stacks that need attention: unavailable first, then partial, then health-only; each by name. */
+export function attentionStacks(items: StackSummary[]): StackSummary[] {
+  return items
+    .filter(stackNeedsAttention)
+    .sort((a, b) => attentionRank(a) - attentionRank(b) || a.name.localeCompare(b.name));
 }

@@ -1,4 +1,5 @@
 import type { HostSnapshot } from '../api/types';
+import { HOST_HISTORY_MAX, HOST_POLL_INTERVAL_MS, type HostSample } from '../stores/host';
 import { formatBytes, formatDuration, formatPercent, formatRate } from '../format';
 
 export interface TileModel {
@@ -118,4 +119,109 @@ export function hostTiles(h: HostSnapshot): TileModel[] {
     });
   }
   return tiles;
+}
+
+export interface HostStat {
+  id: 'cpu' | 'memory' | 'disk' | 'network' | 'containers' | 'uptime';
+  label: string;
+  aux?: string;
+  auxTone?: 'muted' | 'danger';
+  value: string;
+  sub?: string;
+  subTone?: 'muted' | 'warning' | 'danger';
+  series: (number | null)[];
+  tone: 'accent' | 'info' | 'success' | 'warning' | 'danger';
+  href?: string;
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const DISK_WARNING_PERCENT = 75;
+
+/** "14 Oct 10:58" in local time. */
+function formatSince(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** The overview's host strip: one stat per non-null section, in README order, with sparkline series from the history. */
+export function hostStats(h: HostSnapshot, history: HostSample[], now: Date): HostStat[] {
+  const stats: HostStat[] = [];
+  const docker = h.source === 'docker';
+  // The series is consumed by index, so drop samples older than the window (hidden tab, failed polls).
+  const windowStart = now.getTime() - HOST_HISTORY_MAX * HOST_POLL_INTERVAL_MS;
+  history = history.filter((s) => s.t >= windowStart);
+
+  if (h.cpu) {
+    const u = h.uptime;
+    stats.push({
+      id: 'cpu',
+      label: 'CPU',
+      aux: docker ? CONTAINERS_ONLY : `${h.cpu.cores} cores`,
+      value: h.cpu.percent === null ? '—' : formatPercent(h.cpu.percent),
+      ...(u ? { sub: `load ${u.load1.toFixed(2)} ${u.load5.toFixed(2)} ${u.load15.toFixed(2)}` } : {}),
+      series: history.map((s) => s.cpu),
+      tone: 'accent',
+    });
+  }
+  if (h.memory) {
+    const m = h.memory;
+    stats.push({
+      id: 'memory',
+      label: 'Memory',
+      aux: formatBytes(m.total),
+      value: formatBytes(m.used),
+      sub: docker ? CONTAINERS_ONLY : m.swapTotal > 0 ? `swap ${formatBytes(m.swapUsed)} / ${formatBytes(m.swapTotal)}` : 'no swap',
+      series: history.map((s) => s.mem),
+      tone: 'info',
+    });
+  }
+  if (h.disk) {
+    // One rounded value drives both the text and the tone so they cannot disagree (74.6% shows 75% and warns).
+    const usedPercent = h.disk.total > 0 ? Math.round(((h.disk.total - h.disk.free) / h.disk.total) * 100) : 0;
+    stats.push({
+      id: 'disk',
+      label: 'Disk',
+      aux: formatBytes(h.disk.total),
+      value: formatBytes(h.disk.free),
+      sub: `free · ${h.disk.path} ${usedPercent}% used`,
+      series: [],
+      tone: usedPercent >= DISK_WARNING_PERCENT ? 'warning' : 'accent',
+    });
+  }
+  if (h.network) {
+    const { rxBytesPerSec: rx, txBytesPerSec: tx } = h.network;
+    stats.push({
+      id: 'network',
+      label: 'Network',
+      aux: h.network.interface,
+      value: rate(rx),
+      sub: tx === null ? '—' : `↑ ${formatRate(tx)}`,
+      series: history.map((s) => s.rx),
+      tone: 'info',
+    });
+  }
+  if (h.containers) {
+    const { running, total, bad } = h.containers;
+    stats.push({
+      id: 'containers',
+      label: 'Containers',
+      ...(bad > 0 ? { aux: `${bad} bad`, auxTone: 'danger' as const } : {}),
+      value: `${running}/${total}`,
+      ...(h.restarts24h ? { sub: `${h.restarts24h.total} restarts · 24h` } : {}),
+      series: [],
+      tone: 'accent',
+      href: '/containers',
+    });
+  }
+  if (h.uptime) {
+    stats.push({
+      id: 'uptime',
+      label: 'Uptime',
+      value: formatDuration(h.uptime.seconds * 1000),
+      sub: `since ${formatSince(new Date(now.getTime() - h.uptime.seconds * 1000))}`,
+      series: [],
+      tone: 'accent',
+    });
+  }
+  return stats;
 }

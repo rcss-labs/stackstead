@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ContainerInfo, ServiceDetail, StackSummary } from '$lib/api/types';
-import { attentionCount, chipCounts, filterStacks, healthCell, needsAttention, portChips, serviceState } from './summary';
+import { attentionCount, attentionStacks, chipCounts, filterStacks, healthCell, needsAttention, portChips, serviceState } from './summary';
 
 const zero = { healthy: 0, unhealthy: 0, starting: 0, none: 0, failed: 0 };
 const stack = (name: string, over: Partial<StackSummary> = {}): StackSummary => ({
@@ -110,5 +110,20 @@ describe('needsAttention', () => {
   it('attentionCount counts matching stacks', () => {
     expect(attentionCount([s('running'), s('partial'), s('unavailable'), s('stopped')])).toBe(2);
     expect(needsAttention([])).toBe(false);
+  });
+});
+
+describe('attentionStacks', () => {
+  it('orders unavailable, partial, then health-only, each by name', () => {
+    const items = [
+      stack('hz', { health: { ...zero, unhealthy: 1 } }),
+      stack('pb', { status: 'partial' }),
+      stack('ua', { status: 'unavailable' }),
+      stack('ok'),
+      stack('ha', { health: { ...zero, failed: 1 } }),
+      stack('pa', { status: 'partial' }),
+      stack('ub', { status: 'unavailable' }),
+    ];
+    expect(attentionStacks(items).map((s) => s.name)).toEqual(['ua', 'ub', 'pa', 'pb', 'ha', 'hz']);
   });
 });

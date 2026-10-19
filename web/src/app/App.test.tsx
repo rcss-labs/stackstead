@@ -232,6 +232,23 @@ describe('App routing and session', () => {
     expect(stream.requests).toHaveLength(1);
   });
 
+  it('stops polling operations after a session loss', async () => {
+    running = [{ id: 'op1', stack: 'web', action: 'restart', state: 'running', startedAt: '2026-10-19T10:00:00Z' }];
+    at('/');
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Stacks' });
+    const { refreshStacks } = await import('$lib/stores/stacks');
+    stacksRes = { status: 401, body: { error: 'unauthorized' } };
+    await act(async () => {
+      await refreshStacks();
+    });
+    expect(await screen.findByLabelText('Username')).toBeTruthy();
+    const runs = () => fake.calls.filter((c) => c.path === '/api/operations?state=running').length;
+    const before = runs();
+    await sleep(2600); // past the first 2 s recheck of a running operation
+    expect(runs()).toBe(before);
+  });
+
   it('nav links navigate through the router without a reload and mark the current page', async () => {
     at('/');
     render(<App />);
