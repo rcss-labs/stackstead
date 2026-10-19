@@ -18,18 +18,23 @@
   import { ICONS } from '$lib/shell/icons';
   import { lifecycleDisabledReason } from '$lib/stacks/lifecycle';
   import { chipCounts, filterStacks, healthCell, portChips, type ChipFilter } from '$lib/stacks/summary';
+  import { host as hostSnapshot, startHost } from '$lib/stores/host';
   import { changes, events, live, refreshStatus } from '$lib/stores/live';
   import { operationsRefresh, refreshRunningOps, refreshStacks, stacks } from '$lib/stores/stacks';
   import { toasts } from '$lib/stores/toasts';
 
-  const dashboard = createDashboard({ host: api.host, alerts: api.alerts, summary: api.metricsSummary, changes });
-  const { host: hostStore, alerts: alertsStore, summary } = dashboard;
+  const dashboard = createDashboard({ alerts: api.alerts, summary: api.metricsSummary, changes });
+  const { alerts: alertsStore, summary } = dashboard;
   $effect(() => {
     dashboard.start();
-    return () => dashboard.stop();
+    const releaseHost = startHost({ host: api.host });
+    return () => {
+      dashboard.stop();
+      releaseHost();
+    };
   });
   const stackNames = $derived(Object.fromEntries($stacks.items.map((s) => [s.project, s.name])));
-  const tiles = $derived($hostStore ? hostTiles($hostStore) : []);
+  const tiles = $derived($hostSnapshot ? hostTiles($hostSnapshot) : []);
   const netCell = (rx: number | null, tx: number | null) =>
     rx === null && tx === null ? '—' : `${rx === null ? '—' : formatRate(rx)} / ${tx === null ? '—' : formatRate(tx)}`;
 
@@ -133,7 +138,7 @@
 <section>
   <header class="head">
     <h1 id="stacks-heading">Stacks</h1>
-    {#if $hostStore}<span class="hostname">{$hostStore.hostname}</span>{/if}
+    {#if $hostSnapshot}<span class="hostname">{$hostSnapshot.hostname}</span>{/if}
     <span class="spacer"></span>
     {#if $stacks.items.length > 0 || $stacks.error}
       <a class="lbtn secondary" href="/stacks/import" use:link>Import</a>
