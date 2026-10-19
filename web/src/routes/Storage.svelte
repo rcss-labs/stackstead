@@ -6,6 +6,7 @@
   import Banner from '$lib/components/Banner.svelte';
   import Button from '$lib/components/Button.svelte';
   import RelativeTime from '$lib/components/RelativeTime.svelte';
+  import Pager from '$lib/components/Pager.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
   import Tabs from '$lib/components/Tabs.svelte';
   import HostTile from '$lib/dashboard/HostTile.svelte';
@@ -14,7 +15,7 @@
   import { changes, live } from '$lib/stores/live';
   import { operationsRefresh } from '$lib/stores/stacks';
   import { createStorageRefresh } from '$lib/storage/controller';
-  import { deleteDisabledReason, filterImages, filterVolumes, imageChips, imageCounts, imagePath, imageReclaimRange, sizeText, volumeChips, volumeCounts, type ImageChip, type VolumeChip } from '$lib/storage/storage';
+  import { deleteDisabledReason, filterImages, filterVolumes, imageChips, imageCounts, imagePath, imageReclaimRange, pageView, sizeText, volumeChips, volumeCounts, type ImageChip, type VolumeChip } from '$lib/storage/storage';
 
   const tabs = [{ id: 'overview', label: 'Overview' }, { id: 'images', label: 'Images' }, { id: 'volumes', label: 'Volumes' }, { id: 'build-cache', label: 'Build cache' }];
   const tab = $derived(tabs.find(t => t.id === $route.query.get('tab'))?.id ?? 'overview');
@@ -54,6 +55,10 @@
   const volumeCount = $derived(volumeCounts(volumes));
   const shownImages = $derived(filterImages(images, imageChip, search));
   const shownVolumes = $derived(filterVolumes(volumes, volumeChip, search));
+  let pageNumber = $state(1);
+  const imagePage = $derived(pageView(shownImages, pageNumber));
+  const volumePage = $derived(pageView(shownVolumes, pageNumber));
+  const cachePage = $derived(pageView($data?.cache?.records ?? [], pageNumber));
   const dockerDown = $derived($live.docker === 'unavailable' || $live.events === 'disconnected');
   let cleanup = $state<StoragePlanRequest>();
   const kindError = $derived($data?.errors[tab as 'overview' | 'images' | 'volumes' | 'build-cache']);
@@ -88,7 +93,7 @@
       }
     } finally { recalculating = false; updateCooldown(); }
   }
-  function selectTab(id: string) { if (id !== tab) { search = ''; navigate(`/storage?tab=${id}`); } }
+  function selectTab(id: string) { if (id !== tab) { search = ''; pageNumber = 1; navigate(`/storage?tab=${id}`); } }
   const shortId = (id: string) => id.replace(/^sha256:/, '').slice(0, 12);
   const stackPath = (name: string) => `/stacks/${encodeURIComponent(name)}`;
   const volumePath = (name: string) => `/storage/volumes/${encodeURIComponent(name)}`;
@@ -149,7 +154,7 @@
             </tbody></table></div>{/if}
           </section>
         {:else if selected === 'images' && $data.images}
-          <div class="toolbar"><div class="chips" role="group" aria-label="Filter images">{#each imageChips as chip}<button type="button" aria-pressed={imageChip === chip.id} onclick={() => imageChip = chip.id}>{chip.label} <span class="mono">{imageCount[chip.id]}</span></button>{/each}</div><label class="search">Search images<input type="search" aria-label="Search images" bind:value={search} /></label></div>
+          <div class="toolbar"><div class="chips" role="group" aria-label="Filter images">{#each imageChips as chip}<button type="button" aria-pressed={imageChip === chip.id} onclick={() => { imageChip = chip.id; pageNumber = 1; }}>{chip.label} <span class="mono">{imageCount[chip.id]}</span></button>{/each}</div><label class="search">Search images<input type="search" aria-label="Search images" bind:value={search} oninput={() => pageNumber = 1} /></label></div>
           <div class="summary">{@render sizes($data.images.totals)}<div class="image-cleanup"><Button variant="danger" disabledReason={dockerDown ? 'Docker is unavailable' : undefined} onclick={() => cleanup = {kind: 'images', selection: 'dangling'}}><span>Clean up dangling images ({danglingCandidates.length} · {danglingReclaim})</span></Button></div></div>
           {#if shownImages.length}<div class="card"><!-- svelte-ignore a11y_no_redundant_roles -->
 <table role="table" aria-label="Images"><!-- svelte-ignore a11y_no_redundant_roles -->
@@ -157,7 +162,7 @@
 <tr role="row">{#each ['Image', 'Size', 'Created', 'Containers', 'Declared by', 'Status', 'Actions'] as label}<!-- svelte-ignore a11y_no_redundant_roles -->
 <th role="columnheader" scope="col">{label}</th>{/each}</tr></thead><!-- svelte-ignore a11y_no_redundant_roles -->
 <tbody role="rowgroup">
-            {#each shownImages as image (image.id)}<!-- svelte-ignore a11y_no_redundant_roles -->
+            {#each imagePage.rows as image (image.id)}<!-- svelte-ignore a11y_no_redundant_roles -->
 <tr role="row">
               <!-- svelte-ignore a11y_no_redundant_roles -->
 <td role="cell" data-label="Image"><div class="refs">{#each image.tags as tag}<a class="tag mono" href={imagePath(image.id)} use:link>{tag}</a>{:else}<a class="mono" href={imagePath(image.id)} use:link>&lt;none&gt; {shortId(image.id)}</a>{/each}</div></td>
@@ -174,9 +179,9 @@
               <!-- svelte-ignore a11y_no_redundant_roles -->
 <td role="cell" data-label="Actions"><Button variant="danger" size="sm" disabledReason={deleteDisabledReason(image, dockerDown)} onclick={() => cleanup = {kind: 'image', ref: image.id}}>Delete</Button></td>
             </tr>{/each}
-          </tbody></table></div>{:else}<p class="muted">No images match the current filter.</p>{/if}
+          </tbody></table></div><Pager {...imagePage} label="Images" onpage={n => pageNumber = n} />{:else}<p class="muted">No images match the current filter.</p>{/if}
         {:else if selected === 'volumes' && $data.volumes}
-          <div class="toolbar"><div class="chips" role="group" aria-label="Filter volumes">{#each volumeChips as chip}<button type="button" aria-pressed={volumeChip === chip.id} onclick={() => volumeChip = chip.id}>{chip.label} <span class="mono">{volumeCount[chip.id]}</span></button>{/each}</div><label class="search">Search volumes<input type="search" aria-label="Search volumes" bind:value={search} /></label></div>
+          <div class="toolbar"><div class="chips" role="group" aria-label="Filter volumes">{#each volumeChips as chip}<button type="button" aria-pressed={volumeChip === chip.id} onclick={() => { volumeChip = chip.id; pageNumber = 1; }}>{chip.label} <span class="mono">{volumeCount[chip.id]}</span></button>{/each}</div><label class="search">Search volumes<input type="search" aria-label="Search volumes" bind:value={search} oninput={() => pageNumber = 1} /></label></div>
           <div class="summary">{@render sizes($data.volumes.totals)}<Button variant="danger" disabledReason={dockerDown ? 'Docker is unavailable' : undefined} onclick={() => cleanup = {kind: 'volumes', selection: 'unused'}}>Clean up unused volumes</Button></div>
           {#if shownVolumes.length}<div class="card"><!-- svelte-ignore a11y_no_redundant_roles -->
 <table role="table" aria-label="Volumes"><!-- svelte-ignore a11y_no_redundant_roles -->
@@ -184,7 +189,7 @@
 <tr role="row">{#each ['Name', 'Driver', 'Size', 'Containers', 'Declared by', 'Status', 'Actions'] as label}<!-- svelte-ignore a11y_no_redundant_roles -->
 <th role="columnheader" scope="col">{label}</th>{/each}</tr></thead><!-- svelte-ignore a11y_no_redundant_roles -->
 <tbody role="rowgroup">
-            {#each shownVolumes as volume (volume.name)}<!-- svelte-ignore a11y_no_redundant_roles -->
+            {#each volumePage.rows as volume (volume.name)}<!-- svelte-ignore a11y_no_redundant_roles -->
 <tr role="row">
               <!-- svelte-ignore a11y_no_redundant_roles -->
 <td role="cell" data-label="Name"><a class="mono" href={volumePath(volume.name)} use:link>{volume.name}</a></td>
@@ -201,7 +206,7 @@
               <!-- svelte-ignore a11y_no_redundant_roles -->
 <td role="cell" data-label="Actions">{#if !volume.protection && !volume.containers.length}<Button variant="danger" size="sm" disabledReason={deleteDisabledReason(volume, dockerDown)} onclick={() => cleanup = {kind: 'volume', name: volume.name}}>Delete</Button>{/if}</td>
             </tr>{/each}
-          </tbody></table></div>{:else}<p class="muted">No volumes match the current filter.</p>{/if}
+          </tbody></table></div><Pager {...volumePage} label="Volumes" onpage={n => pageNumber = n} />{:else}<p class="muted">No volumes match the current filter.</p>{/if}
         {:else if selected === 'build-cache' && $data.cache}
           <div class="summary"><div><h2>{sizeText($data.cache.totals.size, $data.cache.totals.refreshing)} · {$data.cache.totals.count} records</h2><p class="muted">{sizeText($data.cache.totals.reclaimable)} reclaimable</p>{@render sizes($data.cache.totals)}</div><Button variant="danger" disabledReason={dockerDown ? 'Docker is unavailable' : undefined} onclick={() => cleanup = {kind: 'build-cache', selection: 'unused'}}>Clean up build cache</Button></div>
           {#if $data.cache.records.length}<div class="card"><!-- svelte-ignore a11y_no_redundant_roles -->
@@ -210,15 +215,15 @@
 <tr role="row">{#each ['Type', 'Description', 'Size', 'In use', 'Shared', 'Last used'] as label}<!-- svelte-ignore a11y_no_redundant_roles -->
 <th role="columnheader" scope="col">{label}</th>{/each}</tr></thead><!-- svelte-ignore a11y_no_redundant_roles -->
 <tbody role="rowgroup">
-            {#each $data.cache.records as record (record.id)}<!-- svelte-ignore a11y_no_redundant_roles -->
+            {#each cachePage.rows as record (record.id)}<!-- svelte-ignore a11y_no_redundant_roles -->
 <tr role="row"><!-- svelte-ignore a11y_no_redundant_roles -->
 <td role="cell" data-label="Type">{record.type}</td><!-- svelte-ignore a11y_no_redundant_roles -->
-<td role="cell" data-label="Description"><div>{record.description}<div class="mono muted">{record.id}</div></div></td><!-- svelte-ignore a11y_no_redundant_roles -->
+<td role="cell" data-label="Description"><div><span class="clamp" title={record.description}>{record.description}</span><div class="mono muted">{record.id}</div></div></td><!-- svelte-ignore a11y_no_redundant_roles -->
 <td role="cell" data-label="Size" class="mono">{sizeText(record.size, $data.cache.totals.refreshing)}</td><!-- svelte-ignore a11y_no_redundant_roles -->
 <td role="cell" data-label="In use">{record.inUse ? 'Yes' : 'No'}</td><!-- svelte-ignore a11y_no_redundant_roles -->
 <td role="cell" data-label="Shared">{record.shared ? 'Yes' : 'No'}</td><!-- svelte-ignore a11y_no_redundant_roles -->
 <td role="cell" data-label="Last used">{#if knownTime(record.lastUsedAt)}<RelativeTime iso={record.lastUsedAt!} />{:else}—{/if}</td></tr>{/each}
-          </tbody></table></div>{:else}<p class="muted">No build cache records.</p>{/if}
+          </tbody></table></div><Pager {...cachePage} label="Build cache" onpage={n => pageNumber = n} />{:else}<p class="muted">No build cache records.</p>{/if}
         {/if}
       {/if}
     {/snippet}
@@ -261,6 +266,7 @@
   a:hover { color: var(--accent); }
   .refs { display: flex; flex-wrap: wrap; gap: 4px; }
   .tag { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 1px 5px; font-size: 11px; overflow-wrap: anywhere; }
+  .clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
   .protection { margin: var(--space-1) 0 0; font-size: 12px; color: var(--muted); }
   @media (max-width: 1100px) { .tiles, .ages { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 720px) {

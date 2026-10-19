@@ -49,3 +49,14 @@ export function imagePath(id: string): string | undefined {
 export const sizeText = (bytes: number | null, pending = false) => bytes === null ? pending ? 'calculating…' : '—' : formatBytes(bytes);
 /** Stack states arrive as slugs such as not-deployed. */
 export const stateText = (state: string) => state.replaceAll('-', ' ');
+
+export const PAGE_SIZE = 50;
+export type PageView<T> = { rows: T[]; page: number; pages: number; from: number; to: number; total: number };
+/** Client-side paging; an out-of-range page (for example after a refresh shrank the list) is clamped. */
+export function pageView<T>(rows: T[], page: number, size = PAGE_SIZE): PageView<T> {
+  const pages = Math.max(1, Math.ceil(rows.length / size));
+  const current = Math.min(Math.max(1, Math.trunc(page) || 1), pages);
+  const start = (current - 1) * size;
+  const shown = rows.slice(start, start + size);
+  return { rows: shown, page: current, pages, from: shown.length ? start + 1 : 0, to: start + shown.length, total: rows.length };
+}

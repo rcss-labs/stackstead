@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filterImages, filterVolumes, imageCounts, volumeCounts, reclaimText, deleteDisabledReason, imagePath } from './storage';
+import { filterImages, filterVolumes, imageCounts, volumeCounts, reclaimText, deleteDisabledReason, imagePath, pageView } from './storage';
 import type { StorageImage, StorageVolume } from '../api/types';
 import { consumer, declaration, image, volume } from './fixtures';
 describe('storage presentation rules', () => {
@@ -42,4 +42,18 @@ it('searches the registered stack of consumers even when the image has no declar
 
 it('shows bounded image reclaim as a range even when the estimate is not exact', () => {
   expect(reclaimText({min:120 * 1024 ** 2,max:480 * 1024 ** 2,exact:false})).toBe('Frees between 120.0 MiB and 480.0 MiB');
+});
+
+describe('paging', () => {
+  const rows = Array.from({ length: 120 }, (_, i) => i);
+  it('slices pages of 50 and describes the visible range', () => {
+    expect(pageView(rows, 1)).toMatchObject({ page: 1, pages: 3, from: 1, to: 50, total: 120, rows: rows.slice(0, 50) });
+    expect(pageView(rows, 3)).toMatchObject({ page: 3, from: 101, to: 120, rows: rows.slice(100) });
+  });
+  it('clamps a page past the end after the list shrinks, and handles empty or short lists', () => {
+    expect(pageView(rows.slice(0, 60), 5)).toMatchObject({ page: 2, from: 51, to: 60 });
+    expect(pageView(rows, 0).page).toBe(1);
+    expect(pageView([], 3)).toMatchObject({ page: 1, pages: 1, from: 0, to: 0, total: 0, rows: [] });
+    expect(pageView(rows.slice(0, 50), 1).pages).toBe(1);
+  });
 });

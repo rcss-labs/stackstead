@@ -99,3 +99,22 @@ it('returns focus to a Delete button that was clicked without taking focus (Safa
   await screen.findByRole('dialog'); await fireEvent.keyDown(document, { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull()); expect(document.activeElement).toBe(button);
 });
+
+const manyImages = (n: number) => Array.from({ length: n }, (_, i) => image({ id: 'sha256:' + String(i).padStart(64, '0'), tags: [`app:${i}`], dangling: i % 2 === 0, status: 'no-containers' }));
+it('pages images 50 at a time, counts the whole list, resets on filter and hides the pager when all fit', async () => {
+  imageRows = manyImages(120); navigate('/storage?tab=images'); render(Storage);
+  await screen.findByRole('link', { name: 'app:0' });
+  const table = screen.getByRole('table', { name: 'Images' }); expect(within(table).getAllByRole('link')).toHaveLength(50);
+  expect(screen.getByRole('button', { name: /^All/ }).textContent).toContain('120');
+  expect(screen.getByText('1–50 of 120').getAttribute('aria-live')).toBe('polite');
+  expect(screen.getByRole('button', { name: 'Previous' }).hasAttribute('disabled')).toBe(true);
+  await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+  expect(screen.getByText('51–100 of 120')).toBeTruthy(); expect(screen.getByRole('link', { name: 'app:50' })).toBeTruthy(); expect(screen.queryByRole('link', { name: 'app:0' })).toBeNull();
+  await fireEvent.click(screen.getByRole('button', { name: 'Next' })); expect(screen.getByText('101–120 of 120')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Next' }).hasAttribute('disabled')).toBe(true);
+  await fireEvent.click(screen.getByRole('button', { name: /^Dangling/ })); expect(screen.getByText('1–50 of 60')).toBeTruthy();
+  await fireEvent.click(screen.getByRole('button', { name: 'Next' })); await fireEvent.input(screen.getByRole('searchbox', { name: 'Search images' }), { target: { value: 'app:' } });
+  expect(screen.getByText('1–50 of 60')).toBeTruthy();
+  await fireEvent.input(screen.getByRole('searchbox', { name: 'Search images' }), { target: { value: 'app:11' } });
+  expect(screen.queryByRole('button', { name: 'Next' })).toBeNull();
+});
