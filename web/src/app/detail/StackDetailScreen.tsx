@@ -59,10 +59,12 @@ export function StackDetailScreen({ name }: { name: string }) {
     setSyncedSearch(search);
     setLogsOpen(true);
     setLogService(location.logService);
+  } else if (!logsRequested && syncedSearch !== undefined) {
+    setSyncedSearch(undefined); // leaving ?tab=logs re-arms it, so Back re-expands the console
   }
   useEffect(() => {
-    if (logsRequested) consoleSlot.current?.querySelector<HTMLElement>('button[aria-expanded]')?.focus();
-  }, [logsRequested, search]);
+    if (logsRequested && logsOpen) consoleSlot.current?.querySelector<HTMLElement>('button[aria-expanded]')?.focus();
+  }, [logsRequested, search, logsOpen]);
 
   useEffect(() => {
     document.title = `${name} · Stackstead`;

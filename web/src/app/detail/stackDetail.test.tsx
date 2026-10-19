@@ -331,13 +331,13 @@ describe('stack detail screen', () => {
   });
 
   it("a removal's done event navigates home with exactly one success toast", async () => {
+    rmState = 'running'; // the operation's metadata stays running, so only the done event finishes it
     mount('/stacks/web');
     await screen.findByRole('heading', { level: 1, name: 'web' });
     await user().click(screen.getByRole('button', { name: 'Remove' }));
     await user().click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(stream.requests.some((r) => r.path === '/api/operations/rm1/stream')).toBe(true));
-    // The request is recorded a moment before its body opens; retry the push until the stream is open.
-    await waitFor(() =>
+    await act(async () =>
       stream.push(
         '/api/operations/rm1/stream',
         'event: done\ndata: {"id":"rm1","stack":"web","action":"down","state":"succeeded","startedAt":"2026-10-14T10:00:00Z","exitCode":0}\n\n',
@@ -349,14 +349,15 @@ describe('stack detail screen', () => {
 
   describe('with the operation tracker running as in the app', () => {
     const removeAndFinish = async (state: Operation['state']) => {
-      rmState = state;
+      rmState = 'running'; // the operation stays running until its done event arrives
       startTrackingAsApp();
       mount('/stacks/web');
       await screen.findByRole('heading', { level: 1, name: 'web' });
       await user().click(screen.getByRole('button', { name: 'Remove' }));
       await user().click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Remove' }));
       await waitFor(() => expect(stream.requests.some((r) => r.path === '/api/operations/rm1/stream')).toBe(true));
-      await waitFor(() =>
+      rmState = state;
+      await act(async () =>
         stream.push(
           '/api/operations/rm1/stream',
           `event: done\ndata: {"id":"rm1","stack":"web","action":"down","state":"${state}","startedAt":"2026-10-14T10:00:00Z"}\n\n`,
@@ -563,10 +564,27 @@ describe('stack detail screen', () => {
       await waitFor(() => expect(consoleToggle().getAttribute('aria-expanded')).toBe('true'));
     });
 
+    it('going back to a ?tab=logs URL re-opens the console on its service', async () => {
+      mount('/stacks/web?tab=logs&service=db');
+      await screen.findByRole('heading', { level: 1, name: 'web' });
+      await user().click(consoleToggle());
+      await user().click(chip('All'));
+      goTo('/stacks/web?service=app');
+      await waitFor(() => expect(here()).toBe('/stacks/web?service=app'));
+      expect(consoleToggle().getAttribute('aria-expanded')).toBe('false');
+      goTo('/stacks/web?tab=logs&service=db');
+      await waitFor(() => expect(consoleToggle().getAttribute('aria-expanded')).toBe('true'));
+      expect(chip('db').getAttribute('aria-pressed')).toBe('true');
+    });
+
     it('the unsaved-changes guard does not interfere with console actions', async () => {
       mount('/stacks/web');
       await waitFor(() => expect(logRequests('web')).toHaveLength(1));
       act(() => setUnsavedChanges(true));
+      // dirty is not wired yet (18d); once it is, this also proves console actions skip the discard dialog.
+      const before = here();
+      await user().click(screen.getByRole('button', { name: 'Logs for app' }));
+      expect(here()).toBe(before);
       await user().click(chip('db'));
       await user().click(screen.getByRole('button', { name: /Following|Paused/ }));
       await user().click(consoleToggle());
