@@ -19,10 +19,10 @@
 }
 
 .cell > input { transition: border-color 0.15s; }
-.cell > input[aria-invalid='true'] { border-color: var(--danger); }
 .cell > input[data-check='danger'] { border-color: var(--danger); }
 .cell > input[data-check='warning'] { border-color: var(--warning); }
 .cell > input[data-check='success'] { border-color: var(--success); }
+.cell > input[aria-invalid='true'] { border-color: var(--danger); }
 .cell > input:read-only { background: var(--raised); color: var(--muted); }
 .error { color: var(--danger); font-size: 0.875rem; overflow-wrap: anywhere; }
 

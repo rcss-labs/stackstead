@@ -1,4 +1,4 @@
-import { useId, useImperativeHandle, useRef, useState } from 'react';
+import { useId, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import type { ClipboardEvent, ReactNode, Ref } from 'react';
 import type { Field as FieldGroup } from '$lib/api/types';
 import type { FormErrors, ServiceForm as ServiceFormValue } from '$lib/compose/form';
@@ -124,6 +124,9 @@ export function ServiceForm({
   useImperativeHandle(ref, () => ({
     focusFirstError() {
       const target = root.current?.querySelector<HTMLElement>('[aria-invalid="true"]') ?? root.current?.querySelector<HTMLElement>('[data-form-error]');
+      // A closed <details> does not render its contents, so focus would silently fail: open it first.
+      const disclosure = target?.closest('details');
+      if (disclosure && !disclosure.open) disclosure.open = true;
       target?.focus();
     },
   }));
@@ -152,7 +155,9 @@ export function ServiceForm({
   // The disclosure is forced open while a hidden group holds an error, so the error stays reachable.
   const advancedHasErrors = paths.some((path) => /^(env|networks)\[|^networkMode$|^limits\.|^healthcheck\./.test(path));
   const advancedOpen = advancedToggled || advancedHasErrors;
-  advancedOpenRendered.current = advancedOpen;
+  useLayoutEffect(() => {
+    advancedOpenRendered.current = advancedOpen;
+  }, [advancedOpen]);
 
   const portErrors = rowErrors(shown, 'ports');
   const volumeErrors = rowErrors(shown, 'volumes');
@@ -362,7 +367,7 @@ export function ServiceForm({
   );
 
   const restartGroup = (
-      <fieldset className={styles.group} aria-label="Restart policy group" aria-describedby={describedBy('restart')}>
+    <fieldset className={styles.group} aria-label="Restart policy group" aria-describedby={describedBy('restart')}>
       {readonlyNote('restart')}
       <Field label="Restart policy" id={id('restart')} error={shown['restart']} readonly={ro('restart')}>
         {({ readOnly, ...aria }) => (
@@ -379,20 +384,8 @@ export function ServiceForm({
     </fieldset>
   );
 
-  const limitsGroup = (
-      <fieldset className={`${styles.group} ${styles.limits}`} aria-label="Resources" aria-describedby={describedBy('limits')}>
-      {readonlyNote('limits')}
-      <Field label="CPUs" id={id('cpus')} mono error={shown['limits.cpus']} hint="For example 0.5" readonly={ro('limits')}>
-        {(aria) => <input type="text" {...aria} value={form.cpus} onChange={(e) => patch({ cpus: e.target.value })} inputMode="decimal" autoComplete="off" />}
-      </Field>
-      <Field label="Memory" id={id('memory')} mono error={shown['limits.memory']} hint="For example 512M or 1G" readonly={ro('limits')}>
-        {(aria) => <input type="text" {...aria} value={form.memory} onChange={(e) => patch({ memory: e.target.value })} {...textProps} />}
-      </Field>
-    </fieldset>
-  );
-
-  const limitsGroupStacked = (
-      <fieldset className={styles.group} aria-label="Resources" aria-describedby={describedBy('limits')}>
+  const limitsFieldset = (className: string) => (
+    <fieldset className={className} aria-label="Resources" aria-describedby={describedBy('limits')}>
       {readonlyNote('limits')}
       <Field label="CPUs" id={id('cpus')} mono error={shown['limits.cpus']} hint="For example 0.5" readonly={ro('limits')}>
         {(aria) => <input type="text" {...aria} value={form.cpus} onChange={(e) => patch({ cpus: e.target.value })} inputMode="decimal" autoComplete="off" />}
@@ -564,7 +557,7 @@ export function ServiceForm({
           {networksGroup}
           {modeGroup}
           {healthcheckGroup}
-          {limitsGroupStacked}
+          {limitsFieldset(styles.group)}
         </details>
       ) : (
         <>
@@ -574,7 +567,7 @@ export function ServiceForm({
           {healthcheckGroup}
           <div className={styles.grid3}>
             {restartGroup}
-            {limitsGroup}
+            {limitsFieldset(`${styles.group} ${styles.limits}`)}
           </div>
         </>
       )}

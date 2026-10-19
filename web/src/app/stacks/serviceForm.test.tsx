@@ -231,6 +231,20 @@ describe('ServiceForm', () => {
       expect(detailsOf().open).toBe(false);
     });
 
+    it('focusFirstError re-opens a forced-open disclosure the user closed', async () => {
+      const user = userEvent.setup();
+      const { handle } = setup({
+        advanced: { summary: 'More' },
+        initial: { healthcheck: { ...emptyForm().healthcheck, enabled: true } },
+        errors: { 'healthcheck.interval': 'x' },
+      });
+      await user.click(screen.getByText('More'));
+      await waitFor(() => expect(detailsOf().open).toBe(false));
+      act(() => handle.current.focusFirstError());
+      expect(detailsOf().open).toBe(true);
+      expect(document.activeElement).toBe(screen.getByLabelText('Interval'));
+    });
+
     it('lets the user close a forced-open disclosure', async () => {
       const user = userEvent.setup();
       setup({ advanced: { summary: 'More' }, errors: { 'limits.cpus': 'bad' } });
