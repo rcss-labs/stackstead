@@ -37,6 +37,7 @@ export default defineConfig({
         codeSplitting: {
           groups: [
             {
+              debugName: 'eager-shell',
               name: (id, ctx) => {
                 const seen = new Set<string>();
                 const eager = (m: string): boolean => {
