@@ -27,9 +27,11 @@ export function ComposeView({ detail, compose, error, onRetry, editSlot, editor 
         {editSlot}
       </header>
       {detail.parseError && (
-        <Banner kind="warning" title="This file cannot be edited with forms">
-          Edit it as text; the forms return once it parses.
-        </Banner>
+        <div className={styles.body}>
+          <Banner kind="warning" title="This file cannot be edited with forms">
+            Edit it as text; the forms return once it parses.
+          </Banner>
+        </div>
       )}
       {editor ? (
         editor

@@ -1,5 +1,5 @@
 import type { RawCompose, ServiceDetail } from '$lib/api/types';
-import { serviceBlock, serviceConfigYaml } from '$lib/stacks/composeText';
+import { dedent, serviceBlock, serviceConfigYaml } from '$lib/stacks/composeText';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { Spinner } from '../components/Spinner';
@@ -37,7 +37,7 @@ export function ConfigTab({ service, compose, error, onRetry, onEditYaml }: Conf
   const block = serviceBlock(compose.content, service.name);
   return (
     <div className={styles.tab}>
-      <pre className={styles.yaml}>{block ?? serviceConfigYaml(service.name, service.config)}</pre>
+      <pre className={styles.yaml}>{block !== undefined ? dedent(block) : serviceConfigYaml(service.name, service.config)}</pre>
       {block === undefined && <p className={styles.note}>Shown from the parsed configuration; the file&apos;s own text could not be isolated.</p>}
       <div>
         <Button variant="secondary" size="sm" onClick={onEditYaml}>

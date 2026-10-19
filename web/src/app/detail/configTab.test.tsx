@@ -22,7 +22,7 @@ afterEach(cleanup);
 describe('ConfigTab', () => {
   it('shows the service block sliced from the file', () => {
     setup();
-    expect(document.querySelector('pre')!.textContent).toBe('  app:\n    # the web app\n    image: nginx:1');
+    expect(document.querySelector('pre')!.textContent).toBe('app:\n  # the web app\n  image: nginx:1');
   });
 
   it('falls back to the formatted config with a note when the block is missing', () => {

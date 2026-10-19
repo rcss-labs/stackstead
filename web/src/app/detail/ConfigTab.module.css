@@ -7,7 +7,8 @@
 
 .yaml {
   margin: 0;
-  padding: 16px 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
   font-family: var(--mono);
   font-size: 12px;
   line-height: 1.6;
