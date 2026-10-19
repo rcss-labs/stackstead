@@ -1,6 +1,8 @@
-import { StrictMode, Suspense, useLayoutEffect } from 'react';
+import { StrictMode, Suspense, startTransition, useLayoutEffect } from 'react';
+import type { ReactNode } from 'react';
+import { createRoot } from 'react-dom/client';
 import { act, render } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { derived, writable } from '$lib/store';
 import { useStore } from './useStore';
 import type { Readable } from '$lib/store';
@@ -130,9 +132,9 @@ describe('useStore', () => {
     expect(stop).toHaveBeenCalledTimes(1);
   });
 
-  it('never paints a stale value after an uncommitted render', async () => {
+  it('never paints a stale value after an uncommitted render, and releases it after the grace', async () => {
     vi.useFakeTimers();
-    const store = writable(1);
+    const { store, start, stop } = countedWritable(1);
     let resolve!: () => void;
     let ready = false;
     const pending = new Promise<void>((r) => {
@@ -159,12 +161,104 @@ describe('useStore', () => {
         <Suspender />
       </Suspense>,
     );
-    flushRelease(); // nothing committed yet
+    // Nothing committed yet: the render-time subscription is held for the 1000 ms creation grace.
+    act(() => {
+      vi.advanceTimersByTime(999);
+    });
+    expect(stop).not.toHaveBeenCalled();
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
     act(() => store.set(2));
     await act(async () => {
       resolve();
       await pending;
     });
     expect(committed[0]).toBe(2);
+  });
+
+  it('drops a hub whose store subscribe threw, so a later render subscribes afresh', () => {
+    let broken = true;
+    const inner = writable('ok');
+    const flaky: Readable<string> = {
+      subscribe: (run) => {
+        if (broken) throw new Error('subscribe failed');
+        return inner.subscribe(run);
+      },
+    };
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(() => render(<Probe store={flaky} />)).toThrow('subscribe failed');
+    } finally {
+      consoleError.mockRestore();
+    }
+    broken = false;
+    const { container } = render(<Probe store={flaky} />);
+    expect(container.textContent).toBe('ok');
+  });
+});
+
+// Outside act() React runs passive effects (where useSyncExternalStore subscribes) in a later
+// macrotask than the render, as in the browser; RTL's render() hides this by wrapping in act().
+describe('useStore outside act', () => {
+  const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+  let previousActEnvironment: unknown;
+  let container: HTMLDivElement;
+
+  beforeEach(() => {
+    const scope = globalThis as { IS_REACT_ACT_ENVIRONMENT?: unknown };
+    previousActEnvironment = scope.IS_REACT_ACT_ENVIRONMENT;
+    scope.IS_REACT_ACT_ENVIRONMENT = false;
+    container = document.body.appendChild(document.createElement('div'));
+  });
+
+  afterEach(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: unknown }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    container.remove();
+  });
+
+  function SlowSibling() {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 20) {
+      // Busy-wait so a transition render yields between siblings.
+    }
+    return <i />;
+  }
+
+  const mounts: [string, (root: ReturnType<typeof createRoot>, probe: ReactNode) => Promise<void>][] = [
+    ['a plain mount', async (root, probe) => root.render(probe)],
+    ['a StrictMode mount', async (root, probe) => root.render(<StrictMode>{probe}</StrictMode>)],
+    [
+      'a transition mount with slow siblings',
+      async (root, probe) => {
+        root.render(<div />);
+        await sleep(20);
+        startTransition(() =>
+          root.render(
+            <>
+              {probe}
+              <SlowSibling />
+              <SlowSibling />
+            </>,
+          ),
+        );
+      },
+    ],
+  ];
+
+  it.each(mounts)('keeps one store subscription across %s and releases it after unmount', async (_name, mount) => {
+    const { store, start, stop } = countedWritable(7);
+    const root = createRoot(container);
+    await mount(root, <Probe store={store} />);
+    await sleep(150);
+    expect(container.textContent).toContain('7');
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(stop).not.toHaveBeenCalled();
+    root.unmount();
+    await sleep(20);
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledTimes(1);
   });
 });
