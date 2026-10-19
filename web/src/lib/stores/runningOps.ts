@@ -57,7 +57,7 @@ export function startRunningOps(deps: {
 
   /** A change or an explicit refresh starts over with the shortest backoff. */
   const fetchFresh = () => {
-    if (hidden()) return; // nothing polls while the tab is hidden
+    if (stopped || hidden()) return; // nothing polls after stop or while the tab is hidden
     attempt = 0;
     void fetchOps();
   };

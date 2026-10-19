@@ -192,11 +192,13 @@ describe('running operations store', () => {
     it('stop removes the visibility listener', async () => {
       const t = setup();
       const d = fakeDoc('hidden');
+      const add = vi.spyOn(d.doc, 'addEventListener');
+      const remove = vi.spyOn(d.doc, 'removeEventListener');
       stop = startRunningOps({ list: t.list, changes: t.changes, refresh: t.refresh, doc: d.doc });
+      const listener = add.mock.calls.find(([type]) => type === 'visibilitychange')?.[1];
+      expect(listener).toBeDefined();
       stop();
-      d.setState('visible');
-      await vi.advanceTimersByTimeAsync(0);
-      expect(t.list).not.toHaveBeenCalled();
+      expect(remove).toHaveBeenCalledWith('visibilitychange', listener);
     });
   });
 
