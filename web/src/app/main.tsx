@@ -1,5 +1,8 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import './styles/fonts.css';
+import './styles/tokens.css';
+import './styles/base.css';
 import { initAppearance } from '$lib/stores/appearance';
 import { App } from './App';
 
