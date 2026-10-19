@@ -25,7 +25,7 @@ describe('service pane', () => {
   it('renders the header with the state and three tabs, Overview selected', () => {
     renderPane(appService());
     expect(screen.getByRole('heading', { level: 2, name: 'app' })).toBeTruthy();
-    expect(screen.getByText('Up 2 minutes')).toBeTruthy();
+    expect(screen.getByText('Up 2 minutes', { selector: 'header *' })).toBeTruthy();
     const tabs = within(screen.getByRole('tablist', { name: 'Service sections' }));
     expect(tabs.getByRole('tab', { name: 'Overview' }).getAttribute('aria-selected')).toBe('true');
     expect(tabs.getByRole('tab', { name: 'Metrics' }).getAttribute('aria-selected')).toBe('false');
@@ -50,7 +50,13 @@ describe('service pane', () => {
   it('links the container name to its container page', () => {
     renderPane(appService());
     expect(screen.getByRole('link', { name: 'web-app-1' }).getAttribute('href')).toBe('/containers/web-app-1');
-    expect(screen.getByText('running Up 2 minutes')).toBeTruthy();
+  });
+
+  it('the container card shows the name on one line and the status alone on the next', () => {
+    renderPane(appService());
+    const item = screen.getByRole('link', { name: 'web-app-1' }).closest('li')!;
+    const lines = Array.from(item.querySelectorAll(':scope > div')).map((line) => line.textContent);
+    expect(lines).toEqual(['web-app-1', 'Up 2 minutes']);
   });
 
   it('says so when the service has no containers', () => {

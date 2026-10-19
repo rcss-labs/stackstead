@@ -58,17 +58,25 @@
   list-style: none;
   font-size: 12.5px;
 }
-.containers li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* Name on the first line (after the LED), the container status alone on the second, as in the design. */
+.containers li {
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  min-width: 0;
+}
 
 .containerName {
   color: inherit;
   font-family: var(--mono);
+  font-size: 12px;
   text-decoration: none;
   overflow-wrap: anywhere;
 }
 .containerName:hover { color: var(--accent); }
 
-.muted { color: var(--muted); font-size: 11.5px; margin-inline-start: auto; text-align: end; }
+.containerStatus { grid-column: 2; color: var(--muted); font-size: 12px; }
 .empty { margin: 0; color: var(--muted); font-size: 12.5px; }
 
 .head { display: flex; align-items: baseline; justify-content: space-between; }
@@ -83,4 +91,6 @@
 
 @media (max-width: 759px) {
   .overview { padding: 14px; }
+  /* A 40px tall hit area for the container link on touch screens. */
+  .containerName { display: inline-flex; align-items: center; min-height: 40px; }
 }

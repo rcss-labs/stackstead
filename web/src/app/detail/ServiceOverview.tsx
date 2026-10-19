@@ -72,10 +72,12 @@ export function ServiceOverview({ service, latestCpu, cpuHour }: ServiceOverview
                 return (
                   <li key={container.id}>
                     <Led tone={tone} size={7} />
-                    <Link className={styles.containerName} to={`/containers/${encodeURIComponent(container.name)}`}>
-                      {container.name}
-                    </Link>
-                    <span className={styles.muted}>{`${container.state} ${container.status}`}</span>
+                    <div>
+                      <Link className={styles.containerName} to={`/containers/${encodeURIComponent(container.name)}`}>
+                        {container.name}
+                      </Link>
+                    </div>
+                    <div className={styles.containerStatus}>{container.status}</div>
                   </li>
                 );
               })}
