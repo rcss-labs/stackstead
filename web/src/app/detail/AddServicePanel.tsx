@@ -18,8 +18,8 @@ import styles from './AddServicePanel.module.css';
 
 export interface AddServicePanelProps {
   stack: StackDetail;
-  /** Called with the refreshed detail after the service was added (never after the panel unmounted). */
-  onAdded: (detail: StackDetail, checksPartial: boolean) => void;
+  /** Called with the refreshed detail and the reviewed service name after the add (never after the panel unmounted). */
+  onAdded: (detail: StackDetail, checksPartial: boolean, service: string) => void;
   onCancel: () => void;
   /** Re-fetch the stack after a conflict. */
   onReload: () => Promise<StackDetail>;
@@ -128,7 +128,7 @@ export function AddServicePanel({ stack, onAdded, onCancel, onReload, onDirtyCha
     toasts.push({ kind: 'success', message: `Added ${savedService.current} to compose.yaml. Run Up to start it.` });
     const partial = get(add.checksPartial);
     if (partial) toasts.push({ kind: 'warning', message: 'Port and IP checks were partial (Docker unreachable)' });
-    addedRef.current(detail, partial);
+    addedRef.current(detail, partial, savedService.current);
   }
 
   async function reload(keep: boolean) {
@@ -144,7 +144,10 @@ export function AddServicePanel({ stack, onAdded, onCancel, onReload, onDirtyCha
         add.discard(detail);
       }
     } catch (e) {
-      if (mounted.current) toasts.push({ kind: 'danger', message: `Could not reload the stack: ${messageOf(e)}` });
+      if (mounted.current) {
+        if (e instanceof ApiError && e.status === 503) void refreshStatus();
+        toasts.push({ kind: 'danger', message: `Could not reload the stack: ${messageOf(e)}` });
+      }
     } finally {
       if (mounted.current) setReloading(false);
     }

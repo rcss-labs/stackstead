@@ -409,6 +409,26 @@ describe('adding a service from the rail', () => {
     expect(get(unsavedChanges)).toBe(false);
   });
 
+  it.each([
+    ['a detail without the new service', () => withCache('h2').services.filter((x) => x.name !== 'cache')],
+    ['a detail with two new services', () => [appService(), appService({ name: 'zzz', containers: [] }), withCache('h2').services[1]!]],
+  ])('selects the reviewed name after add even with %s', async (_label, services) => {
+    addRoutes();
+    routes['POST /api/stacks/web/services'] = () => {
+      const d = stackDetail({ hash: 'h2', services: services() });
+      h.stackRes = { body: d };
+      return { body: d };
+    };
+    mountDetail(h, '/stacks/web?service=app');
+    const u = user();
+    await u.click(await addButton());
+    await typeName('cache');
+    await u.type(screen.getByLabelText('Image'), 'redis:7');
+    await u.click(screen.getByRole('button', { name: 'Preview changes' }));
+    await u.click(await screen.findByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(here()).toBe('/stacks/web?service=cache'));
+  });
+
   it('Cancel on a clean add panel returns to the previous item without asking', async () => {
     mountDetail(h, '/stacks/web?service=app');
     await user().click(await addButton());
@@ -429,6 +449,8 @@ describe('adding a service from the rail', () => {
       () => rail().getByRole('button', { name: /^db\b/ }),
       () => within(screen.getByRole('navigation', { name: 'Service chips' })).getByRole('button', { name: /^db\b/ }),
       () => within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Containers' }),
+      () => within(screen.getByRole('region', { name: 'Health · last 60 min' })).getByRole('button', { name: /^db/ }),
+      () => screen.getByRole('button', { name: 'Restart' }),
     ];
     for (const target of targets) {
       await user().click(target());

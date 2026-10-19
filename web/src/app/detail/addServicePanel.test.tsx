@@ -1,5 +1,6 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from '$lib/store';
 import type { StackDetail } from '$lib/api/types';
@@ -12,6 +13,7 @@ vi.mock('$lib/stacks/cm', () => ({
     throw new Error('chunk unavailable in this test');
   },
 }));
+vi.mock('$lib/stores/live', async (importActual) => ({ ...(await importActual<object>()), refreshStatus: vi.fn(async () => {}) }));
 vi.mock('$lib/stores/stacks', async (importActual) => ({
   ...(await importActual<object>()),
   refreshStacks: vi.fn(async () => {}),
@@ -61,7 +63,7 @@ describe('AddServicePanel', () => {
     expect(screen.getByLabelText('Service name')).toHaveProperty('value', 'cache');
     await u.click(screen.getByRole('button', { name: 'Preview changes' }));
     await u.click(await screen.findByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(onAdded).toHaveBeenCalledWith(expect.objectContaining({ hash: 'h2' }), true));
+    await waitFor(() => expect(onAdded).toHaveBeenCalledWith(expect.objectContaining({ hash: 'h2' }), true, 'cache'));
   });
 
   it('Cancel invokes parent and conflict offers Reload / Discard', async () => {
@@ -102,6 +104,34 @@ describe('AddServicePanel', () => {
     const u = await fill();
     await u.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(get(toasts).some((t) => t.message === 'Added cache to compose.yaml. Run Up to start it.')).toBe(true));
+  });
+
+  it('still previews when mounted under StrictMode (dispose must survive the remount)', async () => {
+    render(
+      <StrictMode>
+        <AddServicePanel stack={stack} onAdded={noop} onCancel={noop} onReload={async () => stack} />
+      </StrictMode>,
+    );
+    await fill();
+  });
+
+  it('passes the reviewed name to onAdded', async () => {
+    const onAdded = vi.fn();
+    render(<AddServicePanel stack={stack} onAdded={onAdded} onCancel={noop} onReload={async () => stack} />);
+    const u = await fill();
+    await u.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onAdded).toHaveBeenCalledWith(expect.anything(), true, 'cache'));
+  });
+
+  it('a 503 while reloading refreshes the status before the toast', async () => {
+    routes['POST /api/stacks/web/services'] = { status: 409, body: { error: 'changed on disk' } };
+    const { ApiError } = await import('$lib/api/client');
+    const { refreshStatus } = await import('$lib/stores/live');
+    render(<AddServicePanel stack={stack} onAdded={noop} onCancel={noop} onReload={async () => { throw new ApiError(503, 'down', []); }} />);
+    const u = await fill();
+    await u.click(screen.getByRole('button', { name: 'Save' }));
+    await u.click(await screen.findByRole('button', { name: 'Reload' }));
+    await waitFor(() => expect(refreshStatus).toHaveBeenCalled());
   });
 
   it('reports dirty to the parent as the name is typed', async () => {

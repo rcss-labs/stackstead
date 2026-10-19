@@ -179,5 +179,4 @@
 @media (max-width: 759px) {
   .rail { display: none; }
   .chips { display: flex; }
-  .addChip button { min-height: 40px; min-width: 40px; }
 }

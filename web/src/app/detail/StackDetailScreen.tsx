@@ -112,10 +112,7 @@ export function StackDetailScreen({ name }: { name: string }) {
   const itemKey = item.kind === 'service' ? `service:${item.name}` : item.kind;
   const [addOpenedOn, setAddOpenedOn] = useState<string | undefined>();
   useEffect(() => {
-    if (addingService && (!!parseErrorText || itemKey !== addOpenedOn)) {
-      setAddingService(false);
-      setAddDirty(false);
-    }
+    if (addingService && (!!parseErrorText || itemKey !== addOpenedOn)) closeAdd();
   }, [addingService, parseErrorText, itemKey, addOpenedOn]);
   // Selecting anything but the edited service ends the edit; its draft goes with the editor.
   useEffect(() => {
@@ -306,11 +303,11 @@ export function StackDetailScreen({ name }: { name: string }) {
               onDirtyChange={setAddDirty}
               onReload={ctl.reloadDetail}
               onCancel={() => guarded(closeAdd)}
-              onAdded={(added) => {
-                const fresh = added.services.find((svc) => !detail.services.some((old) => old.name === svc.name)) ?? added.services.at(-1);
+              onAdded={(added, _partial, service) => {
+                const selected = service || added.services.at(-1)?.name;
                 ctl.acceptDetail(added);
                 closeAdd();
-                if (fresh) location.go(location.hrefFor({ kind: 'service', name: fresh.name }));
+                if (selected) location.go(location.hrefFor({ kind: 'service', name: selected }));
               }}
             />
           ) : item.kind === 'service' && selectedService ? (
