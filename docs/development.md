@@ -65,6 +65,13 @@ beside the Svelte one, with the same proxy. `npm run build:app` builds it and
 runs the same bundle budget check into `web/dist-app/`, which is git-ignored
 and not embedded in the binary until the cutover.
 
+React tests live beside their components as `web/src/app/**/*.test.tsx` and run
+with the rest under `make ui-test`; `npm run check:app` type-checks the React
+tree. The React entry budget is enforced by `npm run build:app`: only the shell,
+the stores and the Overview placeholder are eager, every other screen and the
+command palette are route-level `React.lazy` chunks, and `src/bundle.test.ts`
+pins that shape (run it after a build) so a stray static import fails early.
+
 ## Tests
 
 ```bash

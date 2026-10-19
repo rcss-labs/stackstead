@@ -28,7 +28,7 @@ export default defineConfig({
     emptyOutDir: true,
     target: 'es2022',
     manifest: true,
-    rollupOptions: { input: 'app.html' },
+    rollupOptions: { input: 'app.html', output: { chunkFileNames: 'assets/[name]-[hash].js' } },
   },
   server: {
     proxy: {
