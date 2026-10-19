@@ -88,7 +88,7 @@ export function LogLines({
     if (e.key === 'ArrowDown') target = row.nextElementSibling;
     else if (e.key === 'ArrowUp') target = row.previousElementSibling;
     else if (e.key === 'Home') target = row.parentElement?.firstElementChild;
-    else if (e.key === 'End') target = row.parentElement?.querySelector('[data-testid="log-row"]:last-of-type') ?? row;
+    else if (e.key === 'End') target = Array.from(row.parentElement?.querySelectorAll('[data-testid="log-row"]') ?? []).at(-1);
     else return;
     e.preventDefault();
     if (target instanceof HTMLElement && target.dataset.testid === 'log-row') target.focus();

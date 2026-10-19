@@ -412,4 +412,14 @@ describe('LogConsole lines', () => {
     expect(rows()[0].hasAttribute('data-new')).toBe(false);
     expect(rows()[1].hasAttribute('data-new')).toBe(true);
   });
+
+  it('End focuses the last row even when an end-of-log marker follows the rows', async () => {
+    fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'one'), logEvent(C_A, 2, 1, 'two'), 'event: end\ndata: {}\n\n'] });
+    mount();
+    await tick();
+    expect(screen.getByText(/end of log/i)).toBeTruthy();
+    rows()[0].focus();
+    fireEvent.keyDown(rows()[0], { key: 'End' });
+    expect(document.activeElement).toBe(rows()[1]);
+  });
 });
