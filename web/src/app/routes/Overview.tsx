@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router';
 import { issueCards } from '$lib/dashboard/issues';
 import { host, hostHistory } from '$lib/stores/host';
-import { events } from '$lib/stores/live';
+import { events, live } from '$lib/stores/live';
 import { runningOps, runningStackNames } from '$lib/stores/runningOps';
 import { refreshStacks, stacks } from '$lib/stores/stacks';
 import { Banner } from '../components/Banner';
@@ -12,6 +12,7 @@ import { Spinner } from '../components/Spinner';
 import { useDashboard } from '../hooks/useDashboard';
 import { useStore } from '../hooks/useStore';
 import { IssueCards } from '../overview/IssueCards';
+import SideColumn from '../overview/SideColumn';
 import { StacksList } from '../overview/StacksList';
 import { StatusPanel } from '../overview/StatusPanel';
 import { useStackAction } from '../overview/useStackAction';
@@ -23,6 +24,7 @@ export default function Overview() {
   const hostSnapshot = useStore(host);
   const history = useStore(hostHistory);
   const recentEvents = useStore(events);
+  const { connection } = useStore(live);
   // Alerts, summary and storage feed the issue cards and the side column; the controller runs while the screen is mounted.
   const { alerts, summary, storage, refreshAlerts } = useDashboard();
   const running = useStore(runningOps);
@@ -45,6 +47,7 @@ export default function Overview() {
   }
 
   const failedFirstLoad = Boolean(error) && items.length === 0;
+  const stackNames = Object.fromEntries(items.map((s) => [s.project, s.name]));
   const degraded = items.length > 0 && items.every((s) => s.status === 'unknown');
 
   if (loading && items.length === 0) {
@@ -88,19 +91,21 @@ export default function Overview() {
             acting={acting}
             onAct={(name, action) => void actOnIssue(name, action)}
           />
-          {items.length === 0 ? (
-            <EmptyState title="Create your first stack" description="Create a stack or import an existing compose file.">
-              <p className={styles.links}>
-                <Link to="/stacks/new" className={styles.link} data-primary="true">
-                  New stack
-                </Link>
-                <Link to="/stacks/import" className={styles.link}>
-                  Import
-                </Link>
-              </p>
-            </EmptyState>
-          ) : (
-            <div className={styles.columns}>
+          <div className={styles.columns}>
+            {items.length === 0 ? (
+              <div className={styles.empty}>
+                <EmptyState title="Create your first stack" description="Create a stack or import an existing compose file.">
+                  <p className={styles.links}>
+                    <Link to="/stacks/new" className={styles.link} data-primary="true">
+                      New stack
+                    </Link>
+                    <Link to="/stacks/import" className={styles.link}>
+                      Import
+                    </Link>
+                  </p>
+                </EmptyState>
+              </div>
+            ) : (
               <StacksList
                 items={items}
                 alerts={alerts}
@@ -112,8 +117,9 @@ export default function Overview() {
                 acting={acting}
                 onAct={(name, action) => void act(name, action)}
               />
-            </div>
-          )}
+            )}
+            <SideColumn events={recentEvents} connection={connection} top={summary?.top} stackNames={stackNames} />
+          </div>
         </>
       )}
     </section>

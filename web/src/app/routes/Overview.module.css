@@ -46,6 +46,11 @@
   font-weight: 600;
 }
 
+.empty {
+  flex: 999 1 620px;
+  min-width: 0;
+}
+
 .columns {
   display: flex;
   flex-wrap: wrap;
