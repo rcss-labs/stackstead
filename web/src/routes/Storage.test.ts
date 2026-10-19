@@ -91,3 +91,11 @@ it('opens a fresh preview from a cleanup control and restores focus on Escape', 
   expect(fake.calls.find(c=>c.path==='/api/storage/plans')?.body).toEqual({kind:'images',selection:'dangling'});
   await fireEvent.keyDown(document,{key:'Escape'}); await waitFor(()=>expect(screen.queryByRole('dialog')).toBeNull());expect(document.activeElement).toBe(button);
 });
+
+it('returns focus to a Delete button that was clicked without taking focus (Safari, Firefox on macOS)', async () => {
+  navigate('/storage?tab=volumes'); render(Storage);
+  await screen.findByRole('link', { name: 'free' }); const button = screen.getByRole('button', { name: 'Delete' });
+  expect(document.activeElement).not.toBe(button); await fireEvent.click(button);
+  await screen.findByRole('dialog'); await fireEvent.keyDown(document, { key: 'Escape' });
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull()); expect(document.activeElement).toBe(button);
+});

@@ -47,3 +47,5 @@ export function imagePath(id: string): string | undefined {
   return /^[a-fA-F0-9]{12,64}$/.test(hex) ? `/storage/images/${hex.slice(0, 12)}` : undefined;
 }
 export const sizeText = (bytes: number | null, pending = false) => bytes === null ? pending ? 'calculating…' : '—' : formatBytes(bytes);
+/** Stack states arrive as slugs such as not-deployed. */
+export const stateText = (state: string) => state.replaceAll('-', ' ');

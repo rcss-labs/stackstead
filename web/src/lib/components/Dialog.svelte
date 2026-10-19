@@ -1,6 +1,15 @@
 <script module lang="ts">
   // Open dialogs, oldest first. Escape closes only the last one.
   const openStack: symbol[] = [];
+  // Buttons clicked with a mouse do not take focus in Safari or Firefox on macOS, so the last
+  // click target stands in as the opener when nothing is focused.
+  let lastClick: { el: HTMLElement; at: number } | undefined;
+  if (typeof document !== 'undefined') {
+    document.addEventListener('click', (event) => {
+      const button = event.target instanceof Element ? event.target.closest<HTMLElement>('button, a[href], [role="button"]') : null;
+      lastClick = button ? { el: button, at: Date.now() } : undefined;
+    }, true);
+  }
 </script>
 
 <script lang="ts">
@@ -46,11 +55,13 @@
 
   $effect(() => {
     if (!open || !dialogEl) return;
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const active = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
+    const opener = active ?? (lastClick && Date.now() - lastClick.at < 1000 && lastClick.el.isConnected ? lastClick.el : null);
     const appRoot = document.getElementById('app');
     const wasInert = appRoot?.inert ?? false;
     if (appRoot) appRoot.inert = true;
     (focusables()[0] ?? dialogEl).focus();
+    dialogEl.scrollTop = 0;
     return () => {
       if (appRoot) appRoot.inert = wasInert;
       opener?.focus();

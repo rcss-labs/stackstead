@@ -75,3 +75,25 @@ it('shows checking state until the fresh plan resolves', async () => {
   open(); expect(await screen.findByText('Checking current state…')).toBeTruthy(); expect(screen.queryByRole('textbox')).toBeNull();
   release({body:plan}); expect(await screen.findByRole('textbox')).toBeTruthy();expect(screen.queryByText('Checking current state…')).toBeNull();
 });
+
+it('keeps long plans reachable in named scroll regions with counts, ahead of the confirm controls', async () => {
+  plan.items = Array.from({ length: 99 }, (_, i) => ({ kind: 'volume', id: `v${i}`, ref: `volume-${i}`, bytes: 1024 }));
+  open(); const items = await screen.findByRole('region', { name: 'Items to delete (99)' });
+  expect(items.getAttribute('tabindex')).toBe('0'); expect(within(items).getAllByRole('listitem')).toHaveLength(99);
+  expect(within(items).getByText('volume-98')).toBeTruthy();
+  const protectedList = screen.getByRole('region', { name: 'Protected (1)' }); expect(protectedList.getAttribute('tabindex')).toBe('0');
+  const input = screen.getByRole('textbox'); expect(items.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+it('focuses the confirm field without scrolling the dialog', async () => {
+  const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+  try { open(); const input = await screen.findByRole('textbox'); await waitFor(() => expect(document.activeElement).toBe(input)); expect(focus.mock.contexts.some((c, i) => c === input && (focus.mock.calls[i][0] as FocusOptions | undefined)?.preventScroll === true)).toBe(true); }
+  finally { focus.mockRestore(); }
+});
+it('separates not exact from the phrase in text', async () => {
+  plan.kind = 'build-cache'; plan.mode = 'all-unused'; open();
+  const phrase = await screen.findByText(plan.confirmPhrase, { selector: 'code' }); expect(phrase.parentElement?.textContent).toBe(`${plan.confirmPhrase} not exact`);
+});
+it('words protected items as reason · stack (state) with a human state', async () => {
+  plan.protected = [{ ...plan.protected[0], stackState: 'not-deployed' }]; open();
+  const region = await screen.findByRole('region', { name: 'Protected (1)' }); expect(within(region).getByRole('listitem').textContent).toBe('dbdeclared by stack · media (not deployed)');
+});

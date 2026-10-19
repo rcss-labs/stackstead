@@ -9,7 +9,7 @@
   import { refreshRunningOps } from '$lib/stores/stacks';
   import { toasts } from '$lib/stores/toasts';
   import { link } from '$lib/router';
-  import { reclaimText, sizeText } from './storage';
+  import { reclaimText, sizeText, stateText } from './storage';
 
   let { request, onclose, onfinished }: { request: StoragePlanRequest; onclose: () => void; onfinished?: (op: Operation) => void } = $props();
   const uid = $props.id();
@@ -44,7 +44,7 @@
       if (mounted && mine === generation) {
         checking = false;
         await tick();
-        if (mounted && mine === generation) field?.focus();
+        if (mounted && mine === generation) field?.focus({ preventScroll: true });
       }
     }
   }
@@ -67,7 +67,7 @@
       if (e instanceof ApiError && e.status === 404) expired = true;
       else if (e instanceof ApiError && e.fields.some(f => f.field === 'confirm')) {
         fieldError = e.fields.find(f => f.field === 'confirm')?.message ?? e.message;
-        await tick(); field?.focus();
+        await tick(); field?.focus({ preventScroll: true });
       } else error = e instanceof Error ? e.message : String(e);
     } finally { if (mounted) confirming = false; }
   }
@@ -96,13 +96,13 @@
     {#if plan}
       {#if !plan.items.length}<p>Nothing to clean</p>
       {:else}
-        <h3>{plan.mode === 'all-unused' ? 'Expected items' : 'Items to delete'}</h3>
-        <ul>{#each plan.items as item}<li><span class="mono">{item.ref}</span><span class="mono muted">{sizeText(item.bytes)}</span></li>{/each}</ul>
+        <h3 id="{uid}-items">{plan.mode === 'all-unused' ? 'Expected items' : 'Items to delete'} ({plan.items.length})</h3>
+        <div class="scroll" role="region" aria-labelledby="{uid}-items" tabindex="0"><ul>{#each plan.items as item}<li><span class="mono">{item.ref}</span><span class="mono muted">{sizeText(item.bytes)}</span></li>{/each}</ul></div>
         <p>{reclaimText(plan.reclaim)}</p>
       {/if}
       {#if plan.protected.length}
-        <h3>Protected</h3>
-        <ul>{#each plan.protected as item}<li class="protected"><span class="mono">{item.ref}</span><span>{item.reason}{#if item.stack} · <a href="/stacks/{encodeURIComponent(item.stack)}" use:link>{item.stack}</a> ({item.stackState}){/if}</span></li>{/each}</ul>
+        <h3 id="{uid}-protected">Protected ({plan.protected.length})</h3>
+        <div class="scroll" role="region" aria-labelledby="{uid}-protected" tabindex="0"><ul>{#each plan.protected as item}<li class="protected"><span class="mono">{item.ref}</span><span>{item.reason}{#if item.stack}{' · '}<a href="/stacks/{encodeURIComponent(item.stack)}" use:link>{item.stack}</a> ({stateText(item.stackState)}){/if}</span></li>{/each}</ul></div>
       {/if}
       {#each plan.warnings as warning}<p class="warning">{warning}</p>{/each}
       {#if plan.items.length}
@@ -110,7 +110,7 @@
         <p class="muted">Expires in {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}</p>
         {#if stale}<p>This plan has expired. Re-check current state before deleting.</p>
         {:else}
-          <p id="{uid}-phrase"><code>{plan.confirmPhrase}</code>{#if plan.mode === 'all-unused'} <span class="warning">not exact</span>{/if}</p>
+          <p id="{uid}-phrase"><code>{plan.confirmPhrase}</code>{#if plan.mode === 'all-unused'}{' '}<span class="warning">not exact</span>{/if}</p>
           <label for="{uid}-confirm">Type {plan.confirmPhrase} to confirm</label>
           <input id="{uid}-confirm" class="mono" bind:this={field} bind:value={phrase} disabled={confirming} aria-describedby="{uid}-phrase{fieldError ? ` ${uid}-error` : ''}" aria-invalid={fieldError ? 'true' : undefined} autocomplete="off" spellcheck="false" />
           {#if fieldError}<p id="{uid}-error" class="error" role="alert">{fieldError}</p>{/if}
@@ -132,6 +132,7 @@
   p { margin: 0; overflow-wrap: anywhere; }
   ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
   li { display: flex; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; overflow-wrap: anywhere; }
+  .scroll { max-height: 40vh; overflow: auto; flex-shrink: 0; padding: var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-sm); }
   .protected { color: var(--muted); }
   .mono, code { font-family: var(--mono); overflow-wrap: anywhere; }
   .muted { color: var(--muted); }
