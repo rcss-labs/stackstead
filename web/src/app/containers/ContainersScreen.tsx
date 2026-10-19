@@ -72,8 +72,7 @@ export function ContainersScreen() {
       el?.scrollIntoView?.({ block: 'nearest' });
     },
     onToggle: () => visible.length > 0 && togglePeek(focused),
-    // A stack-managed container has no Restart of its own; the stack page owns it.
-    onRestart: () => visible[focused]?.managed !== 'stack' && visible.length > 0 && actions.request(visible[focused], 'restart'),
+    onRestart: () => visible.length > 0 && actions.request(visible[focused], 'restart'),
     onClose: () => setOpenPeek(undefined),
   });
 
@@ -168,8 +167,7 @@ export function ContainersScreen() {
                     />
                     {openPeek === c.name && (
                       <ContainerPeek
-                        key={`peek-${c.id}`}
-                        row={c}
+                                        row={c}
                         id={`peek-${c.id}`}
                         mobile={mobile}
                         reason={actions.reasonFor(c)}

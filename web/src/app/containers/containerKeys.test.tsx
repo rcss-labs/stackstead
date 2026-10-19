@@ -98,6 +98,10 @@ describe('Container keys', () => {
     await user.keyboard('r');
     expect(screen.queryByRole('alertdialog')).toBeNull();
     await user.keyboard('j');
+    await user.keyboard('r');
+    await screen.findByRole('alertdialog');
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     setLiveState({ ...liveState.value, docker: 'unavailable' });
     await user.keyboard('r');
     expect(screen.queryByRole('alertdialog')).toBeNull();
@@ -126,6 +130,33 @@ describe('Container keys', () => {
     expect(screen.getByRole('region', { name: 'Logs of a' })).toBeTruthy();
   });
 
+  it('Escape with the dialog open and focus outside it closes only the dialog', async () => {
+    const user = mount(abc());
+    await screen.findByRole('link', { name: 'a' });
+    act(() => rowOf('a').focus());
+    await user.keyboard('{Enter}');
+    await screen.findByRole('region', { name: 'Logs of a' });
+    await user.keyboard('r');
+    await screen.findByRole('alertdialog');
+    act(() => (document.activeElement as HTMLElement).blur());
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(screen.getByRole('region', { name: 'Logs of a' })).toBeTruthy();
+  });
+
+  it('keys typed in the focused log region belong to the log', async () => {
+    const user = mount(abc());
+    await screen.findByRole('link', { name: 'a' });
+    act(() => rowOf('a').focus());
+    await user.keyboard('{Enter}');
+    const log = (await screen.findByRole('region', { name: 'Logs of a' })).querySelector('[role="log"]') as HTMLElement;
+    act(() => log.focus());
+    await user.keyboard('j{Enter}');
+    expect(document.activeElement).toBe(log);
+    expect(focusedName()).toBe('a');
+    expect(screen.getByRole('region', { name: 'Logs of a' })).toBeTruthy();
+  });
+
   it('Enter on the name link and on the toggle button is left to the element', async () => {
     const user = mount(abc());
     await screen.findByRole('link', { name: 'a' });
@@ -148,6 +179,12 @@ describe('Container keys', () => {
     await screen.findByRole('link', { name: 'a' });
     await user.keyboard('{Meta>}j{/Meta}');
     expect(focusedName()).toBe('a');
+    await user.keyboard('{Control>}j{/Control}');
+    expect(focusedName()).toBe('a');
+    await user.keyboard('{Alt>}j{/Alt}');
+    expect(focusedName()).toBe('a');
+    await user.keyboard('j');
+    expect(focusedName()).toBe('b');
   });
 
   it('a chip change resets the focus to the first visible row', async () => {
@@ -165,5 +202,6 @@ describe('Container keys', () => {
     await user.keyboard('jk{Enter}r{Escape}');
     expect(stream.requests).toHaveLength(0);
     expect(posts()).toHaveLength(0);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 });

@@ -57,7 +57,8 @@ export function useContainerAction(onChanged: (row: ContainerRow, fresh: Contain
   }
 
   function request(row: ContainerRow, action: ContainerAction) {
-    if (reasonFor(row)) return;
+    // A stack-managed container is changed through its stack; the API answers 409 for a direct action.
+    if (reasonFor(row) || row.managed === 'stack') return;
     if (action === 'start') void run(row, action);
     else setConfirming({ row, action });
   }

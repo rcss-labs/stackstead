@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -193,6 +193,22 @@ describe('ContainerActions', () => {
 });
 
 describe('useContainerAction', () => {
+  it('request ignores a restart of a stack-managed container', () => {
+    fake = installFakeFetch({ [`POST ${PATH('restart')}`]: { body: row() } });
+    let api!: ReturnType<typeof useContainerAction>;
+    function Capture() {
+      api = useContainerAction(() => {});
+      return null;
+    }
+    render(<Capture />);
+    act(() => api.request(row({ managed: 'stack', stack: 'shop' }), 'restart'));
+    expect(api.confirming).toBeUndefined();
+    expect(fake.calls).toHaveLength(0);
+    // Positive control: the same call for a free container does ask first.
+    act(() => api.request(row(), 'restart'));
+    expect(api.confirming?.action).toBe('restart');
+  });
+
   it('request ignores an action while a reason applies', () => {
     setLiveState({ ...liveState.value, docker: 'unavailable' });
     fake = installFakeFetch({ [`POST ${PATH('start')}`]: { body: row() } });

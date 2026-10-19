@@ -10,12 +10,12 @@ export interface ContainerKeysOptions {
   onClose: () => void;
 }
 
-/** True when the key belongs to the element that has focus (typing, a dialog, native activation) rather than to the list. */
+/** True when the key belongs to the element that has focus (typing, a dialog, the scrollable log, native activation) rather than to the list. */
 function isIgnored(event: KeyboardEvent): boolean {
   if (event.ctrlKey || event.metaKey || event.altKey) return true;
   const target = event.target instanceof Element ? event.target : null;
   if (!target) return false;
-  if (target.closest('input, textarea, select, dialog, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [role="alertdialog"]')) return true;
+  if (target.closest('input, textarea, select, dialog, [role="log"], [contenteditable]:not([contenteditable="false"]), [role="dialog"], [role="alertdialog"]')) return true;
   return event.key === 'Enter' && target.closest('a, button') !== null;
 }
 
@@ -28,7 +28,7 @@ export function useContainerKeys(options: ContainerKeysOptions): void {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const { enabled, count, focusIndex, onMove, onToggle, onRestart, onClose } = latest.current;
-      if (!enabled || isIgnored(event)) return;
+      if (!enabled || event.defaultPrevented || isIgnored(event)) return;
       switch (event.key) {
         case 'j':
         case 'ArrowDown':
