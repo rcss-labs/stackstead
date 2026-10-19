@@ -120,4 +120,32 @@ describe('host poller', () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(fetchHost).toHaveBeenCalledTimes(2);
   });
+
+  it('stopping one of two starters keeps polling and the value', async () => {
+    const fetchHost = vi.fn(async () => snap('h'));
+    const d = fakeDoc();
+    const releaseA = startHost({ host: fetchHost, doc: d.doc });
+    const releaseB = startHost({ host: fetchHost, doc: d.doc });
+    stop = releaseB;
+    await vi.advanceTimersByTimeAsync(0);
+    releaseA();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchHost).toHaveBeenCalledTimes(2);
+    expect(get(host)?.hostname).toBe('h');
+    releaseB();
+    expect(get(host)).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(fetchHost).toHaveBeenCalledTimes(2);
+  });
+
+  it('release is idempotent', async () => {
+    const fetchHost = vi.fn(async () => snap('h'));
+    const d = fakeDoc();
+    const releaseA = startHost({ host: fetchHost, doc: d.doc });
+    stop = startHost({ host: fetchHost, doc: d.doc });
+    releaseA();
+    releaseA();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchHost).toHaveBeenCalledTimes(2);
+  });
 });

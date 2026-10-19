@@ -14,12 +14,29 @@ export interface HostDeps {
 
 const DEFAULT_INTERVAL_MS = 10_000;
 
-let activeStop: (() => void) | undefined;
+let teardown: (() => void) | undefined;
+let holders = 0;
 
+/**
+ * Starts the shared host poller and returns this caller's own idempotent release function.
+ * The first call starts polling with its deps; later calls only add a holder (their deps are
+ * ignored). Timers, the visibility listener and the value are torn down when the last holder releases.
+ */
 export function startHost(deps: HostDeps): () => void {
-  // Idempotent: a second start shares the running poller.
-  if (activeStop) return activeStop;
+  if (!teardown) teardown = beginPolling(deps);
+  holders++;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    if (--holders === 0) {
+      teardown?.();
+      teardown = undefined;
+    }
+  };
+}
 
+function beginPolling(deps: HostDeps): () => void {
   const doc = deps.doc ?? document;
   const intervalMs = deps.intervalMs ?? DEFAULT_INTERVAL_MS;
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -63,13 +80,9 @@ export function startHost(deps: HostDeps): () => void {
   doc.addEventListener('visibilitychange', onVisibility);
   if (doc.visibilityState !== 'hidden') resume();
 
-  const stop = () => {
-    if (activeStop !== stop) return;
-    activeStop = undefined;
+  return () => {
     pause();
     doc.removeEventListener('visibilitychange', onVisibility);
     hostStore.set(undefined);
   };
-  activeStop = stop;
-  return stop;
 }
