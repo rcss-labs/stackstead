@@ -181,9 +181,13 @@ describe('stack detail screen', () => {
   });
 
   it('a parse error shows the message and the guidance', async () => {
-    stackRes = { body: detail({ status: 'unavailable', parseError: 'yaml: line 3: mapping values are not allowed', services: [] }) };
+    stackRes = { body: detail({ status: 'unavailable', parseError: 'yaml: line 3: mapping values are not allowed' }) };
     mount('/stacks/web');
     const banner = await screen.findByRole('alert');
+    // The rail lists no services whatever the payload holds, and Compose file is the selected item.
+    const rail = within(screen.getByRole('navigation', { name: 'Services' }));
+    expect(rail.queryByRole('button', { name: /^app\b/ })).toBeNull();
+    expect(rail.getByRole('button', { name: /^Compose file/ }).getAttribute('aria-current')).toBe('true');
     expect(within(banner).getByText('Compose file cannot be parsed')).toBeTruthy();
     expect(banner.querySelector('pre')?.textContent).toBe('yaml: line 3: mapping values are not allowed');
     expect(within(banner).getByText(/Fix it in the Compose file/)).toBeTruthy();

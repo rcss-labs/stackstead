@@ -1,0 +1,23 @@
+.pane {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--hi);
+  overflow: hidden;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.console {
+  margin-top: auto;
+}
+
+@media (max-width: 759px) {
+  .pane { grid-template-columns: minmax(0, 1fr); }
+}
