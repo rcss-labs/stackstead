@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { api, ApiError } from '$lib/api/client';
 import type { StackDetail } from '$lib/api/types';
 import type { ServiceForm as Form } from '$lib/compose/form';
@@ -81,6 +81,7 @@ export function AddServicePanel({ stack, onAdded, onCancel, onReload, onDirtyCha
   const [reloading, setReloading] = useState(false);
   const [browse, setBrowse] = useState<{ mode: 'dir' | 'file'; cb: (path: string) => void } | undefined>();
   const root = useRef<HTMLDivElement>(null);
+  const headingId = useId();
   const serviceForm = useRef<ServiceFormHandle>(null);
   const previewHeading = useRef<HTMLHeadingElement>(null);
   const [focusRequest, setFocusRequest] = useState(0);
@@ -156,7 +157,10 @@ export function AddServicePanel({ stack, onAdded, onCancel, onReload, onDirtyCha
   const reviewing = phase === 'previewing' || phase === 'saving';
 
   return (
-    <div className={styles.panel} ref={root}>
+    <div className={styles.panel} ref={root} role="region" aria-labelledby={headingId}>
+      <h2 id={headingId} className="visually-hidden">
+        Add service
+      </h2>
       {notice && (
         <Banner kind="danger" title="Could not complete the request">
           <span className={styles.msg}>{notice.message}</span>

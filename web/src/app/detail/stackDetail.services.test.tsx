@@ -375,6 +375,16 @@ describe('adding a service from the rail', () => {
     expect(get(unsavedChanges)).toBe(false);
   });
 
+  it('names the panel and makes the Add entry, not a service, the current rail item', async () => {
+    mountDetail(h, '/stacks/web?service=app');
+    const addEntry = await addButton();
+    expect(rail().getByRole('button', { name: /^app\b/ }).getAttribute('aria-current')).toBe('true');
+    await user().click(addEntry);
+    expect(await screen.findByRole('region', { name: 'Add service' })).toBeTruthy();
+    expect(rail().getByRole('button', { name: /^app\b/ }).getAttribute('aria-current')).toBeNull();
+    expect(rail().getByRole('button', { name: 'Add service' }).getAttribute('aria-current')).toBe('true');
+  });
+
   it('moves keyboard focus into the panel when Add is clicked', async () => {
     mountDetail(h, '/stacks/web?service=app');
     await user().click(await addButton());

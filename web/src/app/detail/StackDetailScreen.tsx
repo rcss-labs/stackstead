@@ -234,11 +234,23 @@ export function StackDetailScreen({ name }: { name: string }) {
           closeAdd();
           location.go(location.hrefFor(target));
         }),
+      adding: addingService,
       addSlot:
-        parseError || serviceEditorOpen || addingService ? undefined : (
-          <Button variant="ghost" size="xs" aria-label="Add service" onClick={openAdd}>
-            + Add
-          </Button>
+        parseError || serviceEditorOpen ? undefined : (
+          <span className={styles.addEntry}>
+            <Button
+              variant="ghost"
+              size="xs"
+              aria-label="Add service"
+              aria-current={addingService ? 'true' : undefined}
+              data-current={addingService}
+              onClick={() => {
+                if (!addingService) openAdd();
+              }}
+            >
+              + Add
+            </Button>
+          </span>
         ),
     };
     body = (
