@@ -124,28 +124,7 @@ describe('App focus on navigation', () => {
     expect(document.activeElement).not.toBe(h1);
   });
 
-  it('does not steal focus the new page already placed inside main', async () => {
-    at('/');
-    render(<App />);
-    await screen.findByRole('heading', { name: 'Stacks' });
-    const main = screen.getByRole('main');
-    // Runs as soon as the new page's DOM exists, before the app's post-render focus step.
-    const observer = new MutationObserver(() => {
-      if (main.querySelector('h1')?.textContent !== 'Settings') return;
-      observer.disconnect();
-      const field = document.createElement('input');
-      field.setAttribute('aria-label', 'Search settings');
-      main.append(field);
-      field.focus();
-    });
-    observer.observe(main, { childList: true, subtree: true });
-    await push('/settings');
-    const h1 = await screen.findByRole('heading', { level: 1, name: 'Settings' });
-    await sleep(50);
-    expect(main.contains(document.activeElement)).toBe(true);
-    expect(document.activeElement).not.toBe(h1);
-    observer.disconnect();
-  });
+  // Focus a new page placed inside main itself is guarded by useFocusOnNavigate.test.tsx "keeps focus a new page placed inside main".
 
   it("focuses a lazy screen's heading once it renders", async () => {
     at('/');
