@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -180,5 +181,55 @@ func TestStore_PruneKeepsStateInForce(t *testing.T) {
 	if len(tl.Services) != 2 || tl.Services[0].Service != "a" ||
 		len(tl.Services[0].Runs) != 1 || tl.Services[0].Runs[0].State != history.StateHealthy {
 		t.Fatalf("timeline after prune = %+v, want a healthy across the window", tl.Services)
+	}
+}
+
+func TestStore_LatestIsStateInForcePerLiveContainer(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	other := svc(100, "d", history.StateUnhealthy)
+	other.Project = "q"
+	if err := s.Insert(ctx, []history.Row{
+		svc(100, "a", history.StateRunning),
+		svc(200, "a", history.StateExited),
+		svc(300, "a", history.StateRestart),
+		svc(100, "b", history.StateHealthy),
+		svc(100, "b", history.StateUnhealthy), // same second: the later insert wins
+		svc(100, "c", history.StateRunning),
+		svc(200, "c", history.StateRemoved),
+		other,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Latest(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, r := range got {
+		keys = append(keys, fmt.Sprintf("%s/%s/%s@%d=%s", r.Project, r.Service, r.Container, r.TS.Unix(), r.State))
+	}
+	sort.Strings(keys)
+	if want := "p/a/a@200=exited p/b/b@100=unhealthy q/d/d@100=unhealthy"; strings.Join(keys, " ") != want {
+		t.Fatalf("Latest = %v, want %s", keys, want)
+	}
+}
+
+// A restart marker before the window is not a state: it is never returned, and
+// the baseline stays the latest real state.
+func TestStore_QueryIgnoresRestartBeforeWindow(t *testing.T) {
+	s := newStore(t)
+	if err := s.Insert(context.Background(), []history.Row{
+		row(200, "p", "a", history.StateUnhealthy),
+		row(210, "p", "a", history.StateRestart),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Query(context.Background(), "p", at(220), at(300))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].TS.Unix() != 200 || got[0].State != history.StateUnhealthy {
+		t.Fatalf("got %+v, want only a@200 unhealthy", got)
 	}
 }

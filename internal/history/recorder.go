@@ -25,9 +25,11 @@ type Source interface {
 	SubscribeEvents() (<-chan engine.Event, func())
 }
 
-// Writer persists rows; satisfied by *Store.
-type Writer interface {
+// Journal persists rows and reports each live container's last stored state;
+// satisfied by *Store.
+type Journal interface {
 	Insert(ctx context.Context, rows []Row) error
+	Latest(ctx context.Context) ([]Row, error)
 }
 
 // known is what the recorder last wrote for one container.
@@ -38,16 +40,17 @@ type known struct {
 // Recorder turns the cache's change notifications into stored transitions.
 type Recorder struct {
 	src    Source
-	w      Writer
+	w      Journal
 	log    *slog.Logger
 	now    func() time.Time
 	last   map[string]known // container id -> last written state
 	dying  map[string]bool  // container id -> saw "die", waiting for "start"
 	lastRS map[string]int64 // container id -> unix second of the last restart row
 	warned time.Time
+	seeded bool // last has been seeded from the journal
 }
 
-func NewRecorder(src Source, w Writer, logger *slog.Logger, now func() time.Time) *Recorder {
+func NewRecorder(src Source, w Journal, logger *slog.Logger, now func() time.Time) *Recorder {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -128,6 +131,7 @@ func (r *Recorder) connect(ctx context.Context) {
 	if err != nil {
 		return
 	}
+	r.seed(ctx)
 	ts := r.now()
 	var rows []Row
 	next := map[string]known{}
@@ -149,6 +153,26 @@ func (r *Recorder) connect(ctx context.Context) {
 		return // keep the old map so the next change retries
 	}
 	r.last = next
+}
+
+// seed loads, once, the containers the journal last saw alive, so the first
+// baseline marks removed those that vanished while Stackstead was down. On
+// error it warns and carries on with what this run has seen.
+func (r *Recorder) seed(ctx context.Context) {
+	if r.seeded {
+		return
+	}
+	r.seeded = true
+	rows, err := r.w.Latest(ctx)
+	if err != nil {
+		r.warn(ctx, "history: load last container states", err)
+		return
+	}
+	for _, row := range rows {
+		if _, ok := r.last[row.Container]; !ok {
+			r.last[row.Container] = known{row.Project, row.Service, row.Container, row.State}
+		}
+	}
 }
 
 // project records what changed in one project since the last-known states.
@@ -221,7 +245,7 @@ func rowFor(ts time.Time, k known, code *int) Row {
 	return Row{TS: ts, Project: k.project, Service: k.service, Container: k.id, State: k.state, ExitCode: code}
 }
 
-// insert writes rows in one call; failures are logged at most once per warnEvery.
+// insert writes rows in one call; failures are logged through warn.
 func (r *Recorder) insert(ctx context.Context, rows []Row) bool {
 	if len(rows) == 0 {
 		return true
@@ -230,11 +254,17 @@ func (r *Recorder) insert(ctx context.Context, rows []Row) bool {
 	if err == nil {
 		return true
 	}
-	if ctx.Err() == nil {
-		if now := r.now(); now.Sub(r.warned) >= warnEvery {
-			r.warned = now
-			r.log.Warn("history: record transitions", "err", err)
-		}
-	}
+	r.warn(ctx, "history: record transitions", err)
 	return false
+}
+
+// warn logs at most once per warnEvery, and not at all once ctx is done.
+func (r *Recorder) warn(ctx context.Context, msg string, err error) {
+	if ctx.Err() != nil {
+		return
+	}
+	if now := r.now(); now.Sub(r.warned) >= warnEvery {
+		r.warned = now
+		r.log.Warn(msg, "err", err)
+	}
 }

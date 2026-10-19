@@ -88,6 +88,21 @@ SELECT ts, project, service, container, state, exit_code FROM (
 	if err != nil {
 		return nil, err
 	}
+	return scanRows(rows)
+}
+
+// Latest returns every container's state in force — its latest non-marker
+// row — across all projects, leaving out containers already marked removed.
+func (s *Store) Latest(ctx context.Context) ([]Row, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT ts, project, service, container, state, exit_code
+FROM container_transitions WHERE state != 'removed' AND rowid IN (`+latestRowIDs+`)`)
+	if err != nil {
+		return nil, err
+	}
+	return scanRows(rows)
+}
+
+func scanRows(rows *sql.Rows) ([]Row, error) {
 	defer rows.Close()
 	var out []Row
 	for rows.Next() {

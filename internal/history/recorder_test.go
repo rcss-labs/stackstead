@@ -107,10 +107,12 @@ func (f *fakeSource) SubscribeEvents() (<-chan engine.Event, func()) {
 
 // fakeWriter records every Insert call; each call is also sent on inserted.
 type fakeWriter struct {
-	mu       sync.Mutex
-	calls    [][]Row
-	fail     bool
-	attempts chan []Row // every Insert call, successful or not
+	mu        sync.Mutex
+	calls     [][]Row
+	fail      bool
+	attempts  chan []Row // every Insert call, successful or not
+	latest    []Row      // what Latest returns
+	latestErr error
 }
 
 func newFakeWriter() *fakeWriter { return &fakeWriter{attempts: make(chan []Row, 64)} }
@@ -127,6 +129,12 @@ func (w *fakeWriter) Insert(_ context.Context, rows []Row) error {
 		return errors.New("disk full")
 	}
 	return nil
+}
+
+func (w *fakeWriter) Latest(context.Context) ([]Row, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]Row(nil), w.latest...), w.latestErr
 }
 
 func (w *fakeWriter) setFail(v bool) {
@@ -191,7 +199,13 @@ func (s *syncBuffer) String() string {
 // startup baseline (an insert if any compose container exists).
 func start(t *testing.T, cs ...engine.Container) *harness {
 	t.Helper()
-	h := &harness{src: newFakeSource(), w: newFakeWriter(), logs: &syncBuffer{},
+	return startWith(t, newFakeWriter(), cs...)
+}
+
+// startWith is start with a prepared writer (e.g. one seeded with Latest rows).
+func startWith(t *testing.T, w *fakeWriter, cs ...engine.Container) *harness {
+	t.Helper()
+	h := &harness{src: newFakeSource(), w: w, logs: &syncBuffer{},
 		clock: &fakeClock{t: time.Unix(1_700_000_000, 0)}, done: make(chan struct{})}
 	h.src.set(cs...)
 	rec := NewRecorder(h.src, h.w, slog.New(slog.NewTextHandler(h.logs, nil)), h.clock.now)
@@ -494,5 +508,48 @@ func TestRecorder_RecreateRowsCarryContainerIDs(t *testing.T) {
 	}
 	if got["new"] != StateRunning || got["old"] != StateRemoved || len(got) != 2 {
 		t.Fatalf("rows by container = %v", got)
+	}
+}
+
+// A container recreated while Stackstead was down left its last row (exited)
+// in the store. The startup baseline must close it with removed, or that stale
+// row would win the service's worst state until it aged out.
+func TestRecorder_StartupRemovesContainersGoneWhileDown(t *testing.T) {
+	w := newFakeWriter()
+	one := 1
+	w.latest = []Row{{TS: time.Unix(1_600_000_000, 0), Project: "p", Service: "web", Container: "old", State: StateExited, ExitCode: &one}}
+	h := startWith(t, w, ctr("new", "p", "web", "running", "Up"))
+	baseline := w.calls[0]
+	got := map[string]Row{}
+	for _, r := range baseline {
+		got[r.Container] = r
+	}
+	if len(baseline) != 2 || got["new"].State != StateRunning {
+		t.Fatalf("baseline = %+v, want new running and old removed", baseline)
+	}
+	old := got["old"]
+	if old.State != StateRemoved || old.Project != "p" || old.Service != "web" || !old.TS.Equal(h.clock.now()) {
+		t.Fatalf("old row = %+v, want removed for p/web at now", old)
+	}
+
+	// The service then reads running from the removal on.
+	now := h.clock.now()
+	tl := Build(append(append([]Row(nil), w.latest...), baseline...), now.Add(-time.Hour), now.Add(time.Hour))
+	runs := tl.Services[0].Runs
+	if last := runs[len(runs)-1]; last.State != StateRunning || !last.From.Equal(now) {
+		t.Fatalf("runs = %+v, want running from %v", runs, now)
+	}
+}
+
+func TestRecorder_StartupLatestErrorFallsBack(t *testing.T) {
+	w := newFakeWriter()
+	w.latestErr = errors.New("db locked")
+	h := startWith(t, w, ctr("new", "p", "web", "running", "Up"))
+	if baseline := w.calls[0]; len(baseline) != 1 || baseline[0].Container != "new" {
+		t.Fatalf("baseline = %+v, want only new", baseline)
+	}
+	h.drain(t)
+	if !strings.Contains(h.logs.String(), "level=WARN") {
+		t.Fatalf("no warning logged:\n%s", h.logs.String())
 	}
 }
