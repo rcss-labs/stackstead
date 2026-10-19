@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { get } from '$lib/store';
 import type { Operation, StackDetail as Detail } from '$lib/api/types';
 import { changes, startLive, stopLive } from '$lib/stores/live';
+import { startOperationTracker } from '$lib/stores/operationTracker';
+import { runningOps, startRunningOps } from '$lib/stores/runningOps';
+import { operationsRefresh } from '$lib/stores/stacks';
 import { setUnsavedChanges } from '$lib/stores/guard';
 import { toasts } from '$lib/stores/toasts';
 import { installFakeFetch, installFakeStream, type FakeFetch, type FakeResponse, type FakeStream } from '../../vitest-setup';
@@ -50,9 +53,13 @@ let opsRes: Operation[];
 let healthRes: FakeResponse;
 let statusRes: { docker: string; compose: string; events: string; metricsDegraded: boolean };
 let goTo: (href: string) => void;
+let rmState: Operation['state'];
+let stopTracking: (() => void) | undefined;
 
 beforeEach(() => {
   toasts.reset();
+  rmState = 'succeeded';
+  stopTracking = undefined;
   stackRes = { body: detail() };
   stackGate = undefined;
   postGate = undefined;
@@ -82,6 +89,7 @@ beforeEach(() => {
       return { body: op({ id: 'op2', action: 'pull' }) };
     },
     'DELETE /api/stacks/web': { body: op({ id: 'rm1', action: 'down' }) },
+    'GET /api/operations/rm1': () => ({ body: op({ id: 'rm1', action: 'down', state: rmState }) }),
   });
   stream = installFakeStream({
     '/api/events': [],
@@ -92,6 +100,7 @@ beforeEach(() => {
   });
 });
 afterEach(async () => {
+  stopTracking?.();
   cleanup();
   setUnsavedChanges(false);
   stopLive();
@@ -128,6 +137,16 @@ const calls = (method: string, path: string) => fake.calls.filter((c) => c.metho
 const stackGets = () => calls('GET', '/api/stacks/web');
 const user = () => userEvent.setup();
 const startLiveFromFake = () => startLive({ fetchStatus: () => fetch('/api/status').then((r) => r.json()) });
+/** Starts the running-operations store and the operation tracker exactly as App does for a session. */
+function startTrackingAsApp() {
+  const json = (path: string) => fetch(path).then((r) => r.json());
+  const stopRunning = startRunningOps({ list: () => json('/api/operations?state=running'), changes, refresh: operationsRefresh });
+  const stopTracker = startOperationTracker({ runningOps, get: (id) => json(`/api/operations/${id}`) });
+  stopTracking = () => {
+    stopTracker();
+    stopRunning();
+  };
+}
 const pushChange = (project: string, seq: number) =>
   stream.push('/api/events', `event: change\ndata: {"project":"${project}","seq":${seq}}\n\n`);
 
@@ -308,6 +327,41 @@ describe('stack detail screen', () => {
     );
     await waitFor(() => expect(here()).toBe('/'));
     expect(get(toasts).filter((t) => t.kind === 'success')).toHaveLength(1);
+  });
+
+  describe('with the operation tracker running as in the app', () => {
+    const removeAndFinish = async (state: Operation['state']) => {
+      rmState = state;
+      startTrackingAsApp();
+      mount('/stacks/web');
+      await screen.findByRole('heading', { level: 1, name: 'web' });
+      await user().click(screen.getByRole('button', { name: 'Remove' }));
+      await user().click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Remove' }));
+      await waitFor(() => expect(stream.requests.some((r) => r.path === '/api/operations/rm1/stream')).toBe(true));
+      await act(async () =>
+        stream.push(
+          '/api/operations/rm1/stream',
+          `event: done\ndata: {"id":"rm1","stack":"web","action":"down","state":"${state}","startedAt":"2026-10-14T10:00:00Z"}\n\n`,
+        ),
+      );
+      // Let the tracker see the running list and ask the server what became of the operation.
+      await new Promise((r) => setTimeout(r, 50));
+    };
+
+    it('a successful removal shows exactly one toast, "Removed web", with no link', async () => {
+      await removeAndFinish('succeeded');
+      await waitFor(() => expect(here()).toBe('/'));
+      const shown = get(toasts);
+      expect(shown.map((t) => [t.kind, t.message])).toEqual([['success', 'Removed web']]);
+      expect(shown[0]!.link).toBeUndefined();
+    });
+
+    it('a failed removal shows exactly one danger toast', async () => {
+      await removeAndFinish('failed');
+      const shown = get(toasts);
+      expect(shown.map((t) => [t.kind, t.message])).toEqual([['danger', 'Removing web failed']]);
+      expect(shown[0]!.link).toBeUndefined();
+    });
   });
 
   it('navigating from one stack to another restarts the page', async () => {

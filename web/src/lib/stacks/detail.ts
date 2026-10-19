@@ -30,7 +30,7 @@ export interface StackDetailDeps {
   changes: Readable<LiveChange | null>;
   operationsRefresh: Readable<number>;
   refreshStacks: () => Promise<void>;
-  /** Called after every deps.track so the operation tracker sees the new running list. */
+  /** Called whenever an operation starts (tracked or not) so the running list and the tracker see it. */
   refreshRunningOps: () => void;
   refreshStatus: () => Promise<void>;
   track: (op: TrackedOperation) => void;
@@ -282,8 +282,13 @@ export function createStackDetail(name: string, deps: StackDetailDeps): StackDet
     setSession(undefined);
   }
 
-  function openOperation(o: Operation): void {
-    deps.track({ id: o.id, stack: name, action: o.action });
+  /**
+   * Opens a started operation in the operations pane. A removal is not tracked: its outcome is reported by
+   * this controller alone ("Removed x" or the failure), and a tracker toast would duplicate it with a View
+   * link to a page that no longer exists.
+   */
+  function openOperation(o: Operation, opts: { track: boolean } = { track: true }): void {
+    if (opts.track) deps.track({ id: o.id, stack: name, action: o.action });
     deps.navigate(detailHref(name, { tab: 'operations', op: o.id }));
     deps.refreshRunningOps();
     void loadOperations();
@@ -314,7 +319,7 @@ export function createStackDetail(name: string, deps: StackDetailDeps): StackDet
     try {
       const o = await deps.remove(name, withVolumes);
       removeOpId = o.id;
-      openOperation(o);
+      openOperation(o, { track: false });
     } catch (e) {
       reportActionError(e, 'Could not remove the stack');
     } finally {
