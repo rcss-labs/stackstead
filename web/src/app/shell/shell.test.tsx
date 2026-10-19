@@ -152,7 +152,7 @@ describe('Sidebar', () => {
 
   it('shows the attention LED on Stacks only when attention is true', () => {
     const { rerender } = renderIn(<Sidebar {...sidebarProps} attention={false} current="/" />);
-    const led = () => screen.getByRole('link', { name: /^Stacks/ }).querySelector('[data-tone="danger"]');
+    const led = () => screen.getByRole('link', { name: /^Stacks(,|$)/ }).querySelector('[data-tone="danger"]');
     expect(led()).toBeNull();
     rerender(
       <MemoryRouter>
@@ -408,8 +408,8 @@ describe('Mobile', () => {
   it('tab bar marks the current page and shows the alert LED on Stacks', () => {
     renderIn(<TabBar current="/containers/redis" attention />);
     expect(current('Containers')).toBe('page');
-    expect(current(/^Stacks/)).toBeNull();
-    expect(screen.getByRole('link', { name: /^Stacks/ }).querySelector('[data-tone="danger"]')).toBeTruthy();
+    expect(current(/^Stacks(,|$)/)).toBeNull();
+    expect(screen.getByRole('link', { name: /^Stacks(,|$)/ }).querySelector('[data-tone="danger"]')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Containers' }).querySelector('[data-tone="danger"]')).toBeNull();
   });
 
