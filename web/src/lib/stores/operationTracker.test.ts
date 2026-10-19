@@ -140,6 +140,46 @@ describe('operation tracker', () => {
     expect(toast()).toMatchObject({ kind: 'success' });
   });
 
+  it('an armed recheck timer is cleared when the tab hides, and becoming visible rechecks once', async () => {
+    const d = fakeDoc('visible');
+    start(d.doc);
+    trackOperation({ id: 'op1', stack: 'web', action: 'up' });
+    getOp.mockResolvedValueOnce(running('op1'));
+    ops.set([]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.getTimerCount()).toBe(1);
+    d.setState('hidden');
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(TRACKER_RECHECK_MS * 2);
+    expect(getOp).toHaveBeenCalledTimes(1);
+    getOp.mockResolvedValueOnce(finished('succeeded'));
+    d.setState('visible');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getOp).toHaveBeenCalledTimes(2);
+    expect(toast()).toMatchObject({ kind: 'success' });
+  });
+
+  it('becoming visible does not check an operation still in the running list', async () => {
+    const d = fakeDoc('hidden');
+    start(d.doc);
+    trackOperation({ id: 'op1', stack: 'web', action: 'up' });
+    ops.set([running('op1')]);
+    d.setState('visible');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getOp).not.toHaveBeenCalled();
+  });
+
+  it('a failed get arms no retry timer while hidden', async () => {
+    const d = fakeDoc('hidden');
+    start(d.doc);
+    trackOperation({ id: 'op1', stack: 'web', action: 'up' });
+    getOp.mockRejectedValueOnce(new Error('500'));
+    ops.set([]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getOp).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('a 404 resolves the toast as danger no longer available', async () => {
     start();
     trackOperation({ id: 'op1', stack: 'web', action: 'up' });
@@ -191,6 +231,10 @@ describe('operation tracker', () => {
     lateAnswer(finished('succeeded'));
     await vi.advanceTimersByTimeAsync(0);
     expect(toast()).toMatchObject({ id: second, kind: 'info', pending: true });
+    getOp.mockResolvedValueOnce(finished('succeeded'));
+    ops.set([]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(toast()).toMatchObject({ id: second, kind: 'success', message: 'up · web succeeded' });
   });
 
   it('stop cancels timers and ignores late answers', async () => {

@@ -123,7 +123,15 @@ export function startOperationTracker(deps: {
   });
 
   const onVisibility = () => {
-    if (stopped || doc.visibilityState === 'hidden') return;
+    if (stopped) return;
+    if (doc.visibilityState === 'hidden') {
+      // A recheck armed while visible must not fire into a hidden tab.
+      for (const entry of tracked.values()) {
+        clearTimeout(entry.timer);
+        entry.timer = undefined;
+      }
+      return;
+    }
     for (const id of tracked.keys()) if (!present.has(id)) void check(id);
   };
   doc.addEventListener('visibilitychange', onVisibility);
