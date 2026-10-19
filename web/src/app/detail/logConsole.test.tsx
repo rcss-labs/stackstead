@@ -102,7 +102,7 @@ describe('LogConsole stream', () => {
     fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'first'), logEvent(C_A, 2, 1, 'second line')] });
     mount({ open: false });
     await tick(200);
-    expect(screen.getByText('second line')).toBeTruthy();
+    expect(screen.getByText('second line').parentElement!.textContent).toMatch(/\S+\s+api\s+second line/);
     expect(screen.queryByText('first')).toBeNull();
     expect(body().style.height).toBe('0px');
     expect(fake.requests[0].signal!.aborted).toBe(false);
@@ -165,6 +165,23 @@ describe('LogConsole header', () => {
     expect(screen.getByRole('button', { name: 'Paused · 2 new' })).toBeTruthy();
   });
 
+  it('draws an up chevron that the open state rotates, as the design does', () => {
+    fake = installFakeStream({ [PATH]: [] });
+    mount();
+    expect(screen.getByRole('button', { name: 'Logs' }).querySelector('path')!.getAttribute('d')).toBe('M6 15l6-6 6 6');
+  });
+
+  it('a service change un-pauses the console', async () => {
+    fake = installFakeStream({ [PATH]: [] });
+    const { props, rerender } = mount();
+    await tick();
+    fireEvent.click(screen.getByRole('button', { name: 'Following' }));
+    expect(screen.getByRole('button', { name: 'Paused' })).toBeTruthy();
+    rerender(<LogConsole {...props} service="worker" />);
+    await tick();
+    expect(screen.getByRole('button', { name: 'Following' })).toBeTruthy();
+  });
+
   it('has a level control and a search field only while open', () => {
     fake = installFakeStream({ [PATH]: [] });
     const { rerender, props } = mount();
@@ -193,7 +210,7 @@ describe('LogConsole height', () => {
     const storage = storageStub('240');
     mount({ storage });
     const handle = screen.getByRole('separator', { name: 'Resize logs' });
-    fireEvent.pointerDown(handle, { clientY: 400, pointerId: 1 });
+    expect(fireEvent.pointerDown(handle, { clientY: 400, pointerId: 1 })).toBe(false); // default prevented: no text selection
     expect(body().hasAttribute('data-dragging')).toBe(true);
     fireEvent.pointerMove(handle, { clientY: 300, pointerId: 1 });
     expect(body().style.height).toBe('340px');

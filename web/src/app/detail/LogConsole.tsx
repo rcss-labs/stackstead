@@ -59,6 +59,7 @@ export function LogConsole({ source, services, service, open, onOpenChange, mobi
   }
 
   function onPointerDown(e: PointerEvent<HTMLDivElement>) {
+    e.preventDefault();
     drag.current = { startY: e.clientY, startHeight: height };
     try {
       e.currentTarget.setPointerCapture(e.pointerId);

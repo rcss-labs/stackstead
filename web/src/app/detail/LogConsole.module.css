@@ -47,14 +47,15 @@
 .toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   height: 30px;
-  padding: 0 6px;
+  padding: 0 6px 0 2px;
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text);
   font: inherit;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -69,15 +70,17 @@
   align-items: center;
   gap: 6px;
   height: 24px;
-  padding: 0 10px;
+  padding: 0 9px;
   border: 0;
   border-radius: var(--radius-pill);
   background: var(--success-soft);
   color: var(--success);
-  font-family: var(--mono);
+  font: inherit;
   font-size: 11px;
   cursor: pointer;
 }
+
+.pill:active { transform: scale(0.96); }
 
 .pill[data-paused='true'] {
   background: var(--warning-soft);

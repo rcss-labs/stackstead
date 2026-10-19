@@ -1,4 +1,4 @@
-import { LOG_LEVELS, type LogLevel } from '$lib/stacks/console';
+import { LOG_LEVELS, logClock, type LogLevel } from '$lib/stacks/console';
 import type { LogLine } from '$lib/logs/buffer';
 import { Segmented } from '../components/Segmented';
 import styles from './LogConsole.module.css';
@@ -34,8 +34,8 @@ export function LogConsoleHeader({
   return (
     <header className={styles.header}>
       <button type="button" className={styles.toggle} aria-expanded={open} onClick={onToggle}>
-        <svg className={styles.chevron} width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-          <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        <svg className={styles.chevron} width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 15l6-6 6 6" fill="none" stroke="var(--muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
         Logs
       </button>
@@ -57,7 +57,13 @@ export function LogConsoleHeader({
           />
         </>
       ) : (
-        <span className={styles.latest}>{latest?.text}</span>
+        <span className={styles.latest}>
+          {latest && (
+            <>
+              <span>{logClock(latest.time)}</span> <span>{latest.service}</span> <span>{latest.text}</span>
+            </>
+          )}
+        </span>
       )}
       <span className={styles.status} role="status" data-tone={status.tone}>
         {status.label}
