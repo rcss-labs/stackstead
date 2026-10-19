@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router';
 import type { Action } from '$lib/api/types';
 import { timelineLanes } from '$lib/stacks/timeline';
 import { lifecycleDisabledReason } from '$lib/stacks/lifecycle';
@@ -12,10 +12,12 @@ import { Button } from '../components/Button';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState } from '../components/EmptyState';
 import { Spinner } from '../components/Spinner';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { useStore } from '../hooks/useStore';
 import { ComposeView } from './ComposeView';
 import { DetailHeader } from './DetailHeader';
 import { HealthTimeline } from './HealthTimeline';
+import { LogConsole } from './LogConsole';
 import { OperationsPane } from './OperationsPane';
 import { ServiceChips, ServiceRail } from './ServiceRail';
 import { ServicePane } from './ServicePane';
@@ -43,6 +45,24 @@ export function StackDetailScreen({ name }: { name: string }) {
   const latest = useStore(liveMetrics.latest);
   const [retrying, setRetrying] = useState(false);
   const [pendingLeave, setPendingLeave] = useState<(() => void) | undefined>();
+  const mobile = useIsMobile();
+  const [query] = useSearchParams();
+  const [logsOpen, setLogsOpen] = useState(!mobile);
+  const [logService, setLogService] = useState<string | undefined>();
+  const consoleSlot = useRef<HTMLDivElement>(null);
+  // ?tab=logs (from a link or a reload) opens the console on the requested service and moves focus to it.
+  // The state is adjusted while rendering so the console's first stream already carries that service.
+  const logsRequested = location.logsRequested;
+  const search = query.toString();
+  const [syncedSearch, setSyncedSearch] = useState<string | undefined>();
+  if (logsRequested && syncedSearch !== search) {
+    setSyncedSearch(search);
+    setLogsOpen(true);
+    setLogService(location.logService);
+  }
+  useEffect(() => {
+    if (logsRequested) consoleSlot.current?.querySelector<HTMLElement>('button[aria-expanded]')?.focus();
+  }, [logsRequested, search]);
 
   useEffect(() => {
     document.title = `${name} · Stackstead`;
@@ -147,13 +167,32 @@ export function StackDetailScreen({ name }: { name: string }) {
         <SplitPane
           rail={<ServiceRail {...railProps} />}
           chips={<ServiceChips {...railProps} />}
+          console={
+            // A parse error leaves no services to read logs from, so no console and no stream.
+            !parseError && (
+              <div ref={consoleSlot}>
+                <LogConsole
+                  source={{ kind: 'stack', name }}
+                  services={detail.services.map((s) => s.name)}
+                  service={logService}
+                  onService={setLogService}
+                  open={logsOpen}
+                  onOpenChange={setLogsOpen}
+                  mobile={mobile}
+                />
+              </div>
+            )
+          }
         >
           {item.kind === 'service' && selectedService ? (
             <ServicePane
               service={selectedService}
               tab={serviceTab}
               onTab={(tab) => guarded(() => location.go(location.hrefFor(item, tab)))}
-              onLogs={() => guarded(() => location.go(detailHref(name, { tab: 'logs', service: selectedService.name })))}
+              onLogs={() => {
+                setLogService(selectedService.name);
+                setLogsOpen(true);
+              }}
               latestCpu={latest.get(selectedService.name)?.cpu}
               cpuHour={cpuHour.get(selectedService.name)}
             />

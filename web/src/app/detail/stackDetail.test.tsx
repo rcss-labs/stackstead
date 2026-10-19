@@ -2,7 +2,7 @@ import { act, cleanup, render, screen, waitFor, within } from '@testing-library/
 import userEvent from '@testing-library/user-event';
 import { Suspense } from 'react';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from '$lib/store';
 import type { Operation, StackDetail as Detail } from '$lib/api/types';
 import { changes, startLive, stopLive } from '$lib/stores/live';
@@ -94,6 +94,7 @@ beforeEach(() => {
   stream = installFakeStream({
     '/api/events': [],
     '/api/stacks/web/logs': [],
+    '/api/stacks/db/logs': [],
     '/api/stacks/web/metrics/live': [],
     '/api/operations/op1/stream': [],
     '/api/operations/rm1/stream': [],
@@ -147,6 +148,20 @@ function startTrackingAsApp() {
     stopRunning();
   };
 }
+const logRequests = (stack: string) => stream.requests.filter((r) => r.path.startsWith(`/api/stacks/${stack}/logs`));
+const twoServices = (): Detail => {
+  const base = detail();
+  return detail({
+    serviceCount: 2,
+    running: 2,
+    services: [
+      base.services[0]!,
+      { name: 'db', config: { image: 'postgres:16', limits: {} }, readOnly: [], containers: [{ id: 'def', name: 'web-db-1', service: 'db', state: 'running', status: 'Up', health: 'none' }] },
+    ],
+  });
+};
+const consoleToggle = () => screen.getByRole('button', { name: 'Logs' });
+const chip = (name: string) => within(screen.getByRole('group', { name: 'Service filter' })).getByRole('button', { name });
 const pushChange = (project: string, seq: number) =>
   stream.push('/api/events', `event: change\ndata: {"project":"${project}","seq":${seq}}\n\n`);
 
@@ -321,7 +336,8 @@ describe('stack detail screen', () => {
     await user().click(screen.getByRole('button', { name: 'Remove' }));
     await user().click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(stream.requests.some((r) => r.path === '/api/operations/rm1/stream')).toBe(true));
-    await act(async () =>
+    // The request is recorded a moment before its body opens; retry the push until the stream is open.
+    await waitFor(() =>
       stream.push(
         '/api/operations/rm1/stream',
         'event: done\ndata: {"id":"rm1","stack":"web","action":"down","state":"succeeded","startedAt":"2026-10-14T10:00:00Z","exitCode":0}\n\n',
@@ -340,7 +356,7 @@ describe('stack detail screen', () => {
       await user().click(screen.getByRole('button', { name: 'Remove' }));
       await user().click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Remove' }));
       await waitFor(() => expect(stream.requests.some((r) => r.path === '/api/operations/rm1/stream')).toBe(true));
-      await act(async () =>
+      await waitFor(() =>
         stream.push(
           '/api/operations/rm1/stream',
           `event: done\ndata: {"id":"rm1","stack":"web","action":"down","state":"${state}","startedAt":"2026-10-14T10:00:00Z"}\n\n`,
@@ -372,6 +388,8 @@ describe('stack detail screen', () => {
     await screen.findByRole('heading', { level: 1, name: 'web' });
     await waitFor(() => expect(stream.requests.some((r) => r.path === '/api/operations/op1/stream')).toBe(true));
     const opStream = stream.requests.find((r) => r.path === '/api/operations/op1/stream');
+    await waitFor(() => expect(logRequests('web')).toHaveLength(1));
+    const logStream = logRequests('web')[0]!;
     await waitFor(() => expect(get(changes)?.resync).toBe(true));
     goTo('/stacks/db');
     expect(await screen.findByRole('heading', { level: 1, name: 'db' })).toBeTruthy();
@@ -379,6 +397,7 @@ describe('stack detail screen', () => {
     await waitFor(() => expect(calls('GET', '/api/stacks/db/health?span=60m')).toBeGreaterThanOrEqual(1));
     expect(document.title).toBe('db · Stackstead');
     expect(opStream?.signal?.aborted).toBe(true);
+    expect(logStream.signal?.aborted).toBe(true);
     // The web page's controller stopped: a change for web no longer refetches it.
     const webGets = stackGets();
     pushChange('web', 7);
@@ -427,6 +446,131 @@ describe('stack detail screen', () => {
       const extra = calls('GET', p) - before[i]!;
       expect(extra, p).toBeGreaterThanOrEqual(1);
       expect(extra, p).toBeLessThanOrEqual(2);
+    });
+  });
+
+  describe('log console', () => {
+    beforeEach(() => {
+      stackRes = { body: twoServices() };
+    });
+    const stubMobile = (matches: boolean) =>
+      vi.stubGlobal('matchMedia', (query: string) => ({
+        matches: query === '(max-width: 759px)' ? matches : false,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      }));
+    afterEach(() => vi.unstubAllGlobals());
+
+    it('?tab=logs expands the console with the service chip preselected', async () => {
+      mount('/stacks/web?tab=logs&service=app');
+      await screen.findByRole('heading', { level: 1, name: 'web' });
+      await waitFor(() => expect(logRequests('web')).toHaveLength(1));
+      expect(consoleToggle().getAttribute('aria-expanded')).toBe('true');
+      expect(chip('app').getAttribute('aria-pressed')).toBe('true');
+      expect(logRequests('web')[0]!.path).toContain('service=app');
+      expect(screen.getByRole('heading', { level: 2, name: 'app' })).toBeTruthy();
+      await waitFor(() => expect(document.activeElement).toBe(consoleToggle()));
+    });
+
+    it('the console stream opens once the stack is loaded and not before', async () => {
+      let release!: () => void;
+      stackGate = new Promise<void>((r) => (release = r));
+      mount('/stacks/web');
+      await new Promise((r) => setTimeout(r, 50));
+      expect(logRequests('web')).toHaveLength(0);
+      release();
+      await waitFor(() => expect(logRequests('web')).toHaveLength(1));
+    });
+
+    it('opens no log stream on a 404', async () => {
+      stackRes = { status: 404, body: { error: 'stack not found' } };
+      mount('/stacks/web');
+      await screen.findByText('Stack not found');
+      await new Promise((r) => setTimeout(r, 50));
+      expect(logRequests('web')).toHaveLength(0);
+      expect(screen.queryByRole('region', { name: 'Logs' })).toBeNull();
+    });
+
+    it('opens no log stream when the first load fails', async () => {
+      stackRes = { status: 500, body: { error: 'boom' } };
+      mount('/stacks/web');
+      await screen.findByText('Could not load the stack');
+      await new Promise((r) => setTimeout(r, 50));
+      expect(logRequests('web')).toHaveLength(0);
+    });
+
+    it('shows no console and opens no stream under a parse error', async () => {
+      stackRes = { body: detail({ parseError: 'yaml: line 3: bad' }) };
+      mount('/stacks/web?tab=logs');
+      await screen.findByText('Compose file cannot be parsed');
+      await new Promise((r) => setTimeout(r, 50));
+      expect(logRequests('web')).toHaveLength(0);
+      expect(screen.queryByRole('region', { name: 'Logs' })).toBeNull();
+    });
+
+    it('collapsing keeps the stream and shows the latest line', async () => {
+      mount('/stacks/web');
+      await waitFor(() => expect(logRequests('web')).toHaveLength(1));
+      const data = JSON.stringify({ service: 'app', container: 'aaaaaaaaaaaa', stream: 'stdout', time: '2026-10-14T10:00:00Z', text: 'hello world' });
+      await waitFor(() => stream.push('/api/stacks/web/logs', `id: aaaaaaaaaaaa:1:1\nevent: log\ndata: ${data}\n\n`));
+      await screen.findByText('hello world');
+      await user().click(consoleToggle());
+      expect(consoleToggle().getAttribute('aria-expanded')).toBe('false');
+      expect(logRequests('web')).toHaveLength(1);
+      expect(logRequests('web')[0]!.signal?.aborted).toBe(false);
+      expect(within(screen.getByTestId('log-console-header')).getByText('hello world')).toBeTruthy();
+    });
+
+    it("the pane's Logs button expands the console and selects its service without navigating", async () => {
+      mount('/stacks/web?service=db');
+      await waitFor(() => expect(logRequests('web')).toHaveLength(1));
+      await user().click(consoleToggle());
+      expect(consoleToggle().getAttribute('aria-expanded')).toBe('false');
+      const before = here();
+      await user().click(screen.getByRole('button', { name: 'Logs for db' }));
+      expect(here()).toBe(before);
+      expect(consoleToggle().getAttribute('aria-expanded')).toBe('true');
+      expect(chip('db').getAttribute('aria-pressed')).toBe('true');
+      await waitFor(() => expect(logRequests('web')).toHaveLength(2));
+      expect(logRequests('web')[1]!.path).toContain('service=db');
+    });
+
+    it("navigating to another stack aborts the console stream and opens the new stack's", async () => {
+      mount('/stacks/web');
+      await waitFor(() => expect(logRequests('web')).toHaveLength(1));
+      const webLogs = logRequests('web')[0]!;
+      goTo('/stacks/db');
+      await screen.findByRole('heading', { level: 1, name: 'db' });
+      await waitFor(() => expect(logRequests('db')).toHaveLength(1));
+      expect(webLogs.signal?.aborted).toBe(true);
+      expect(logRequests('web')).toHaveLength(1);
+    });
+
+    it('mobile starts collapsed at 280px', async () => {
+      stubMobile(true);
+      mount('/stacks/web');
+      await screen.findByRole('heading', { level: 1, name: 'web' });
+      expect(consoleToggle().getAttribute('aria-expanded')).toBe('false');
+      await user().click(consoleToggle());
+      expect(screen.getByTestId('log-console-body').style.height).toBe('280px');
+      expect(screen.queryByRole('separator', { name: 'Resize logs' })).toBeNull();
+    });
+
+    it('?tab=logs expands the collapsed mobile console', async () => {
+      stubMobile(true);
+      mount('/stacks/web?tab=logs');
+      await screen.findByRole('heading', { level: 1, name: 'web' });
+      await waitFor(() => expect(consoleToggle().getAttribute('aria-expanded')).toBe('true'));
+    });
+
+    it('the unsaved-changes guard does not interfere with console actions', async () => {
+      mount('/stacks/web');
+      await waitFor(() => expect(logRequests('web')).toHaveLength(1));
+      act(() => setUnsavedChanges(true));
+      await user().click(chip('db'));
+      await user().click(screen.getByRole('button', { name: /Following|Paused/ }));
+      await user().click(consoleToggle());
+      expect(screen.queryByRole('alertdialog')).toBeNull();
     });
   });
 

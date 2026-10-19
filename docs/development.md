@@ -94,6 +94,11 @@ toast from `runningOps` plus one `GET /api/operations/{id}`. A stack removal is
 the exception: the stack page reports its outcome itself ("Removed x" or the
 failure), so it is not tracked and shows a single toast.
 
+The stack page's log console keeps one log stream per open stack page (tail 200, follow), opened once the stack
+has loaded and closed when the page is left. Only the service chips restart it (a collapsed console keeps it
+running), and the console height persists under `stackstead.logsHeight`. `?tab=logs` (and the service pane's
+`Logs` button) expands the console on the chosen service.
+
 ## Tests
 
 ```bash
