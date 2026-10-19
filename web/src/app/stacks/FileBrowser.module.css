@@ -3,7 +3,7 @@
   flex-wrap: wrap;
   gap: 4px;
   align-items: center;
-  overflow-wrap: anywhere;
+  min-width: 0;
   font-size: 12.5px;
 }
 
@@ -11,7 +11,12 @@
   display: inline-flex;
   gap: 4px;
   align-items: center;
+  min-width: 0;
+  max-width: 100%;
 }
+/* The separator stays with its segment; a long segment breaks within itself instead of stranding the chevron. */
+.step > [aria-hidden='true'] { flex: none; }
+.step > :not([aria-hidden='true']) { min-width: 0; overflow-wrap: anywhere; text-align: start; }
 
 .step > [aria-hidden='true'] { color: var(--faint); }
 
