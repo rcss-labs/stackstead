@@ -50,3 +50,16 @@ export function serviceState(svc: ServiceDetail): { tone: StateTone; text: strin
   if (cs.some((c) => c.state === 'running')) return { tone: 'success', text };
   return { tone: 'muted', text };
 }
+
+/** A stack needs attention when it is partial or unavailable, or has an unhealthy or failed container. */
+function stackNeedsAttention(s: StackSummary): boolean {
+  return s.status === 'partial' || s.status === 'unavailable' || s.health.unhealthy > 0 || s.health.failed > 0;
+}
+
+export function needsAttention(items: StackSummary[]): boolean {
+  return items.some(stackNeedsAttention);
+}
+
+export function attentionCount(items: StackSummary[]): number {
+  return items.filter(stackNeedsAttention).length;
+}

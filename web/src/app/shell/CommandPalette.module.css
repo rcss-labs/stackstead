@@ -1,0 +1,107 @@
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The dialog panel is the palette's frame; its own padding and gap give way to the design's flush rows. */
+.palette {
+  display: flex;
+  flex-direction: column;
+  margin: -20px;
+  color: var(--text);
+  font: 13px/1.45 var(--sans);
+}
+
+.searchRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  height: 50px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.input::placeholder { color: var(--faint); }
+
+.kbd,
+.enter {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--faint);
+}
+
+.kbd {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 5px;
+}
+
+.results {
+  max-height: 380px;
+  overflow: auto;
+  padding: 6px;
+}
+
+.groupLabel { padding: 8px 10px 4px; }
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.08s;
+}
+
+.option[aria-selected='true'] { background: var(--hover); }
+.option[aria-disabled='true'] { cursor: not-allowed; }
+.option[aria-disabled='true'] .label { color: var(--muted); }
+
+.dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-led);
+  background: var(--border-strong);
+}
+
+.label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.label[data-mono='true'] { font-family: var(--mono); }
+
+.hint { font-size: 11.5px; color: var(--faint); }
+
+.empty { padding: 18px 12px; color: var(--muted); }
+
+.footer {
+  display: flex;
+  gap: 14px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--faint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .option { transition: none; }
+}

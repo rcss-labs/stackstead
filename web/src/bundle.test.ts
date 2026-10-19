@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -85,5 +85,34 @@ describe('public logos', () => {
 
   it('logo-art.png stays within its 40 960 B cap', () => {
     expect(statSync(pub('logo-art.png')).size).toBeLessThanOrEqual(40960);
+  });
+});
+
+describe('react app build shape', () => {
+  const dist = join(process.cwd(), 'dist-app');
+  const manifestPath = join(dist, '.vite', 'manifest.json');
+  const lazyNames = [
+    'StackDetail', 'StackCreate', 'StackImport', 'ContainerList', 'ContainerDetail', 'NetworkList',
+    'Storage', 'StorageImage', 'StorageVolume', 'Settings', 'Login', 'Setup', 'NotFound',
+    'CommandPalette',
+  ];
+  // Chunk files are named assets/<Name>-<hash>.js (see chunkFileNames in vite.app.config.ts).
+  const chunkName = (file: string) => file.replace(/^assets\//, '').replace(/-[\w-]{8}\.js$/, '');
+
+  it.skipIf(!existsSync(manifestPath))('keeps every screen and the palette out of the eager entry', () => {
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    expect(Object.keys(manifest).find((k) => manifest[k].isEntry)).toBe('app.html');
+
+    const sizes = measure(dist);
+    const eager = readdirSync(join(dist, 'assets'))
+      .filter((f) => f.endsWith('.js'))
+      .map((f) => `assets/${f}`)
+      .filter((f) => !sizes.lazy.some((l: { file: string }) => l.file === f))
+      .map(chunkName);
+    for (const name of lazyNames) expect(eager).not.toContain(name);
+
+    const lazy = sizes.lazy.map((l: { file: string }) => chunkName(l.file));
+    for (const name of lazyNames) expect(lazy).toContain(name);
+    expect(verdict(sizes)).toEqual([]);
   });
 });

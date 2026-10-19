@@ -1,0 +1,37 @@
+/* The click-capture wrapper must not become a layout box between the shell's flex parts. */
+.frame {
+  display: contents;
+}
+
+.banners {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 24px 0;
+}
+
+.main {
+  display: block;
+  padding: 24px 24px 48px;
+}
+
+.bare {
+  display: block;
+  padding: 0;
+}
+
+.loading {
+  display: flex;
+  justify-content: center;
+  padding: 48px 24px;
+}
+
+@media (max-width: 759px) {
+  .banners {
+    padding: 12px 14px 0;
+  }
+
+  .main {
+    padding: 16px 14px 24px;
+  }
+}

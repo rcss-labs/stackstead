@@ -1,0 +1,13 @@
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 32px 16px;
+  text-align: center;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+}
+
+.empty h2 { font-size: 14px; font-weight: 600; }
+.empty p { color: var(--muted); }

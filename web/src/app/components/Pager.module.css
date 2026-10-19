@@ -1,0 +1,13 @@
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.status {
+  color: var(--muted);
+  font-size: 12px;
+}

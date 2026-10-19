@@ -1,0 +1,19 @@
+.tag {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  white-space: nowrap;
+  background: var(--tone-soft);
+  color: var(--tone);
+}
+
+.tag[data-mono='true'] { font-family: var(--mono); }
+
+.tag[data-tone='muted'] { --tone: var(--muted); --tone-soft: var(--muted-soft); }
+.tag[data-tone='info'] { --tone: var(--info); --tone-soft: var(--info-soft); }
+.tag[data-tone='warning'] { --tone: var(--warning); --tone-soft: var(--warning-soft); }
+.tag[data-tone='danger'] { --tone: var(--danger); --tone-soft: var(--danger-soft); }
+.tag[data-tone='success'] { --tone: var(--success); --tone-soft: var(--success-soft); }

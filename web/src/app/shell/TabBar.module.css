@@ -1,0 +1,43 @@
+.bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 6;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  padding: 6px 4px 10px;
+  background: var(--chassis);
+  border-top: 1px solid var(--border);
+}
+
+.tab {
+  flex: 1;
+  min-height: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 0.12s;
+}
+
+.tab[aria-current='page'] {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.icon {
+  position: relative;
+  display: grid;
+}
+
+.alert {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+}
+
+.label {
+  font-size: 10.5px;
+}

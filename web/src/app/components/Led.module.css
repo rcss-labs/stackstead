@@ -1,0 +1,30 @@
+.led {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-led);
+  background: var(--tone);
+  box-shadow: 0 0 0 3px var(--tone-soft);
+}
+
+.led[data-size='7'] {
+  width: 7px;
+  height: 7px;
+}
+
+.led[data-tone='success'] { --tone: var(--success); --tone-soft: var(--success-soft); }
+.led[data-tone='warning'] { --tone: var(--warning); --tone-soft: var(--warning-soft); }
+.led[data-tone='danger'] { --tone: var(--danger); --tone-soft: var(--danger-soft); }
+.led[data-tone='info'] { --tone: var(--info); --tone-soft: var(--info-soft); }
+.led[data-tone='muted'] { --tone: var(--muted); --tone-soft: var(--muted-soft); }
+.led[data-tone='faint'] { --tone: var(--faint); --tone-soft: var(--muted-soft); }
+
+.led[data-pulse='true'] {
+  animation: led-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes led-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
