@@ -222,18 +222,19 @@ func (h *harness) next(t *testing.T) []Row {
 	}
 }
 
-// sync_ proves the recorder has processed everything sent before it by
-// sending a change for an unknown project and waiting for it to be consumed.
+// drain proves the recorder has processed everything sent before it. It sends
+// two no-op sentinels on each channel (an unknown project, a non-compose
+// event) and waits for each channel to empty: the second sentinel is only
+// received after the first was fully handled, so every earlier message on that
+// channel has been processed too.
 func (h *harness) drain(t *testing.T) {
 	t.Helper()
-	h.src.changes <- state.Change{Project: "sync-marker"}
-	for len(h.src.changes) > 0 {
-		time.Sleep(time.Millisecond)
-	}
-	// the marker is consumed; the recorder then handles it before reading the next select
-	h.src.changes <- state.Change{Project: "sync-marker"}
-	for len(h.src.changes) > 0 {
-		time.Sleep(time.Millisecond)
+	for range 2 {
+		h.src.changes <- state.Change{Project: "sync-marker"}
+		h.src.events <- engine.Event{Type: "container", Action: "start", ContainerID: "sync-marker"}
+		for len(h.src.changes) > 0 || len(h.src.events) > 0 {
+			time.Sleep(time.Millisecond)
+		}
 	}
 }
 
@@ -296,7 +297,7 @@ func TestRecorder_WritesTransitionAndRemoved(t *testing.T) {
 
 	h.src.set()
 	h.src.changes <- state.Change{Project: "app"}
-	if rows := h.next(t); len(rows) != 1 || rows[0].State != StateRemoved || rows[0].Container != "app-web-1" {
+	if rows := h.next(t); len(rows) != 1 || rows[0].State != StateRemoved || rows[0].Container != "a" {
 		t.Fatalf("rows = %+v", rows)
 	}
 
@@ -391,7 +392,7 @@ func TestRecorder_CountsDieStartPairsOnce(t *testing.T) {
 			}
 			rows := h.next(t)
 			if len(rows) != 1 || rows[0].State != StateRestart || rows[0].Project != "app" ||
-				rows[0].Service != "web" || rows[0].Container != "app-web-1" {
+				rows[0].Service != "web" || rows[0].Container != "a" {
 				t.Fatalf("rows = %+v", rows)
 			}
 			h.noInsert(t)
@@ -473,5 +474,25 @@ func TestRecorder_StopsOnCancel(t *testing.T) {
 		default:
 			t.Fatalf("subscription %d was not cancelled", i)
 		}
+	}
+}
+
+// A compose recreate gives the new container the old one's name; rows must be
+// told apart by container id or the timeline would show the old id's removal
+// over the new id's running state.
+func TestRecorder_RecreateRowsCarryContainerIDs(t *testing.T) {
+	h := start(t, ctr("old", "app", "web", "running", "Up"))
+	h.src.set(ctr("new", "app", "web", "running", "Up"))
+	h.src.changes <- state.Change{Project: "app"}
+	rows := h.next(t)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v, want 2", rows)
+	}
+	got := map[string]string{}
+	for _, r := range rows {
+		got[r.Container] = r.State
+	}
+	if got["new"] != StateRunning || got["old"] != StateRemoved || len(got) != 2 {
+		t.Fatalf("rows by container = %v", got)
 	}
 }

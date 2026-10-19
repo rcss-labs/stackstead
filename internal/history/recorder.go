@@ -32,7 +32,7 @@ type Writer interface {
 
 // known is what the recorder last wrote for one container.
 type known struct {
-	project, service, name, state string
+	project, service, id, state string
 }
 
 // Recorder turns the cache's change notifications into stored transitions.
@@ -136,13 +136,13 @@ func (r *Recorder) connect(ctx context.Context) {
 			continue
 		}
 		st, code := DeriveState(c)
-		k := known{c.Project(), c.ComposeService(), c.Name, st}
+		k := known{c.Project(), c.ComposeService(), c.ID, st}
 		next[c.ID] = k
 		rows = append(rows, rowFor(ts, k, code))
 	}
 	for id, k := range r.last {
 		if _, ok := next[id]; !ok {
-			rows = append(rows, rowFor(ts, known{k.project, k.service, k.name, StateRemoved}, nil))
+			rows = append(rows, rowFor(ts, known{k.project, k.service, k.id, StateRemoved}, nil))
 		}
 	}
 	if !r.insert(ctx, rows) {
@@ -167,7 +167,7 @@ func (r *Recorder) project(ctx context.Context, project string) {
 		}
 		seen[c.ID] = true
 		st, code := DeriveState(c)
-		k := known{project, c.ComposeService(), c.Name, st}
+		k := known{project, c.ComposeService(), c.ID, st}
 		if prev, ok := r.last[c.ID]; !ok || prev.state != st {
 			rows = append(rows, rowFor(ts, k, code))
 			updates[c.ID] = k
@@ -176,7 +176,7 @@ func (r *Recorder) project(ctx context.Context, project string) {
 	var gone []string
 	for id, k := range r.last {
 		if k.project == project && !seen[id] {
-			rows = append(rows, rowFor(ts, known{k.project, k.service, k.name, StateRemoved}, nil))
+			rows = append(rows, rowFor(ts, known{k.project, k.service, k.id, StateRemoved}, nil))
 			gone = append(gone, id)
 		}
 	}
@@ -210,7 +210,7 @@ func (r *Recorder) event(ctx context.Context, ev engine.Event) {
 			return
 		}
 		row := Row{TS: ts, Project: project, Service: ev.Labels[labelComposeService],
-			Container: ev.Name, State: StateRestart}
+			Container: ev.ContainerID, State: StateRestart}
 		if r.insert(ctx, []Row{row}) {
 			r.lastRS[ev.ContainerID] = ts.Unix()
 		}
@@ -218,7 +218,7 @@ func (r *Recorder) event(ctx context.Context, ev engine.Event) {
 }
 
 func rowFor(ts time.Time, k known, code *int) Row {
-	return Row{TS: ts, Project: k.project, Service: k.service, Container: k.name, State: k.state, ExitCode: code}
+	return Row{TS: ts, Project: k.project, Service: k.service, Container: k.id, State: k.state, ExitCode: code}
 }
 
 // insert writes rows in one call; failures are logged at most once per warnEvery.
