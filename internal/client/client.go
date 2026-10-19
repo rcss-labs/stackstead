@@ -386,6 +386,18 @@ func (c *Client) MetricsHistory(ctx context.Context, name string, q MetricsQuery
 	return out, err
 }
 
+// HealthHistory fetches the stack's per-service state timeline; a zero span
+// lets the server use its default.
+func (c *Client) HealthHistory(ctx context.Context, name string, span time.Duration) (apitypes.HealthHistory, error) {
+	path := "/api/stacks/" + esc(name) + "/health"
+	if span > 0 {
+		path += "?" + url.Values{"span": {span.String()}}.Encode()
+	}
+	var out apitypes.HealthHistory
+	_, err := c.authed(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
 func (c *Client) MetricsTokenStatus(ctx context.Context) (apitypes.MetricsTokenStatus, error) {
 	var out apitypes.MetricsTokenStatus
 	_, err := c.authed(ctx, http.MethodGet, "/api/settings/metrics-token", nil, &out)
