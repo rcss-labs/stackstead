@@ -10,7 +10,10 @@ import { changes, live, startLive, stopLive } from '$lib/stores/live';
 import { startStacks, stacks } from '$lib/stores/stacks';
 import { toasts } from '$lib/stores/toasts';
 import { Banner } from './components/Banner';
+import { Button } from './components/Button';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { EmptyState } from './components/EmptyState';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Spinner } from './components/Spinner';
 import { useDocumentTitle } from './hooks/useDocumentTitle';
 import { useFocusOnNavigate } from './hooks/useFocusOnNavigate';
@@ -86,9 +89,11 @@ function AppFrame() {
     const Screen = state === 'needs-setup' ? SetupScreen : LoginScreen;
     page = (
       <main className={styles.bare}>
-        <Suspense fallback={<Spinner label="Loading page" />}>
-          <Screen />
-        </Suspense>
+        <ErrorBoundary resetKey={pathname} fallback={<PageLoadError />}>
+          <Suspense fallback={<Spinner label="Loading page" />}>
+            <Screen />
+          </Suspense>
+        </ErrorBoundary>
       </main>
     );
   } else {
@@ -111,6 +116,7 @@ interface SignedInFrameProps {
 /** The shell, banners and the single main landmark; mounted only while signed in. */
 function SignedInFrame({ runningOps, loggingOut }: SignedInFrameProps) {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const { username } = useStore(session);
   const liveState = useStore(live);
   const { items } = useStore(stacks);
@@ -162,13 +168,15 @@ function SignedInFrame({ runningOps, loggingOut }: SignedInFrameProps) {
           banners={banners.length > 0 ? <div className={styles.banners}>{banners}</div> : undefined}
         >
           <main ref={mainRef} className={styles.main}>
-            <Suspense fallback={<Spinner label="Loading page" />}>
-              <Routes>
-                {ROUTES.map(({ path, screen: Screen }) => (
-                  <Route key={path} path={path} element={<Screen />} />
-                ))}
-              </Routes>
-            </Suspense>
+            <ErrorBoundary resetKey={pathname} fallback={<PageLoadError />}>
+              <Suspense fallback={<Spinner label="Loading page" />}>
+                <Routes>
+                  {ROUTES.map(({ path, screen: Screen }) => (
+                    <Route key={path} path={path} element={<Screen />} />
+                  ))}
+                </Routes>
+              </Suspense>
+            </ErrorBoundary>
           </main>
         </Shell>
       </div>
@@ -183,5 +191,19 @@ function SignedInFrame({ runningOps, loggingOut }: SignedInFrameProps) {
       />
       <PaletteHost open={paletteOpen} runningOps={runningOps} onClose={() => setPaletteOpen(false)} />
     </>
+  );
+}
+
+/**
+ * A screen's chunk could not be fetched (typically an upgrade changed the asset hashes under an open tab).
+ * The shell stays; reloading fetches the new build.
+ */
+function PageLoadError() {
+  return (
+    <EmptyState title="Could not load this page" description="Stackstead may have been upgraded since this tab was opened.">
+      <Button variant="primary" onClick={() => window.location.reload()}>
+        Reload
+      </Button>
+    </EmptyState>
   );
 }
