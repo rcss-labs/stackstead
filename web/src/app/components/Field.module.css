@@ -1,0 +1,28 @@
+.field { display: flex; flex-direction: column; gap: var(--space-1); }
+.field label { font-size: 12px; font-weight: 500; color: var(--muted); }
+.hint { color: var(--faint); font-size: 11.5px; }
+.error { color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
+
+.field input,
+.field select,
+.field textarea {
+  height: 32px;
+  padding: 0 10px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius);
+  font: inherit;
+  font-size: 13px;
+}
+
+.field textarea { height: auto; padding-block: 6px; }
+
+.field[data-mono='true'] input,
+.field[data-mono='true'] select,
+.field[data-mono='true'] textarea { font-family: var(--mono); }
+
+.field [aria-invalid='true'] { border-color: var(--danger); }
+
+.field :is(input, textarea):read-only,
+.field :is(input, select, textarea):disabled { background: var(--raised); color: var(--muted); }

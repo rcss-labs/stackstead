@@ -1,0 +1,38 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: var(--overlay);
+  z-index: 200;
+}
+
+.dialog {
+  width: min(32rem, 100%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 20px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  animation: pop 0.16s ease-out;
+}
+
+.dialog[data-width='lg'] { width: min(44rem, 100%); }
+
+.dialog h2 { font-size: 14px; font-weight: 600; }
+
+@keyframes pop {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dialog { animation: none; }
+}
