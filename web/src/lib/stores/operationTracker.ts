@@ -18,7 +18,6 @@ interface Entry {
   toastId: number;
   stack: string;
   action: string;
-  seen: boolean;
   checking: boolean;
   timer?: ReturnType<typeof setTimeout>;
 }
@@ -44,7 +43,11 @@ export function operationToast(op: Pick<Operation, 'stack' | 'action' | 'state'>
   }
 }
 
-/** Pushes the pending toast for a started operation; tracking the same id again returns the existing toast. */
+/**
+ * Pushes the pending toast for a started operation; tracking the same id again returns the existing toast
+ * (unless that toast was dismissed, then it is tracked afresh). Callers must call refreshRunningOps() after
+ * tracking: the tracker only reacts to running-list emissions.
+ */
 export function trackOperation(op: TrackedOperation): number {
   const existing = tracked.get(op.id);
   if (existing) {
@@ -57,7 +60,7 @@ export function trackOperation(op: TrackedOperation): number {
     ...operationToast({ stack: op.stack, action: op.action, state: 'running' }),
     ...(href && { link: { label: 'View', href } }),
   });
-  tracked.set(op.id, { toastId, stack: op.stack, action: op.action, seen: false, checking: false });
+  tracked.set(op.id, { toastId, stack: op.stack, action: op.action, checking: false });
   return toastId;
 }
 
@@ -97,7 +100,10 @@ export function startOperationTracker(deps: {
       if (stopped || tracked.get(id) !== entry) return;
       if ((e as { status?: number }).status === 404) {
         resolve(id, entry, { kind: 'danger', message: `${label(entry)} no longer available`, pending: false });
-      } // any other failure keeps the entry; the next list change retries
+      } else if (doc.visibilityState !== 'hidden') {
+        // Any other failure keeps the entry. A quiet host emits no further list change, so retry on a timer.
+        entry.timer = setTimeout(() => void check(id), TRACKER_RECHECK_MS);
+      }
     } finally {
       entry.checking = false;
     }
@@ -108,7 +114,6 @@ export function startOperationTracker(deps: {
     present = new Set(ops.map((o) => o.id));
     for (const [id, entry] of tracked) {
       if (present.has(id)) {
-        entry.seen = true;
         clearTimeout(entry.timer);
         entry.timer = undefined;
       } else {

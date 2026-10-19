@@ -164,6 +164,35 @@ describe('operation tracker', () => {
     expect(toast()).toMatchObject({ kind: 'success' });
   });
 
+  it('a failed get rechecks after 2 s even when the list does not change again', async () => {
+    start();
+    trackOperation({ id: 'op1', stack: 'web', action: 'up' });
+    getOp.mockRejectedValueOnce(new Error('500'));
+    ops.set([]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(toast().pending).toBe(true);
+    getOp.mockResolvedValueOnce(finished('succeeded'));
+    await vi.advanceTimersByTimeAsync(TRACKER_RECHECK_MS);
+    expect(getOp).toHaveBeenCalledTimes(2);
+    expect(toast()).toMatchObject({ kind: 'success', message: 'up · web succeeded' });
+  });
+
+  it("a dismissed toast's id tracked again pushes one new pending toast, and the old entry's late answer is ignored", async () => {
+    start();
+    const first = trackOperation({ id: 'op1', stack: 'web', action: 'up' });
+    let lateAnswer!: (op: Operation) => void;
+    getOp.mockReturnValueOnce(new Promise<Operation>((resolve) => (lateAnswer = resolve)));
+    ops.set([]);
+    await vi.advanceTimersByTimeAsync(0);
+    toasts.dismiss(first);
+    const second = trackOperation({ id: 'op1', stack: 'web', action: 'up' });
+    expect(second).not.toBe(first);
+    expect(get(toasts)).toHaveLength(1);
+    lateAnswer(finished('succeeded'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(toast()).toMatchObject({ id: second, kind: 'info', pending: true });
+  });
+
   it('stop cancels timers and ignores late answers', async () => {
     start();
     trackOperation({ id: 'op1', stack: 'web', action: 'up' });

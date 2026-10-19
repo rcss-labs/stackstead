@@ -273,8 +273,11 @@ describe('App routing and session', () => {
     const checks = () => fake.calls.filter((c) => c.path === '/api/operations/op1').length;
     refreshRunningOps();
     await waitFor(() => expect(checks()).toBeGreaterThan(0));
+    const beforeLogout = checks();
     await user().click(screen.getByRole('button', { name: 'Log out' }));
     expect(await screen.findByLabelText('Username')).toBeTruthy();
+    // Stopping the running-ops store empties its list; a tracker still alive would check the absent id.
+    expect(checks()).toBe(beforeLogout);
     const before = checks();
     await sleep(2100); // past the 2 s recheck of a still-running operation
     expect(checks()).toBe(before);
