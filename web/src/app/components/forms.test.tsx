@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react';
+import { createRoot } from 'react-dom/client';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
@@ -218,6 +219,31 @@ describe('ListEditor', () => {
     screen.getByRole('button', { name: 'Add item' }).focus();
     rerender(<ListEditor<string> items={['a', 'b']} {...props} />);
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Add item' }));
+  });
+
+  it('moves focus after add and remove with real browser event flushing (outside act)', async () => {
+    const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    const previous = g.IS_REACT_ACT_ENVIRONMENT;
+    g.IS_REACT_ACT_ENVIRONMENT = false;
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const click = (el: Element) => el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    const macrotask = () => new Promise((resolve) => setTimeout(resolve, 0));
+    try {
+      root.render(<Harness initial={['a']} onChange={() => {}} />);
+      await macrotask();
+      click(container.querySelector('button[aria-label="Add item"]')!);
+      await macrotask();
+      expect(document.activeElement).toBe(container.querySelector('input[aria-label="Value 2"]'));
+      click(container.querySelector('button[aria-label="Remove item 2"]')!);
+      await macrotask();
+      expect(document.activeElement).toBe(container.querySelector('input[aria-label="Value 1"]'));
+    } finally {
+      root.unmount();
+      container.remove();
+      g.IS_REACT_ACT_ENVIRONMENT = previous;
+    }
   });
 
   it('shows per-row errors and hides add/remove when read-only', () => {
