@@ -109,8 +109,13 @@ export function ServiceForm({
 
   const ro = (group: FieldGroup) => form.readOnly.has(group);
   const sourceReadOnly = ro('image') || ro('build');
-  const patch = (changes: Partial<ServiceFormValue>) => onChange({ ...form, ...changes });
-  const patchHealthcheck = (changes: Partial<ServiceFormValue['healthcheck']>) => onChange({ ...form, healthcheck: { ...form.healthcheck, ...changes } });
+  // Patches build on the latest form, not the one captured by the render that created the handler:
+  // the onBrowse callback runs after the file browser closes, when the parent may have moved on.
+  const latest = useRef(form);
+  latest.current = form;
+  const patch = (changes: Partial<ServiceFormValue>) => onChange({ ...latest.current, ...changes });
+  const patchHealthcheck = (changes: Partial<ServiceFormValue['healthcheck']>) =>
+    onChange({ ...latest.current, healthcheck: { ...latest.current.healthcheck, ...changes } });
 
   // Errors for the source that is not selected, and for a disabled healthcheck, are not shown or counted.
   const shown: FormErrors = {};

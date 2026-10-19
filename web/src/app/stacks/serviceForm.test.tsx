@@ -1,6 +1,6 @@
 import { useImperativeHandle, useRef, useState } from 'react';
 import type { Ref } from 'react';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Field } from '$lib/api/types';
@@ -14,6 +14,7 @@ const HINT = "This field uses YAML the form can't edit — open the raw YAML edi
 interface HostHandle extends ServiceFormHandle {
   getForm(): Form;
   getName(): string;
+  setForm(next: Form): void;
 }
 
 interface HostProps {
@@ -38,6 +39,7 @@ function Host({ initial, errors = {}, withPicker, handle, ...rest }: HostProps) 
   useImperativeHandle(handle, () => ({
     getForm: () => latest.current.form,
     getName: () => latest.current.name,
+    setForm,
     focusFirstError: () => inner.current?.focusFirstError(),
   }));
   return (
@@ -283,5 +285,26 @@ describe('ServiceForm', () => {
     setup({ idPrefix: 's2', initial: { ports: ['1:1'] } });
     expect(screen.getByLabelText('Image').id).toBe('s2-image');
     expect(screen.getByLabelText('Port 1').id).toBe('s2-ports-0');
+  });
+
+  it('keeps parent changes made between clicking Browse and the picked path arriving', async () => {
+    let pick: (path: string) => void = () => {};
+    const { handle } = setup({ initial: { source: 'build' }, onBrowse: (_mode, set) => (pick = set) });
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Browse for build context' }));
+    act(() => handle.current.setForm({ ...handle.current.getForm(), image: 'reset:1' }));
+    act(() => pick('/srv'));
+    expect(handle.current.getForm()).toMatchObject({ image: 'reset:1', buildContext: '/srv' });
+  });
+
+  it('reflects a parent-driven form replacement in the inputs', () => {
+    const { handle } = setup({ initial: { image: 'a', ports: ['1:1'] } });
+    act(() => handle.current.setForm({ ...emptyForm(), image: 'b', ports: ['2:2', '3:3'] }));
+    expect((screen.getByLabelText('Image') as HTMLInputElement).value).toBe('b');
+    expect((screen.getByLabelText('Port 2') as HTMLInputElement).value).toBe('3:3');
+  });
+
+  it('does not announce build errors while the image source is selected', () => {
+    setup({ errors: { 'build.context': 'x' } });
+    expect(screen.getByRole('status').textContent).toBe('');
   });
 });
