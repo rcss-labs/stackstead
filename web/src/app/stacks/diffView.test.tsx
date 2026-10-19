@@ -1,8 +1,12 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { EditorView } from '@codemirror/view';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DiffView } from './DiffView';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe('DiffView with the loading fallback', () => {
   it('is a labelled group showing the modified text until the editor chunk loads', () => {
@@ -27,7 +31,9 @@ describe('DiffView with real CodeMirror (jsdom)', () => {
   it('destroys the view on unmount', async () => {
     const { unmount } = render(<DiffView original={'a\n'} modified={'b\n'} ariaLabel="Changes" />);
     await waitFor(() => expect(document.querySelector('.cm-editor')).not.toBeNull());
+    const destroy = vi.spyOn(EditorView.prototype, 'destroy');
     unmount();
+    expect(destroy).toHaveBeenCalledTimes(1);
     expect(document.querySelector('.cm-editor')).toBeNull();
   });
 
@@ -36,6 +42,9 @@ describe('DiffView with real CodeMirror (jsdom)', () => {
     await waitFor(() => expect(document.querySelectorAll('.cm-editor')).toHaveLength(1));
     rerender(<DiffView original={'a\n'} modified={'c\n'} ariaLabel="Changes" />);
     await waitFor(() => expect(document.querySelector('.cm-content')?.textContent).toContain('c'));
+    expect(document.querySelectorAll('.cm-editor')).toHaveLength(1);
+    rerender(<DiffView original={'z\n'} modified={'c\n'} ariaLabel="Changes" />);
+    await waitFor(() => expect(document.querySelector('.cm-deletedChunk')?.textContent).toContain('z'));
     expect(document.querySelectorAll('.cm-editor')).toHaveLength(1);
   });
 });

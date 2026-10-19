@@ -18,6 +18,7 @@ export interface YamlEditorProps {
   ref?: Ref<YamlEditorHandle>;
 }
 
+// Expects a controlled parent: `value` echoes what `onChange` reported (the editor itself is uncontrolled).
 export function YamlEditor({ value, readonly = false, ariaLabel, original, onChange, ref }: YamlEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
