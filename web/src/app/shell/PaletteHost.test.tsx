@@ -17,7 +17,7 @@ describe('PaletteHost', () => {
   it('does not import the palette module until the first open', async () => {
     const ui = (open: boolean) => (
       <MemoryRouter>
-        <PaletteHost open={open} onClose={() => {}} />
+        <PaletteHost open={open} runningOps={[]} onClose={() => {}} />
       </MemoryRouter>
     );
     const { rerender } = render(ui(false));

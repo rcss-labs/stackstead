@@ -1,3 +1,4 @@
+import type { Operation } from '$lib/api/types';
 import { lazy, Suspense, useState } from 'react';
 
 // The palette (and its CSS) is fetched on first open, not with the entry chunk.
@@ -5,17 +6,18 @@ const CommandPalette = lazy(() => import('./CommandPalette'));
 
 export interface PaletteHostProps {
   open: boolean;
+  runningOps: Operation[];
   onClose: () => void;
 }
 
 /** Mounts the lazily loaded command palette on its first open and keeps it mounted afterwards. */
-export function PaletteHost({ open, onClose }: PaletteHostProps) {
+export function PaletteHost({ open, runningOps, onClose }: PaletteHostProps) {
   const [requested, setRequested] = useState(false);
   if (open && !requested) setRequested(true);
   if (!requested) return null;
   return (
     <Suspense fallback={null}>
-      <CommandPalette open={open} onClose={onClose} />
+      <CommandPalette open={open} runningOps={runningOps} onClose={onClose} />
     </Suspense>
   );
 }

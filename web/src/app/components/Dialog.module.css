@@ -26,13 +26,17 @@
 
 .dialog[data-width='lg'] { width: min(620px, 100%); }
 
+.backdrop[data-placement='top'] .dialog { border-radius: 14px; }
+
 .backdrop[data-placement='top'] {
   place-items: start center;
   padding-top: 12vh;
 }
 
 @media (max-width: 759px) {
-  .backdrop[data-placement='top'] { padding-top: 64px; }
+  .backdrop[data-placement='top'] .dialog { border-radius: 14px; }
+
+.backdrop[data-placement='top'] { padding-top: 64px; }
 }
 
 .dialog h2 { font-size: 14px; font-weight: 600; }

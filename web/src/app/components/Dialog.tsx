@@ -34,9 +34,11 @@ export interface DialogProps {
   width?: 'md' | 'lg';
   /** 'top' pins the panel near the top of the viewport (the command palette). */
   placement?: 'center' | 'top';
+  /** Opt-in: a click on the backdrop (outside the panel) closes the dialog. */
+  closeOnBackdrop?: boolean;
 }
 
-export function Dialog({ open, title, onClose, children, labelledBy, describedBy, role = 'dialog', width = 'md', placement = 'center' }: DialogProps) {
+export function Dialog({ open, title, onClose, children, labelledBy, describedBy, role = 'dialog', width = 'md', placement = 'center', closeOnBackdrop = false }: DialogProps) {
   const uid = useId();
   const titleId = labelledBy ?? `${uid}-title`;
   const panelRef = useRef<HTMLDivElement>(null);
@@ -115,7 +117,11 @@ export function Dialog({ open, title, onClose, children, labelledBy, describedBy
 
   // Rendered under <body> so the app root can be made inert.
   return createPortal(
-    <div className={styles.backdrop} data-placement={placement}>
+    <div
+      className={styles.backdrop}
+      data-placement={placement}
+      onClick={closeOnBackdrop ? (event) => event.target === event.currentTarget && onClose() : undefined}
+    >
       <div
         ref={panelRef}
         className={styles.dialog}

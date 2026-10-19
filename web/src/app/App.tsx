@@ -181,7 +181,7 @@ function SignedInFrame({ runningOps, loggingOut }: SignedInFrameProps) {
         onConfirm={guard.leave}
         onCancel={guard.cancel}
       />
-      <PaletteHost open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      <PaletteHost open={paletteOpen} runningOps={runningOps} onClose={() => setPaletteOpen(false)} />
     </>
   );
 }

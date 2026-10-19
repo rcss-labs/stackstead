@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { MemoryRouter, useLocation } from 'react-router';
@@ -64,7 +64,15 @@ function Where() {
 }
 
 /** The app's wiring in miniature: the shortcut hook opens the lazily loaded palette. */
-function Harness({ underlying = false, onUnderlyingCancel = () => {} }: { underlying?: boolean; onUnderlyingCancel?: () => void }) {
+function Harness({
+  underlying = false,
+  onUnderlyingCancel = () => {},
+  runningOps = [],
+}: {
+  underlying?: boolean;
+  onUnderlyingCancel?: () => void;
+  runningOps?: Operation[];
+}) {
   const [open, setOpen] = useState(false);
   useGlobalShortcut(() => setOpen(true));
   return (
@@ -72,7 +80,7 @@ function Harness({ underlying = false, onUnderlyingCancel = () => {} }: { underl
       <input aria-label="Elsewhere" />
       <button onClick={() => setOpen(true)}>Open palette</button>
       <ConfirmDialog open={underlying} title="Underneath" message="m" confirmLabel="Ok" onConfirm={() => {}} onCancel={onUnderlyingCancel} />
-      <PaletteHost open={open} onClose={() => setOpen(false)} />
+      <PaletteHost open={open} runningOps={runningOps} onClose={() => setOpen(false)} />
     </>
   );
 }
@@ -220,6 +228,30 @@ describe('CommandPalette', () => {
     expect(fake.calls.some((c) => c.method === 'POST')).toBe(false);
     expect(screen.getByRole('dialog', { name: 'Command palette' })).toBeTruthy();
     expect(document.activeElement).toBe(search());
+  });
+
+  it('a stack busy before the palette opens has its actions disabled on the first render and never posts', async () => {
+    const user = await renderPalette({ runningOps: [operation] });
+    await user.keyboard('{Meta>}k{/Meta}');
+    await palette();
+    fireEvent.change(search(), { target: { value: 'restart web' } });
+    const option = screen.getByRole('option', { name: /Restart web/ });
+    expect(option.getAttribute('aria-disabled')).toBe('true');
+    expect(within(option).getByText('an operation is already running')).toBeTruthy();
+    await user.keyboard('{Enter}');
+    await user.click(option);
+    expect(fake.calls.some((c) => c.method === 'POST')).toBe(false);
+  });
+
+  it('clicking the backdrop closes the palette; clicking inside the panel does not', async () => {
+    const user = await renderPalette();
+    await user.keyboard('{Meta>}k{/Meta}');
+    const panel = await palette();
+    await user.click(search());
+    await user.click(panel);
+    expect(screen.getByRole('dialog', { name: 'Command palette' })).toBeTruthy();
+    await user.click(panel.parentElement!);
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
   it('Toggle theme flips the theme and closes', async () => {

@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router';
 import { api } from '$lib/api/client';
+import type { Operation } from '$lib/api/types';
 import { effectiveTheme, setTheme } from '$lib/stores/appearance';
 import { live } from '$lib/stores/live';
 import { stacks } from '$lib/stores/stacks';
@@ -9,7 +10,6 @@ import { toasts } from '$lib/stores/toasts';
 import { Dialog } from '../components/Dialog';
 import { Led } from '../components/Led';
 import { PanelLabel } from '../components/PanelLabel';
-import { useRunningOps } from '../hooks/useRunningOps';
 import { useStore } from '../hooks/useStore';
 import styles from './CommandPalette.module.css';
 import { nextIndex, paletteEntries } from './palette';
@@ -17,24 +17,25 @@ import type { PaletteEntry, PaletteGroup } from './palette';
 
 export interface CommandPaletteProps {
   open: boolean;
+  /** The app's running operations; a stack with one is busy. */
+  runningOps: Operation[];
   onClose: () => void;
 }
 
-export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
+export default function CommandPalette({ open, runningOps, onClose }: CommandPaletteProps) {
   const uid = useId();
   const navigate = useNavigate();
   const { items } = useStore(stacks);
   const liveState = useStore(live);
   const theme = useStore(effectiveTheme);
-  const runningOps = useRunningOps(open);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
   const busyStacks = useMemo(() => new Set(runningOps.map((op) => op.stack)), [runningOps]);
   const entries = useMemo(
-    () => paletteEntries({ query, stacks: items, live: liveState, busyStacks, effectiveTheme: theme }),
-    [query, items, liveState, busyStacks, theme],
+    () => paletteEntries({ query, stacks: items, live: liveState, busyStacks }),
+    [query, items, liveState, busyStacks],
   );
   const active = Math.min(selected, Math.max(0, entries.length - 1));
   const optionId = (index: number) => `${uid}-option-${index}`;
@@ -98,7 +99,7 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const titleId = `${uid}-title`;
 
   return (
-    <Dialog open={open} title="Command palette" labelledBy={titleId} onClose={onClose} width="lg" placement="top">
+    <Dialog open={open} title="Command palette" labelledBy={titleId} onClose={onClose} width="lg" placement="top" closeOnBackdrop>
       <h2 id={titleId} className={styles.visuallyHidden}>
         Command palette
       </h2>

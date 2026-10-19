@@ -21,7 +21,7 @@ function stack(name: string, status: StackStatus, running: number, serviceCount:
 const stacks = [stack('grafana', 'running', 3, 3), stack('home-assistant', 'partial', 2, 3), stack('nextcloud', 'stopped', 0, 2)];
 
 function entries(overrides: Partial<Parameters<typeof paletteEntries>[0]> = {}) {
-  return paletteEntries({ query: '', stacks, live: healthy, busyStacks: new Set(), effectiveTheme: 'dark', ...overrides });
+  return paletteEntries({ query: '', stacks, live: healthy, busyStacks: new Set(), ...overrides });
 }
 
 describe('paletteEntries', () => {

@@ -1,5 +1,4 @@
 import type { Action, StackSummary } from '$lib/api/types';
-import type { EffectiveTheme } from '$lib/stores/appearance';
 import type { LiveState } from '$lib/stores/live';
 import { lifecycleDisabledReason } from '$lib/stacks/lifecycle';
 import { needsAttention } from '$lib/stacks/summary';
@@ -26,7 +25,6 @@ export interface PaletteInput {
   stacks: StackSummary[];
   live: Pick<LiveState, 'compose' | 'docker' | 'events'>;
   busyStacks: Set<string>;
-  effectiveTheme: EffectiveTheme;
 }
 
 const GROUP_ORDER: PaletteGroup[] = ['Go to', 'Stacks', 'Actions'];
