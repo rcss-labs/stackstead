@@ -366,3 +366,124 @@ func TestFailedInvalidatedGetDoesNotRestoreFreshEligibility(t *testing.T) {
 	}
 	c.wait()
 }
+
+func TestForcedGetFollowersWaitForFreshValue(t *testing.T) {
+	c := New[int](time.Now)
+	if _, err := c.Get(context.Background(), time.Minute, func(context.Context) (int, error) { return 1, nil }); err != nil {
+		t.Fatal(err)
+	}
+	c.Invalidate()
+	entered, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+	first := make(chan int, 1)
+	go func() {
+		v, _ := c.Get(context.Background(), time.Minute, func(context.Context) (int, error) {
+			close(entered)
+			<-release
+			return 2, nil
+		})
+		first <- v
+	}()
+	<-entered
+	follower := make(chan int, 1)
+	waiting := &getWaitContext{Context: context.Background(), waiting: make(chan struct{})}
+	go func() {
+		v, err := c.Get(waiting, time.Minute, func(context.Context) (int, error) {
+			t.Error("concurrent loader started")
+			return 3, nil
+		})
+		if err != nil {
+			t.Error(err)
+		}
+		follower <- v
+	}()
+	select {
+	case got := <-follower:
+		t.Fatalf("forced-refresh follower returned invalidated value %d", got)
+	case <-waiting.waiting:
+	case <-time.After(time.Second):
+		t.Fatal("follower did not wait")
+	}
+	if v, ok := c.GetStale(time.Minute, func() (int, error) { t.Error("parallel stale loader"); return 3, nil }); !ok || v != 1 {
+		t.Fatalf("stale read during refresh = %d, %v", v, ok)
+	}
+	releaseOnce.Do(func() { close(release) })
+	if got := <-first; got != 2 {
+		t.Fatal(got)
+	}
+	if got := <-follower; got != 2 {
+		t.Fatalf("forced-refresh follower = %d, want 2", got)
+	}
+}
+
+func TestGetKeepsValidCacheAvailableDuringOrdinaryBackgroundRefresh(t *testing.T) {
+	c := New[int](time.Now)
+	if _, err := c.Get(context.Background(), time.Minute, func(context.Context) (int, error) { return 1, nil }); err != nil {
+		t.Fatal(err)
+	}
+	started, release := make(chan struct{}), make(chan struct{})
+	defer func() { close(release); c.wait() }()
+	c.GetStale(0, func() (int, error) { close(started); <-release; return 2, nil })
+	<-started
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	got, err := c.Get(ctx, time.Minute, func(context.Context) (int, error) {
+		t.Error("parallel loader started")
+		return 3, nil
+	})
+	if err != nil || got != 1 {
+		t.Fatalf("valid cached read during ordinary refresh = %d, %v", got, err)
+	}
+}
+
+func TestPostInvalidationGetRejectsOlderFlight(t *testing.T) {
+	c := New[int](time.Now)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+	first := make(chan int, 1)
+	go func() {
+		v, _ := c.Get(context.Background(), time.Minute, func(context.Context) (int, error) {
+			close(entered)
+			<-release
+			return 2, nil
+		})
+		first <- v
+	}()
+	<-entered
+	c.Invalidate()
+	follower := make(chan int, 1)
+	waiting := &getWaitContext{Context: context.Background(), waiting: make(chan struct{})}
+	go func() {
+		v, err := c.Get(waiting, time.Minute, func(context.Context) (int, error) { return 3, nil })
+		if err != nil {
+			t.Error(err)
+		}
+		follower <- v
+	}()
+	select {
+	case <-waiting.waiting:
+	case <-time.After(time.Second):
+		t.Fatal("post-invalidation caller did not join pending flight")
+	}
+	releaseOnce.Do(func() { close(release) })
+	if got := <-first; got != 2 {
+		t.Fatal(got)
+	}
+	if got := <-follower; got != 3 {
+		t.Fatalf("post-invalidation caller accepted older flight value %d, want 3", got)
+	}
+}
+
+// Expose the point where Get starts waiting, without inspecting cache internals.
+type getWaitContext struct {
+	context.Context
+	waiting chan struct{}
+	once    sync.Once
+}
+
+func (c *getWaitContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.waiting) })
+	return c.Context.Done()
+}

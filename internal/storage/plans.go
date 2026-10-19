@@ -352,9 +352,9 @@ func clonePlan(p Plan) Plan {
 	p.Reclaim.Max = knownSize(p.Reclaim.Max)
 	return p
 }
-func (s *Service) ConfirmPlan(ctx context.Context, id, phrase, username string) (stacks.Operation, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+
+// confirmPlanLocked validates the current stored plan. The caller holds s.mu.
+func (s *Service) confirmPlanLocked(id, phrase, username string) (int, Plan, error) {
 	at := -1
 	for i, p := range s.plans {
 		if p.ID == id {
@@ -363,33 +363,51 @@ func (s *Service) ConfirmPlan(ctx context.Context, id, phrase, username string) 
 		}
 	}
 	if at < 0 {
-		return stacks.Operation{}, ErrPlanNotFound
+		return -1, Plan{}, ErrPlanNotFound
 	}
 	p := s.plans[at]
 	if !s.cfg.Now().Before(p.ExpiresAt) {
 		s.plans = append(s.plans[:at], s.plans[at+1:]...)
-		return stacks.Operation{}, ErrPlanNotFound
+		return -1, Plan{}, ErrPlanNotFound
 	}
 	if len(p.Items) == 0 {
-		return stacks.Operation{}, fmt.Errorf("%w: empty plan", ErrConflict)
+		return -1, Plan{}, fmt.Errorf("%w: empty plan", ErrConflict)
 	}
 	if phrase != p.ConfirmPhrase {
-		return stacks.Operation{}, &FieldError{Field: "confirm", Message: ErrWrongPhrase.Error(), cause: ErrWrongPhrase}
+		return -1, Plan{}, &FieldError{Field: "confirm", Message: ErrWrongPhrase.Error(), cause: ErrWrongPhrase}
 	}
 	if username == "" {
-		return stacks.Operation{}, invalidField("username", "username required")
+		return -1, Plan{}, invalidField("username", "username required")
 	}
 	if s.cfg.Ops == nil {
-		return stacks.Operation{}, ErrUnavailable
+		return -1, Plan{}, ErrUnavailable
 	}
-	e, ok := s.cfg.Engine.(CleanupEngine)
-	if !ok {
-		return stacks.Operation{}, ErrUnavailable
+	if _, ok := s.cfg.Engine.(CleanupEngine); !ok {
+		return -1, Plan{}, ErrUnavailable
 	}
-	// Observe an unavailable daemon before consuming the plan or starting mutation.
+	return at, p, nil
+}
+
+func (s *Service) ConfirmPlan(ctx context.Context, id, phrase, username string) (stacks.Operation, error) {
+	s.mu.Lock()
+	_, _, err := s.confirmPlanLocked(id, phrase, username)
+	s.mu.Unlock()
+	if err != nil {
+		return stacks.Operation{}, err
+	}
+	// Network and Compose preflight must not block cached DF readers or publication.
 	if _, err := s.freshLists(ctx); err != nil {
 		return stacks.Operation{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Preflight can outlive expiry, eviction, or another confirmation. Never
+	// retain a slice index across that unlocked interval.
+	at, p, err := s.confirmPlanLocked(id, phrase, username)
+	if err != nil {
+		return stacks.Operation{}, err
+	}
+	e := s.cfg.Engine.(CleanupEngine)
 	ready := make(chan string, 1)
 	o, err := s.cfg.Ops.Start("", "storage-cleanup", func(ctx context.Context, out func(string)) error {
 		return s.executePlan(ctx, e, p, username, <-ready, out)

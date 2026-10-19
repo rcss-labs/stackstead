@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -504,6 +505,224 @@ func TestCleanupConfirmAtomicAndPlanCopies(t *testing.T) {
 	waitService(t, func() bool { return s.cfg.Ops.Recent("")[0].State != stacks.OpRunning })
 	if !reflect.DeepEqual(e.removed, []string{"data"}) {
 		t.Fatal(e.removed)
+	}
+}
+
+type preflightEngine struct {
+	*cleanupEngine
+	images func(context.Context) error
+	df     func(context.Context, engine.DFKind) (engine.DFSnapshot, error)
+}
+
+func (e *preflightEngine) Images(ctx context.Context) ([]engine.Image, error) {
+	if err := e.images(ctx); err != nil {
+		return nil, err
+	}
+	return e.cleanupEngine.Images(ctx)
+}
+
+func (e *preflightEngine) DiskUsage(ctx context.Context, k engine.DFKind) (engine.DFSnapshot, error) {
+	if e.df != nil {
+		return e.df(ctx, k)
+	}
+	return e.cleanupEngine.DiskUsage(ctx, k)
+}
+
+func TestCleanupConfirmPreflightKeepsDFBrowsingAndPublicationAvailable(t *testing.T) {
+	s, e, _ := cleanupFixture(t)
+	e.volumes = []engine.Volume{volume("data")}
+	p := plan(t, s, PlanRequest{Kind: "volume", Name: "data"})
+	preflight, releasePreflight := make(chan struct{}), make(chan struct{})
+	dfStarted, releaseDF := make(chan struct{}), make(chan struct{})
+	var preflightOnce, dfOnce sync.Once
+	defer preflightOnce.Do(func() { close(releasePreflight) })
+	defer dfOnce.Do(func() { close(releaseDF) })
+	s.cfg.Engine = &preflightEngine{cleanupEngine: e, images: func(context.Context) error {
+		close(preflight)
+		<-releasePreflight
+		return errors.New("preflight offline")
+	}, df: func(context.Context, engine.DFKind) (engine.DFSnapshot, error) {
+		close(dfStarted)
+		<-releaseDF
+		return engine.DFSnapshot{Kinds: dfKinds, Volumes: []engine.DFVolume{{Name: "data", UsageData: &engine.DFVolumeUsage{Size: 42}}}}, nil
+	}}
+	fresh := make(chan error, 1)
+	go func() { _, err := s.FreshDF(context.Background(), engine.DFVolumes); fresh <- err }()
+	<-dfStarted
+	confirmed := make(chan error, 1)
+	go func() {
+		_, err := s.ConfirmPlan(context.Background(), p.ID, p.ConfirmPhrase, "alice")
+		confirmed <- err
+	}()
+	<-preflight
+	for _, read := range []struct {
+		name string
+		run  func()
+	}{
+		{"DFReadings", func() { s.DFReadings() }},
+		{"VolumeSummary", func() { s.VolumeSummary() }},
+	} {
+		done := make(chan struct{})
+		go func() { read.run(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Errorf("%s blocked behind confirmation preflight", read.name)
+		}
+	}
+	dfOnce.Do(func() { close(releaseDF) })
+	select {
+	case err := <-fresh:
+		if err != nil {
+			t.Fatal(err)
+		}
+		if summary, ok := s.VolumeSummary(); !ok || summary.Size != 42 {
+			t.Fatalf("fresh DF not published: %+v %v", summary, ok)
+		}
+	case <-time.After(time.Second):
+		t.Error("FreshDF completion blocked behind confirmation preflight")
+	}
+	preflightOnce.Do(func() { close(releasePreflight) })
+	if err := <-confirmed; !errors.Is(err, ErrUnavailable) {
+		t.Fatal(err)
+	}
+}
+
+func TestCleanupConfirmRevalidatesExpiryAfterPreflight(t *testing.T) {
+	s, e, _ := cleanupFixture(t)
+	e.volumes = []engine.Volume{volume("data")}
+	base := time.Now()
+	var ticks atomic.Int64
+	s.cfg.Now = func() time.Time { return base.Add(time.Duration(ticks.Load())) }
+	p := plan(t, s, PlanRequest{Kind: "volume", Name: "data"})
+	preflight, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	defer once.Do(func() { close(release) })
+	s.cfg.Engine = &preflightEngine{cleanupEngine: e, images: func(context.Context) error {
+		onceGate := ticks.Load() == 0
+		if onceGate {
+			close(preflight)
+			<-release
+		}
+		return nil
+	}}
+	done := make(chan error, 1)
+	go func() { _, err := s.ConfirmPlan(context.Background(), p.ID, p.ConfirmPhrase, "alice"); done <- err }()
+	<-preflight
+	ticks.Store(int64(5 * time.Minute))
+	once.Do(func() { close(release) })
+	if err := <-done; !errors.Is(err, ErrPlanNotFound) {
+		t.Fatalf("expired during preflight: %v", err)
+	}
+	if ops := s.cfg.Ops.Recent(""); len(ops) != 0 {
+		t.Fatalf("expired plan started operation: %+v", ops)
+	}
+}
+
+func TestCleanupConfirmRevalidatesEvictionAfterPreflight(t *testing.T) {
+	s, e, _ := cleanupFixture(t)
+	e.volumes = []engine.Volume{volume("data")}
+	p := plan(t, s, PlanRequest{Kind: "volume", Name: "data"})
+	preflight, release := make(chan struct{}), make(chan struct{})
+	var first atomic.Bool
+	var once sync.Once
+	defer once.Do(func() { close(release) })
+	s.cfg.Engine = &preflightEngine{cleanupEngine: e, images: func(context.Context) error {
+		if first.CompareAndSwap(false, true) {
+			close(preflight)
+			<-release
+		}
+		return nil
+	}}
+	done := make(chan error, 1)
+	go func() { _, err := s.ConfirmPlan(context.Background(), p.ID, p.ConfirmPhrase, "alice"); done <- err }()
+	<-preflight
+	evicted := make(chan error, 1)
+	go func() {
+		for range 32 {
+			if _, err := s.CreatePlan(context.Background(), PlanRequest{Kind: "volume", Name: "data"}); err != nil {
+				evicted <- err
+				return
+			}
+		}
+		evicted <- nil
+	}()
+	select {
+	case err := <-evicted:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Error("plan eviction blocked behind confirmation preflight")
+	}
+	once.Do(func() { close(release) })
+	if err := <-done; !errors.Is(err, ErrPlanNotFound) {
+		t.Fatalf("evicted during preflight: %v", err)
+	}
+	if ops := s.cfg.Ops.Recent(""); len(ops) != 0 {
+		t.Fatalf("evicted plan started operation: %+v", ops)
+	}
+}
+
+func TestCleanupConfirmRelooksUpAfterConcurrentConsumption(t *testing.T) {
+	for _, same := range []bool{true, false} {
+		t.Run(fmt.Sprintf("same-plan=%v", same), func(t *testing.T) {
+			s, e, _ := cleanupFixture(t)
+			e.volumes = []engine.Volume{volume("data")}
+			first := plan(t, s, PlanRequest{Kind: "volume", Name: "data"})
+			target := first
+			if !same {
+				target = plan(t, s, PlanRequest{Kind: "volume", Name: "data"})
+			}
+			preflight, release := make(chan struct{}), make(chan struct{})
+			var gated atomic.Bool
+			var once sync.Once
+			defer once.Do(func() { close(release) })
+			s.cfg.Engine = &preflightEngine{cleanupEngine: e, images: func(context.Context) error {
+				if gated.CompareAndSwap(false, true) {
+					close(preflight)
+					<-release
+				}
+				return nil
+			}}
+			type result struct {
+				op  stacks.Operation
+				err error
+			}
+			confirm := func(p Plan, done chan result) {
+				o, err := s.ConfirmPlan(context.Background(), p.ID, p.ConfirmPhrase, "alice")
+				done <- result{o, err}
+			}
+			blocked, concurrent := make(chan result, 1), make(chan result, 1)
+			go confirm(target, blocked)
+			<-preflight
+			go confirm(first, concurrent)
+			var other result
+			select {
+			case other = <-concurrent:
+			case <-time.After(time.Second):
+				t.Error("concurrent confirmation blocked by unrelated preflight")
+				once.Do(func() { close(release) })
+				other = <-concurrent
+			}
+			if other.err != nil {
+				t.Error(other.err)
+			} else {
+				waitService(t, func() bool { o, _ := s.cfg.Ops.Get(other.op.ID); return o.State != stacks.OpRunning })
+			}
+			once.Do(func() { close(release) })
+			got := <-blocked
+			if same {
+				if !errors.Is(got.err, ErrPlanNotFound) {
+					t.Fatalf("consumed plan confirmation = %v", got.err)
+				}
+			} else {
+				if got.err != nil {
+					t.Fatal(got.err)
+				}
+				waitService(t, func() bool { o, _ := s.cfg.Ops.Get(got.op.ID); return o.State != stacks.OpRunning })
+			}
+		})
 	}
 }
 func TestCleanupExactBuildRecheckSkipsAndEmptyNeverPrunes(t *testing.T) {
