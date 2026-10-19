@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/http/httputil"
 	"net/netip"
 	"net/url"
 	"os"
@@ -64,6 +65,7 @@ func redact(log string) string { return setupTokenRe.ReplaceAllString(log, "${1}
 
 type e2eServer struct {
 	base   string
+	bin    string
 	stderr *syncBuffer
 }
 
@@ -147,7 +149,7 @@ func startServer(t *testing.T, socket string) *e2eServer {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return &e2eServer{base: base, stderr: stderr}
+	return &e2eServer{base: base, bin: bin, stderr: stderr}
 }
 
 type client struct {
@@ -204,6 +206,10 @@ func TestE2ESmoke(t *testing.T) {
 		t.Skip("web UI not built (run make ui)")
 	}
 	socket := dockerSocket()
+	var releaseDF func()
+	if socket != "" {
+		socket, releaseDF = pendingDFSocket(t, socket)
+	}
 	srv := startServer(t, socket)
 	c := newClient(t, srv.base)
 	anon := newClient(t, srv.base)
@@ -306,6 +312,24 @@ func TestE2ESmoke(t *testing.T) {
 		}
 	})
 
+	if releaseDF != nil {
+		t.Run("storage overview pending", func(t *testing.T) {
+			started := time.Now()
+			var overview apitypes.StorageOverview
+			if err := json.Unmarshal(c.expect(200, "GET", "/api/storage", nil), &overview); err != nil {
+				t.Fatal(err)
+			}
+			if time.Since(started) > 2*time.Second {
+				t.Error("overview waited for blocked disk usage")
+			}
+			for _, totals := range []apitypes.StorageKindTotals{overview.Images, overview.Containers, overview.Volumes, overview.BuildCache} {
+				if totals.SizesAt != nil {
+					t.Error("disk usage published while daemon response blocked")
+				}
+			}
+		})
+		releaseDF()
+	}
 	t.Run("password change", func(t *testing.T) {
 		other := newClient(t, srv.base)
 		other.expect(204, "POST", "/api/login", map[string]string{"username": "admin", "password": password})
@@ -322,6 +346,7 @@ func TestE2ESmoke(t *testing.T) {
 	})
 
 	if socket != "" {
+		t.Run("storage cleanup", func(t *testing.T) { storageCleanup(t, c, srv.bin) })
 		t.Run("docker stack", func(t *testing.T) { dockerStack(t, c) })
 	} else {
 		t.Log("docker unavailable: skipped the stack lifecycle part")
@@ -476,6 +501,7 @@ func dockerStack(t *testing.T, c *client) {
 			_, _ = dockerOutput("rm", "-f", id)
 		}
 		_, _ = dockerOutput("network", "rm", name+"_default")
+		_, _ = dockerOutput("volume", "rm", name+"_data")
 	})
 
 	c.expect(201, "POST", "/api/stacks", map[string]any{
@@ -495,6 +521,13 @@ func dockerStack(t *testing.T, c *client) {
 			t.Fatalf("detail: count=%d services=%d hash present=%t, want %d", detail.ServiceCount, len(detail.Services), detail.Hash != "", count)
 		}
 	}
+	readDetail(c.expect(200, "GET", base, nil), 2)
+	var initialCompose apitypes.RawCompose
+	if err := json.Unmarshal(c.expect(200, "GET", base+"/compose", nil), &initialCompose); err != nil {
+		t.Fatal(err)
+	}
+	withVolume := strings.Replace(initialCompose.Content, "  web:\n", "  web:\n    volumes: [data:/data]\n", 1) + "\nvolumes:\n  data: {}\n"
+	c.expect(200, "PUT", base+"/compose", map[string]string{"content": withVolume, "hash": initialCompose.Hash})
 	readDetail(c.expect(200, "GET", base, nil), 2)
 	anon := newClient(t, c.base)
 	anon.expect(401, "POST", base+"/services", map[string]any{})
@@ -618,6 +651,8 @@ func dockerStack(t *testing.T, c *client) {
 		t.Fatalf("down = %d: %.200s", got, body)
 	}
 	wait(body, "down")
+	time.Sleep(2100 * time.Millisecond)
+	storageProtectedVolume(t, c, name, name+"_data")
 	got, body = c.do("DELETE", "/api/stacks/"+name+"?volumes=true", nil)
 	if got != 202 {
 		t.Fatalf("remove = %d: %.200s", got, body)
@@ -910,5 +945,183 @@ func networkEndpoints(t *testing.T, c *client, stackName string) {
 		{"GET", "/api/networks", nil}, {"POST", "/api/networks", request}, {"DELETE", "/api/networks/x", nil}, {"GET", "/api/host/interfaces", nil},
 	} {
 		anon.expect(401, route.method, route.path, route.body)
+	}
+}
+
+// pendingDFSocket forwards the real daemon while holding disk-usage responses.
+// This proves the running server can answer before its first df completes.
+func pendingDFSocket(t *testing.T, upstream string) (string, func()) {
+	t.Helper()
+	gate := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(gate) }) }
+	t.Cleanup(release)
+	socket := filepath.Join(t.TempDir(), "docker.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", upstream)
+	}}
+	proxy := &httputil.ReverseProxy{Director: func(r *http.Request) { r.URL.Scheme = "http"; r.URL.Host = "docker" }, Transport: transport}
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/system/df") {
+			select {
+			case <-gate:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		proxy.ServeHTTP(w, r)
+	})}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { release(); _ = server.Close(); transport.CloseIdleConnections() })
+	return socket, release
+}
+
+func storageCleanup(t *testing.T, c *client, bin string) {
+	t.Helper()
+	name := "stackstead-e2e-" + strings.ToLower(rand.Text()[:10])
+	tag := name + ":tmp"
+	t.Cleanup(func() { _, _ = dockerOutput("volume", "rm", name); _, _ = dockerOutput("image", "rm", tag) })
+	if out, err := dockerOutput("volume", "create", "--label", "io.stackstead.e2e=1", name); err != nil {
+		t.Fatalf("create volume: %v: %s", err, out)
+	}
+	var volumes apitypes.StorageVolumes
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if err := json.Unmarshal(c.expect(200, "GET", "/api/storage/volumes", nil), &volumes); err != nil {
+			t.Fatal(err)
+		}
+		if slices.ContainsFunc(volumes.Volumes, func(v apitypes.StorageVolume) bool {
+			return v.Name == name && v.Status == "unused" && v.Protection == nil
+		}) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("throwaway volume not unused and unprotected")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	plan := func(request apitypes.StoragePlanRequest) apitypes.StoragePlan {
+		t.Helper()
+		var p apitypes.StoragePlan
+		if err := json.Unmarshal(c.expect(201, "POST", "/api/storage/plans", request), &p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	confirm := func(p apitypes.StoragePlan) apitypes.Operation {
+		t.Helper()
+		var op apitypes.Operation
+		if err := json.Unmarshal(c.expect(202, "POST", "/api/storage/plans/"+p.ID+"/confirm", map[string]string{"confirm": p.ConfirmPhrase}), &op); err != nil {
+			t.Fatal(err)
+		}
+		if op.Stack != "" || op.Action != "storage-cleanup" {
+			t.Fatalf("not host storage operation: %+v", op)
+		}
+		deadline := time.Now().Add(30 * time.Second)
+		for time.Now().Before(deadline) {
+			var current apitypes.Operation
+			if err := json.Unmarshal(c.expect(200, "GET", "/api/operations/"+op.ID, nil), &current); err != nil {
+				t.Fatal(err)
+			}
+			if current.State != "running" {
+				if current.State != "succeeded" {
+					t.Fatalf("cleanup state: %s", current.State)
+				}
+				return op
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Fatal("cleanup timed out")
+		return op
+	}
+	p := plan(apitypes.StoragePlanRequest{Kind: "volume", Name: name})
+	if len(p.Items) != 1 || p.Items[0].Ref != name {
+		t.Fatalf("wrong volume preview: %+v", p.Items)
+	}
+	c.expect(400, "POST", "/api/storage/plans/"+p.ID+"/confirm", map[string]string{"confirm": p.ConfirmPhrase + " "})
+	op := confirm(p)
+	if _, err := dockerOutput("volume", "inspect", name); err == nil {
+		t.Fatal("deleted volume remains")
+	}
+	assertAction := func(op apitypes.Operation, target, result string) {
+		t.Helper()
+		var actions []apitypes.ActionEntry
+		if err := json.Unmarshal(c.expect(200, "GET", "/api/actions?kind=storage.delete&scope=host&limit=500", nil), &actions); err != nil {
+			t.Fatal(err)
+		}
+		count := 0
+		for _, a := range actions {
+			if a.OperationID == op.ID {
+				count++
+				if a.Target != target || a.Result != result || a.Username != "admin" {
+					t.Fatalf("unexpected action: %+v", a)
+				}
+			}
+		}
+		if count != 1 {
+			t.Fatalf("action rows=%d, want one", count)
+		}
+	}
+	assertAction(op, name, "deleted")
+	if out, err := dockerOutput("tag", "busybox:latest", tag); err != nil {
+		t.Fatalf("tag busybox: %v: %s", err, out)
+	}
+	op = confirm(plan(apitypes.StoragePlanRequest{Kind: "image", Ref: tag}))
+	if _, err := dockerOutput("image", "inspect", tag); err == nil {
+		t.Fatal("throwaway tag remains")
+	}
+	if _, err := dockerOutput("image", "inspect", "busybox:latest"); err != nil {
+		t.Fatal("busybox removed with throwaway tag")
+	}
+	assertAction(op, tag, "untagged")
+	config := t.TempDir()
+	u, _ := url.Parse(c.base)
+	cookies := c.http.Jar.Cookies(u)
+	if len(cookies) == 0 {
+		t.Fatal("missing authenticated session")
+	}
+	contextDir := filepath.Join(config, "stackstead")
+	if err := os.MkdirAll(contextDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	saved, _ := json.Marshal(map[string]any{"version": 1, "current": "e2e", "contexts": map[string]any{"e2e": map[string]any{"url": c.base, "username": "admin", "session": cookies[0].Value, "expiresAt": time.Now().Add(time.Hour)}}})
+	if err := os.WriteFile(filepath.Join(contextDir, "contexts.json"), saved, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(bin, "storage", "prune", "volumes", "--preview")
+	cmd.Env = append(os.Environ(), "XDG_CONFIG_HOME="+config, "STACKSTEAD_CONTEXT=e2e")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("CLI preview: %v: %s", err, out)
+	}
+}
+
+func storageProtectedVolume(t *testing.T, c *client, stack, name string) {
+	t.Helper()
+	var volumes apitypes.StorageVolumes
+	if err := json.Unmarshal(c.expect(200, "GET", "/api/storage/volumes", nil), &volumes); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(volumes.Volumes, func(v apitypes.StorageVolume) bool {
+		return v.Name == name && v.Status == "unused" && v.Protection != nil && v.Protection.Stack == stack
+	}) {
+		t.Fatal("stopped stack volume not unused and protected")
+	}
+	refusal := c.expect(409, "POST", "/api/storage/plans", apitypes.StoragePlanRequest{Kind: "volume", Name: name})
+	if !strings.Contains(string(refusal), stack) {
+		t.Fatal("refusal does not name owning stack")
+	}
+	var p apitypes.StoragePlan
+	if err := json.Unmarshal(c.expect(201, "POST", "/api/storage/plans", apitypes.StoragePlanRequest{Kind: "volumes", Selection: "unused"}), &p); err != nil {
+		t.Fatal(err)
+	}
+	if slices.ContainsFunc(p.Items, func(i apitypes.StoragePlanItem) bool { return i.Ref == name }) {
+		t.Fatal("protected volume included in deletions")
+	}
+	if !slices.ContainsFunc(p.Protected, func(i apitypes.StorageProtectedItem) bool { return i.Ref == name && i.Stack == stack }) {
+		t.Fatal("bulk preview omits protected volume")
 	}
 }
