@@ -76,6 +76,17 @@ var migrations = []string{
 	);
 	CREATE INDEX action_log_ts ON action_log(ts);
 	CREATE INDEX action_log_kind_ts ON action_log(kind, ts);`,
+	// Container state changes (ts is unix seconds) that health history is
+	// built from; 'restart' is a marker row, not a state.
+	`CREATE TABLE container_transitions (
+		ts        INTEGER NOT NULL,
+		project   TEXT    NOT NULL,
+		service   TEXT    NOT NULL,
+		container TEXT    NOT NULL,
+		state     TEXT    NOT NULL CHECK (state IN ('running','healthy','unhealthy','starting','restarting','exited','removed','restart')),
+		exit_code INTEGER NULL
+	);
+	CREATE INDEX container_transitions_project_ts ON container_transitions(project, ts);`,
 }
 
 // preMigration checks run inside the migration's transaction, before its SQL.
