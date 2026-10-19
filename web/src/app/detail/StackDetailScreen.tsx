@@ -74,16 +74,6 @@ export function StackDetailScreen({ name }: { name: string }) {
     document.title = `${name} · Stackstead`;
   }, [name]);
   useEffect(() => () => setUnsavedChanges(false), []);
-  // Both loaders are idempotent; they run again when a refetch replaces the detail because that clears the
-  // cpu-hour cache (the controller refreshes a requested compose file itself).
-  useEffect(() => {
-    if (item.kind === 'compose' || (item.kind === 'service' && serviceTab === 'config')) void ctl.loadCompose();
-  }, [ctl, item.kind, serviceTab, detail]);
-  const overviewService = selectedService && serviceTab === 'overview' ? selectedService.name : undefined;
-  useEffect(() => {
-    if (overviewService) void ctl.loadCpuHour(overviewService);
-  }, [ctl, overviewService, detail]);
-
   // The compose editor is the only producer of unsaved changes for now (18e adds the service and add flags).
   const parseErrorPresent = !!detail?.parseError;
   const rawOnly = parseErrorPresent && !missingComposeFile(detail?.parseError);
@@ -91,6 +81,20 @@ export function StackDetailScreen({ name }: { name: string }) {
   const [composeDirty, setComposeDirty] = useState(false);
   const onCompose = item.kind === 'compose';
   const editingCompose = onCompose && (editRequested || rawOnly);
+  // Set when the user asked to edit, so the editor takes keyboard focus once loaded.
+  const [focusEditor, setFocusEditor] = useState(false);
+  // Both loaders are idempotent; they run again when a refetch replaces the detail because that clears the
+  // cpu-hour cache (the controller refreshes a requested compose file itself). The compose editor fetches the
+  // file itself, so the screen stays out of its way while editing.
+  useEffect(() => {
+    if (editingCompose) return;
+    if (item.kind === 'compose' || (item.kind === 'service' && serviceTab === 'config')) void ctl.loadCompose();
+  }, [ctl, item.kind, serviceTab, detail, editingCompose]);
+  const overviewService = selectedService && serviceTab === 'overview' ? selectedService.name : undefined;
+  useEffect(() => {
+    if (overviewService) void ctl.loadCpuHour(overviewService);
+  }, [ctl, overviewService, detail]);
+
   const dirty = editingCompose && composeDirty;
   useEffect(() => {
     setUnsavedChanges(dirty);
@@ -102,11 +106,12 @@ export function StackDetailScreen({ name }: { name: string }) {
     setEditRequested(true);
     // Compose is only the default item while the file fails to parse; pin it in the URL so a fix keeps it selected.
     if (query.get('tab') !== 'compose') void navigate(location.hrefFor({ kind: 'compose' }), { replace: true });
-  }, [onCompose, rawOnly, query, navigate, location]);
+  }, [onCompose, rawOnly, query, navigate, location.hrefFor]);
   // Leaving the compose item ends edit mode; a held draft is gone with the editor.
   useEffect(() => {
     if (!onCompose) {
       setEditRequested(false);
+      setFocusEditor(false);
       setComposeDirty(false);
     }
   }, [onCompose]);
@@ -118,6 +123,7 @@ export function StackDetailScreen({ name }: { name: string }) {
     const action = pendingLeave;
     setPendingLeave(undefined);
     setEditRequested(false);
+    setFocusEditor(false);
     setComposeDirty(false);
     action?.();
   }
@@ -250,6 +256,7 @@ export function StackDetailScreen({ name }: { name: string }) {
                       guarded(() => {
                         location.go(location.hrefFor({ kind: 'compose' }));
                         setEditRequested(true);
+                        setFocusEditor(true);
                       })
                     }
                   />
@@ -265,7 +272,10 @@ export function StackDetailScreen({ name }: { name: string }) {
               editSlot={
                 !editingCompose &&
                 !missingFile && (
-                  <Button variant="secondary" size="sm" onClick={() => setEditRequested(true)}>
+                  <Button variant="secondary" size="sm" onClick={() => {
+                      setEditRequested(true);
+                      setFocusEditor(true);
+                    }}>
                     Edit YAML
                   </Button>
                 )
@@ -277,6 +287,7 @@ export function StackDetailScreen({ name }: { name: string }) {
                     stackName={name}
                     composePath={detail.path}
                     onDirtyChange={setComposeDirty}
+                    autoFocus={focusEditor}
                     onSaved={() => void ctl.load()}
                     onApply={() => void ctl.act('up')}
                   />

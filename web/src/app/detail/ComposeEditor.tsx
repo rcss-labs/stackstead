@@ -19,11 +19,13 @@ export interface ComposeEditorProps {
   onApply?: () => void;
   /** True while the draft differs from the saved file. */
   onDirtyChange?: (dirty: boolean) => void;
+  /** Move keyboard focus into the editor once the file has loaded (set when the user asked to edit). */
+  autoFocus?: boolean;
 }
 
 const CONFLICT_REASON = 'Resolve the conflict first (Reload or Discard)';
 
-export function ComposeEditor({ stackName, parseError, composePath, onSaved, onApply, onDirtyChange }: ComposeEditorProps) {
+export function ComposeEditor({ stackName, parseError, composePath, onSaved, onApply, onDirtyChange, autoFocus }: ComposeEditorProps) {
   // The screen keys this component by stack, so the name is fixed for its lifetime.
   const [editor] = useState(() =>
     createComposeEditor(stackName, {
@@ -47,6 +49,14 @@ export function ComposeEditor({ stackName, parseError, composePath, onSaved, onA
   useEffect(() => {
     dirtyCallback.current?.(isDirty);
   }, [isDirty]);
+
+  const focused = useRef(false);
+  const ready = st.phase !== 'loading' && st.phase !== 'loadFailed';
+  useEffect(() => {
+    if (!autoFocus || !ready || focused.current) return;
+    focused.current = true;
+    yaml.current?.focus();
+  }, [autoFocus, ready]);
 
   useEffect(() => {
     void editor.reload();

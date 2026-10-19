@@ -93,6 +93,21 @@ describe('compose editor on the stack page', () => {
     await waitFor(() => expect(here()).toBe('/stacks/web?tab=operations&op=op1'));
   });
 
+  it('Edit YAML moves keyboard focus into the editor', async () => {
+    mountDetail(h, '/stacks/web?tab=compose');
+    await user().click(await screen.findByRole('button', { name: 'Edit YAML' }));
+    await waitFor(() => expect(textbox().value).toBe('services: {}\n'));
+    await waitFor(() => expect(document.activeElement).toBe(textbox()));
+  });
+
+  it('a parse-error stack fetches the compose file once, from the editor alone', async () => {
+    h.stackRes = { body: stackDetail({ status: 'unavailable', parseError: 'yaml: line 3: bad', services: [] }) };
+    mountDetail(h, '/stacks/web');
+    await waitFor(() => expect(textbox().value).toBe('services: {}\n'));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(h.calls('GET', '/api/stacks/web/compose')).toBe(1);
+  });
+
   it('a parse error opens the raw editor directly and hides Edit YAML', async () => {
     h.stackRes = { body: stackDetail({ status: 'unavailable', parseError: 'yaml: line 3: mapping values are not allowed', services: [] }) };
     mountDetail(h, '/stacks/web');
