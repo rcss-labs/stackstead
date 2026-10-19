@@ -101,6 +101,9 @@ func (f *File) UpdateService(name string, cfg ServiceConfig) (*File, error) {
 			}
 		}
 		edits = append(edits, fd.edits()...)
+		if fd.field == FieldNetworks {
+			edits = append(edits, undeclaredNetworkEdits(f.root, cfg.Networks)...)
+		}
 	}
 	if len(edits) == 0 {
 		return f, nil
@@ -111,6 +114,20 @@ func (f *File) UpdateService(name string, cfg ServiceConfig) (*File, error) {
 		return nil, err
 	}
 	return Parse(out)
+}
+
+// undeclaredNetworkEdits declares each attached network that the file does not
+// yet declare as external, as AddService does; existing declarations are never
+// touched. Without it the project fails validation (undefined network).
+func undeclaredNetworkEdits(root *yaml.Node, attached []NetworkAttachment) []edit {
+	declared := mappingValue(root, "networks")
+	var edits []edit
+	for _, net := range attached {
+		if mappingValue(declared, net.Name) == nil {
+			edits = append(edits, edit{path: []string{"networks", net.Name}, value: mapNode("external", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})})
+		}
+	}
+	return edits
 }
 
 func scalarEdit(path []string, v string, node func(string) *yaml.Node) []edit {

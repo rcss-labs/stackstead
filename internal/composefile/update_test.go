@@ -79,11 +79,11 @@ func TestUpdateKeepsEnvironmentListStyle(t *testing.T) {
 }
 
 func TestUpdateStaticIPSwitchesNetworksToMapping(t *testing.T) {
-	src := "services:\n  a:\n    image: x\n    networks:\n      - lan\n"
+	src := "services:\n  a:\n    image: x\n    networks:\n      - lan\nnetworks:\n  lan: {}\n"
 	got := update(t, src, "a", func(c *ServiceConfig) {
 		c.Networks = []NetworkAttachment{{Name: "lan", IPv4Address: "10.0.0.5"}}
 	})
-	want := "services:\n  a:\n    image: x\n    networks:\n      lan:\n        ipv4_address: 10.0.0.5\n"
+	want := "services:\n  a:\n    image: x\n    networks:\n      lan:\n        ipv4_address: 10.0.0.5\nnetworks:\n  lan: {}\n"
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}
@@ -304,5 +304,25 @@ func TestUpdateMapEnvironmentReorderFallsBackToRewrite(t *testing.T) {
 	})
 	if want := "services:\n  a:\n    image: x\n    environment:\n      B: \"2\"\n      A: \"1\"\n"; got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestUpdateDeclaresOnlyUndeclaredNetworks(t *testing.T) {
+	src := "services:\n  web:\n    image: nginx:1.27\nnetworks:\n  lan: {external: true} # existing\n  internal: {}\n"
+	got := update(t, src, "web", func(c *ServiceConfig) {
+		c.Networks = []NetworkAttachment{{Name: "lan"}, {Name: "internal"}, {Name: "backend"}}
+	})
+	want := "networks:\n  lan: {external: true} # existing\n  internal: {}\n  backend:\n    external: true\n"
+	if !strings.HasSuffix(got, want) {
+		t.Fatalf("got:\n%s", got)
+	}
+}
+
+func TestUpdateJoiningUndeclaredNetworkCreatesNetworksBlock(t *testing.T) {
+	got := update(t, "services:\n  web:\n    image: nginx:1.27\n", "web", func(c *ServiceConfig) {
+		c.Networks = []NetworkAttachment{{Name: "rv18e-net"}}
+	})
+	if !strings.Contains(got, "networks:\n  rv18e-net:\n    external: true") {
+		t.Fatalf("got:\n%s", got)
 	}
 }
