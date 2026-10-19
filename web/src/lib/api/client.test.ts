@@ -169,16 +169,22 @@ describe('api wrappers', () => {
       'GET /api/fs?path=%2Fsrv%2Fa+b': { body: [] },
       'GET /api/stacks/my%20stack': { body: {} },
       'GET /api/stacks/web/metrics?from=1&to=2&step=30s&service=api': { body: { points: [] } },
+      'GET /api/stacks/web/health?span=30m': { body: { from: 0, to: 0, services: [] } },
+      'GET /api/stacks/web/health': { body: { from: 0, to: 0, services: [] } },
       'GET /api/operations?state=running': { body: [] },
     });
     await api.fs('/srv/a b');
     await api.stack('my stack');
     await api.metricsHistory('web', { from: '1', to: '2', step: '30s', service: 'api' });
+    await api.healthHistory('web', { span: '30m' });
+    await api.healthHistory('web');
     await api.runningOperations();
     expect(fake.calls.map((c) => c.path)).toEqual([
       '/api/fs?path=%2Fsrv%2Fa+b',
       '/api/stacks/my%20stack',
       '/api/stacks/web/metrics?from=1&to=2&step=30s&service=api',
+      '/api/stacks/web/health?span=30m',
+      '/api/stacks/web/health',
       '/api/operations?state=running',
     ]);
   });

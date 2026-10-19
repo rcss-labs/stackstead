@@ -258,6 +258,19 @@ running container.
   Memory excludes page cache (`inactive_file` on cgroup v2, `cache` on v1),
   like `docker stats`. `metrics/live` streams new samples as they are taken
   (`sample` events). History and live `time` are both UTC RFC3339.
+- **Health history.** `GET /api/stacks/{name}/health?span=` returns
+  `{from, to, services}` (Unix seconds); `span` is a duration from `1m` to
+  `24h` (default `60m`, anything else is 400). Each service has `restarts`
+  and `runs`, contiguous `{state, from, to}` stretches covering `[from, to]`;
+  time before the first known row is `nodata`. States are `running`
+  (no health check), `healthy`, `unhealthy`, `starting`, `restarting`,
+  `exited`, `removed` (all replicas gone) and `nodata`. With several
+  replicas the worst state wins: `exited` > `unhealthy` > `restarting` >
+  `starting` > `healthy`/`running` > `removed` > `nodata`. `restarts` counts
+  `die` followed by `start` in the window, once per restart, whether from
+  `docker restart` or a restart policy. History starts with the first run of
+  this version and is kept for `metrics_retention`. Refetch on the stack's
+  `change` event. An unknown stack is 404.
 - **Events.** `GET /api/events` sends `status` (`events`, `metricsDegraded`)
   when it connects or changes, and `change` (`project`, `seq`) when a
   project's containers changed; refetch the affected stack on `change`. It
