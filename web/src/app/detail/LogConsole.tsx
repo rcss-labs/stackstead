@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import type { LogError } from '$lib/api/types';
 import type { LogLine } from '$lib/logs/buffer';
 import {
   consoleStatus,
@@ -14,14 +13,14 @@ import type { LogSource } from '$lib/stacks/logs';
 import styles from './LogConsole.module.css';
 import { LogChips } from './LogChips';
 import { LogConsoleHeader } from './LogConsoleHeader';
+import { errorKey } from './logConsoleShared';
 import { LogLines } from './LogLines';
 import { useLogStream } from './useLogStream';
 import { useLogsHeight } from './useLogsHeight';
 
 const KEY_STEP = 20;
+const SEARCH_DEBOUNCE_MS = 150;
 const STREAM_OPTIONS = { tail: 200, follow: true } as const;
-
-const errorKey = (e: LogError) => `${e.container}\0${e.error}`;
 
 /** Stable colour slot: a service's position among the sorted names; unlisted names fall back to a hash. */
 function serviceColorIndex(sorted: string[], service: string): number {
@@ -56,6 +55,7 @@ export function LogConsole({ source, services, service, onService, open, onOpenC
   const [pinned, setPinned] = useState<number | undefined>();
   const [level, setLevel] = useState<LogLevel>('all');
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [dragging, setDragging] = useState(false);
   const drag = useRef<{ startY: number; startHeight: number } | undefined>(undefined);
 
@@ -78,9 +78,16 @@ export function LogConsole({ source, services, service, onService, open, onOpenC
     setPinned(undefined);
   }
 
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [search]);
+  // Typing waits for a pause; emptying the field shows everything at once.
+  const appliedSearch = search === '' ? '' : debouncedSearch;
+
   const latestSeq = stream.lines.at(-1)?.seq ?? 0;
   const view = paused ? frozen : stream.lines;
-  const visible = useMemo(() => filterConsoleLines(view, { level, search }), [view, level, search]);
+  const visible = useMemo(() => filterConsoleLines(view, { level, search: appliedSearch }), [view, level, appliedSearch]);
   const newCount = paused ? newLinesSince(stream.lines, frozenSeq) : 0;
   const status = consoleStatus({ status: stream.status, ended: stream.ended, paused, sourceKind: source.kind });
   const sortedServices = useMemo(() => [...services].sort(), [services]);
@@ -180,7 +187,7 @@ export function LogConsole({ source, services, service, onService, open, onOpenC
         )}
         <LogLines
           lines={visible}
-          search={search}
+          search={appliedSearch}
           pinned={pinned}
           onPin={(seq) => setPinned((current) => (current === seq ? undefined : seq))}
           paused={paused}

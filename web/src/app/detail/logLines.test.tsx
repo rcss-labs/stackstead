@@ -331,4 +331,85 @@ describe('LogConsole lines', () => {
     });
     expect(el.scrollTop).toBe(1000);
   });
+
+  it('resuming after scrolling up jumps to the bottom', async () => {
+    fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'one')] });
+    mount();
+    await tick();
+    const el = scroller();
+    Object.defineProperty(el, 'scrollHeight', { configurable: true, value: 1000 });
+    Object.defineProperty(el, 'clientHeight', { configurable: true, value: 200 });
+    el.scrollTop = 100;
+    fireEvent.scroll(el);
+    fireEvent.click(screen.getByRole('button', { name: 'Following' }));
+    await act(async () => {
+      fake.push(PATH, logEvent(C_A, 2, 1, 'two'));
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Paused · 1 new' }));
+    expect(el.scrollTop).toBe(1000);
+  });
+
+  it('debounces the search by 150 ms and clears it immediately', async () => {
+    fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'boom'), logEvent(C_A, 2, 1, 'quiet')] });
+    const { container } = mount();
+    await tick();
+    const input = screen.getByLabelText('Search logs') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'boom' } });
+    expect(input.value).toBe('boom');
+    expect(rows()).toHaveLength(2);
+    expect(container.querySelector('mark')).toBeNull();
+    await tick(149);
+    expect(rows()).toHaveLength(2);
+    await tick(1);
+    expect(rows()).toHaveLength(1);
+    fireEvent.change(input, { target: { value: '' } });
+    expect(rows()).toHaveLength(2);
+  });
+
+  it('has a single tab stop among rows and moves it with the arrow keys', async () => {
+    fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'one'), logEvent(C_A, 2, 1, 'two'), logEvent(C_A, 3, 1, 'three')] });
+    mount();
+    await tick();
+    const tabbable = () => rows().filter((r) => r.getAttribute('tabindex') === '0');
+    expect(tabbable()).toEqual([rows()[2]]);
+    rows()[2].focus();
+    fireEvent.keyDown(rows()[2], { key: 'ArrowUp' });
+    expect(document.activeElement).toBe(rows()[1]);
+    expect(tabbable()).toEqual([rows()[1]]);
+    fireEvent.keyDown(rows()[1], { key: 'Home' });
+    expect(document.activeElement).toBe(rows()[0]);
+    fireEvent.keyDown(rows()[0], { key: 'End' });
+    expect(document.activeElement).toBe(rows()[2]);
+    fireEvent.keyDown(rows()[2], { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(rows()[2]);
+    fireEvent.keyDown(rows()[2], { key: ' ' });
+    expect(rows()[2].getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('the pinned row is the tab stop', async () => {
+    fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'one'), logEvent(C_A, 2, 1, 'two')] });
+    mount();
+    await tick();
+    fireEvent.click(rows()[0]);
+    document.body.focus();
+    expect(rows().filter((r) => r.getAttribute('tabindex') === '0')).toEqual([rows()[0]]);
+  });
+
+  it('flashes only genuinely new lines, not rows revealed by a filter', async () => {
+    fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'old')] });
+    mount();
+    await tick();
+    expect(rows()[0].hasAttribute('data-new')).toBe(true);
+    await tick(2000);
+    fireEvent.click(screen.getByRole('button', { name: 'Errors' }));
+    fireEvent.click(within(screen.getByRole('group', { name: 'Level' })).getByRole('button', { name: 'All' }));
+    expect(rows()[0].hasAttribute('data-new')).toBe(false);
+    await act(async () => {
+      fake.push(PATH, logEvent(C_A, 2, 1, 'fresh'));
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    expect(rows()[0].hasAttribute('data-new')).toBe(false);
+    expect(rows()[1].hasAttribute('data-new')).toBe(true);
+  });
 });

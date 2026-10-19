@@ -102,8 +102,9 @@
   margin: 0 -6px;
   border-radius: 4px;
   cursor: pointer;
-  animation: lineIn 1.2s ease-out;
 }
+
+.row[data-new] { animation: lineIn 1.2s ease-out; }
 
 .row:hover { background: var(--hover); }
 .row[data-pinned] { background: var(--accent-soft); }
@@ -123,6 +124,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.serviceName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .text {

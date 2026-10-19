@@ -103,7 +103,7 @@ describe('LogConsole stream', () => {
     mount({ open: false });
     await tick(200);
     // The lines stay mounted (inert) behind the collapsed drawer; the inline line is the header's.
-    const header = screen.getByRole('banner');
+    const header = screen.getByTestId('log-console-header');
     expect(within(header).getByText('second line').parentElement!.textContent).toMatch(/\S+\s+api\s+second line/);
     expect(within(header).queryByText('first')).toBeNull();
     expect(body().style.height).toBe('0px');

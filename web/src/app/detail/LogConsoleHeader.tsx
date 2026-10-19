@@ -32,7 +32,7 @@ export function LogConsoleHeader({
 }: LogConsoleHeaderProps) {
   const pillLabel = !paused ? 'Following' : newCount > 0 ? `Paused · ${newCount} new` : 'Paused';
   return (
-    <header className={styles.header}>
+    <header className={styles.header} data-testid="log-console-header">
       <button type="button" className={styles.toggle} aria-expanded={open} onClick={onToggle}>
         <svg className={styles.chevron} width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M6 15l6-6 6 6" fill="none" stroke="var(--muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />

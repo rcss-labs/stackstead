@@ -1,3 +1,4 @@
+import { seriesVar } from './logConsoleShared';
 import styles from './LogLines.module.css';
 
 export interface LogChipsProps {
@@ -5,11 +6,6 @@ export interface LogChipsProps {
   selected: string | undefined;
   onSelect: (service: string | undefined) => void;
   colorIndex: (service: string) => number;
-}
-
-/** Colour slot for a service: its position among the sorted names, wrapped over the four console series. */
-export function seriesVar(index: number): string {
-  return `var(--series-${(index % 4) + 1})`;
 }
 
 export function LogChips({ services, selected, onSelect, colorIndex }: LogChipsProps) {
