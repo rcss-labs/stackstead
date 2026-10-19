@@ -1,4 +1,5 @@
-/** Placeholder until Plan 18; App owns the main landmark. */
+import { StackCreateScreen } from '../create/StackCreateScreen';
+
 export default function StackCreate() {
-  return <h1>New stack</h1>;
+  return <StackCreateScreen />;
 }
