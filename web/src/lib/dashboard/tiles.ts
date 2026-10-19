@@ -1,5 +1,5 @@
 import type { HostSnapshot } from '../api/types';
-import type { HostSample } from '../stores/host';
+import { HOST_HISTORY_MAX, HOST_POLL_INTERVAL_MS, type HostSample } from '../stores/host';
 import { formatBytes, formatDuration, formatPercent, formatRate } from '../format';
 
 export interface TileModel {
@@ -135,7 +135,7 @@ export interface HostStat {
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const DISK_WARNING_RATIO = 0.75;
+const DISK_WARNING_PERCENT = 75;
 
 /** "14 Oct 10:58" in local time. */
 function formatSince(d: Date): string {
@@ -147,6 +147,9 @@ function formatSince(d: Date): string {
 export function hostStats(h: HostSnapshot, history: HostSample[], now: Date): HostStat[] {
   const stats: HostStat[] = [];
   const docker = h.source === 'docker';
+  // The series is consumed by index, so drop samples older than the window (hidden tab, failed polls).
+  const windowStart = now.getTime() - HOST_HISTORY_MAX * HOST_POLL_INTERVAL_MS;
+  history = history.filter((s) => s.t >= windowStart);
 
   if (h.cpu) {
     const u = h.uptime;
@@ -173,15 +176,16 @@ export function hostStats(h: HostSnapshot, history: HostSample[], now: Date): Ho
     });
   }
   if (h.disk) {
-    const usedRatio = h.disk.total > 0 ? (h.disk.total - h.disk.free) / h.disk.total : 0;
+    // One rounded value drives both the text and the tone so they cannot disagree (74.6% shows 75% and warns).
+    const usedPercent = h.disk.total > 0 ? Math.round(((h.disk.total - h.disk.free) / h.disk.total) * 100) : 0;
     stats.push({
       id: 'disk',
       label: 'Disk',
       aux: formatBytes(h.disk.total),
       value: formatBytes(h.disk.free),
-      sub: `free · ${h.disk.path} ${Math.round(usedRatio * 100)}% used`,
+      sub: `free · ${h.disk.path} ${usedPercent}% used`,
       series: [],
-      tone: usedRatio >= DISK_WARNING_RATIO ? 'warning' : 'accent',
+      tone: usedPercent >= DISK_WARNING_PERCENT ? 'warning' : 'accent',
     });
   }
   if (h.network) {

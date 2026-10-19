@@ -44,7 +44,7 @@ export interface HostDeps {
   intervalMs?: number;
 }
 
-const DEFAULT_INTERVAL_MS = 10_000;
+export const HOST_POLL_INTERVAL_MS = 10_000;
 
 let teardown: (() => void) | undefined;
 let holders = 0;
@@ -70,7 +70,7 @@ export function startHost(deps: HostDeps): () => void {
 
 function beginPolling(deps: HostDeps): () => void {
   const doc = deps.doc ?? document;
-  const intervalMs = deps.intervalMs ?? DEFAULT_INTERVAL_MS;
+  const intervalMs = deps.intervalMs ?? HOST_POLL_INTERVAL_MS;
   let timer: ReturnType<typeof setInterval> | undefined;
   let generation = 0;
   let busy = false;

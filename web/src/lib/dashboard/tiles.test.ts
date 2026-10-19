@@ -105,11 +105,11 @@ describe('hostTiles', () => {
 });
 
 describe('hostStats', () => {
-  const history: HostSample[] = [
-    { t: 1, cpu: 10, mem: 100, rx: 5 },
-    { t: 2, cpu: null, mem: 200, rx: 6 },
-  ];
   const now = new Date(2026, 9, 15, 12, 0, 0);
+  const history: HostSample[] = [
+    { t: now.getTime() - 20_000, cpu: 10, mem: 100, rx: 5 },
+    { t: now.getTime() - 10_000, cpu: null, mem: 200, rx: 6 },
+  ];
   const stat = (h: HostSnapshot, id: string) => hostStats(h, history, now).find((x) => x.id === id);
 
   it('six stats in README order, null sections omitted', () => {
@@ -138,6 +138,19 @@ describe('hostStats', () => {
     const disk = (free: number) => host({ disk: { path: '/srv/stacks', free, total: 100 } });
     expect(stat(disk(26), 'disk')).toMatchObject({ aux: '100 B', value: '26 B', sub: 'free · /srv/stacks 74% used', tone: 'accent' });
     expect(stat(disk(25), 'disk')).toMatchObject({ sub: 'free · /srv/stacks 75% used', tone: 'warning' });
+  });
+
+  it('disk tone follows the rounded percentage that is shown', () => {
+    const disk = host({ disk: { path: '/srv/stacks', free: 254, total: 1000 } });
+    expect(stat(disk, 'disk')).toMatchObject({ sub: 'free · /srv/stacks 75% used', tone: 'warning' });
+  });
+
+  it('a stale sample is dropped from the series', () => {
+    const stale: HostSample = { t: now.getTime() - 31 * 10_000, cpu: 99, mem: 999, rx: 9 };
+    const fresh: HostSample = { t: now.getTime() - 30 * 10_000, cpu: 11, mem: 111, rx: 7 };
+    const stats = hostStats(host(), [stale, fresh, ...history], now);
+    expect(stats.find((x) => x.id === 'cpu')?.series).toEqual([11, 10, null]);
+    expect(stats.find((x) => x.id === 'memory')?.series).toEqual([111, 100, 200]);
   });
 
   it('network falls back to dashes', () => {
