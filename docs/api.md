@@ -176,6 +176,8 @@ Plan bodies are `{kind:"image", ref:"tag-or-id"}` or
 `{kind:"images", selection:"dangling"}`, `{kind:"volumes", selection:"unused"}`
 or `{kind:"build-cache", selection:"unused"}`. Tagged images are excluded from
 bulk cleanup. A single tag removes that reference, leaving other tags intact.
+An image with several tags cannot be planned by ID (409): Docker refuses an
+unforced delete by ID, so remove its tags one at a time.
 
 The plan includes `id`, `createdAt`, `expiresAt`, `items`, `protected`, `warnings`,
 `reclaim:{min,max,exact}` and `confirmPhrase`. Plans expire after 5 minutes, live
