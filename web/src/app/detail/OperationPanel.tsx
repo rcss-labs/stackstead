@@ -17,17 +17,19 @@ export interface OperationPanelProps {
 /**
  * Follows one operation's output. The stream is opened in an effect (not a render-time initializer) so
  * StrictMode's mount, cleanup, mount cycle closes and reopens it instead of leaving a closed stream or an
- * orphaned one; callers key the panel on the id.
+ * orphaned one. The stream remembers whose it is: when operationId changes without the caller re-keying the
+ * panel, the render before the effect swaps streams would otherwise show the old operation's output under
+ * the new id (and notify its finish again), so nothing renders until the new stream is open.
  */
 export function OperationPanel(props: OperationPanelProps) {
-  const [stream, setStream] = useState<OperationStream>();
+  const [opened, setOpened] = useState<{ id: string; stream: OperationStream }>();
   const { operationId } = props;
   useEffect(() => {
-    const opened = createOperationStream(operationId);
-    setStream(opened);
-    return () => opened.close();
+    const stream = createOperationStream(operationId);
+    setOpened({ id: operationId, stream });
+    return () => stream.close();
   }, [operationId]);
-  return stream ? <OperationOutput key={operationId} stream={stream} {...props} /> : null;
+  return opened?.id === operationId ? <OperationOutput key={operationId} stream={opened.stream} {...props} /> : null;
 }
 
 function OperationOutput({ stream, operationId, onCancel, onFinished, autoscroll = true }: OperationPanelProps & { stream: OperationStream }) {
@@ -121,7 +123,7 @@ function OperationOutput({ stream, operationId, onCancel, onFinished, autoscroll
         )}
         <span className={styles.spacer} />
         {running && (
-          <Button variant="secondary" size="sm" loading={cancelling} onClick={() => void cancel()}>
+          <Button variant="secondary" loading={cancelling} onClick={() => void cancel()}>
             Cancel
           </Button>
         )}

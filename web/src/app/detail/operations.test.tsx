@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { StrictMode } from 'react';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { get } from '$lib/store';
@@ -212,6 +213,46 @@ describe('OperationPanel', () => {
     expect(screen.queryByRole('button', { name: 'Jump to latest' })).toBeNull();
   });
 
+  it('under StrictMode keeps one live stream, shows each line once and notifies once', async () => {
+    const onFinished = vi.fn();
+    fetcher = installFakeFetch({ 'GET /api/operations/op1': { body: { ...op('running'), lines: [] } } });
+    stream = installFakeStream({ [PATH]: [line('0', 'only')] });
+    render(
+      <StrictMode>
+        <OperationPanel operationId="op1" onFinished={onFinished} />
+      </StrictMode>,
+    );
+    expect(await screen.findByText('only')).toBeTruthy();
+    // StrictMode's throwaway mount may send a request, but it must be closed: exactly one stays open.
+    expect(stream.requests.filter((r) => !r.signal?.aborted)).toHaveLength(1);
+    await act(async () => stream.push(PATH, doneEv()));
+    await waitFor(() => expect(onFinished).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.getAllByText('only')).toHaveLength(1);
+    expect(onFinished).toHaveBeenCalledTimes(1);
+  });
+
+  it('a new operationId without re-keying shows the new output and notifies for the new id only', async () => {
+    const onFinished = vi.fn();
+    const op2 = { ...op('succeeded'), id: 'op2', action: 'pull' };
+    fetcher = installFakeFetch({
+      'GET /api/operations/op1': { body: { ...op('running'), lines: [] } },
+      'GET /api/operations/op2': { body: { ...op2, lines: [] } },
+    });
+    stream = installFakeStream({
+      [PATH]: [line('0', 'first op'), doneEv()],
+      '/api/operations/op2/stream': [line('0', 'second op'), `event: done\ndata: ${JSON.stringify(op2)}\n\n`],
+    });
+    const view = render(<OperationPanel operationId="op1" onFinished={onFinished} />);
+    await waitFor(() => expect(onFinished).toHaveBeenCalledTimes(1));
+    view.rerender(<OperationPanel operationId="op2" onFinished={onFinished} />);
+    expect(await screen.findByText('second op')).toBeTruthy();
+    await waitFor(() => expect(onFinished).toHaveBeenCalledTimes(2));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText('first op')).toBeNull();
+    expect(onFinished.mock.calls.map(([o]) => o.id)).toEqual(['op1', 'op2']);
+  });
+
   it('onFinished fires once for repeated done', async () => {
     const onFinished = vi.fn();
     const view = setup([line('0', 'a'), doneEv(), doneEv()], { onFinished });
@@ -268,7 +309,6 @@ describe('operations pane on the stack page', () => {
     await waitFor(() => expect(h.calls('GET', '/api/stacks/web')).toBeGreaterThan(before.detail));
     await waitFor(() => expect(h.calls('GET', '/api/stacks')).toBeGreaterThan(before.stacks));
     await waitFor(() => expect(h.calls('GET', '/api/operations?state=running')).toBeGreaterThan(before.running));
-    await waitFor(() => expect(h.calls('GET', '/api/stacks/web')).toBeGreaterThan(before.detail));
   });
 
   it('Cancel posts once to the cancel endpoint and toasts on failure', async () => {

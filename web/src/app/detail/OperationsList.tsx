@@ -34,7 +34,7 @@ export function OperationsList({ operations, selected, href }: OperationsListPro
         const ms = operationDurationMs(o, now);
         const content = (
           <>
-            <Led tone={look.tone} pulse={o.state === 'running'} label={look.label} />
+            <Led tone={look.tone} pulse={o.state === 'running'} size={7} label={look.label} />
             <span className={styles.action}>{o.action}</span>
             <span className={styles.detail}>{o.stack ? `docker compose ${o.action}` : 'host'}</span>
             <span className={styles.when}>
