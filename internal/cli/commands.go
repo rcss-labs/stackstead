@@ -14,7 +14,7 @@ func rootCommand() *Command {
 	add("Remote",
 		loginCommand(), logoutCommand(), contextCommand(), whoamiCommand(), statusCommand(),
 		stacksCommand(), opsCommand(), logsCommand(), metricsCommand(), eventsCommand(),
-		networksCommand(), settingsCommand())
+		networksCommand(), storageCommand(), settingsCommand())
 	add("Host admin", configCommand(), dbCommand(), adminCommand(), healthCommand(), upgradeCommand())
 	return &Command{
 		Name:  "stackstead",

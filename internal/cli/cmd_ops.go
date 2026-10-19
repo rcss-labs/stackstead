@@ -72,7 +72,7 @@ func streamOperation(ctx context.Context, env *Env, p *Printer, c *client.Client
 	if final == nil {
 		return exitf(ExitGeneral, "the output stream of operation %s ended without a result", oneLine(op.ID))
 	}
-	desc := fmt.Sprintf("%s %s %s", oneLine(final.Action), oneLine(final.Stack), oneLine(final.State))
+	desc := fmt.Sprintf("%s %s %s", oneLine(final.Action), operationStack(final.Stack), oneLine(final.State))
 	if final.State != apitypes.OpSucceeded {
 		if final.Error != "" {
 			desc += ": " + oneLine(final.Error)
@@ -132,7 +132,7 @@ func opsCommand() *Command {
 								exit = fmt.Sprint(*op.ExitCode)
 							}
 							rows = append(rows, []string{
-								oneLine(op.ID), oneLine(op.Stack), oneLine(op.Action), p.Status(oneLine(op.State)),
+								oneLine(op.ID), operationStack(op.Stack), oneLine(op.Action), p.Status(oneLine(op.State)),
 								relativeTime(op.StartedAt, now), operationDuration(op, now), exit,
 							})
 						}
@@ -158,7 +158,7 @@ func opsCommand() *Command {
 						}
 						now := env.Now()
 						fmt.Fprintf(env.Stdout, "ID:        %s\nStack:     %s\nAction:    %s\nState:     %s\nStarted:   %s\nDuration:  %s\n",
-							oneLine(d.ID), oneLine(d.Stack), oneLine(d.Action), p.Status(oneLine(d.State)),
+							oneLine(d.ID), operationStack(d.Stack), oneLine(d.Action), p.Status(oneLine(d.State)),
 							d.StartedAt.Local().Format(time.RFC3339), operationDuration(d.Operation, now))
 						if d.ExitCode != nil {
 							fmt.Fprintf(env.Stdout, "Exit code: %d\n", *d.ExitCode)
@@ -242,4 +242,11 @@ func networksCommand() *Command {
 			},
 		}},
 	}
+}
+
+func operationStack(stack string) string {
+	if stack == "" {
+		return "host"
+	}
+	return oneLine(stack)
 }

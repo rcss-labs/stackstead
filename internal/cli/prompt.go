@@ -186,3 +186,39 @@ var (
 	getTerminalState = term.GetState
 	restoreTerminal  = term.Restore
 )
+
+// confirmTyped compares the typed bytes exactly, removing only the line's
+// final LF. Spaces and CR must survive so the server sees the same phrase.
+func confirmTyped(env *Env, phrase string, yes bool) error {
+	if yes {
+		return nil
+	}
+	if !env.IsTerminal(stdinFd(env)) {
+		return exitf(ExitUsage, "refusing to continue without confirmation: use --yes")
+	}
+	fmt.Fprintf(env.Stderr, "Type %q to confirm: ", oneLine(phrase))
+	var line []byte
+	one := make([]byte, 1)
+	for {
+		n, err := env.Stdin.Read(one)
+		if n == 1 {
+			if one[0] == '\n' {
+				break
+			}
+			line = append(line, one[0])
+			if len(line) > maxSecretBytes {
+				return exitf(ExitValidation, "confirmation is too long")
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return exitf(ExitGeneral, "read answer: %v", err)
+		}
+	}
+	if string(line) != phrase {
+		return exitf(ExitValidation, "confirmation phrase does not match")
+	}
+	return nil
+}
