@@ -210,6 +210,7 @@ describe('stack detail screen', () => {
     await waitFor(() => expect(here()).toBe('/stacks/web?tab=operations&op=op1'));
     const pending = get(toasts).filter((t) => t.pending);
     expect(pending.map((t) => t.message)).toEqual(['up · web']);
+    await waitFor(() => expect(stream.requests.some((r) => r.path === '/api/operations/op1/stream')).toBe(true));
   });
 
   it('a 409 on an action toasts busy and a 503 refreshes status', async () => {
@@ -293,9 +294,27 @@ describe('stack detail screen', () => {
     expect(get(toasts).filter((t) => t.kind === 'success')).toHaveLength(1);
   });
 
+  it("a removal's done event navigates home with exactly one success toast", async () => {
+    mount('/stacks/web');
+    await screen.findByRole('heading', { level: 1, name: 'web' });
+    await user().click(screen.getByRole('button', { name: 'Remove' }));
+    await user().click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(stream.requests.some((r) => r.path === '/api/operations/rm1/stream')).toBe(true));
+    await act(async () =>
+      stream.push(
+        '/api/operations/rm1/stream',
+        'event: done\ndata: {"id":"rm1","stack":"web","action":"down","state":"succeeded","startedAt":"2026-10-14T10:00:00Z","exitCode":0}\n\n',
+      ),
+    );
+    await waitFor(() => expect(here()).toBe('/'));
+    expect(get(toasts).filter((t) => t.kind === 'success')).toHaveLength(1);
+  });
+
   it('navigating from one stack to another restarts the page', async () => {
     mount('/stacks/web?tab=operations&op=op1');
     await screen.findByRole('heading', { level: 1, name: 'web' });
+    await waitFor(() => expect(stream.requests.some((r) => r.path === '/api/operations/op1/stream')).toBe(true));
+    const opStream = stream.requests.find((r) => r.path === '/api/operations/op1/stream');
     await waitFor(() => expect(calls('GET', '/api/stacks/web/health?span=60m')).toBe(1));
     goTo('/stacks/db');
     expect(await screen.findByRole('heading', { level: 1, name: 'db' })).toBeTruthy();
@@ -304,6 +323,7 @@ describe('stack detail screen', () => {
     expect(calls('GET', '/api/stacks/web')).toBe(1);
     expect(document.title).toBe('db · Stackstead');
     expect(here()).toBe('/stacks/db');
+    expect(opStream?.signal?.aborted).toBe(true);
   });
 
   it('refetches when a change for its project arrives or on resync, not for another project', async () => {

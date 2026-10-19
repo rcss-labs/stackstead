@@ -16,6 +16,7 @@ import { useStore } from '../hooks/useStore';
 import { ComposeView } from './ComposeView';
 import { DetailHeader } from './DetailHeader';
 import { HealthTimeline } from './HealthTimeline';
+import { OperationsPane } from './OperationsPane';
 import { ServiceChips, ServiceRail } from './ServiceRail';
 import { ServicePane } from './ServicePane';
 import { SplitPane } from './SplitPane';
@@ -155,6 +156,14 @@ export function StackDetailScreen({ name }: { name: string }) {
             />
           ) : item.kind === 'compose' ? (
             <ComposeView detail={detail} compose={compose} error={composeError} onRetry={() => void ctl.loadCompose()} />
+          ) : item.kind === 'operations' ? (
+            <OperationsPane
+              operations={operations}
+              selected={location.op}
+              href={(id) => detailHref(name, { tab: 'operations', op: id })}
+              onCancel={ctl.cancelOperation}
+              onFinished={ctl.operationFinished}
+            />
           ) : item.kind === 'none' ? (
             <EmptyState title="No services" description="This stack has no services yet." />
           ) : null}
