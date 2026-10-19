@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -170,4 +171,57 @@ it.each([false, true])('ignores a delayed canceled POST without changing rows or
   expect(fake.calls.filter(c => c.path === '/api/networks' && c.method === 'GET')).toHaveLength(1);
   if (reopen) { expect(screen.getByRole('dialog')).toBeTruthy(); expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('new'); }
   else expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+function StatefulPicker({ initial, onValue }: { initial: NetworkPickerProps['value']; onValue: (v: NetworkPickerProps['value']) => void }) {
+  const [value, setValue] = useState(initial);
+  onValue(value);
+  return <NetworkPicker value={value} onChange={setValue} />;
+}
+
+describe('NetworkPicker with a stateful parent', () => {
+  function setupCreate() {
+    let count = 0, finish!: (value: { body: Network[] }) => void;
+    const created = { ...nets[0], name: 'lan', id: 'lan-id' };
+    fake = installFakeFetch({
+      'GET /api/networks': () => (++count === 1 ? { body: nets } : new Promise((resolve) => { finish = resolve; })),
+      'GET /api/host/interfaces': { body: [] },
+      'POST /api/networks': { status: 201, body: created },
+    });
+    let latest: NetworkPickerProps['value'] = [];
+    render(<StatefulPicker initial={[{ name: 'frontend', ipv4Address: '' }, { name: 'backend', ipv4Address: '' }]} onValue={(v) => (latest = v)} />);
+    return { finish: () => finish({ body: [...nets, created] }), value: () => latest, created };
+  }
+  const selects = () => screen.getAllByRole('combobox', { name: 'Network' }) as HTMLSelectElement[];
+
+  it('returns the select to the real value after cancel, and after create it shows the new network and stays editable', async () => {
+    const ctl = setupCreate();
+    await screen.findAllByRole('option', { name: /backend/ });
+    await userEvent.selectOptions(selects()[0], '__create__');
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(selects()[0].value).toBe('frontend');
+    await userEvent.selectOptions(selects()[0], '__create__');
+    await userEvent.type(screen.getByLabelText('Name'), 'lan');
+    await userEvent.click(screen.getByRole('button', { name: 'Create network' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    ctl.finish();
+    await waitFor(() => expect(selects()[0].value).toBe('lan'));
+    await userEvent.selectOptions(selects()[0], 'backend');
+    expect(selects()[0].value).toBe('backend');
+    expect(ctl.value()[0].name).toBe('backend');
+  });
+
+  it('does not write the created network into a different row when the row was removed before the reload finished', async () => {
+    const ctl = setupCreate();
+    await screen.findAllByRole('option', { name: /backend/ });
+    await userEvent.selectOptions(selects()[0], '__create__');
+    await userEvent.type(screen.getByLabelText('Name'), 'lan');
+    await userEvent.click(screen.getByRole('button', { name: 'Create network' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await userEvent.click(screen.getByRole('button', { name: 'Remove item 1' }));
+    ctl.finish();
+    await screen.findByRole('option', { name: /lan/ });
+    expect(ctl.value()).toEqual([{ name: 'backend', ipv4Address: '' }]);
+    expect(selects()[0].value).toBe('backend');
+  });
 });

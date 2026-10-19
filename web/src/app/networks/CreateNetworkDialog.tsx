@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, ApiError } from '$lib/api/client';
 import type { CreateNetworkRequest, HostInterface, Network, NetworkDriver } from '$lib/api/types';
@@ -93,7 +93,8 @@ export function CreateNetworkDialog({ open, onClose, onCreated }: CreateNetworkD
     update({ selected, ...(selected === '__other__' ? { parent: '' } : applyInterface(selected)) });
   }
 
-  useEffect(() => {
+  // Layout effect: a reopened dialog must never paint the previous session's values.
+  useLayoutEffect(() => {
     if (!open) return;
     let alive = true;
     const opened = {};
