@@ -378,6 +378,13 @@ func dieStart(id string, project string) []engine.Event {
 	return []engine.Event{ev("die"), ev("start")}
 }
 
+// dieStartAt is a compose die/start pair with the given engine event times.
+func dieStartAt(id string, die, start time.Time) []engine.Event {
+	evs := dieStart(id, "app")
+	evs[0].Time, evs[1].Time = die, start
+	return evs
+}
+
 func TestRecorder_CountsDieStartPairsOnce(t *testing.T) {
 	ev := func(a string) engine.Event {
 		e := dieStart("a", "app")[0]
@@ -413,21 +420,25 @@ func TestRecorder_CountsDieStartPairsOnce(t *testing.T) {
 		})
 	}
 
-	t.Run("two pairs a second apart", func(t *testing.T) {
+	// Crash loops restart faster than once a second: pairs with different
+	// event times are distinct restarts even within one wall-clock second.
+	t.Run("two pairs in one second with different event times", func(t *testing.T) {
 		h := start(t, ctr("a", "app", "web", "running", "Up"))
-		for _, e := range dieStart("a", "app") {
+		base := time.Unix(1_700_000_000, 0)
+		for _, e := range append(dieStartAt("a", base, base.Add(100*time.Millisecond)),
+			dieStartAt("a", base.Add(200*time.Millisecond), base.Add(400*time.Millisecond))...) {
 			h.src.events <- e
 		}
 		h.next(t)
-		h.clock.advance(time.Second)
-		for _, e := range dieStart("a", "app") {
-			h.src.events <- e
-		}
 		h.next(t)
+		h.noInsert(t)
 	})
-	t.Run("two pairs in the same second", func(t *testing.T) {
+	// A replayed pair carries the same event times: it is one restart.
+	t.Run("replayed pair with identical event times", func(t *testing.T) {
 		h := start(t, ctr("a", "app", "web", "running", "Up"))
-		for _, e := range append(dieStart("a", "app"), dieStart("a", "app")...) {
+		base := time.Unix(1_700_000_000, 0)
+		pair := dieStartAt("a", base, base.Add(100*time.Millisecond))
+		for _, e := range append(pair, pair...) {
 			h.src.events <- e
 		}
 		h.next(t)

@@ -43,9 +43,9 @@ type Recorder struct {
 	w      Journal
 	log    *slog.Logger
 	now    func() time.Time
-	last   map[string]known // container id -> last written state
-	dying  map[string]bool  // container id -> saw "die", waiting for "start"
-	lastRS map[string]int64 // container id -> unix second of the last restart row
+	last   map[string]known     // container id -> last written state
+	dying  map[string]bool      // container id -> saw "die", waiting for "start"
+	lastRS map[string]time.Time // container id -> event time of the last restart recorded
 	warned time.Time
 	seeded bool // last has been seeded from the journal
 }
@@ -58,7 +58,7 @@ func NewRecorder(src Source, w Journal, logger *slog.Logger, now func() time.Tim
 		now = time.Now
 	}
 	return &Recorder{src: src, w: w, log: logger, now: now,
-		last: map[string]known{}, dying: map[string]bool{}, lastRS: map[string]int64{}}
+		last: map[string]known{}, dying: map[string]bool{}, lastRS: map[string]time.Time{}}
 }
 
 // DeriveState maps a container's engine state and status text to a stored state.
@@ -230,13 +230,19 @@ func (r *Recorder) event(ctx context.Context, ev engine.Event) {
 		}
 		delete(r.dying, ev.ContainerID)
 		ts := r.now()
-		if sec, ok := r.lastRS[ev.ContainerID]; ok && sec == ts.Unix() {
+		// A replayed start carries its original event time; a new restart, even
+		// within the same second, does not. Events without a time fall back to now.
+		eventTime := ev.Time
+		if eventTime.IsZero() {
+			eventTime = ts
+		}
+		if prev, ok := r.lastRS[ev.ContainerID]; ok && prev.Equal(eventTime) {
 			return
 		}
 		row := Row{TS: ts, Project: project, Service: ev.Labels[labelComposeService],
 			Container: ev.ContainerID, State: StateRestart}
 		if r.insert(ctx, []Row{row}) {
-			r.lastRS[ev.ContainerID] = ts.Unix()
+			r.lastRS[ev.ContainerID] = eventTime
 		}
 	}
 }
