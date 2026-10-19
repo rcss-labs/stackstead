@@ -5,6 +5,8 @@ import type { SeriesPoint } from '$lib/metrics/series';
 import { writable } from '$lib/store';
 import type { StackLiveMetrics } from '$lib/stacks/liveMetrics';
 import { installFakeFetch, type FakeFetch } from '../../vitest-setup';
+import { startHost } from '$lib/stores/host';
+import type { HostSnapshot } from '$lib/api/types';
 import { MetricsTab, type MetricsTabProps } from './MetricsTab';
 
 function fakeLive() {
@@ -131,15 +133,50 @@ describe('MetricsTab', () => {
     await waitFor(() => expect(screen.getAllByRole('figure')[0]!.parentElement!.getAttribute('aria-busy')).toBeNull());
   });
 
-  it('draws the dashed Memory limit line when the service reports a limit', async () => {
-    history([point('web')]);
+  const GiB = 1024 ** 3;
+  type Call = [{ series: { label?: string; dash?: number[] }[] }, unknown[][]];
+  const withHost = (total: number | null) => {
+    const snapshot = { memory: total === null ? null : { used: 0, total, swapUsed: 0, swapTotal: 0 } } as unknown as HostSnapshot;
+    return startHost({ host: async () => snapshot, intervalMs: 1_000_000 });
+  };
+  const limitCalls = (createPlot: ReturnType<typeof setup>['createPlot']) =>
+    (createPlot.mock.calls as unknown as Call[]).filter(([o]) => o.series.some((s) => s.label === 'Limit'));
+
+  it('draws the dashed Memory limit line when the service reports a real limit', async () => {
+    history([point('web', { memLimit: 512 * 1024 ** 2 })]);
+    const release = withHost(8 * GiB);
     const { createPlot } = setup();
     await screen.findByText('Memory · 1h');
     await waitFor(() => expect(createPlot).toHaveBeenCalledTimes(4));
-    type Call = [{ series: { label?: string; dash?: number[] }[] }, unknown[][]];
-    const memory = (createPlot.mock.calls as unknown as Call[]).find(([o]) => o.series.some((s) => s.label === 'Limit'))!;
+    const memory = limitCalls(createPlot)[0]!;
     expect(memory[0].series.at(-1)!.dash).toBeTruthy();
-    expect(memory[1].at(-1)).toEqual([100]);
+    expect(memory[1].at(-1)).toEqual([512 * 1024 ** 2]);
+    release();
+  });
+
+  it('omits the limit line when Docker reports the host RAM (no mem_limit set)', async () => {
+    history([point('web', { memLimit: 8 * GiB })]);
+    const release = withHost(8 * GiB);
+    const { createPlot } = setup();
+    await screen.findByText('Memory · 1h');
+    await waitFor(() => expect(createPlot).toHaveBeenCalledTimes(4));
+    expect(limitCalls(createPlot)).toHaveLength(0);
+    release();
+  });
+
+  it('without a host total, omits a limit equal to the largest limit across the stack and keeps a smaller one', async () => {
+    const release = withHost(null);
+    history([point('web', { memLimit: 8 * GiB }), point('db', { memLimit: 512 * 1024 ** 2 })]);
+    const unlimited = setup({ allServices: ['db', 'web'] });
+    await screen.findByText('Memory · 1h');
+    await waitFor(() => expect(unlimited.createPlot).toHaveBeenCalledTimes(4));
+    expect(limitCalls(unlimited.createPlot)).toHaveLength(0);
+    cleanup();
+    const limited = setup({ service: 'db', allServices: ['db', 'web'] });
+    await screen.findByText('Memory · 1h');
+    await waitFor(() => expect(limited.createPlot).toHaveBeenCalledTimes(4));
+    expect(limitCalls(limited.createPlot)).toHaveLength(1);
+    release();
   });
 
   it("only the selected service's points are charted", async () => {

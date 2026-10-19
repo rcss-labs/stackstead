@@ -3,6 +3,7 @@ import { api } from '$lib/api/client';
 import type { Range, SeriesSet } from '$lib/metrics/series';
 import type { StackLiveMetrics } from '$lib/stacks/liveMetrics';
 import { createMetricsController, type MetricsController } from '$lib/stacks/metrics';
+import { host } from '$lib/stores/host';
 import { Banner } from '../components/Banner';
 import { EmptyState } from '../components/EmptyState';
 import { Segmented } from '../components/Segmented';
@@ -51,7 +52,12 @@ function MetricsBody({ ctl, service, metricsDegraded, metricsIntervalSeconds, me
 
   const points = all.get(service);
   const data: SeriesSet = new Map(points ? [[service, points]] : []);
+  const hostMemory = useStore(host)?.memory?.total;
   const lastLimit = points && points.length > 0 ? points[points.length - 1]!.memLimit : 0;
+  // Without a mem_limit Docker reports the host's RAM as the limit, which would squash the usage line; draw it only when it is a real cap.
+  const largestSeenLimit = Math.max(0, ...[...all.values()].flatMap((pts) => pts.map((p) => p.memLimit)));
+  const unlimited = hostMemory ? lastLimit >= hostMemory : lastLimit >= largestSeenLimit;
+  const memLimit = lastLimit > 0 && !unlimited ? lastLimit : undefined;
 
   const chart = (title: string, series: { label: string; metric: 'cpu' | 'mem' | 'netRx' | 'netTx' | 'blkRead' | 'blkWrite' }[], unit: 'percent' | 'bytes' | 'bytesPerSec', memLimit?: number) => (
     <MetricsChart
@@ -62,6 +68,7 @@ function MetricsBody({ ctl, service, metricsDegraded, metricsIntervalSeconds, me
       allServices={allServices}
       memLimit={memLimit}
       createPlot={createPlot}
+      height={80}
     />
   );
 
@@ -92,7 +99,7 @@ function MetricsBody({ ctl, service, metricsDegraded, metricsIntervalSeconds, me
       ) : (
         <div className={styles.grid} aria-busy={loaded ? undefined : 'true'}>
           {chart('CPU', [{ label: service, metric: 'cpu' }], 'percent')}
-          {chart('Memory', [{ label: service, metric: 'mem' }], 'bytes', lastLimit > 0 ? lastLimit : undefined)}
+          {chart('Memory', [{ label: service, metric: 'mem' }], 'bytes', memLimit)}
           {chart('Network', [{ label: 'RX', metric: 'netRx' }, { label: 'TX', metric: 'netTx' }], 'bytesPerSec')}
           {chart('Disk I/O', [{ label: 'read', metric: 'blkRead' }, { label: 'write', metric: 'blkWrite' }], 'bytesPerSec')}
         </div>
