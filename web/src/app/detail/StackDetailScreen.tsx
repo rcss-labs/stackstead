@@ -136,11 +136,14 @@ export function StackDetailScreen({ name }: { name: string }) {
               : 'Fix it in the Compose file; the structured editor is unavailable until it parses.'}
           </Banner>
         )}
-        <HealthTimeline
-          lanes={timelineLanes(health, detail.services.map((s) => s.name), nowSeconds)}
-          selected={location.item.kind === 'service' ? location.item.name : undefined}
-          onSelect={(service) => guarded(() => location.go(location.hrefFor({ kind: 'service', name: service })))}
-        />
+        {/* Under a parse error there are no services to chart, so the card would be an empty frame. */}
+        {!parseError && (
+          <HealthTimeline
+            lanes={timelineLanes(health, detail.services.map((s) => s.name), nowSeconds)}
+            selected={location.item.kind === 'service' ? location.item.name : undefined}
+            onSelect={(service) => guarded(() => location.go(location.hrefFor({ kind: 'service', name: service })))}
+          />
+        )}
         <SplitPane
           rail={<ServiceRail {...railProps} />}
           chips={<ServiceChips {...railProps} />}

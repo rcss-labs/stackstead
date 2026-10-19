@@ -210,6 +210,8 @@ describe('stack detail screen', () => {
     expect(within(banner).getByText('Compose file cannot be parsed')).toBeTruthy();
     expect(banner.querySelector('pre')?.textContent).toBe('yaml: line 3: mapping values are not allowed');
     expect(within(banner).getByText(/Fix it in the Compose file/)).toBeTruthy();
+    // With no parsed services there is nothing to chart: the health card is not shown.
+    expect(screen.queryByRole('region', { name: 'Health · last 60 min' })).toBeNull();
   });
 
   it('a missing compose file names it and offers no editor', async () => {
