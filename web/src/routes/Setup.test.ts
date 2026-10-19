@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { get } from 'svelte/store';
+import { get } from '$lib/store';
 import { installFakeFetch, type FakeFetch } from '../vitest-setup';
 import { onUnauthorized } from '../lib/api/client';
 import { bootstrapSession, expireSession, session } from '../lib/api/session';

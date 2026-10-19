@@ -1,4 +1,4 @@
-import type { Readable } from 'svelte/store';
+import type { Readable } from '$lib/store';
 import type { HostInterface, Network, NetworkDriver } from '../api/types';
 import type { LiveChange } from '../stores/live';
 import { createRefreshList } from '../stores/refreshList';

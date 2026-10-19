@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { get } from 'svelte/store';
+import { get } from '$lib/store';
 import type { Status } from '../api/types';
 import { navigate, route } from '../router';
 import { setTheme } from '../stores/appearance';

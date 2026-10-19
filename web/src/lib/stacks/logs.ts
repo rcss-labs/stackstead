@@ -1,4 +1,4 @@
-import { writable, type Readable } from 'svelte/store';
+import { writable, type Readable } from '$lib/store';
 import { createCoalescer, createLogBuffer, type LogBuffer } from '../logs/buffer';
 import type { LogError, LogEvent } from '../api/types';
 import { openSSE, type SSEHandle, type SSEMessage, type SSEStatus } from '../sse/client';

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { get } from 'svelte/store';
+import { get } from '$lib/store';
 import type { StoragePlan } from '$lib/api/types';
 import { operationsRefresh } from '$lib/stores/stacks';
 import { toasts } from '$lib/stores/toasts';

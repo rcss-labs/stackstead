@@ -1,4 +1,4 @@
-import { get } from 'svelte/store';
+import { get } from '$lib/store';
 import { describe, expect, it, vi, type Mock } from 'vitest';
 import { ApiError } from '../api/client';
 import type { ServiceConfig, StackDetail } from '../api/types';

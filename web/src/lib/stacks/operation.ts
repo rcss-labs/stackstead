@@ -1,6 +1,6 @@
 // Store behind OperationPanel: follows /api/operations/{id}/stream, resuming
 // with the absolute line index as Last-Event-ID so no line repeats or is lost.
-import { writable, type Readable } from 'svelte/store';
+import { writable, type Readable } from '$lib/store';
 import { api } from '$lib/api/client';
 import type { Operation, OperationDetail } from '$lib/api/types';
 import { openSSE, type SSEHandle, type SSEMessage, type SSEStatus } from '$lib/sse/client';

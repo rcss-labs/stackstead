@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { writable } from '$lib/store';
 
 export type ToastKind = 'info' | 'success' | 'warning' | 'danger';
 

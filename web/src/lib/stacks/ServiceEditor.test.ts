@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { get } from 'svelte/store';
+import { get } from '$lib/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ServiceDetail, StackDetail } from '../api/types';
 import { toasts } from '../stores/toasts';

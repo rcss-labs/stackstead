@@ -1,7 +1,7 @@
 // Owns the list page's refresh timers (spec §11): host 10 s, summary 30 s,
 // alerts 60 s and on every change. Everything stops while the tab is hidden
 // and resumes with an immediate fetch when it is visible again.
-import { writable, type Readable } from 'svelte/store';
+import { writable, type Readable } from '$lib/store';
 import type { Alert, HostSnapshot, MetricsSummary } from '../api/types';
 import { debounce } from '../stores/debounce';
 import type { LiveChange } from '../stores/live';

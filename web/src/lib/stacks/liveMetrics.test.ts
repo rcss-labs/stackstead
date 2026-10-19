@@ -1,4 +1,4 @@
-import { get } from 'svelte/store';
+import { get } from '$lib/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Sample } from '../api/types';
 import type { SeriesPoint } from '../metrics/series';

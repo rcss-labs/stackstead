@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { get, writable } from 'svelte/store';
+import { get, writable } from '$lib/store';
 import { createStorageRefresh } from './controller';
 import type { LiveChange } from '../stores/live';
 let visibility = 'visible';

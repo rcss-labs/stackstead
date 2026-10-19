@@ -1,6 +1,6 @@
 // Pure helpers for the Containers list plus the controller that keeps it fresh (spec §5.2):
 // refetch on every live change (debounced) and every 10 s while the tab is visible, nothing while hidden.
-import { type Readable } from 'svelte/store';
+import { type Readable } from '$lib/store';
 import type { ContainerRow } from '../api/types';
 import { createRefreshList } from '../stores/refreshList';
 import type { LiveChange } from '../stores/live';

@@ -4,7 +4,7 @@
 // refetches the whole list. Bursts are debounced; a resync (reconnect after
 // missed events) refetches immediately; responses that arrive out of order are
 // dropped by sequence number.
-import { writable, type Readable } from 'svelte/store';
+import { writable, type Readable } from '$lib/store';
 import type { Change, StackSummary } from '../api/types';
 
 export interface StacksState {

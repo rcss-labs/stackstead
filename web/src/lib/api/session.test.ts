@@ -1,4 +1,4 @@
-import { get } from 'svelte/store';
+import { get } from '$lib/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installFakeFetch, type FakeFetch } from '../../vitest-setup';
 import { api, onUnauthorized } from './client';

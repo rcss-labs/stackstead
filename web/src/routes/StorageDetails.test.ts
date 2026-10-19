@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, expect, it } from 'vitest';
-import { get } from 'svelte/store';
+import { get } from '$lib/store';
 import { navigate, route } from '$lib/router';
 import { operationsRefresh } from '$lib/stores/stacks';
 import { toasts } from '$lib/stores/toasts';

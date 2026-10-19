@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { createRawSnippet } from 'svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { get } from 'svelte/store';
+import { get } from '$lib/store';
 import { navigate, route } from '../router';
 import { toasts } from '../stores/toasts';
 import Banner from './Banner.svelte';

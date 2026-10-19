@@ -1,4 +1,4 @@
-import { writable, type Readable } from 'svelte/store';
+import { writable, type Readable } from '$lib/store';
 
 export interface RouteMatch {
   params: Record<string, string>;

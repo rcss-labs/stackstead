@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { get } from 'svelte/store';
+import { get } from '$lib/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContainerDetail as Detail, ContainerRow } from '$lib/api/types';
 import { navigate, route } from '$lib/router';
@@ -9,7 +9,7 @@ import { toasts } from '$lib/stores/toasts';
 import { installFakeFetch, installFakeStream, type FakeFetch, type FakeResponse, type FakeStream } from '../vitest-setup';
 
 vi.mock('$lib/stores/live', async (orig) => {
-  const { writable } = await import('svelte/store');
+  const { writable } = await import('$lib/store');
   const live = writable({ connection: 'open', events: 'connected', metricsDegraded: false, docker: 'ok', compose: '2.29.0', dockerVersion: '' });
   const changes = writable<{ project: string; seq: number; resync?: true } | null>(null);
   return { ...(await orig<typeof import('$lib/stores/live')>()), live: { subscribe: live.subscribe }, changes: { subscribe: changes.subscribe }, refreshStatus: vi.fn(), __changes: changes };

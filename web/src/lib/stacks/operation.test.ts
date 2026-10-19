@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { get } from 'svelte/store';
+import { get } from '$lib/store';
 import { installFakeFetch, installFakeStream, type FakeFetch, type FakeStream } from '../../vitest-setup';
 import { createOperationStream } from './operation';
 

@@ -1,4 +1,4 @@
-import { get, writable } from 'svelte/store';
+import { get, writable } from '$lib/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Change, StackSummary } from '../api/types';
 import { refreshStacks, stacks, startStacks } from './stacks';

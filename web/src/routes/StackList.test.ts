@@ -1,13 +1,13 @@
 import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { writable } from 'svelte/store';
+import { writable } from '$lib/store';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Change, Operation, StackSummary } from '$lib/api/types';
 import { navigate } from '$lib/router';
 import { refreshRunningOps, refreshStacks, startStacks } from '$lib/stores/stacks';
 import * as liveModule from '$lib/stores/live';
 import { toasts } from '$lib/stores/toasts';
-import { get } from 'svelte/store';
+import { get } from '$lib/store';
 import { installFakeFetch, type FakeFetch } from '../vitest-setup';
 import StackList from './StackList.svelte';
 
@@ -57,7 +57,7 @@ afterEach(() => {
 
 const liveState = vi.hoisted(() => ({ value: { connection: 'open', events: 'connected', metricsDegraded: false, docker: 'ok', compose: '2.29.0', dockerVersion: '' } as Record<string, unknown> }));
 vi.mock('$lib/stores/live', async (orig) => {
-  const { writable } = await import('svelte/store');
+  const { writable } = await import('$lib/store');
   const store = writable(liveState.value);
   const eventStore = writable<unknown[]>([]);
   return {

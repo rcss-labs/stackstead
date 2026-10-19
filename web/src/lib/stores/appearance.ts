@@ -2,7 +2,7 @@
 // <html> before first paint; this store reads them at init and owns every
 // change afterwards (DOM attribute + localStorage), so the rail toggle and
 // Settings always agree.
-import { derived, writable, type Readable } from 'svelte/store';
+import { derived, writable, type Readable } from '$lib/store';
 
 export type ThemeChoice = 'dark' | 'light' | 'system';
 export type EffectiveTheme = 'dark' | 'light';

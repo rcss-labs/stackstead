@@ -1,4 +1,4 @@
-import { get } from 'svelte/store';
+import { get } from '$lib/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Status } from '../api/types';
 import { installFakeStream, type FakeStream } from '../../vitest-setup';
