@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -82,12 +82,17 @@ function install(items: StackSummary[], opts: { ops?: Operation[]; extra?: Param
   stops.push(startRunningOps({ list: () => fetch('/api/operations?state=running').then((r) => r.json()), changes, refresh: operationsRefresh }));
 }
 
+/** Every distinct location the router visited, to count history entries. */
+let visited: string[] = [];
+
 function Where() {
   const l = useLocation();
+  if (visited[visited.length - 1] !== l.key) visited.push(l.key);
   return <output data-testid="where">{l.pathname + l.search}</output>;
 }
 
 async function mount() {
+  visited = [];
   const view = render(
     <MemoryRouter>
       <Overview />
@@ -193,7 +198,10 @@ describe('stacks list', () => {
     install([stack('alpha')]);
     await mount();
     const table = screen.getByRole('table', { name: 'Stacks' });
-    expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['Stack', 'Services', 'Ports', 'CPU', 'Memory', 'Actions']);
+    const headers = within(table).getAllByRole('columnheader').map((h) => h.textContent);
+    expect(headers).toEqual(['Status', 'Stack', 'Services', 'Ports', 'CPU', 'Memory', 'Actions']);
+    expect(within(rowOf('alpha')).getAllByRole('cell')).toHaveLength(headers.length);
+    expect(groupHeader('running')!.querySelector('[role="cell"]')!.getAttribute('aria-colspan')).toBe(String(headers.length));
     expect(within(table).getAllByRole('rowgroup').length).toBeGreaterThanOrEqual(2);
     expect(groupHeader('running')!.getAttribute('role')).toBe('row');
   });
@@ -266,8 +274,14 @@ describe('stacks list', () => {
     expect(where()).toBe('/');
     await user.click(within(rowOf('alpha')).getByRole('link', { name: ':8123' }));
     expect(where()).toBe('/');
+    const entries = visited.length;
     await user.click(within(rowOf('alpha')).getByRole('link', { name: 'alpha' }));
     expect(where()).toBe('/stacks/alpha');
+    expect(visited).toHaveLength(entries + 1); // exactly one push
+    cleanup();
+    await mount();
+    await user.click(within(rowOf('alpha')).getByRole('link', { name: 'Logs' }));
+    expect(where()).toBe('/stacks/alpha?tab=logs');
     cleanup();
     await mount();
     await user.click(within(rowOf('beta')).getByRole('button', { name: 'Up beta' }));
@@ -361,6 +375,25 @@ describe('stacks list', () => {
       await user.click(btn);
       await waitFor(() => expect(where()).toBe('/stacks/alpha?tab=operations&op=op9'));
       expect(fake.calls.filter((c) => c.path.endsWith('/actions/up'))).toHaveLength(1);
+    });
+
+    it('two synchronous clicks in one tick send one act', async () => {
+      install([stack('alpha', { status: 'stopped', running: 0 })], { extra: { 'POST /api/stacks/alpha/actions/up': { body: started } } });
+      await mount();
+      const btn = screen.getByRole('button', { name: 'Up alpha' });
+      // One act() batch: no re-render (and so no soft-disabled button) between the clicks.
+      act(() => {
+        fireEvent.click(btn);
+        fireEvent.click(btn);
+      });
+      await waitFor(() => expect(where()).toBe('/stacks/alpha?tab=operations&op=op9'));
+      expect(fake.calls.filter((c) => c.path.endsWith('/actions/up'))).toHaveLength(1);
+    });
+
+    it('enabled primary action carries its label as title', async () => {
+      install([stack('alpha')]);
+      await mount();
+      expect(screen.getByRole('button', { name: 'Restart alpha' }).getAttribute('title')).toBe('Restart alpha');
     });
 
     it('act failure toasts a warning on 409 and re-enables', async () => {

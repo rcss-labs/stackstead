@@ -19,7 +19,7 @@ export interface StacksListProps {
   onAct: (name: string, action: Action) => void;
 }
 
-const COLUMNS = ['Stack', 'Services', 'Ports', 'CPU', 'Memory', 'Actions'];
+const COLUMNS = ['Status', 'Stack', 'Services', 'Ports', 'CPU', 'Memory', 'Actions'];
 
 /** The stacks card: filter, then one group per health bucket with a row per stack. */
 export function StacksList({ items, alerts, summary, query, onQuery, runningStacks, reasonFor, acting, onAct }: StacksListProps) {
@@ -54,7 +54,7 @@ export function StacksList({ items, alerts, summary, query, onQuery, runningStac
           {groups.map((group) => (
             <div key={group.id} role="rowgroup">
               <div role="row" className={styles.groupRow} data-group={group.id}>
-                <div role="cell" aria-colspan={6}>
+                <div role="cell" aria-colspan={COLUMNS.length}>
                   <PanelLabel as="div" tone={group.id === 'attention' ? 'warning' : 'muted'}>
                     {group.title} <span className={styles.groupCount}>{group.items.length}</span>
                   </PanelLabel>

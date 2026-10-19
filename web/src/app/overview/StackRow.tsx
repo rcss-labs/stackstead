@@ -99,6 +99,7 @@ export function StackRow({ stack: s, failing, usage, running, reason, acting, on
           size="sm"
           icon
           aria-label={`${primary.label} ${s.name}`}
+          title={`${primary.label} ${s.name}`}
           disabledReason={reason}
           loading={acting}
           onClick={() => onAct(s.name, primary.action)}
