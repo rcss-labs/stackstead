@@ -125,7 +125,7 @@ export function ServiceRail({ services, selected, operationsCount, latest, onSel
 /** The rail as a horizontal chip scroller for narrow screens; the same selection, shown under 760px only. */
 export function ServiceChips({ services, selected, onSelect }: ServiceRailProps) {
   return (
-    <div className={styles.chips} aria-label="Service chips" role="group">
+    <nav className={styles.chips} aria-label="Service chips">
       {services.map((service) => {
         const state = serviceState(service);
         const current = isService(selected, service.name);
@@ -149,6 +149,6 @@ export function ServiceChips({ services, selected, onSelect }: ServiceRailProps)
       <button type="button" className={styles.chip} data-plain data-selected={selected.kind === 'operations'} aria-pressed={selected.kind === 'operations'} onClick={() => onSelect({ kind: 'operations' })}>
         Operations
       </button>
-    </div>
+    </nav>
   );
 }

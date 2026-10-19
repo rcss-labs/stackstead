@@ -71,15 +71,15 @@
 
 .cpuValue {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 10.5px;
+  color: var(--faint);
 }
-.cpuValue[data-empty='true'] { color: var(--faint); }
 
 .bar {
   width: 44px;
   height: 3px;
   border-radius: 2px;
-  background: var(--raised);
+  background: var(--border);
   overflow: hidden;
 }
 
@@ -94,17 +94,17 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 8px;
+  padding: 7px 8px;
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: var(--muted);
+  color: var(--text);
   font: inherit;
   font-size: 13px;
   text-align: start;
   cursor: pointer;
 }
-.item[data-selected='true'] { color: var(--text); }
+.item svg { color: var(--muted); }
 
 .itemLabel { flex: 1; }
 
@@ -116,7 +116,7 @@
 
 .totals {
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
+  grid-template-columns: auto 1fr;
   gap: 6px 8px;
   margin: auto 0 0;
   padding: 12px 16px;
@@ -124,7 +124,7 @@
   font-size: 12px;
 }
 .totals dt { color: var(--muted); }
-.totals dd { margin: 0; font-family: var(--mono); }
+.totals dd { margin: 0; font-family: var(--mono); text-align: end; }
 .totals dd[data-empty='true'] { color: var(--faint); }
 
 .chips {

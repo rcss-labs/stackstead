@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ServiceDetail } from '$lib/api/types';
+import { changes, startLive } from '$lib/stores/live';
+import { get } from '$lib/store';
 import { appService, installHarness, mountDetail, removeHarness, stackDetail, type Harness } from './detailTestKit';
 import { ServicePane } from './ServicePane';
 
@@ -63,7 +65,7 @@ describe('service pane', () => {
 
   it('CPU · 1h shows the live value and a sparkline from the hour history', () => {
     const view = renderPane(appService(), { latestCpu: 12.5, cpuHour: [1, null, 4, 2] });
-    const card = within(screen.getByText('CPU · 1h').parentElement!);
+    const card = within(screen.getByText('CPU · 1h').parentElement!.parentElement!);
     expect(card.getByText('12.5%')).toBeTruthy();
     expect(sparklinePath()).not.toBe(flatLine);
     expect(sparklinePath()).toMatch(/^M/);
@@ -131,6 +133,22 @@ describe('stack detail service pane and compose view', () => {
     await screen.findByRole('heading', { level: 2, name: 'app' });
     await new Promise((r) => setTimeout(r, 30));
     expect(cpuCalls()).toHaveLength(2);
+  });
+
+  it('asks for the hour of cpu again after a refetch', async () => {
+    startLive({ fetchStatus: () => fetch('/api/status').then((r) => r.json()) });
+    mountDetail(h, '/stacks/web');
+    await screen.findByRole('heading', { level: 2, name: 'app' });
+    await waitFor(() => expect(get(changes)?.resync).toBe(true));
+    const stackGets = () => h.calls('GET', '/api/stacks/web');
+    await waitFor(() => expect(stackGets()).toBe(2)); // initial + resync on open
+    await waitFor(() => expect(cpuCalls().length).toBeGreaterThanOrEqual(1));
+    await new Promise((r) => setTimeout(r, 30));
+    const before = cpuCalls().length;
+    h.stream.push('/api/events', 'event: change\ndata: {"project":"web","seq":9}\n\n');
+    await waitFor(() => expect(stackGets()).toBe(3));
+    await waitFor(() => expect(cpuCalls()).toHaveLength(before + 1));
+    expect(cpuCalls().at(-1)!.path).toMatch(/service=app/);
   });
 
   it('?tab=compose shows the file with its name and path', async () => {

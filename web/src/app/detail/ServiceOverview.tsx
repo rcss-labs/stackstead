@@ -83,8 +83,10 @@ export function ServiceOverview({ service, latestCpu, cpuHour }: ServiceOverview
           )}
         </section>
         <section className={styles.card}>
-          <PanelLabel>CPU · 1h</PanelLabel>
-          <p className={styles.cpuNow}>{latestCpu === undefined ? '—' : formatPercent(latestCpu)}</p>
+          <div className={styles.head}>
+            <PanelLabel>CPU · 1h</PanelLabel>
+            <p className={styles.cpuNow}>{latestCpu === undefined ? '—' : formatPercent(latestCpu)}</p>
+          </div>
           <Sparkline values={cpuHour ?? []} tone="accent" width={100} height={40} />
         </section>
       </div>
