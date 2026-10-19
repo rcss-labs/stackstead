@@ -221,6 +221,55 @@ describe('loading and refetching', () => {
     expect(get(ctl.composeError)).toBe('read failed');
   });
 
+  it('loadCpuHour aligns its window to the server 120 s grid so the first bucket is kept', async () => {
+    const offGrid = new Date('2026-10-19T12:01:10Z');
+    const metricsHistory = vi.fn<StackDetailDeps['metricsHistory']>(async () => ({
+      points: [{ time: '2026-10-19T11:00:00Z', service: 'app', cpu: 7, mem: 0, memLimit: 0 }],
+    }));
+    const { ctl } = await started({ metricsHistory, now: () => offGrid });
+    await ctl.loadCpuHour('app');
+    expect(metricsHistory).toHaveBeenCalledWith(
+      'web',
+      { from: '2026-10-19T11:00:00Z', to: '2026-10-19T12:00:00Z', step: '2m', service: 'app' },
+      expect.any(AbortSignal),
+    );
+    const values = get(ctl.cpuHour).get('app');
+    expect(values).toHaveLength(30);
+    expect(values?.[0]).toBe(7);
+  });
+
+  it('loadCpuHour: a response that lands after a newer request for the service is ignored', async () => {
+    const a = gate<MetricsHistory>();
+    const b = gate<MetricsHistory>();
+    const metricsHistory = vi.fn<StackDetailDeps['metricsHistory']>().mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);
+    const { ctl, changes } = await started({ metricsHistory });
+    const first = ctl.loadCpuHour('app');
+    changes.set({ project: 'web', seq: 1 });
+    await vi.advanceTimersByTimeAsync(1500);
+    const second = ctl.loadCpuHour('app');
+    const point = (cpu: number) => ({ points: [{ time: '2026-10-19T11:00:00Z', service: 'app', cpu, mem: 0, memLimit: 0 }] });
+    b.resolve(point(2));
+    await second;
+    a.resolve(point(1));
+    await first;
+    expect(get(ctl.cpuHour).get('app')?.[0]).toBe(2);
+  });
+
+  it('loadCpuHour: a failed older request does not unmark the newer in-flight one', async () => {
+    const a = gate<MetricsHistory>();
+    const b = gate<MetricsHistory>();
+    const metricsHistory = vi.fn<StackDetailDeps['metricsHistory']>().mockReturnValueOnce(a.promise).mockReturnValueOnce(b.promise);
+    const { ctl, changes } = await started({ metricsHistory });
+    const first = ctl.loadCpuHour('app');
+    changes.set({ project: 'web', seq: 1 });
+    await vi.advanceTimersByTimeAsync(1500);
+    void ctl.loadCpuHour('app');
+    a.reject(new Error('aborted'));
+    await first;
+    await ctl.loadCpuHour('app');
+    expect(metricsHistory).toHaveBeenCalledTimes(2);
+  });
+
   it('loadCpuHour caches per service and clears on refetch', async () => {
     const { from, to } = rangeToQuery('1h', NOW);
     const at = (minutes: number) => new Date(Date.parse(from) + minutes * 60_000).toISOString();

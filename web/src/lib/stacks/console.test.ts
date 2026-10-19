@@ -43,6 +43,11 @@ describe('console derivations', () => {
       { text: 'BOOM', match: true },
       { text: ' b', match: false },
     ]);
+    expect(searchSegments('a BOOM b', 'Boom')).toEqual([
+      { text: 'a ', match: false },
+      { text: 'BOOM', match: true },
+      { text: ' b', match: false },
+    ]);
     expect(searchSegments('İ', 'i')).toEqual([{ text: 'İ', match: false }]);
     expect(searchSegments('abc', '')).toEqual([{ text: 'abc', match: false }]);
   });

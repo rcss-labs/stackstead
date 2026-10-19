@@ -6,7 +6,6 @@
 import { get, writable, type Readable, type Unsubscriber } from '$lib/store';
 import { ApiError } from '../api/client';
 import type { Action, HealthHistory, MetricPoint, MetricsHistory, Operation, RawCompose, StackDetail } from '../api/types';
-import { rangeToQuery } from '../metrics/series';
 import { debounce } from '../stores/debounce';
 import type { LiveChange } from '../stores/live';
 import type { TrackedOperation } from '../stores/operationTracker';
@@ -200,20 +199,27 @@ export function createStackDetail(name: string, deps: StackDetailDeps): StackDet
 
   const cpuRequested = new Set<string>();
   const cpuAborts = new Set<AbortController>();
+  const cpuTokens = new Map<string, number>(); // latest request per service; older responses are dropped
+  let cpuSeq = 0;
   async function loadCpuHour(service: string): Promise<void> {
     if (cpuRequested.has(service)) return;
     cpuRequested.add(service);
     const mine = generation;
+    const token = ++cpuSeq;
+    cpuTokens.set(service, token);
     const controller = new AbortController();
     cpuAborts.add(controller);
-    const { from, to } = rangeToQuery('1h', now());
+    // The server buckets on an epoch-aligned grid, so the window must start and end on it.
+    const toMs = Math.floor(now().getTime() / CPU_STEP_MS) * CPU_STEP_MS;
+    const to = new Date(toMs).toISOString().replace(/\.\d{3}Z$/, 'Z');
+    const from = new Date(toMs - 3_600_000).toISOString().replace(/\.\d{3}Z$/, 'Z');
     try {
       const h = await deps.metricsHistory(name, { from, to, step: CPU_STEP, service }, controller.signal);
-      if (mine !== generation) return;
+      if (mine !== generation || cpuTokens.get(service) !== token) return;
       cpuHour.update((m) => new Map(m).set(service, cpuSlots(h.points, service, from, to)));
     } catch {
       // Keep the last values and let the next request try again.
-      if (mine === generation) cpuRequested.delete(service);
+      if (mine === generation && cpuTokens.get(service) === token) cpuRequested.delete(service);
     } finally {
       cpuAborts.delete(controller);
     }
@@ -222,6 +228,8 @@ export function createStackDetail(name: string, deps: StackDetailDeps): StackDet
   // A burst of this project's container events is one refetch; a resync flushes at once.
   const refetch = debounce(() => {
     cpuRequested.clear();
+    for (const c of cpuAborts) c.abort();
+    cpuAborts.clear();
     void load();
     void loadOperations();
     void loadHealth();
