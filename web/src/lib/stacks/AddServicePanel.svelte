@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
-  import { get } from 'svelte/store';
+  import { get } from '$lib/store';
   import { api, ApiError } from '../api/client';
   import type { StackDetail } from '../api/types';
   import type { ServiceForm as Form } from '../compose/form';

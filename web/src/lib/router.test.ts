@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { get } from 'svelte/store';
+import { get } from '$lib/store';
 import { link, matchRoute, navigate, route, startRouter } from './router';
 
 describe('matchRoute', () => {

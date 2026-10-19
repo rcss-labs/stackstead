@@ -1,5 +1,5 @@
 // Shared list refresh rules: changes, visible intervals and stale-response guards.
-import { writable, type Readable } from 'svelte/store';
+import { writable, type Readable } from '$lib/store';
 import { debounce } from './debounce';
 import type { LiveChange } from './live';
 

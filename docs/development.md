@@ -60,6 +60,11 @@ STACKSTEAD_DATA_DIR=$PWD/.dev/data STACKSTEAD_STACKS_DIR=$PWD/.dev/stacks go run
 cd web && npm run dev
 ```
 
+`npm run dev:app` serves the React UI (the future replacement) at `app.html`
+beside the Svelte one, with the same proxy. `npm run build:app` builds it and
+runs the same bundle budget check into `web/dist-app/`, which is git-ignored
+and not embedded in the binary until the cutover.
+
 ## Tests
 
 ```bash

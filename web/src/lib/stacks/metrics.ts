@@ -1,6 +1,6 @@
 // Controller for the metrics tab: history (JSON) + live (SSE) merged into one
 // SeriesSet. Kept free of Svelte components so the lifecycle is testable.
-import { get, writable, derived, type Readable, type Writable } from 'svelte/store';
+import { get, writable, derived, type Readable, type Writable } from '$lib/store';
 import type { MetricsHistory } from '../api/types';
 import type { openSSE, SSEStatus } from '../sse/client';
 import { createStackLiveMetrics, type StackLiveMetrics } from './liveMetrics';

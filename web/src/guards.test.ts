@@ -11,13 +11,33 @@ function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = join(dir, e.name);
     if (e.isDirectory()) return sourceFiles(p);
-    return /\.(svelte|ts)$/.test(e.name) && p !== thisFile ? [p] : [];
+    return /\.(svelte|ts|tsx)$/.test(e.name) && p !== thisFile ? [p] : [];
   });
 }
 
 function findHtmlTag(files: Record<string, string>): string[] {
   return Object.entries(files)
     .filter(([, text]) => /\{\s*@html\b/.test(text))
+    .map(([name]) => name);
+}
+
+function findRawHtml(files: Record<string, string>): string[] {
+  return Object.entries(files)
+    .filter(([name, text]) =>
+      /\.(ts|tsx)$/.test(name) ? /\bdangerouslySetInnerHTML\b/.test(text) : /\{\s*@html\b/.test(text),
+    )
+    .map(([name]) => name);
+}
+
+function findHandoffReferences(files: Record<string, string>): string[] {
+  return Object.entries(files)
+    .filter(([, text]) => text.includes('design_handoff_stackstead_react'))
+    .map(([name]) => name);
+}
+
+function findSvelteStoreImports(files: Record<string, string>): string[] {
+  return Object.entries(files)
+    .filter(([, text]) => /(?:\bfrom\s*|\bimport\s*\(\s*)['"]svelte\/store['"]/.test(text))
     .map(([name]) => name);
 }
 
@@ -44,6 +64,34 @@ describe('guards: detectors', () => {
       }),
     ).toEqual(['a.svelte', 'c.svelte', 'd.svelte', 'e.svelte']);
   });
+  it('flags dangerouslySetInnerHTML in tsx and ts but not plain markup', () => {
+    expect(
+      findRawHtml({
+        'a.tsx': 'const x = <div dangerouslySetInnerHTML={{ __html: y }} />;',
+        'b.tsx': 'const x = <div>{y}</div>;',
+        'c.ts': 'const p = { dangerouslySetInnerHTML: 1 };',
+        'd.svelte': '<p>{@html x}</p>',
+      }),
+    ).toEqual(['a.tsx', 'c.ts', 'd.svelte']);
+  });
+  it('flags references to the design handoff folder', () => {
+    expect(
+      findHandoffReferences({
+        'a.tsx': "import x from '../../docs/superpowers/design_handoff_stackstead_react/x';",
+        'b.tsx': 'const x = 1;',
+      }),
+    ).toEqual(['a.tsx']);
+  });
+  it('flags svelte/store imports but not $lib/store', () => {
+    expect(
+      findSvelteStoreImports({
+        'a.ts': "import { writable } from 'svelte/store';",
+        'b.ts': "import { writable } from '$lib/store';",
+        'c.svelte': '<script>import { get } from "svelte/store";</script>',
+        'd.ts': "const { writable } = await import('svelte/store');",
+      }),
+    ).toEqual(['a.ts', 'c.svelte', 'd.ts']);
+  });
   it('flags anything that is not an exact version', () => {
     const bad = findRangedVersions({
       dependencies: { a: '^1.0.0', b: '~2.0.0', c: '3.0.0', d: 'latest' },
@@ -63,6 +111,21 @@ describe('guards: repository', () => {
   it('has no {@html anywhere in src/', () => {
     const files = Object.fromEntries(sourceFiles(srcDir).map((p) => [p, readFileSync(p, 'utf8')]));
     expect(findHtmlTag(files)).toEqual([]);
+  });
+
+  it('has no dangerouslySetInnerHTML in src/', () => {
+    const files = Object.fromEntries(sourceFiles(srcDir).map((p) => [p, readFileSync(p, 'utf8')]));
+    expect(findRawHtml(files)).toEqual([]);
+  });
+
+  it('never references the design handoff folder', () => {
+    const files = Object.fromEntries(sourceFiles(srcDir).map((p) => [p, readFileSync(p, 'utf8')]));
+    expect(findHandoffReferences(files)).toEqual([]);
+  });
+
+  it('imports no svelte/store anywhere in src/', () => {
+    const files = Object.fromEntries(sourceFiles(srcDir).map((p) => [p, readFileSync(p, 'utf8')]));
+    expect(findSvelteStoreImports(files)).toEqual([]);
   });
 
   it('pins every dependency to an exact version', () => {

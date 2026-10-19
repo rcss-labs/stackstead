@@ -1,4 +1,4 @@
-import { get, writable } from 'svelte/store';
+import { get, writable } from '$lib/store';
 import { expect, it, vi } from 'vitest';
 import type { HostInterface, Network } from '../api/types';
 import type { LiveChange } from '../stores/live';

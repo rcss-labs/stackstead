@@ -1,13 +1,13 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { get } from 'svelte/store';
+import { get } from '$lib/store';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { Network } from '$lib/api/types';
 import { toasts } from '$lib/stores/toasts';
 import { installFakeFetch, type FakeFetch, type FakeResponse } from '../vitest-setup';
 import NetworkList from './NetworkList.svelte';
 vi.mock('$lib/stores/live', async (orig) => {
-  const { writable } = await import('svelte/store');
+  const { writable } = await import('$lib/store');
   const store = writable({ connection: 'open', events: 'connected', metricsDegraded: false, docker: 'ok', compose: '2.29.0', dockerVersion: '' });
   return { ...(await orig<typeof import('$lib/stores/live')>()), live: { subscribe: store.subscribe }, refreshStatus: vi.fn() };
 });

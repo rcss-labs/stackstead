@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { get } from 'svelte/store';
+import { get } from '$lib/store';
 import { afterEach, describe, expect, it } from 'vitest';
 import { toasts } from '../stores/toasts';
 import { installFakeFetch, type FakeFetch } from '../../vitest-setup';

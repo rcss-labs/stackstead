@@ -37,3 +37,4 @@ bin/
 .dev/
 node_modules/
 dist/
+web/dist-app/

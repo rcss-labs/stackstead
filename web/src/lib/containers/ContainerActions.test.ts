@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { get } from 'svelte/store';
+import { get } from '$lib/store';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ContainerRow } from '$lib/api/types';
 import * as liveModule from '$lib/stores/live';
@@ -10,7 +10,7 @@ import ContainerActions from './ContainerActions.svelte';
 
 const liveState = vi.hoisted(() => ({ value: { connection: 'open', events: 'connected', metricsDegraded: false, docker: 'ok', compose: '2.29.0', dockerVersion: '' } as Record<string, unknown> }));
 vi.mock('$lib/stores/live', async (orig) => {
-  const { writable } = await import('svelte/store');
+  const { writable } = await import('$lib/store');
   const store = writable(liveState.value);
   return {
     ...(await orig<typeof import('$lib/stores/live')>()),

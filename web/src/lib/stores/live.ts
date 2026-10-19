@@ -1,7 +1,7 @@
 // Multiplexer for /api/events. One shared connection feeds status flags and a
 // change signal; screens refetch on every `resync` because events missed
 // while disconnected are not replayed.
-import { readable, writable, type Readable } from 'svelte/store';
+import { readable, writable, type Readable } from '$lib/store';
 import type { DockerEvent, Status } from '../api/types';
 import { openSSE, type SSEHandle, type SSEStatus } from '../sse/client';
 import type { SSEMessage } from '../sse/parse';

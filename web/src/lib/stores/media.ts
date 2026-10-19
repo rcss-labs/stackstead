@@ -1,4 +1,4 @@
-import { readable, type Readable } from 'svelte/store';
+import { readable, type Readable } from '$lib/store';
 
 /** Whether a CSS media query currently matches; false where matchMedia does not exist (tests, old engines). */
 export function mediaQuery(query: string): Readable<boolean> {

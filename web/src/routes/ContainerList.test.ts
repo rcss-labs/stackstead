@@ -7,7 +7,7 @@ import { installFakeFetch, type FakeFetch, type FakeResponse } from '../vitest-s
 import ContainerList from './ContainerList.svelte';
 
 vi.mock('$lib/stores/live', async (orig) => {
-  const { writable } = await import('svelte/store');
+  const { writable } = await import('$lib/store');
   const store = writable({ connection: 'open', events: 'connected', metricsDegraded: false, docker: 'ok', compose: '2.29.0', dockerVersion: '' });
   return { ...(await orig<typeof import('$lib/stores/live')>()), live: { subscribe: store.subscribe }, refreshStatus: vi.fn() };
 });

@@ -1,4 +1,4 @@
-import { writable, type Readable } from 'svelte/store';
+import { writable, type Readable } from '$lib/store';
 import { api, rearmUnauthorized } from './client';
 
 export interface SessionState {

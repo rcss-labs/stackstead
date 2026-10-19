@@ -8,7 +8,7 @@ vi.mock('./cm', () => ({ createDiffView: () => {
   } }));
 vi.mock('../stores/stacks', () => ({ refreshStacks: vi.fn(async () => {
   }) }));
-import { get } from 'svelte/store';
+import { get } from '$lib/store';
 import { toasts } from '../stores/toasts';
 import { refreshStacks } from '../stores/stacks';
 import AddServicePanel from './AddServicePanel.svelte';

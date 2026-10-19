@@ -1,4 +1,4 @@
-import type { Readable } from 'svelte/store';
+import type { Readable } from '$lib/store';
 import type { LogEvent } from '../api/types';
 
 export interface LogLine extends LogEvent {

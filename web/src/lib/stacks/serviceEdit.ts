@@ -1,4 +1,4 @@
-import { get, writable, type Readable, type Writable } from 'svelte/store';
+import { get, writable, type Readable, type Writable } from '$lib/store';
 import { ApiError } from '../api/client';
 import type { Field, RawCompose, ServiceConfig, StackDetail } from '../api/types';
 import { fromForm, mapServerErrors, toForm, validateForm, type FormErrors, type ServiceForm } from '../compose/form';

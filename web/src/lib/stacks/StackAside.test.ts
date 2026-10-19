@@ -1,5 +1,5 @@
 import { render, screen, within } from '@testing-library/svelte';
-import { writable } from 'svelte/store';
+import { writable } from '$lib/store';
 import { describe, expect, it } from 'vitest';
 import type { ContainerInfo, Operation, StackDetail } from '$lib/api/types';
 import type { SeriesPoint } from '$lib/metrics/series';

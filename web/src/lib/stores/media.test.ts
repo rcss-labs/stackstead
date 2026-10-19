@@ -1,4 +1,4 @@
-import { get } from 'svelte/store';
+import { get } from '$lib/store';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mediaQuery } from './media';
 

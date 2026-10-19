@@ -1,0 +1,167 @@
+/* Design tokens (Evolve v2). Components use the variables, not literals; this is the only file with colour literals.
+   Light is the default set; dark applies for the OS preference unless the user chose light
+   (data-theme="light"), and always when data-theme="dark". theme.js sets both before first paint.
+   The 760px mobile breakpoint is not a token (media queries cannot read custom properties); it is written
+   literally as max-width: 759px where needed. */
+:root {
+  color-scheme: light;
+
+  --bg: #f3f5f7;
+  --chassis: #e9edf1;
+  --surface: #ffffff;
+  --raised: #f7f9fa;
+  --hover: #eef1f4;
+  --border: #dfe4ea;
+  --border-strong: #c9d1da;
+  --border-input: #78828f;
+  --text: #161a20;
+  --muted: #5f6b7a;
+  --faint: #626c7a;
+  --accent: #047857;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(4, 120, 87, 0.12);
+  --success: #047857;
+  --warning: #9c4707;
+  --danger: #b91c1c;
+  --info: #1d4ed8;
+  --success-soft: rgba(4, 120, 87, 0.12);
+  --warning-soft: rgba(156, 71, 7, 0.12);
+  --danger-soft: rgba(185, 28, 28, 0.12);
+  --info-soft: rgba(29, 78, 216, 0.12);
+  --muted-soft: rgba(95, 107, 122, 0.12);
+  --hi: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-pop: 0 16px 48px rgba(16, 24, 40, 0.18);
+  --overlay: rgba(16, 24, 40, 0.35);
+  --series-1: #60a5fa;
+  --series-2: #f97316;
+  --series-3: #a78bfa;
+  --series-4: #14b8a6;
+  --series-5: #be185d;
+  --series-6: #6d28d9;
+  --series-7: #0f766e;
+  --series-8: #be123c;
+  --kind-images: #60a5fa;
+  --kind-volumes: #a78bfa;
+  --kind-layers: #14b8a6;
+  --kind-cache: #f97316;
+
+  --sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --mono: 'Geist Mono', ui-monospace, Menlo, Consolas, monospace;
+
+  --pad: 6px;
+  --row: 36px;
+
+  --radius-led: 2px;
+  --radius-sm: 4px;
+  --radius-xs: 6px;
+  --radius: 7px;
+  --radius-md: 9px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  --sidebar-w: 232px;
+  --topbar-h: 48px;
+  --mobile-bar-h: 52px;
+}
+
+:root[data-density='comfortable'] {
+  --pad: 10px;
+  --row: 44px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --bg: #0f1216;
+    --chassis: #0b0e12;
+    --surface: #151a20;
+    --raised: #1c2129;
+    --hover: #1f2530;
+    --border: #262d36;
+    --border-strong: #3a4350;
+    --border-input: #5b6573;
+    --text: #e6eaf0;
+    --muted: #8b95a5;
+    --faint: #848d9c;
+    --accent: #34d399;
+    --accent-ink: #062a1c;
+    --accent-soft: rgba(52, 211, 153, 0.14);
+    --success: #34d399;
+    --warning: #fbbf24;
+    --danger: #f87171;
+    --info: #60a5fa;
+    --success-soft: rgba(52, 211, 153, 0.16);
+    --warning-soft: rgba(251, 191, 36, 0.16);
+    --danger-soft: rgba(248, 113, 113, 0.16);
+    --info-soft: rgba(96, 165, 250, 0.16);
+    --muted-soft: rgba(139, 149, 165, 0.14);
+    --hi: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+    --shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+    --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.5);
+    --overlay: rgba(5, 8, 12, 0.55);
+    --series-1: #60a5fa;
+    --series-2: #f97316;
+    --series-3: #a78bfa;
+    --series-4: #14b8a6;
+    --series-5: #ec4899;
+    --series-6: #8b5cf6;
+    --series-7: #14b8a6;
+    --series-8: #f43f5e;
+    --kind-images: #60a5fa;
+    --kind-volumes: #a78bfa;
+    --kind-layers: #14b8a6;
+    --kind-cache: #f97316;
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0f1216;
+  --chassis: #0b0e12;
+  --surface: #151a20;
+  --raised: #1c2129;
+  --hover: #1f2530;
+  --border: #262d36;
+  --border-strong: #3a4350;
+  --border-input: #5b6573;
+  --text: #e6eaf0;
+  --muted: #8b95a5;
+  --faint: #848d9c;
+  --accent: #34d399;
+  --accent-ink: #062a1c;
+  --accent-soft: rgba(52, 211, 153, 0.14);
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --info: #60a5fa;
+  --success-soft: rgba(52, 211, 153, 0.16);
+  --warning-soft: rgba(251, 191, 36, 0.16);
+  --danger-soft: rgba(248, 113, 113, 0.16);
+  --info-soft: rgba(96, 165, 250, 0.16);
+  --muted-soft: rgba(139, 149, 165, 0.14);
+  --hi: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  --shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+  --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.5);
+  --overlay: rgba(5, 8, 12, 0.55);
+  --series-1: #60a5fa;
+  --series-2: #f97316;
+  --series-3: #a78bfa;
+  --series-4: #14b8a6;
+  --series-5: #ec4899;
+  --series-6: #8b5cf6;
+  --series-7: #14b8a6;
+  --series-8: #f43f5e;
+  --kind-images: #60a5fa;
+  --kind-volumes: #a78bfa;
+  --kind-layers: #14b8a6;
+  --kind-cache: #f97316;
+}

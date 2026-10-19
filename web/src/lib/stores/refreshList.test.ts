@@ -1,4 +1,4 @@
-import { get, writable } from 'svelte/store';
+import { get, writable } from '$lib/store';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { LiveChange } from './live';
 import { createRefreshList } from './refreshList';
