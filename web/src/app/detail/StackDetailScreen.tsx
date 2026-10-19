@@ -151,7 +151,9 @@ export function StackDetailScreen({ name }: { name: string }) {
     }
   }
 
-  // A removed service that the URL still names sends the page to the first remaining service.
+  // A removed service that the URL still names sends the page to the first remaining service. The name is
+  // remembered from the dialog until the refreshed detail no longer lists it, so a 404 or a cancelled-but-accepted
+  // removal (the controller clears the dialog before load() replaces the detail) is covered too.
   const removedService = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (removing) {
@@ -159,9 +161,14 @@ export function StackDetailScreen({ name }: { name: string }) {
       return;
     }
     const gone = removedService.current;
-    removedService.current = undefined;
+    if (!gone) return;
+    if (query.get('service') !== gone) {
+      removedService.current = undefined; // the page already moved elsewhere
+      return;
+    }
     const first = detail?.services[0];
-    if (gone && first && !detail.services.some((svc) => svc.name === gone) && query.get('service') === gone) {
+    if (first && !detail.services.some((svc) => svc.name === gone)) {
+      removedService.current = undefined;
       void navigate(location.hrefFor({ kind: 'service', name: first.name }), { replace: true });
     }
   }, [removing, detail, query, navigate, location.hrefFor]);
@@ -256,12 +263,10 @@ export function StackDetailScreen({ name }: { name: string }) {
               service={selectedService}
               tab={serviceTab}
               onTab={(tab) => guarded(() => location.go(location.hrefFor(item, tab)))}
-              onLogs={() =>
-                guarded(() => {
-                  setLogService(selectedService.name);
-                  setLogsOpen(true);
-                })
-              }
+              onLogs={() => {
+                setLogService(selectedService.name);
+                setLogsOpen(true);
+              }}
               onEdit={parseError ? undefined : () => guarded(() => setEditingService(selectedService.name))}
               onCloseEditor={() => guarded(() => setEditingService(undefined))}
               editor={

@@ -59,17 +59,17 @@ export function ServicePane({ service, tab, onTab, onLogs, latestCpu, cpuHour, o
       {editor ? (
         editor
       ) : (
-      <div className={styles.tabs}>
-        <Tabs tabs={TABS} selected={tab} onSelect={(id) => onTab(id as ServiceTab)} ariaLabel="Service sections" activation="manual">
-          {(selected) =>
-            selected === 'overview' ? (
-              <ServiceOverview service={service} latestCpu={latestCpu} cpuHour={cpuHour} />
-            ) : (
-              children?.(selected as ServiceTab)
-            )
-          }
-        </Tabs>
-      </div>
+        <div className={styles.tabs}>
+          <Tabs tabs={TABS} selected={tab} onSelect={(id) => onTab(id as ServiceTab)} ariaLabel="Service sections" activation="manual">
+            {(selected) =>
+              selected === 'overview' ? (
+                <ServiceOverview service={service} latestCpu={latestCpu} cpuHour={cpuHour} />
+              ) : (
+                children?.(selected as ServiceTab)
+              )
+            }
+          </Tabs>
+        </div>
       )}
     </div>
   );

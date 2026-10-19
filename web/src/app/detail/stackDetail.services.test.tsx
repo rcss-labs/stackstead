@@ -122,14 +122,28 @@ describe('service editor on the stack page', () => {
     expect(screen.getByRole('button', { name: 'Up' }).getAttribute('aria-disabled')).toBe('true');
   });
 
-  it('the Logs button asks before discarding an open service editor', async () => {
+  it('the Logs button opens the console and keeps the open editor and its draft', async () => {
     mountDetail(h, '/stacks/web?service=app');
     await user().click(await screen.findByRole('button', { name: 'Edit app' }));
     await user().type(await screen.findByLabelText('Image'), 'x');
     await user().click(screen.getByRole('button', { name: 'Logs for app' }));
-    expect(await dialog()).toBeTruthy();
-    expect(here()).toBe('/stacks/web?service=app');
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect((screen.getByLabelText('Image') as HTMLInputElement).value).toBe('nginx:1x');
     expect(get(unsavedChanges)).toBe(true);
+  });
+
+  it('a dirty editor asks before Close editor; Cancel keeps the draft and Discard restores the tabs', async () => {
+    mountDetail(h, '/stacks/web?service=app');
+    await user().click(await screen.findByRole('button', { name: 'Edit app' }));
+    await user().type(await screen.findByLabelText('Image'), 'x');
+    await user().click(screen.getByRole('button', { name: 'Close editor' }));
+    await user().click(within(await dialog()).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect((screen.getByLabelText('Image') as HTMLInputElement).value).toBe('nginx:1x');
+    await user().click(screen.getByRole('button', { name: 'Close editor' }));
+    await user().click(within(await dialog()).getByRole('button', { name: 'Discard changes' }));
+    expect(await screen.findByRole('tablist', { name: 'Service sections' })).toBeTruthy();
+    expect(get(unsavedChanges)).toBe(false);
   });
 
   it('a dirty editor asks before selecting another service, a chip, the timeline and a link; Discard changes closes it', async () => {
@@ -188,6 +202,32 @@ describe('service editor on the stack page', () => {
 });
 
 describe('removing a service from its editor', () => {
+  it('a dirty editor asks to discard before Remove service opens its dialog', async () => {
+    h.stackRes = { body: withCache() };
+    mountDetail(h, '/stacks/web?service=cache');
+    await user().click(await screen.findByRole('button', { name: 'Edit cache' }));
+    await user().type(await screen.findByLabelText('Image'), 'x');
+    await user().click(screen.getByRole('button', { name: 'Remove service cache' }));
+    expect((await dialog()).textContent).toMatch(/unsaved/);
+    expect(screen.queryByText('Remove service?')).toBeNull();
+    await user().click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Discard changes' }));
+    expect(await screen.findByText('Remove cache from compose.yaml? Its container is removed on the next Up.')).toBeTruthy();
+  });
+
+  it('a 404 on remove still sends the page to the first remaining service', async () => {
+    h.stackRes = { body: withCache() };
+    routes['DELETE /api/stacks/web/services/cache?hash=h1'] = () => {
+      h.stackRes = { body: stackDetail({ hash: 'h2', services: [appService()] }) };
+      return { status: 404, body: { error: 'service not found' } };
+    };
+    mountDetail(h, '/stacks/web?service=cache');
+    await user().click(await screen.findByRole('button', { name: 'Edit cache' }));
+    await user().click(await screen.findByRole('button', { name: 'Remove service cache' }));
+    await user().click(screen.getByRole('button', { name: 'Remove service' }));
+    await waitFor(() => expect(here()).toBe('/stacks/web?service=app'));
+    expect(screen.queryByLabelText('Image')).toBeNull();
+  });
+
   it('soft-disables removal of the last service', async () => {
     h.stackRes = { body: stackDetail({ services: [appService()] }) };
     mountDetail(h, '/stacks/web?service=app');

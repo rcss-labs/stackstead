@@ -26,7 +26,7 @@ export interface ServiceEditorProps {
   onSaved?: (hash: string) => void;
   /** Called when Apply has started an operation (the panel is shown here). */
   onApplied?: (op: Operation) => void;
-  /** Send the user to the raw YAML editor (their form values stay untouched). */
+  /** Send the user to the raw YAML editor. The page asks first when the form is dirty, and the draft is discarded. */
   onRawEditor: () => void;
   /**
    * Re-fetch the stack after a conflict or when the file moved on. The parent keys this editor by stack and
