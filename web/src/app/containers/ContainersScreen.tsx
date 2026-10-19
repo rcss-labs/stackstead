@@ -61,21 +61,23 @@ export function ContainersScreen() {
         )}
       </header>
 
-      <div className={styles.filters}>
-        <div className={styles.chips}>
-          {CHIPS.map(({ id, label }) => (
-            <Chip key={id} pressed={chip === id} count={counts[id]} tone={id === 'problems' ? 'danger' : undefined} onClick={() => setChip(id)}>
-              {label}
-            </Chip>
-          ))}
+      {all.length > 0 && (
+        <div className={styles.filters}>
+          <div className={styles.chips}>
+            {CHIPS.map(({ id, label }) => (
+              <Chip key={id} pressed={chip === id} count={counts[id]} tone={id === 'problems' ? 'danger' : undefined} onClick={() => setChip(id)}>
+                {label}
+              </Chip>
+            ))}
+          </div>
+          <label className={styles.search}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d={ICONS.search} />
+            </svg>
+            <input type="search" aria-label="Search containers" placeholder="Filter containers" value={query} onChange={(e) => setQuery(e.target.value)} />
+          </label>
         </div>
-        <label className={styles.search}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d={ICONS.search} />
-          </svg>
-          <input type="search" aria-label="Search containers" placeholder="Filter containers" value={query} onChange={(e) => setQuery(e.target.value)} />
-        </label>
-      </div>
+      )}
 
       {rows === undefined && error ? (
         <>
@@ -109,6 +111,7 @@ export function ContainersScreen() {
                   <div role="columnheader" aria-label="Restarts 24h">
                     <PanelLabel as="div">↻ 24h</PanelLabel>
                   </div>
+                  <div role="columnheader" aria-label="Peek logs" />
                 </div>
               </div>
               <div role="rowgroup">

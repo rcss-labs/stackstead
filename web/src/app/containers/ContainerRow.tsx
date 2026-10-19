@@ -110,7 +110,7 @@ export function ContainerRow({ row, index, focused, open, peekId, mobile, onFocu
         <span data-tone={row.restarts24h >= 3 ? 'warning' : undefined}>{row.restarts24h}</span>
       </div>
       {mobile && (
-        <div role="cell" data-mobile aria-hidden="true" className={styles.mobileStats}>
+        <div role="cell" data-mobile aria-label={`CPU ${cpu}, memory ${mem}`} className={styles.mobileStats}>
           <span>{cpu}</span>
           <span>{mem}</span>
         </div>

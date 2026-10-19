@@ -190,6 +190,40 @@ describe('Containers screen', () => {
     expect(r.querySelector('[data-col="image"]')!.hasAttribute('data-desktop')).toBe(true);
   });
 
+  it('encodes the container name in the row link', async () => {
+    mount({ body: [row('my db')] });
+    expect((await screen.findByRole('link', { name: 'my db' })).getAttribute('href')).toBe('/containers/my%20db');
+  });
+
+  it('gives the header and every row the same ten cells', async () => {
+    mount({ body: [row('a')] });
+    await screen.findByRole('link', { name: 'a' });
+    expect(screen.getAllByRole('columnheader')).toHaveLength(10);
+    expect(within(bodyRows()[0]).getAllByRole('cell')).toHaveLength(10);
+  });
+
+  it('exposes CPU and memory to assistive tech on the mobile row', async () => {
+    stubWidth(true);
+    mount({ body: [row('busy', { cpu: 12.34, mem: 2 * 1024 * 1024 })] });
+    await screen.findByRole('link', { name: 'busy' });
+    expect(within(bodyRows()[0]).getByRole('cell', { name: 'CPU 12.3%, memory 2.0 MiB' })).toBeTruthy();
+  });
+
+  it('shows no chips or search while loading, after a first-load error, or when empty', async () => {
+    let fail = true;
+    const user = mount(() => (fail ? { status: 503, body: { error: 'Docker is unreachable' } } : { body: [] }));
+    expect(await screen.findByText('Loading containers')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^All/ })).toBeNull();
+    await screen.findByText('Docker is unreachable');
+    expect(screen.queryByRole('button', { name: /^All/ })).toBeNull();
+    expect(screen.queryByRole('searchbox')).toBeNull();
+    fail = false;
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    await screen.findByText('No containers on this host.');
+    expect(screen.queryByRole('button', { name: /^All/ })).toBeNull();
+    expect(screen.queryByRole('searchbox')).toBeNull();
+  });
+
   it('the route table titles /containers as Containers', () => {
     expect(findRoute('/containers')?.title).toBe('Containers');
   });

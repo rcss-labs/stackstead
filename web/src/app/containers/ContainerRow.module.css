@@ -76,5 +76,5 @@
   }
   .row[data-focused='true'],
   .row:focus-visible { box-shadow: none; }
-  [data-desktop] { display: none; }
+  .row [data-desktop] { display: none; }
 }
