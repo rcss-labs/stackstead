@@ -106,10 +106,10 @@ describe('LogConsole lines', () => {
     const chips = within(screen.getByLabelText('Service filter'));
     fireEvent.click(chips.getByRole('button', { name: 'worker' }));
     await tick();
-    fireEvent.click(chips.getByRole('button', { name: 'All' }));
+    fireEvent.click(chips.getByRole('button', { name: 'All services' }));
     await tick();
     expect(fake.requests.at(-1)!.path).not.toContain('service=');
-    expect(chips.getByRole('button', { name: 'All' }).getAttribute('aria-pressed')).toBe('true');
+    expect(chips.getByRole('button', { name: 'All services' }).getAttribute('aria-pressed')).toBe('true');
   });
 
   it('a reconnect resumes from the composite cursor without repeating lines', async () => {
@@ -309,6 +309,27 @@ describe('LogConsole lines', () => {
     expect(within(rows()[0]).getByText('worker').getAttribute('style')).toContain('--series-2');
   });
 
+  it('service colours use the metrics series slots, so the fifth service is series 5', async () => {
+    fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'x', 'e')] });
+    mount({ kind: 'stack', name: 'web' }, ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i']);
+    await tick();
+    const chips = within(screen.getByLabelText('Service filter'));
+    expect(chips.getByRole('button', { name: 'e' }).querySelector('i')!.getAttribute('style')).toContain('--series-5');
+    expect(chips.getByRole('button', { name: 'h' }).querySelector('i')!.getAttribute('style')).toContain('--series-8');
+    expect(chips.getByRole('button', { name: 'i' }).querySelector('i')!.getAttribute('style')).toContain('--series-1');
+    expect(within(rows()[0]).getByText('e').getAttribute('style')).toContain('--series-5');
+  });
+
+  it('the service chip row and the level control name their All buttons apart', async () => {
+    fake = installFakeStream({ [PATH]: [] });
+    mount();
+    await tick();
+    const all = within(screen.getByLabelText('Service filter')).getByRole('button', { name: 'All services' });
+    expect(all.textContent).toBe('all');
+    const level = within(screen.getByRole('group', { name: 'Level' })).getByRole('button', { name: 'All levels' });
+    expect(level.textContent).toBe('All');
+  });
+
   it('auto-scroll sticks to the bottom only when near it', async () => {
     fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'one')] });
     mount();
@@ -403,7 +424,7 @@ describe('LogConsole lines', () => {
     expect(rows()[0].hasAttribute('data-new')).toBe(true);
     await tick(2000);
     fireEvent.click(screen.getByRole('button', { name: 'Errors' }));
-    fireEvent.click(within(screen.getByRole('group', { name: 'Level' })).getByRole('button', { name: 'All' }));
+    fireEvent.click(within(screen.getByRole('group', { name: 'Level' })).getByRole('button', { name: 'All levels' }));
     expect(rows()[0].hasAttribute('data-new')).toBe(false);
     await act(async () => {
       fake.push(PATH, logEvent(C_A, 2, 1, 'fresh'));

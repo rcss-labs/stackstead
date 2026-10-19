@@ -44,7 +44,6 @@
 .notices > :last-child { margin-left: auto; }
 
 .jump,
-.clear,
 .end button,
 .error button {
   border: 1px solid var(--border);
@@ -60,17 +59,7 @@
 .end button,
 .error button { padding: 0 8px; height: 22px; }
 
-.clear {
-  display: inline-grid;
-  place-items: center;
-  width: 24px;
-  height: 22px;
-  border-color: transparent;
-  color: var(--muted);
-}
-
 .jump:hover,
-.clear:hover,
 .end button:hover,
 .error button:hover { background: var(--hover); }
 

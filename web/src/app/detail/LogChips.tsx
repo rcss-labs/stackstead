@@ -12,9 +12,9 @@ export function LogChips({ services, selected, onSelect, colorIndex }: LogChipsP
   if (services.length === 0) return null;
   return (
     <div className={styles.chips} aria-label="Service filter" role="group">
-      <button type="button" className={styles.chip} aria-pressed={selected === undefined} onClick={() => onSelect(undefined)}>
+      <button type="button" className={styles.chip} aria-label="All services" aria-pressed={selected === undefined} onClick={() => onSelect(undefined)}>
         <i className={styles.swatch} style={{ background: 'var(--muted)' }} />
-        All
+        all
       </button>
       {services.map((service) => (
         <button key={service} type="button" className={styles.chip} aria-pressed={selected === service} onClick={() => onSelect(service)}>

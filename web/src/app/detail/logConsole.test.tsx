@@ -44,6 +44,37 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe('LogConsole follow pill', () => {
+  const pulsing = () => document.querySelector('[data-dot]')?.hasAttribute('data-pulse');
+
+  it('pulses while following, keeps a still dot while paused', async () => {
+    fake = installFakeStream({ [PATH]: [] });
+    mount();
+    await tick();
+    expect(pulsing()).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Following' }));
+    expect(document.querySelector('[data-dot]')).not.toBeNull();
+    expect(pulsing()).toBe(false);
+  });
+
+  it('turns into a disabled Ended pill without a pulse once the stream ends', async () => {
+    fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'x'), 'event: end\ndata: {}\n\n'] });
+    mount();
+    await tick();
+    expect(screen.queryByRole('button', { name: 'Following' })).toBeNull();
+    const pill = screen.getByRole('button', { name: 'Ended' }) as HTMLButtonElement;
+    expect(pill.disabled).toBe(true);
+    expect(pulsing()).toBe(false);
+  });
+
+  it('is also stopped when the logs are gone', async () => {
+    fake = installFakeStream({ [PATH]: { responses: [{ status: 404, body: { error: 'gone' } }] } });
+    mount();
+    await tick();
+    expect((screen.getByRole('button', { name: 'Ended' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
 describe('LogConsole stream', () => {
   it('opens one stream with follow and tail 200 and aborts it on unmount', async () => {
     fake = installFakeStream({ [PATH]: [] });
@@ -104,7 +135,7 @@ describe('LogConsole stream', () => {
     await tick(200);
     // The lines stay mounted (inert) behind the collapsed drawer; the inline line is the header's.
     const header = screen.getByTestId('log-console-header');
-    expect(within(header).getByText('second line').parentElement!.textContent).toMatch(/\S+\s+api\s+second line/);
+    expect(within(header).getByText('second line').parentElement!.textContent).toMatch(/^\d\d:\d\d:\d\d {2}api {2}second line$/);
     expect(within(header).queryByText('first')).toBeNull();
     expect(body().style.height).toBe('0px');
     expect(fake.requests[0].signal!.aborted).toBe(false);
@@ -224,6 +255,21 @@ describe('LogConsole height', () => {
     expect(storage.setItem).toHaveBeenCalledTimes(1);
     expect(storage.setItem).toHaveBeenCalledWith('stackstead.logsHeight', '560');
     expect(body().hasAttribute('data-dragging')).toBe(false);
+  });
+
+  it('rounds fractional drag heights to whole pixels in the value and the store', () => {
+    fake = installFakeStream({ [PATH]: [] });
+    const storage = storageStub('240');
+    mount({ storage });
+    const handle = screen.getByRole('separator', { name: 'Resize logs' });
+    fireEvent.pointerDown(handle, { clientY: 400, pointerId: 1 });
+    fireEvent.pointerMove(handle, { clientY: 350.4, pointerId: 1 });
+    expect(handle.getAttribute('aria-valuenow')).toBe('290');
+    expect(body().style.height).toBe('290px');
+    fireEvent.pointerMove(handle, { clientY: 300.6, pointerId: 1 });
+    expect(handle.getAttribute('aria-valuenow')).toBe('339');
+    fireEvent.pointerUp(handle, { clientY: 300.6, pointerId: 1 });
+    expect(storage.setItem).toHaveBeenCalledWith('stackstead.logsHeight', '339');
   });
 
   it('exposes separator semantics', () => {

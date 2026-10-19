@@ -35,6 +35,12 @@
   transition: height 0.22s ease;
 }
 
+/* Dragging the handle must not select log text on the way. */
+.console:has([data-dragging]) {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .body[data-dragging] { transition: none; }
 
 .header {
@@ -89,13 +95,22 @@
   color: var(--warning);
 }
 
+.pill[data-stopped] {
+  background: var(--hover);
+  color: var(--muted);
+  cursor: default;
+}
+
+.pill[data-stopped]:active { transform: none; }
+
 .dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: currentColor;
-  animation: pulse 2s ease-in-out infinite;
 }
+
+.dot[data-pulse] { animation: pulse 2s ease-in-out infinite; }
 
 @keyframes pulse {
   50% { opacity: 0.35; }
@@ -105,7 +120,7 @@
 
 .search {
   height: 26px;
-  width: 180px;
+  width: 160px;
   padding: 0 8px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-xs);
@@ -115,12 +130,34 @@
   font-size: 11.5px;
 }
 
+.clear {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.clear:hover { background: var(--hover); color: var(--text); }
+
+/* The design's active level is accent-tinted, unlike the shared Segmented's raised surface. */
+.level button[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: none;
+}
+
 .latest {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre;
   color: var(--muted);
   font-family: var(--mono);
   font-size: 11.5px;
@@ -137,7 +174,10 @@
 
 @media (max-width: 759px) {
   .toggle,
-  .pill { height: 40px; }
+  .pill,
+  .clear { height: 40px; }
+  .clear { width: 40px; }
+  .level button { min-width: 40px; }
   .search {
     order: 1;
     flex: 1 0 100%;

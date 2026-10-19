@@ -568,7 +568,7 @@ describe('stack detail screen', () => {
       mount('/stacks/web?tab=logs&service=db');
       await screen.findByRole('heading', { level: 1, name: 'web' });
       await user().click(consoleToggle());
-      await user().click(chip('All'));
+      await user().click(chip('All services'));
       goTo('/stacks/web?service=app');
       await waitFor(() => expect(here()).toBe('/stacks/web?service=app'));
       expect(consoleToggle().getAttribute('aria-expanded')).toBe('false');

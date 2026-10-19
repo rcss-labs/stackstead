@@ -15,7 +15,7 @@ export function useLogsHeight(storage: Storage | undefined = defaultStorage()) {
   // commit() runs right after setHeight() in the same event, before a re-render, so it reads the ref.
   const latest = useRef(height);
   const setHeight = useCallback((next: number) => {
-    const clamped = clampLogsHeight(next);
+    const clamped = clampLogsHeight(Math.round(next));
     latest.current = clamped;
     setHeightState(clamped);
   }, []);

@@ -1,8 +1,8 @@
 import type { LogError } from '$lib/api/types';
 
-/** Colour slot for a service: its position among the sorted names, wrapped over the four console series. */
+/** CSS colour of a series slot (0-based, as lib/stacks/metrics serviceColorIndex returns), matching the metrics charts. */
 export function seriesVar(index: number): string {
-  return `var(--series-${(index % 4) + 1})`;
+  return `var(--series-${index + 1})`;
 }
 
 /** Identity of a per-container error, for dismissing it. */

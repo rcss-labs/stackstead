@@ -10,6 +10,7 @@ import {
   type LogLevel,
 } from '$lib/stacks/console';
 import type { LogSource } from '$lib/stacks/logs';
+import { serviceColorIndex } from '$lib/stacks/metrics';
 import styles from './LogConsole.module.css';
 import { LogChips } from './LogChips';
 import { LogConsoleHeader } from './LogConsoleHeader';
@@ -21,15 +22,6 @@ import { useLogsHeight } from './useLogsHeight';
 const KEY_STEP = 20;
 const SEARCH_DEBOUNCE_MS = 150;
 const STREAM_OPTIONS = { tail: 200, follow: true } as const;
-
-/** Stable colour slot: a service's position among the sorted names; unlisted names fall back to a hash. */
-function serviceColorIndex(sorted: string[], service: string): number {
-  const at = sorted.indexOf(service);
-  if (at >= 0) return at;
-  let h = 0;
-  for (let i = 0; i < service.length; i++) h = (h * 31 + service.charCodeAt(i)) >>> 0;
-  return h;
-}
 
 export interface LogConsoleProps {
   source: LogSource;
@@ -173,7 +165,9 @@ export function LogConsole({ source, services, service, onService, open, onOpenC
         onLevel={setLevel}
         search={search}
         onSearch={setSearch}
+        onClear={clear}
         status={status}
+        stopped={stream.ended || status.tone === 'muted'}
         latest={stream.lines.at(-1)}
       />
       <div className={styles.body} data-testid="log-console-body" data-dragging={dragging || undefined} style={{ height: bodyHeight }} inert={!open}>
@@ -182,7 +176,7 @@ export function LogConsole({ source, services, service, onService, open, onOpenC
             services={sortedServices}
             selected={serverService}
             onSelect={onService}
-            colorIndex={(name) => serviceColorIndex(sortedServices, name)}
+            colorIndex={(name) => serviceColorIndex(name, sortedServices)}
           />
         )}
         <LogLines
@@ -198,8 +192,7 @@ export function LogConsole({ source, services, service, onService, open, onOpenC
           errors={visibleErrors}
           onDismissError={(e) => setDismissed((current) => new Set(current).add(errorKey(e)))}
           onReconnect={reconnect}
-          onClear={clear}
-          colorIndex={(name) => serviceColorIndex(sortedServices, name)}
+          colorIndex={(name) => serviceColorIndex(name, sortedServices)}
           empty={view.length > 0 && visible.length === 0}
         />
       </div>
