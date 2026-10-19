@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
+import { issueCards } from '$lib/dashboard/issues';
 import { host, hostHistory } from '$lib/stores/host';
 import { events } from '$lib/stores/live';
 import { runningOps, runningStackNames } from '$lib/stores/runningOps';
@@ -10,6 +11,7 @@ import { EmptyState } from '../components/EmptyState';
 import { Spinner } from '../components/Spinner';
 import { useDashboard } from '../hooks/useDashboard';
 import { useStore } from '../hooks/useStore';
+import { IssueCards } from '../overview/IssueCards';
 import { StacksList } from '../overview/StacksList';
 import { StatusPanel } from '../overview/StatusPanel';
 import { useStackAction } from '../overview/useStackAction';
@@ -22,11 +24,16 @@ export default function Overview() {
   const history = useStore(hostHistory);
   const recentEvents = useStore(events);
   // Alerts, summary and storage feed the issue cards and the side column; the controller runs while the screen is mounted.
-  const { alerts, summary } = useDashboard();
+  const { alerts, summary, storage, refreshAlerts } = useDashboard();
   const running = useStore(runningOps);
   const { act, acting, reasonFor } = useStackAction();
   const [query, setQuery] = useState('');
   const [retrying, setRetrying] = useState(false);
+
+  async function actOnIssue(name: string, action: 'up' | 'restart') {
+    // Failures are toasted by act(); only a started operation changes what the alerts say.
+    if (await act(name, action)) refreshAlerts();
+  }
 
   async function retry() {
     setRetrying(true);
@@ -74,6 +81,13 @@ export default function Overview() {
               Container status is unavailable, so every stack shows as unknown.
             </Banner>
           )}
+          <IssueCards
+            cards={issueCards({ alerts, storage })}
+            stackStatus={(name) => items.find((s) => s.name === name)?.status}
+            reasonFor={reasonFor}
+            acting={acting}
+            onAct={(name, action) => void actOnIssue(name, action)}
+          />
           {items.length === 0 ? (
             <EmptyState title="Create your first stack" description="Create a stack or import an existing compose file.">
               <p className={styles.links}>

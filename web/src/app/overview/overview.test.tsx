@@ -11,6 +11,8 @@ import { operationsRefresh, startStacks, stacks } from '$lib/stores/stacks';
 import { installFakeFetch, type FakeFetch, type FakeResponse } from '../../vitest-setup';
 import Overview from '../routes/Overview';
 
+const noStorage = { count: 0, size: null, reclaimable: 0, sizesAt: null, refreshing: false, error: '' };
+
 const stack = (name: string, over: Partial<StackSummary> = {}): StackSummary => ({
   name,
   path: `/srv/stacks/${name}/compose.yaml`,
@@ -72,7 +74,7 @@ function install(items: StackSummary[] | FakeResponse, ops: Operation[] = []) {
     'GET /api/host': { body: hostSnapshot() },
     'GET /api/alerts': { body: [] },
     'GET /api/metrics/summary': { body: { window: '15m', step: 15, from: '', to: '', stacks: {}, top: { cpu: [], mem: [] } } },
-    'GET /api/storage': { body: { reclaimable: 0 } },
+    'GET /api/storage': { body: { images: noStorage, containers: noStorage, volumes: noStorage, buildCache: noStorage, topContainers: [], declarationsUnknown: [] } },
   });
   const changes = writable<(Change & { resync?: true }) | null>(null);
   const list = () =>

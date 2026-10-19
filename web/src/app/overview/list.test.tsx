@@ -43,6 +43,7 @@ const hostSnapshot = (): HostSnapshot => ({
   restarts24h: null,
 });
 
+const noStorage = { count: 0, size: null, reclaimable: 0, sizesAt: null, refreshing: false, error: '' };
 const liveDefaults = vi.hoisted(() => ({ connection: 'open', events: 'connected', metricsDegraded: false, docker: 'ok', compose: '2.29.0', dockerVersion: '' }));
 const setLive = (v: Record<string, unknown>) => (liveModule as unknown as { __set: (v: unknown) => void }).__set(v);
 
@@ -73,7 +74,7 @@ function install(items: StackSummary[], opts: { ops?: Operation[]; extra?: Param
     'GET /api/host': { body: hostSnapshot() },
     'GET /api/alerts': { body: opts.alerts ?? [] },
     'GET /api/metrics/summary': { body: opts.summary ?? { window: '15m', step: 15, from: '', to: '', stacks: {}, top: { cpu: [], mem: [] } } },
-    'GET /api/storage': { body: { reclaimable: 0 } },
+    'GET /api/storage': { body: { images: noStorage, containers: noStorage, volumes: noStorage, buildCache: noStorage, topContainers: [], declarationsUnknown: [] } },
     ...opts.extra,
   });
   const changes = writable<(Change & { resync?: true }) | null>(null);
