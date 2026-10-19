@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { get } from '$lib/store';
-import { link, matchRoute, navigate, route, startRouter } from './router';
+import { link, matchRoute, navigate, route, safeNext, startRouter } from './router';
 
 describe('matchRoute', () => {
   it.each([
@@ -158,5 +158,32 @@ describe('link action', () => {
   it('stops intercepting after destroy', () => {
     action.destroy();
     expect(click().defaultPrevented).toBe(false);
+  });
+});
+
+describe('safeNext', () => {
+  it('keeps same-origin paths', () => {
+    expect(safeNext('/stacks/web')).toBe('/stacks/web');
+    expect(safeNext('/stacks?x=1#a')).toBe('/stacks?x=1#a');
+    expect(safeNext('/%2f%2fevil')).toBe('/%2f%2fevil'); // still a path on this origin
+  });
+  it.each([
+    'https://evil',
+    '//evil',
+    '/\\evil',
+    '\\\\evil',
+    'javascript:alert(1)',
+    'stacks',
+    '/\t/evil',
+    '/a\\b',
+    '/\n/evil',
+    '/.//evil',
+    '/a/..//evil',
+    'JAVASCRIPT:alert(1)',
+    'data:text/html,x',
+    '',
+    null,
+  ])('rejects %j', (v) => {
+    expect(safeNext(v)).toBe('/');
   });
 });
