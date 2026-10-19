@@ -1,9 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { ICONS } from '$lib/shell/icons';
-import { filterByQuery } from '$lib/dashboard/overview';
 import { host, hostHistory } from '$lib/stores/host';
 import { events } from '$lib/stores/live';
+import { runningOps, runningStackNames } from '$lib/stores/runningOps';
 import { refreshStacks, stacks } from '$lib/stores/stacks';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
@@ -11,7 +10,9 @@ import { EmptyState } from '../components/EmptyState';
 import { Spinner } from '../components/Spinner';
 import { useDashboard } from '../hooks/useDashboard';
 import { useStore } from '../hooks/useStore';
+import { StacksList } from '../overview/StacksList';
 import { StatusPanel } from '../overview/StatusPanel';
+import { useStackAction } from '../overview/useStackAction';
 import styles from './Overview.module.css';
 
 /** Health first: the status panel, then the stack list. Eager: the only screen in the entry chunk. */
@@ -21,7 +22,9 @@ export default function Overview() {
   const history = useStore(hostHistory);
   const recentEvents = useStore(events);
   // Alerts, summary and storage feed the issue cards and the side column; the controller runs while the screen is mounted.
-  useDashboard();
+  const { alerts, summary } = useDashboard();
+  const running = useStore(runningOps);
+  const { act, acting, reasonFor } = useStackAction();
   const [query, setQuery] = useState('');
   const [retrying, setRetrying] = useState(false);
 
@@ -36,7 +39,6 @@ export default function Overview() {
 
   const failedFirstLoad = Boolean(error) && items.length === 0;
   const degraded = items.length > 0 && items.every((s) => s.status === 'unknown');
-  const visible = filterByQuery(items, query);
 
   if (loading && items.length === 0) {
     return (
@@ -85,20 +87,17 @@ export default function Overview() {
             </EmptyState>
           ) : (
             <div className={styles.columns}>
-              <section className={styles.listCard}>
-                <header className={styles.listHead}>
-                  <h2 id="stacks-heading" className={styles.listTitle}>
-                    Stacks
-                  </h2>
-                  <span className={styles.count}>{visible.length === items.length ? items.length : `${visible.length} of ${items.length}`}</span>
-                  <label className={styles.search}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-                      <path d={ICONS.search} />
-                    </svg>
-                    <input type="search" aria-label="Search stacks" placeholder="Filter by name, project or path" value={query} onChange={(e) => setQuery(e.target.value)} />
-                  </label>
-                </header>
-              </section>
+              <StacksList
+                items={items}
+                alerts={alerts}
+                summary={summary}
+                query={query}
+                onQuery={setQuery}
+                runningStacks={runningStackNames(running)}
+                reasonFor={(s) => reasonFor(s.name, s.status)}
+                acting={acting}
+                onAct={(name, action) => void act(name, action)}
+              />
             </div>
           )}
         </>

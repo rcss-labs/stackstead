@@ -1,0 +1,22 @@
+.ports {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  min-width: 0;
+}
+
+.port {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--info);
+  text-decoration: none;
+}
+
+.port:hover { text-decoration: underline; }
+
+.more,
+.none {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
