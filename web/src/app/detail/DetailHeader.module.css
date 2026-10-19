@@ -15,20 +15,27 @@
 }
 
 /*
- * Meta stays on the name's row: a zero basis keeps a long path from wrapping the row, the path shrinks to an
- * ellipsis (its full text is the title), and growing into the free space acts as the design's spacer that
- * keeps the actions right-aligned on the same row.
+ * Meta stays on the name's row while it has room: its basis is 0 but it cannot get narrower than 240px, so
+ * when the row runs out of space the actions wrap to the next row instead of covering it. The prefix and the
+ * copy button keep their size; only the path shrinks, to an ellipsis (its full text is the title). Growing
+ * into the free space acts as the design's spacer that keeps the actions right-aligned.
  */
 .meta {
   display: flex;
   align-items: center;
   gap: 4px;
   flex: 1 1 0;
-  min-width: 0;
+  min-width: min(100%, 240px);
   margin: 0;
+  overflow: hidden;
   color: var(--muted);
   font-size: 12.5px;
   white-space: nowrap;
+}
+
+.prefix,
+.meta > button {
+  flex: none;
 }
 
 .path {
@@ -38,12 +45,15 @@
   text-overflow: ellipsis;
 }
 
+/* The buttons wrap inside their cluster rather than pushing the page wider than the screen. */
 .actions {
-  flex: none;
-  margin-inline-start: auto; /* right-aligned on mobile too, where the meta is hidden */
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-inline-start: auto;
 }
 
 @media (max-width: 759px) {
   .name { font-size: 20px; }
   .meta { display: none; }
+  .actions { flex-basis: 100%; }
 }

@@ -29,7 +29,10 @@ export function DetailHeader({ detail, busy, lifecycleReason, onAct, onRemove }:
       <h1 className={styles.name}>{detail.name}</h1>
       <StatusBadge status={detail.status} />
       <p className={styles.meta}>
-        {detail.running}/{detail.serviceCount} up · {detail.origin} · <span className={styles.path} title={detail.path}>
+        <span className={styles.prefix}>
+          {detail.running}/{detail.serviceCount} up · {detail.origin} ·
+        </span>{' '}
+        <span className={styles.path} title={detail.path}>
           {detail.path}
         </span>
         <CopyButton text={detail.path} variant="icon" label="Copy path" />
