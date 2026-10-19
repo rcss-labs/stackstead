@@ -6,7 +6,20 @@ import { runningOps, runningStackNames, startRunningOps } from './runningOps';
 
 const op = (stack: string) => ({ id: `op-${stack}`, stack, action: 'up', state: 'running' }) as Operation;
 
-function setup() {
+function fakeDoc(state: 'visible' | 'hidden' = 'visible') {
+  const target = new EventTarget();
+  const doc = target as unknown as Document & { visibilityState: string };
+  Object.defineProperty(doc, 'visibilityState', { value: state, writable: true, configurable: true });
+  return {
+    doc,
+    setState(next: 'visible' | 'hidden') {
+      (doc as { visibilityState: string }).visibilityState = next;
+      target.dispatchEvent(new Event('visibilitychange'));
+    },
+  };
+}
+
+function setup(doc?: Document) {
   let result: Operation[] = [];
   let failing = false;
   const list = vi.fn(async () => {
@@ -21,7 +34,7 @@ function setup() {
     refresh,
     setResult: (r: Operation[]) => (result = r),
     setFailing: (f: boolean) => (failing = f),
-    start: () => startRunningOps({ list, changes, refresh }),
+    start: () => startRunningOps({ list, changes, refresh, doc }),
   };
 }
 
@@ -131,6 +144,60 @@ describe('running operations store', () => {
     await vi.advanceTimersByTimeAsync(20000);
     expect(get(runningOps)).toEqual([]);
     expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  it('stop cancels a pending recheck so nothing is written back after logout', async () => {
+    const t = setup();
+    t.setResult([op('web')]);
+    stop = t.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.list).toHaveBeenCalledTimes(1);
+    stop();
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(t.list).toHaveBeenCalledTimes(1);
+    expect(get(runningOps)).toEqual([]);
+  });
+
+  describe('hidden tab', () => {
+    it('makes no calls while hidden, fetches once on becoming visible, then resumes the backoff', async () => {
+      const t = setup();
+      const d = fakeDoc();
+      t.setResult([op('web')]);
+      stop = startRunningOps({ list: t.list, changes: t.changes, refresh: t.refresh, doc: d.doc });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(t.list).toHaveBeenCalledTimes(1);
+      d.setState('hidden');
+      t.changes.set({ project: 'p', seq: 1 });
+      t.refresh.update((n) => n + 1);
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(t.list).toHaveBeenCalledTimes(1);
+      d.setState('visible');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(t.list).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(t.list).toHaveBeenCalledTimes(3);
+    });
+
+    it('a response that lands while hidden schedules no recheck', async () => {
+      let release!: (ops: Operation[]) => void;
+      const list = vi.fn(() => new Promise<Operation[]>((r) => (release = r)));
+      const d = fakeDoc();
+      stop = startRunningOps({ list, changes: writable(null), refresh: writable(0), doc: d.doc });
+      d.setState('hidden');
+      release([op('web')]);
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(list).toHaveBeenCalledTimes(1);
+    });
+
+    it('stop removes the visibility listener', async () => {
+      const t = setup();
+      const d = fakeDoc('hidden');
+      stop = startRunningOps({ list: t.list, changes: t.changes, refresh: t.refresh, doc: d.doc });
+      stop();
+      d.setState('visible');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(t.list).not.toHaveBeenCalled();
+    });
   });
 
   it('runningStackNames returns the distinct stack names', () => {

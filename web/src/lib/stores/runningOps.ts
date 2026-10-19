@@ -23,7 +23,10 @@ export function startRunningOps(deps: {
   list: () => Promise<Operation[]>;
   changes: Readable<LiveChange | null>;
   refresh: Readable<number>;
+  doc?: Document;
 }): () => void {
+  const doc = deps.doc ?? document;
+  const hidden = () => doc.visibilityState === 'hidden';
   stopActive?.(); // idempotent: a second start replaces the first instead of doubling subscriptions
   let seq = 0;
   let stopped = false;
@@ -32,6 +35,7 @@ export function startRunningOps(deps: {
   let recheckTimer: ReturnType<typeof setTimeout> | undefined;
 
   const scheduleRecheck = () => {
+    if (hidden()) return; // becoming visible fetches again and resumes the backoff
     recheckTimer = setTimeout(() => void fetchOps(), Math.min(BACKOFF_BASE_MS * 2 ** attempt, BACKOFF_MAX_MS));
     attempt++;
   };
@@ -53,6 +57,7 @@ export function startRunningOps(deps: {
 
   /** A change or an explicit refresh starts over with the shortest backoff. */
   const fetchFresh = () => {
+    if (hidden()) return; // nothing polls while the tab is hidden
     attempt = 0;
     void fetchOps();
   };
@@ -72,6 +77,16 @@ export function startRunningOps(deps: {
     else debounced.trigger();
   });
 
+  const onVisibility = () => {
+    if (hidden()) {
+      clearTimeout(recheckTimer);
+      debounced.cancel();
+    } else {
+      fetchFresh();
+    }
+  };
+  doc.addEventListener('visibilitychange', onVisibility);
+
   let firstTick = true;
   const unsubscribeRefresh = deps.refresh.subscribe(() => {
     if (firstTick) {
@@ -90,6 +105,7 @@ export function startRunningOps(deps: {
     clearTimeout(recheckTimer);
     unsubscribeChanges();
     unsubscribeRefresh();
+    doc.removeEventListener('visibilitychange', onVisibility);
     seq++; // a response still in flight must not land after stop
     if (stopActive === stop) {
       stopActive = null;

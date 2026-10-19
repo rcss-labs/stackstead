@@ -245,7 +245,7 @@ describe('App routing and session', () => {
     expect(await screen.findByLabelText('Username')).toBeTruthy();
     const runs = () => fake.calls.filter((c) => c.path === '/api/operations?state=running').length;
     const before = runs();
-    await sleep(500);
+    await sleep(2600); // past the first 2 s recheck of a running operation
     expect(runs()).toBe(before);
   });
 
