@@ -50,9 +50,11 @@ export function ServicePane({ service, tab, onTab, onLogs, latestCpu, cpuHour, o
           </Button>
         ) : (
           onEdit && (
-            <Button variant="secondary" size="sm" aria-label={`Edit ${service.name}`} onClick={onEdit}>
-              Edit
-            </Button>
+            <span className={styles.edit}>
+              <Button variant="secondary" size="sm" aria-label={`Edit ${service.name}`} onClick={onEdit}>
+                Edit
+              </Button>
+            </span>
           )
         )}
       </header>
