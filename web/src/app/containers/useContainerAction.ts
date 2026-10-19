@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { api, ApiError } from '$lib/api/client';
 import type { ContainerRow } from '$lib/api/types';
 import { BUSY_REASON } from '$lib/stacks/lifecycle';
@@ -22,8 +22,10 @@ export interface ContainerActionState {
   /** Ids of containers with an action request in flight. */
   acting: ReadonlySet<string>;
   reasonFor: (row: ContainerRow) => string | undefined;
-  actionsFor: (row: ContainerRow) => ContainerAction[];
 }
+
+/** The lifecycle actions offered for a container, in display order. */
+export const actionsFor = (row: ContainerRow): ContainerAction[] => (row.state === 'running' ? ['stop', 'restart'] : ['start', 'restart']);
 
 const DONE_TEXT: Record<ContainerAction, string> = { start: 'started', stop: 'stopped', restart: 'restarted' };
 
@@ -37,27 +39,22 @@ export function useContainerAction(onChanged: (row: ContainerRow, fresh: Contain
   const reasonFor = (row: ContainerRow) =>
     liveState.docker === 'unavailable' || liveState.events === 'disconnected' ? 'Docker is unreachable' : acting.has(row.id) ? BUSY_REASON : undefined;
 
-  const actionsFor = (row: ContainerRow): ContainerAction[] => (row.state === 'running' ? ['stop', 'restart'] : ['start', 'restart']);
-
-  const run = useCallback(
-    async (row: ContainerRow, action: ContainerAction) => {
-      if (inFlight.current.has(row.id)) return;
-      inFlight.current.add(row.id);
+  async function run(row: ContainerRow, action: ContainerAction) {
+    if (inFlight.current.has(row.id)) return;
+    inFlight.current.add(row.id);
+    setActing(new Set(inFlight.current));
+    try {
+      const fresh = await api.containerAction(row.id, action);
+      toasts.push({ kind: 'success', message: `${row.name} ${DONE_TEXT[action]}` });
+      onChanged(row, fresh);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 503) void refreshStatus();
+      toasts.push({ kind: e instanceof ApiError && e.status === 409 ? 'warning' : 'danger', message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      inFlight.current.delete(row.id);
       setActing(new Set(inFlight.current));
-      try {
-        const fresh = await api.containerAction(row.id, action);
-        toasts.push({ kind: 'success', message: `${row.name} ${DONE_TEXT[action]}` });
-        onChanged(row, fresh);
-      } catch (e) {
-        if (e instanceof ApiError && e.status === 503) void refreshStatus();
-        toasts.push({ kind: e instanceof ApiError && e.status === 409 ? 'warning' : 'danger', message: e instanceof Error ? e.message : String(e) });
-      } finally {
-        inFlight.current.delete(row.id);
-        setActing(new Set(inFlight.current));
-      }
-    },
-    [onChanged],
-  );
+    }
+  }
 
   function request(row: ContainerRow, action: ContainerAction) {
     if (reasonFor(row)) return;
@@ -72,5 +69,5 @@ export function useContainerAction(onChanged: (row: ContainerRow, fresh: Contain
     void run(row, action);
   }
 
-  return { request, confirming, confirm, cancel: () => setConfirming(undefined), acting, reasonFor, actionsFor };
+  return { request, confirming, confirm, cancel: () => setConfirming(undefined), acting, reasonFor };
 }

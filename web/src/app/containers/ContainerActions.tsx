@@ -4,7 +4,7 @@ import { ICONS } from '$lib/shell/icons';
 import { Button } from '../components/Button';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import styles from './ContainerActions.module.css';
-import type { ConfirmingAction, ContainerAction } from './useContainerAction';
+import { actionsFor, type ConfirmingAction, type ContainerAction } from './useContainerAction';
 
 const ICON_OF: Record<ContainerAction, 'play' | 'stop' | 'restart'> = { start: 'play', stop: 'stop', restart: 'restart' };
 const labelOf = (action: ContainerAction) => action[0].toUpperCase() + action.slice(1);
@@ -26,7 +26,7 @@ export function ContainerActions({ row, size, reason, onRequest }: ContainerActi
       </Link>
     );
   }
-  const actions: ContainerAction[] = row.state === 'running' ? ['stop', 'restart'] : ['start', 'restart'];
+  const actions = actionsFor(row);
   const px = size === 'icon' ? 14 : 16;
   return (
     <span className={styles.btns}>
@@ -73,11 +73,10 @@ export interface ContainerConfirmDialogProps {
 }
 
 export function ContainerConfirmDialog({ confirming, onConfirm, onCancel }: ContainerConfirmDialogProps) {
-  const shown = confirming;
-  const name = shown?.row.name ?? '';
-  const label = shown ? labelOf(shown.action) : '';
+  const name = confirming?.row.name ?? '';
+  const label = confirming ? labelOf(confirming.action) : '';
   const message =
-    shown?.action === 'stop'
+    confirming?.action === 'stop'
       ? `Stop container ${name}? Anything it serves goes offline until it is started again.`
       : `Restart container ${name}? It is briefly unavailable while it restarts.`;
   return <ConfirmDialog open={!!confirming} danger title={`${label} ${name}?`} message={message} confirmLabel={label} onConfirm={onConfirm} onCancel={onCancel} />;
