@@ -2,6 +2,7 @@ package history_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -131,5 +132,53 @@ func TestStore_PruneRemovesOlderRows(t *testing.T) {
 	got, err := s.Query(context.Background(), "p", at(0), at(1000))
 	if err != nil || len(got) != 1 || got[0].TS.Unix() != 200 {
 		t.Fatalf("got %v, %v", got, err)
+	}
+}
+
+// svc is a row whose service is named after its container, so timelines keep
+// containers apart.
+func svc(sec int64, container, state string) history.Row {
+	return history.Row{TS: at(sec), Project: "p", Service: container, Container: container, State: state}
+}
+
+// A container that never changes has only its baseline row; pruning it would
+// make a stable service read as nodata. Prune keeps each container's state in
+// force unless that state is removed.
+func TestStore_PruneKeepsStateInForce(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	if err := s.Insert(ctx, []history.Row{
+		svc(100, "a", history.StateHealthy),
+		svc(90, "a", history.StateRestart),
+		svc(100, "b", history.StateExited),
+		svc(120, "b", history.StateRunning),
+		svc(50, "c", history.StateRunning),
+		svc(60, "c", history.StateRemoved),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.Prune(ctx, at(200))
+	if err != nil || n != 4 {
+		t.Fatalf("Prune = %d, %v; want 4", n, err)
+	}
+	got, err := s.Query(ctx, "p", at(0), at(1000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, r := range got {
+		keys = append(keys, fmt.Sprintf("%s@%d=%s", r.Container, r.TS.Unix(), r.State))
+	}
+	if want := "a@100=healthy b@120=running"; strings.Join(keys, " ") != want {
+		t.Fatalf("rows after prune = %v, want %s", keys, want)
+	}
+
+	tl, err := s.Timeline(ctx, "p", at(500), at(600))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tl.Services) != 2 || tl.Services[0].Service != "a" ||
+		len(tl.Services[0].Runs) != 1 || tl.Services[0].Runs[0].State != history.StateHealthy {
+		t.Fatalf("timeline after prune = %+v, want a healthy across the window", tl.Services)
 	}
 }
