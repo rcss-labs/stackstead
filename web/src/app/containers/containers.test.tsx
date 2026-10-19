@@ -65,6 +65,8 @@ describe('Containers screen', () => {
     await screen.findByRole('link', { name: 'api' });
     const r = bodyRows()[0];
     expect(within(r).getByRole('link', { name: 'api' }).getAttribute('href')).toBe('/containers/api');
+    // Long names are ellipsised in the grid; the full name stays reachable on hover.
+    expect(within(r).getByRole('link', { name: 'api' }).getAttribute('title')).toBe('api');
     expect(within(r).getByText('ghcr.io/acme/api:2').getAttribute('title')).toBe('ghcr.io/acme/api:2');
     expect(within(r).getByText('running')).toBeTruthy();
     expect(within(r).getByText('unhealthy').getAttribute('data-health')).toBe('unhealthy');

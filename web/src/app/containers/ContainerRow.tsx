@@ -52,7 +52,7 @@ export function ContainerRow({ row, index, focused, open, peekId, mobile, onFocu
         <Led tone={led.tone} pulse={led.pulse} label={row.state} />
       </div>
       <div role="cell" className={styles.name}>
-        <Link to={`/containers/${encodeURIComponent(row.name)}`} className={styles.nameLink}>
+        <Link to={`/containers/${encodeURIComponent(row.name)}`} className={styles.nameLink} title={row.name}>
           {row.name}
         </Link>
         {mobile && (
