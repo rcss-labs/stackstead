@@ -29,6 +29,8 @@
 .handle:focus-visible .grip { background: var(--muted); }
 
 .body {
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   transition: height 0.22s ease;
 }

@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installFakeStream, type FakeStream } from '../../vitest-setup';
@@ -102,8 +102,10 @@ describe('LogConsole stream', () => {
     fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'first'), logEvent(C_A, 2, 1, 'second line')] });
     mount({ open: false });
     await tick(200);
-    expect(screen.getByText('second line').parentElement!.textContent).toMatch(/\S+\s+api\s+second line/);
-    expect(screen.queryByText('first')).toBeNull();
+    // The lines stay mounted (inert) behind the collapsed drawer; the inline line is the header's.
+    const header = screen.getByRole('banner');
+    expect(within(header).getByText('second line').parentElement!.textContent).toMatch(/\S+\s+api\s+second line/);
+    expect(within(header).queryByText('first')).toBeNull();
     expect(body().style.height).toBe('0px');
     expect(fake.requests[0].signal!.aborted).toBe(false);
   });

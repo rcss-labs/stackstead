@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import type { LogError } from '$lib/api/types';
+import type { LogLine } from '$lib/logs/buffer';
 import {
   consoleStatus,
+  filterConsoleLines,
   LOGS_HEIGHT_MAX,
   LOGS_HEIGHT_MIN,
   LOGS_HEIGHT_MOBILE,
@@ -9,11 +12,25 @@ import {
 } from '$lib/stacks/console';
 import type { LogSource } from '$lib/stacks/logs';
 import styles from './LogConsole.module.css';
+import { LogChips } from './LogChips';
 import { LogConsoleHeader } from './LogConsoleHeader';
+import { LogLines } from './LogLines';
 import { useLogStream } from './useLogStream';
 import { useLogsHeight } from './useLogsHeight';
 
 const KEY_STEP = 20;
+const STREAM_OPTIONS = { tail: 200, follow: true } as const;
+
+const errorKey = (e: LogError) => `${e.container}\0${e.error}`;
+
+/** Stable colour slot: a service's position among the sorted names; unlisted names fall back to a hash. */
+function serviceColorIndex(sorted: string[], service: string): number {
+  const at = sorted.indexOf(service);
+  if (at >= 0) return at;
+  let h = 0;
+  for (let i = 0; i < service.length; i++) h = (h * 31 + service.charCodeAt(i)) >>> 0;
+  return h;
+}
 
 export interface LogConsoleProps {
   source: LogSource;
@@ -27,13 +44,16 @@ export interface LogConsoleProps {
   storage?: Storage;
 }
 
-export function LogConsole({ source, services, service, open, onOpenChange, mobile, storage }: LogConsoleProps) {
+export function LogConsole({ source, services, service, onService, open, onOpenChange, mobile, storage }: LogConsoleProps) {
   // A service the stack does not have (a stale ?service=) shows every service rather than an empty console.
   const serverService = source.kind === 'stack' && service !== undefined && services.includes(service) ? service : undefined;
   const stream = useLogStream(source, { service: serverService, tail: 200, follow: true });
   const { height, setHeight, commit } = useLogsHeight(storage);
   const [paused, setPaused] = useState(false);
+  const [frozen, setFrozen] = useState<LogLine[]>([]);
   const [frozenSeq, setFrozenSeq] = useState(0);
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
+  const [pinned, setPinned] = useState<number | undefined>();
   const [level, setLevel] = useState<LogLevel>('all');
   const [search, setSearch] = useState('');
   const [dragging, setDragging] = useState(false);
@@ -45,17 +65,45 @@ export function LogConsole({ source, services, service, open, onOpenChange, mobi
   useEffect(() => {
     if (appliedService.current === serverService) return;
     appliedService.current = serverService;
-    setPaused(false);
-    restart({ service: serverService, tail: 200, follow: true });
+    resetView();
+    restart({ service: serverService, ...STREAM_OPTIONS });
   }, [serverService, restart]);
 
+  // A new stream starts a new view: nothing frozen, dismissed or pinned carries over.
+  function resetView() {
+    setPaused(false);
+    setFrozen([]);
+    setFrozenSeq(0);
+    setDismissed(new Set());
+    setPinned(undefined);
+  }
+
   const latestSeq = stream.lines.at(-1)?.seq ?? 0;
+  const view = paused ? frozen : stream.lines;
+  const visible = useMemo(() => filterConsoleLines(view, { level, search }), [view, level, search]);
   const newCount = paused ? newLinesSince(stream.lines, frozenSeq) : 0;
   const status = consoleStatus({ status: stream.status, ended: stream.ended, paused, sourceKind: source.kind });
+  const sortedServices = useMemo(() => [...services].sort(), [services]);
+  const visibleErrors = stream.errors.filter((e) => !dismissed.has(errorKey(e)));
 
   function togglePause() {
-    if (!paused) setFrozenSeq(latestSeq);
+    if (!paused) {
+      setFrozen(stream.lines);
+      setFrozenSeq(latestSeq);
+    }
     setPaused(!paused);
+  }
+
+  function reconnect() {
+    resetView();
+    stream.restart({ service: serverService, ...STREAM_OPTIONS });
+  }
+
+  function clear() {
+    stream.clear();
+    setFrozen([]);
+    setFrozenSeq(latestSeq);
+    setPinned(undefined);
   }
 
   function onPointerDown(e: PointerEvent<HTMLDivElement>) {
@@ -121,7 +169,33 @@ export function LogConsole({ source, services, service, open, onOpenChange, mobi
         status={status}
         latest={stream.lines.at(-1)}
       />
-      <div className={styles.body} data-testid="log-console-body" data-dragging={dragging || undefined} style={{ height: bodyHeight }} />
+      <div className={styles.body} data-testid="log-console-body" data-dragging={dragging || undefined} style={{ height: bodyHeight }} inert={!open}>
+        {source.kind === 'stack' && (
+          <LogChips
+            services={sortedServices}
+            selected={serverService}
+            onSelect={onService}
+            colorIndex={(name) => serviceColorIndex(sortedServices, name)}
+          />
+        )}
+        <LogLines
+          lines={visible}
+          search={search}
+          pinned={pinned}
+          onPin={(seq) => setPinned((current) => (current === seq ? undefined : seq))}
+          paused={paused}
+          newCount={newCount}
+          onJumpToLatest={togglePause}
+          ended={stream.ended}
+          dropped={stream.dropped}
+          errors={visibleErrors}
+          onDismissError={(e) => setDismissed((current) => new Set(current).add(errorKey(e)))}
+          onReconnect={reconnect}
+          onClear={clear}
+          colorIndex={(name) => serviceColorIndex(sortedServices, name)}
+          empty={view.length > 0 && visible.length === 0}
+        />
+      </div>
     </section>
   );
 }
