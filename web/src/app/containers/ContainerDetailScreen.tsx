@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { api } from '$lib/api/client';
 import type { ContainerDetail } from '$lib/api/types';
@@ -160,8 +160,10 @@ export function ContainerDetailScreen({ name }: { name: string }) {
     );
   }
 
+  // After a recreation the previous container's details linger for one commit; they are not this row's.
+  const shown = detail && detail.id.startsWith(row.id) ? detail : undefined;
   const led = containerLed(row);
-  const fullId = detail?.id ?? row.id;
+  const fullId = shown?.id ?? row.id;
   const image = imagePath(row.imageId);
   const stackUrl = `/stacks/${encodeURIComponent(row.stack)}`;
 
@@ -251,11 +253,11 @@ export function ContainerDetailScreen({ name }: { name: string }) {
             <div className={styles.cols}>
               <div className={styles.card}>
                 {detailError && (
-                  <Banner kind={detail ? 'warning' : 'danger'} title={detail ? 'Showing the last loaded details' : 'Could not load the details'}>
+                  <Banner kind={shown ? 'warning' : 'danger'} title={shown ? 'Showing the last loaded details' : 'Could not load the details'}>
                     {detailError}
                   </Banner>
                 )}
-                {detail ? <DetailFacts detail={detail} /> : !detailError && <Spinner />}
+                {shown ? <DetailFacts detail={shown} /> : !detailError && <Spinner />}
               </div>
               <section className={styles.card} aria-label="Resources · now">
                 <PanelLabel as="h2">Resources · now</PanelLabel>
@@ -263,7 +265,7 @@ export function ContainerDetailScreen({ name }: { name: string }) {
                   <dt>CPU</dt>
                   <dd className={styles.mono}>{row.cpu !== null ? formatPercent(row.cpu) : '—'}</dd>
                   <dt>Memory</dt>
-                  <dd className={styles.mono}>{memoryText(row.mem, detail?.memoryLimit ?? null)}</dd>
+                  <dd className={styles.mono}>{memoryText(row.mem, shown?.memoryLimit ?? null)}</dd>
                 </dl>
               </section>
             </div>
@@ -334,20 +336,14 @@ function DetailFacts({ detail: d }: { detail: ContainerDetail }) {
           <summary>Labels ({labelCount})</summary>
           <dl className={styles.dl}>
             {composeFirst(d.labels).map(([k, v]) => (
-              <LabelEntry key={k} labelKey={k} value={v} />
+              <Fragment key={k}>
+                <dt className={styles.mono}>{k}</dt>
+                <dd className={styles.mono}>{v}</dd>
+              </Fragment>
             ))}
           </dl>
         </details>
       )}
-    </>
-  );
-}
-
-function LabelEntry({ labelKey, value }: { labelKey: string; value: string }) {
-  return (
-    <>
-      <dt className={styles.mono}>{labelKey}</dt>
-      <dd className={styles.mono}>{value}</dd>
     </>
   );
 }

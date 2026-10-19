@@ -98,8 +98,9 @@ describe('ContainerDetail', () => {
     listRes = { body: [row({ managed: 'compose', project: 'shop' })] };
     mountAt('/containers/redis');
     await heading('redis');
-    expect(screen.getByText(/^· project/).textContent).toContain('shop');
-    expect(screen.getByText(/unregistered/)).toBeTruthy();
+    const meta = screen.getByText(/unregistered/).parentElement!;
+    expect(within(meta).getByText('shop')).toBeTruthy();
+    expect(meta.textContent).toMatch(/project\s+shop/);
     expect(screen.getByRole('button', { name: 'Stop redis' })).toBeTruthy();
   });
 
@@ -252,6 +253,29 @@ describe('ContainerDetail', () => {
     await screen.findByText('always');
     expect(screen.getByRole('heading', { level: 1, name: 'redis' })).toBeTruthy();
     expect(screen.queryByText('This container no longer exists')).toBeNull();
+  });
+
+  it('never pairs the recreated container with the previous details, not even for one render', async () => {
+    fake.restore();
+    fake = installFakeFetch({
+      'GET /api/containers': () => listRes as FakeResponse,
+      [`GET /api/containers/${ID}`]: { body: detail({ memoryLimit: 104857600 }) },
+      [`GET /api/containers/${NEW}`]: { body: detail({ id: NEW + '0'.repeat(52), memoryLimit: null }) },
+    });
+    listRes = { body: [row({ mem: 52428800 })] };
+    mountAt('/containers/redis');
+    const box = await screen.findByRole('region', { name: /resources/i });
+    await waitFor(() => expect(box.textContent).toContain('50.0 MiB / 100.0 MiB'));
+    // Every text the memory cell ever held: a commit that mixes the new row with the old limit would leave a trace here.
+    const memory = within(box).getByText('Memory').nextElementSibling!;
+    const seen: (string | null)[] = [];
+    const observer = new MutationObserver((records) => records.forEach((r) => seen.push(r.oldValue)));
+    observer.observe(memory, { subtree: true, characterData: true, characterDataOldValue: true });
+    listRes = { body: [row({ id: NEW, mem: 62914560 })] };
+    await pushChange({ project: '', seq: 9, resync: true });
+    await waitFor(() => expect(memory.textContent).toBe('60.0 MiB'));
+    observer.disconnect();
+    expect(seen).not.toContain('60.0 MiB / 100.0 MiB');
   });
 
   it('remounts the logs stream on the new id after recreation', async () => {
