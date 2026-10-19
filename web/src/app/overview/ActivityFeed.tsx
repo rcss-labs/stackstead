@@ -52,18 +52,20 @@ export function ActivityFeed({ events, connection }: ActivityFeedProps) {
             return (
               <li key={`${e.time}|${e.container}|${e.action}|${i}`} className={styles.event}>
                 <span className={styles.tone} data-tone={tone(action)} aria-hidden="true" />
-                <span className={styles.action} data-tone={tone(action)} title={action}>
-                  {action}
+                <span className={styles.what}>
+                  <span className={styles.action} data-tone={tone(action)} title={action}>
+                    {action}
+                  </span>{' '}
+                  {e.container ? (
+                    <Link className={styles.subject} to={`/containers/${encodeURIComponent(e.container)}`} title={subject}>
+                      {subject}
+                    </Link>
+                  ) : (
+                    <span className={styles.subject} title={subject}>
+                      {subject}
+                    </span>
+                  )}
                 </span>
-                {e.container ? (
-                  <Link className={styles.subject} to={`/containers/${encodeURIComponent(e.container)}`} title={subject}>
-                    {subject}
-                  </Link>
-                ) : (
-                  <span className={styles.subject} title={subject}>
-                    {subject}
-                  </span>
-                )}
                 <span className={styles.time}>{clock(e.time)}</span>
               </li>
             );

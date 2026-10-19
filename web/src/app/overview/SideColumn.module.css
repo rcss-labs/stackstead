@@ -3,7 +3,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 12px;
 }
 
 .card {
@@ -71,15 +71,14 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  font-family: var(--mono);
-  font-size: 11.5px;
+  gap: 7px;
+  font-size: 12px;
 }
 
 .event {
   display: grid;
-  grid-template-columns: 8px 58px minmax(0, 1fr) auto;
-  align-items: center;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: baseline;
   gap: 8px;
   min-width: 0;
 }
@@ -87,7 +86,7 @@
 .tone {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: 2px;
   background: var(--muted);
 }
 
@@ -95,13 +94,23 @@
 .tone[data-tone='warning'] { background: var(--warning); }
 .tone[data-tone='danger'] { background: var(--danger); }
 
-.action,
-.subject,
+.what,
 .name {
+  display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.action {
+  font-weight: 500;
+}
+
+.subject {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
 }
 
 .action[data-tone='success'] { color: var(--success); }
@@ -111,14 +120,19 @@
 
 .subject,
 .name {
-  color: inherit;
   text-decoration: none;
 }
+
+.name { color: inherit; }
 
 .subject:hover,
 .name:hover { color: var(--accent); }
 
-.time { color: var(--faint); }
+.time {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--faint);
+}
 
 .consumers {
   list-style: none;
@@ -126,7 +140,7 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 9px;
 }
 
 .line {
@@ -140,7 +154,7 @@
 .value { flex: none; font-family: var(--mono); }
 
 .bar {
-  height: 4px;
+  height: 3px;
   margin-top: 4px;
   background: var(--border);
   border-radius: 2px;
@@ -159,8 +173,6 @@
 @media (max-width: 759px) {
   .column { flex-basis: 100%; }
   .name,
-  .subject { display: inline-flex; align-items: center; min-height: 40px; }
-  .line { align-items: center; }
+  .what { line-height: 40px; }
   .events { gap: 0; }
-  .event { min-height: 40px; }
 }

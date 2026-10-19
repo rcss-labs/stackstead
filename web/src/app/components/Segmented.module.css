@@ -28,5 +28,6 @@
 }
 
 @media (max-width: 759px) {
-  .option { height: 36px; }
+  .option,
+  .group[data-size='sm'] .option { height: 40px; }
 }
