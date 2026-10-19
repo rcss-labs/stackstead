@@ -4,8 +4,8 @@
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 8px 0 14px;
+  gap: 10px;
+  padding: 0 14px;
   background: var(--chassis);
   border-bottom: 1px solid var(--border);
   position: sticky;
@@ -28,7 +28,7 @@
   flex: 1;
   min-width: 0;
   margin: 0;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -37,7 +37,6 @@
 
 .title[data-mono='true'] {
   font-family: var(--mono);
-  font-weight: 500;
 }
 
 .action {
@@ -47,9 +46,9 @@
   display: grid;
   place-items: center;
   padding: 0;
-  border: 0;
-  border-radius: var(--radius);
-  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
   color: var(--muted);
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
@@ -58,4 +57,11 @@
 .action:hover {
   background: var(--hover);
   color: var(--text);
+}
+
+.primary,
+.primary:hover {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
 }

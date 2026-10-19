@@ -57,7 +57,7 @@ export function Sidebar({ username, onLogout, current, stackCount, attention, on
           <path d={ICONS.search} />
         </svg>
         <span className={styles.searchText} aria-hidden="true">
-          Search
+          Search or run…
         </span>
         <kbd className={styles.kbd} aria-hidden="true">
           {isMac ? '⌘K' : 'Ctrl K'}
@@ -68,8 +68,9 @@ export function Sidebar({ username, onLogout, current, stackCount, attention, on
         <PanelLabel tone="faint">Create</PanelLabel>
       </div>
       <div className={styles.group}>{NAV.filter((e) => e.group === 'create').map(item)}</div>
-      <div className={styles.group}>{NAV.filter((e) => e.group === 'settings').map(item)}</div>
-      <div className={styles.user}>
+      <div className={styles.bottom}>
+        <div className={styles.group}>{NAV.filter((e) => e.group === 'settings').map(item)}</div>
+        <div className={styles.user}>
         <button type="button" className={styles.avatar} aria-label="Log out" title={`${username ?? ''} · Log out`} onClick={onLogout}>
           {initials}
         </button>
@@ -82,6 +83,7 @@ export function Sidebar({ username, onLogout, current, stackCount, attention, on
             <path d={dark ? ICONS.sun : ICONS.moon} />
           </svg>
         </button>
+        </div>
       </div>
     </nav>
   );

@@ -20,15 +20,16 @@
 .item[data-current='true'] {
   background: var(--hover);
   color: var(--text);
+  font-weight: 600;
 }
 
 .bar {
   position: absolute;
-  left: 0;
-  top: 6px;
-  bottom: 6px;
+  left: -10px;
+  top: 8px;
+  bottom: 8px;
   width: 3px;
-  border-radius: 0 2px 2px 0;
+  border-radius: 0 3px 3px 0;
   background: var(--accent);
   opacity: 0;
   transition: opacity 0.15s;
@@ -36,10 +37,6 @@
 
 .item[data-current='true'] .bar {
   opacity: 1;
-}
-
-.item[data-current='true'] svg {
-  color: var(--accent);
 }
 
 .label {

@@ -1,10 +1,11 @@
 .block {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 3px;
   padding: 10px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: 8px;
+  box-shadow: var(--hi);
   background: var(--surface);
 }
 
@@ -22,7 +23,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 500;
 }
 
@@ -40,7 +41,7 @@
 
 .row {
   display: grid;
-  grid-template-columns: 32px 1fr auto;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 8px;
 }
@@ -66,13 +67,13 @@
   display: block;
   height: 100%;
   background: var(--fill);
-  transition: width 0.3s;
+  transition: width 0.6s ease;
 }
 
 .value {
   min-width: 40px;
   text-align: right;
   font-family: var(--mono);
-  font-size: 11px;
-  color: var(--muted);
+  font-size: 10.5px;
+  color: var(--text);
 }

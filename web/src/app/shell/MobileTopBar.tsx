@@ -16,17 +16,17 @@ export function MobileTopBar({ title, mono, attention, onOpenPalette }: MobileTo
       <Link to="/" className={styles.logo} aria-label="Stackstead">
         <img src="/containers.png" alt="" width="24" height="24" />
       </Link>
-      <h1 className={styles.title} data-mono={mono ? 'true' : undefined}>
+      <span className={styles.title} data-mono={mono ? 'true' : undefined}>
         {title}
-      </h1>
-      {attention && <Led tone="danger" pulse size={7} />}
+      </span>
+      {attention && <Led tone="danger" pulse size={7} label="Needs attention" />}
       <button type="button" className={styles.action} aria-label="Search or run a command" onClick={onOpenPalette}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d={ICONS.search} />
         </svg>
       </button>
-      <Link to="/stacks/new" className={styles.action} aria-label="New stack">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <Link to="/stacks/new" className={`${styles.action} ${styles.primary}`} aria-label="New stack">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d={ICONS.plus} />
         </svg>
       </Link>

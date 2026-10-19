@@ -38,7 +38,7 @@ function renderIn(ui: React.ReactElement, at = '/') {
 }
 
 const sidebarProps = { onLogout: () => {}, stackCount: 3, attention: false, onOpenPalette: () => {} };
-const current = (name: string) => screen.getByRole('link', { name }).getAttribute('aria-current');
+const current = (name: string | RegExp) => screen.getByRole('link', { name }).getAttribute('aria-current');
 
 describe('Sidebar', () => {
   it('links to the main pages and marks the current one', () => {
@@ -152,7 +152,7 @@ describe('Sidebar', () => {
 
   it('shows the attention LED on Stacks only when attention is true', () => {
     const { rerender } = renderIn(<Sidebar {...sidebarProps} attention={false} current="/" />);
-    const led = () => screen.getByRole('link', { name: 'Stacks' }).querySelector('[data-tone="danger"]');
+    const led = () => screen.getByRole('link', { name: /^Stacks/ }).querySelector('[data-tone="danger"]');
     expect(led()).toBeNull();
     rerender(
       <MemoryRouter>
@@ -161,6 +161,12 @@ describe('Sidebar', () => {
     );
     expect(led()?.getAttribute('data-pulse')).toBe('true');
     expect(screen.getByRole('link', { name: 'Containers' }).querySelector('[data-tone="danger"]')).toBeNull();
+  });
+
+  it('announces the attention LED as part of the Stacks link name', () => {
+    renderIn(<Sidebar {...sidebarProps} attention current="/" />);
+    expect(screen.getByRole('link', { name: /Stacks.*needs attention/i })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Containers' })).toBeTruthy();
   });
 
   it('search button opens the palette', async () => {
@@ -266,15 +272,17 @@ describe('HostBlock', () => {
     expect(bar(container, 'cpu')?.getAttribute('data-empty')).toBe('true');
   });
 
-  it('disk at 78% is accent below the warning line, 80% warning, 92% danger', async () => {
-    const { container } = mountWith(snapshot({ disk: { path: '/', free: 8, total: 100 } }));
-    await screen.findByText('92%');
-    expect(bar(container, 'disk')?.getAttribute('data-tone')).toBe('danger');
-    release?.();
-    release = startHost({ host: async () => snapshot({ disk: { path: '/', free: 20, total: 100 } }) });
-    const view = render(<HostBlock />);
-    await waitFor(() => expect(within(view.container).getByText('80%')).toBeTruthy());
-    expect(bar(view.container, 'disk')?.getAttribute('data-tone')).toBe('warning');
+  it('disk at 78% is warning, 92% danger', async () => {
+    const tones: Record<number, string> = { 74: 'accent', 78: 'warning', 92: 'danger' };
+    for (const [pct, tone] of Object.entries(tones)) {
+      release = startHost({ host: async () => snapshot({ disk: { path: '/', free: 100 - Number(pct), total: 100 } }) });
+      const view = render(<HostBlock />);
+      await waitFor(() => expect(within(view.container).getByText(`${pct}%`)).toBeTruthy());
+      expect(bar(view.container, 'disk')?.getAttribute('data-tone')).toBe(tone);
+      view.unmount();
+      release();
+      release = undefined;
+    }
   });
 });
 
@@ -400,14 +408,26 @@ describe('Mobile', () => {
   it('tab bar marks the current page and shows the alert LED on Stacks', () => {
     renderIn(<TabBar current="/containers/redis" attention />);
     expect(current('Containers')).toBe('page');
-    expect(current('Stacks')).toBeNull();
-    expect(screen.getByRole('link', { name: 'Stacks' }).querySelector('[data-tone="danger"]')).toBeTruthy();
+    expect(current(/^Stacks/)).toBeNull();
+    expect(screen.getByRole('link', { name: /^Stacks/ }).querySelector('[data-tone="danger"]')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Containers' }).querySelector('[data-tone="danger"]')).toBeNull();
+  });
+
+  it('tab bar and mobile top bar announce the attention LED', () => {
+    renderIn(
+      <>
+        <TabBar current="/" attention />
+        <MobileTopBar title="Stacks" mono={false} attention onOpenPalette={() => {}} />
+      </>,
+    );
+    expect(screen.getByRole('link', { name: /Stacks.*needs attention/i })).toBeTruthy();
+    expect(screen.getAllByRole('img', { name: 'Needs attention' })).toHaveLength(1);
   });
 
   it('mobile title is mono for an entity route', () => {
     const { rerender } = renderIn(<MobileTopBar title="redis" mono attention={false} onOpenPalette={() => {}} />);
-    expect(screen.getByRole('heading', { name: 'redis' }).hasAttribute('data-mono')).toBe(true);
+    expect(screen.queryByRole('heading')).toBeNull();
+    expect(screen.getByText('redis').hasAttribute('data-mono')).toBe(true);
     rerender(
       <MemoryRouter>
         <MobileTopBar title="Networks" mono={false} attention onOpenPalette={() => {}} />

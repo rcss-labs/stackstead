@@ -15,7 +15,7 @@ export function TabBar({ current, attention }: TabBarProps) {
       {TAB_BAR.map((entry) => {
         const active = entry.match(current);
         return (
-          <Link key={entry.href} to={entry.href} className={styles.tab} aria-label={entry.label} aria-current={active ? 'page' : undefined}>
+          <Link key={entry.href} to={entry.href} className={styles.tab} aria-label={attention && entry.href === '/' ? `${entry.label}, needs attention` : entry.label} aria-current={active ? 'page' : undefined}>
             <span className={styles.icon}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <path d={ICONS[entry.icon]} />

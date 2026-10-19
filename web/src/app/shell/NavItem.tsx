@@ -16,13 +16,13 @@ export function NavItem({ entry, current, count, alert = false }: NavItemProps) 
     <Link
       to={entry.href}
       className={styles.item}
-      aria-label={entry.label}
+      aria-label={alert ? `${entry.label}, needs attention` : entry.label}
       title={entry.label}
       aria-current={current ? 'page' : undefined}
       data-current={current ? 'true' : undefined}
     >
       <span className={styles.bar} aria-hidden="true" />
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d={ICONS[entry.icon]} />
       </svg>
       <span className={styles.label} aria-hidden="true">
