@@ -24,6 +24,7 @@ import { LogConsole } from './LogConsole';
 import { MetricsTab } from './MetricsTab';
 import { OperationsPane } from './OperationsPane';
 import { ServiceChips, ServiceRail } from './ServiceRail';
+import { AddServicePanel } from './AddServicePanel';
 import { ServiceEditor } from './ServiceEditor';
 import { ServicePane } from './ServicePane';
 import { SplitPane } from './SplitPane';
@@ -100,7 +101,22 @@ export function StackDetailScreen({ name }: { name: string }) {
   const [serviceDirty, setServiceDirty] = useState(false);
   // The service editor counts only while it is open on the selected service.
   const serviceEditorOpen = item.kind === 'service' && editingService === item.name;
-  const dirty = (editingCompose && composeDirty) || (serviceEditorOpen && serviceDirty);
+  const [addingService, setAddingService] = useState(false);
+  const [addDirty, setAddDirty] = useState(false);
+  const dirty = (editingCompose && composeDirty) || (serviceEditorOpen && serviceDirty) || (addingService && addDirty);
+  const closeAdd = () => {
+    setAddingService(false);
+    setAddDirty(false);
+  };
+  // The add panel belongs to the item it was opened on and to a parseable file.
+  const itemKey = item.kind === 'service' ? `service:${item.name}` : item.kind;
+  const [addOpenedOn, setAddOpenedOn] = useState<string | undefined>();
+  useEffect(() => {
+    if (addingService && (!!parseErrorText || itemKey !== addOpenedOn)) {
+      setAddingService(false);
+      setAddDirty(false);
+    }
+  }, [addingService, parseErrorText, itemKey, addOpenedOn]);
   // Selecting anything but the edited service ends the edit; its draft goes with the editor.
   useEffect(() => {
     if (!serviceEditorOpen) {
@@ -139,7 +155,17 @@ export function StackDetailScreen({ name }: { name: string }) {
     setComposeDirty(false);
     setEditingService(undefined);
     setServiceDirty(false);
+    closeAdd();
     action?.();
+  }
+
+  function openAdd() {
+    guarded(() => {
+      setEditingService(undefined);
+      setServiceDirty(false);
+      setAddOpenedOn(itemKey);
+      setAddingService(true);
+    });
   }
 
   async function retry() {
@@ -206,7 +232,17 @@ export function StackDetailScreen({ name }: { name: string }) {
       selected: item,
       operationsCount: operations.length,
       latest,
-      onSelect: (target: DetailItem) => guarded(() => location.go(location.hrefFor(target))),
+      onSelect: (target: DetailItem) =>
+        guarded(() => {
+          closeAdd();
+          location.go(location.hrefFor(target));
+        }),
+      addSlot:
+        parseError || serviceEditorOpen || addingService ? undefined : (
+          <Button variant="ghost" size="xs" aria-label="Add service" onClick={openAdd}>
+            + Add
+          </Button>
+        ),
     };
     body = (
       <section className={styles.page}>
@@ -235,7 +271,12 @@ export function StackDetailScreen({ name }: { name: string }) {
           <HealthTimeline
             lanes={timelineLanes(health, detail.services.map((s) => s.name), nowSeconds)}
             selected={location.item.kind === 'service' ? location.item.name : undefined}
-            onSelect={(service) => guarded(() => location.go(location.hrefFor({ kind: 'service', name: service })))}
+            onSelect={(service) =>
+              guarded(() => {
+                closeAdd();
+                location.go(location.hrefFor({ kind: 'service', name: service }));
+              })
+            }
           />
         )}
         <SplitPane
@@ -258,7 +299,21 @@ export function StackDetailScreen({ name }: { name: string }) {
             )
           }
         >
-          {item.kind === 'service' && selectedService ? (
+          {addingService && !parseError ? (
+            <AddServicePanel
+              key={name}
+              stack={detail}
+              onDirtyChange={setAddDirty}
+              onReload={ctl.reloadDetail}
+              onCancel={() => guarded(closeAdd)}
+              onAdded={(added) => {
+                const fresh = added.services.find((svc) => !detail.services.some((old) => old.name === svc.name)) ?? added.services.at(-1);
+                ctl.acceptDetail(added);
+                closeAdd();
+                if (fresh) location.go(location.hrefFor({ kind: 'service', name: fresh.name }));
+              }}
+            />
+          ) : item.kind === 'service' && selectedService ? (
             <ServicePane
               service={selectedService}
               tab={serviceTab}

@@ -112,6 +112,21 @@ reports `dirty` to the screen; the screen alone feeds `setUnsavedChanges`, and
 every in-page navigation (rail, chips, timeline, tabs, header actions) goes
 through `guarded()`, so leaving with unsaved edits asks first.
 
+The service editors of the stack detail live under `web/src/app/stacks/`
+(`ServiceForm`, `FileBrowser`, `NetworkPicker`, `CreateNetworkDialog`; shared with
+New stack and meant to be reused by the container and network screens of Plans
+20 and 22) and `web/src/app/detail/` (`ServiceEditor` behind `Edit`,
+`AddServicePanel` behind `+ Add` on the rail and chips). The state machines in
+`lib/stacks/serviceEdit.ts` and `serviceAdd.ts` own the data, validation and
+conflict handling; the React components only render them. Each editor reports a
+`dirty` flag to `StackDetailScreen` (`serviceDirty` while a service is being
+edited, `addDirty` while the add panel is open); together with the compose
+editor's flag they feed the one `unsavedChanges` store, and every navigation
+goes through `guarded()`. Opening the add panel, the editor or another item
+closes the others, `discardAndLeave` closes both, and the pane's `Logs` button
+is not guarded because it leaves the editor open. The editors add nothing to the
+entry; the add panel and service editor ride in the lazy `StackDetail` chunk.
+
 ## Tests
 
 ```bash

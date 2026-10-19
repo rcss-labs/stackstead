@@ -352,3 +352,94 @@ describe('removing a service from its editor', () => {
     expect(get(unsavedChanges)).toBe(false);
   });
 });
+
+describe('adding a service from the rail', () => {
+  const addButton = async () => within(await screen.findByRole('navigation', { name: 'Services' })).findByRole('button', { name: 'Add service' });
+  const typeName = async (value: string) => user().type(await screen.findByLabelText('Service name'), value);
+  const addRoutes = () => {
+    routes['POST /api/stacks/web/services/preview'] = { body: { content: 'services: {}\n', hash: 'h1' } };
+  };
+
+  it('opens add, guards a dirty panel before editing, and hides Add during editing', async () => {
+    mountDetail(h, '/stacks/web?service=app');
+    await user().click(await addButton());
+    await typeName('cache');
+    await waitFor(() => expect(get(unsavedChanges)).toBe(true));
+    // The panel replaces the pane, so the way back to Edit is the rail entry of the service.
+    await user().click(rail().getByRole('button', { name: /^app\b/ }));
+    await user().click(within(await dialog()).getByRole('button', { name: 'Discard changes' }));
+    await user().click(await screen.findByRole('button', { name: 'Edit app' }));
+    await screen.findByLabelText('Image');
+    expect(screen.queryByLabelText('Service name')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add service' })).toBeNull();
+    expect(get(unsavedChanges)).toBe(false);
+  });
+
+  it('moves keyboard focus into the panel when Add is clicked', async () => {
+    mountDetail(h, '/stacks/web?service=app');
+    await user().click(await addButton());
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Service name')));
+  });
+
+  it('does not offer Add on parse errors', async () => {
+    h.stackRes = { body: stackDetail({ parseError: 'yaml: line 3: bad', services: [] }) };
+    mountDetail(h, '/stacks/web');
+    await screen.findByText('Compose file cannot be parsed');
+    expect(screen.queryByRole('button', { name: 'Add service' })).toBeNull();
+  });
+
+  it('adds reviewed service, replaces detail, closes panel and selects it', async () => {
+    addRoutes();
+    routes['POST /api/stacks/web/services'] = () => {
+      h.stackRes = { body: withCache('h2') };
+      return { body: withCache('h2') };
+    };
+    mountDetail(h, '/stacks/web?service=app');
+    const u = user();
+    await u.click(await addButton());
+    await typeName('cache');
+    await u.type(screen.getByLabelText('Image'), 'redis:7');
+    await u.click(screen.getByRole('button', { name: 'Preview changes' }));
+    await u.click(await screen.findByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(here()).toBe('/stacks/web?service=cache'));
+    expect(await screen.findByRole('heading', { name: 'cache' })).toBeTruthy();
+    expect(rail().getByRole('button', { name: /^cache\b/ })).toBeTruthy();
+    expect(screen.queryByLabelText('Service name')).toBeNull();
+    expect(get(toasts).some((t) => t.message === 'Added cache to compose.yaml. Run Up to start it.')).toBe(true);
+    expect(get(unsavedChanges)).toBe(false);
+  });
+
+  it('Cancel on a clean add panel returns to the previous item without asking', async () => {
+    mountDetail(h, '/stacks/web?service=app');
+    await user().click(await addButton());
+    await screen.findByLabelText('Service name');
+    await user().click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(await screen.findByRole('tablist', { name: 'Service sections' })).toBeTruthy();
+    expect(here()).toBe('/stacks/web?service=app');
+  });
+
+  it('the add panel asks before a rail, chip or link navigation while dirty', async () => {
+    window.history.replaceState(null, '', '/stacks/web?service=app');
+    render(<App />);
+    await user().click(await addButton());
+    await typeName('cache');
+    await waitFor(() => expect(get(unsavedChanges)).toBe(true));
+    const targets = [
+      () => rail().getByRole('button', { name: /^db\b/ }),
+      () => within(screen.getByRole('navigation', { name: 'Service chips' })).getByRole('button', { name: /^db\b/ }),
+      () => within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Containers' }),
+    ];
+    for (const target of targets) {
+      await user().click(target());
+      await user().click(within(await dialog()).getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    }
+    expect((screen.getByLabelText('Service name') as HTMLInputElement).value).toBe('cache');
+    await user().click(rail().getByRole('button', { name: /^db\b/ }));
+    await user().click(within(await dialog()).getByRole('button', { name: 'Discard changes' }));
+    expect(await screen.findByRole('button', { name: 'Edit db' })).toBeTruthy();
+    expect(screen.queryByLabelText('Service name')).toBeNull();
+    expect(get(unsavedChanges)).toBe(false);
+  });
+});

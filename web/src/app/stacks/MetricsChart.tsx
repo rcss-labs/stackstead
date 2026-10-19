@@ -90,7 +90,7 @@ export function MetricsChart({ title, series, data, unit, allServices, memLimit,
 
   const hostRef = useRef<HTMLDivElement>(null);
   const [themeTick, setThemeTick] = useState(0);
-  const structure = series.map((s) => s.label).join('\u0000') + '|' + limits.map((l) => l.label).join('\u0000') + '|' + themeTick;
+  const structure = series.map((s) => s.label).join('\u0000') + '|' + limits.map((l) => l.label).join('\u0000') + '|' + allServices.join('\u0000') + '|' + themeTick;
   const [failedStructure, setFailedStructure] = useState<string | undefined>();
   const failed = failedStructure === structure;
   const plotRef = useRef<PlotHandle | undefined>(undefined);

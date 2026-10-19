@@ -48,4 +48,6 @@
 
 @media (max-width: 759px) {
   .editor { padding: 14px; }
+  .row button,
+  .footer button { min-height: 40px; } /* touch target */
 }

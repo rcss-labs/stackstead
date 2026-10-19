@@ -15,7 +15,7 @@ export interface ServiceRailProps {
   operationsCount: number;
   latest: Map<string, SeriesPoint>;
   onSelect: (item: DetailItem) => void;
-  /** Where the add-service control goes (a later plan fills it). */
+  /** The add-service control: beside the Services label on the rail and as a trailing chip on narrow screens. */
   addSlot?: ReactNode;
 }
 
@@ -125,7 +125,7 @@ export function ServiceRail({ services, selected, operationsCount, latest, onSel
 }
 
 /** The rail as a horizontal chip scroller for narrow screens; the same selection, shown under 760px only. */
-export function ServiceChips({ services, selected, onSelect }: ServiceRailProps) {
+export function ServiceChips({ services, selected, onSelect, addSlot }: ServiceRailProps) {
   return (
     <nav className={styles.chips} aria-label="Service chips">
       {services.map((service) => {
@@ -151,6 +151,7 @@ export function ServiceChips({ services, selected, onSelect }: ServiceRailProps)
       <button type="button" className={styles.chip} data-plain data-selected={selected.kind === 'operations'} aria-pressed={selected.kind === 'operations'} onClick={() => onSelect({ kind: 'operations' })}>
         Operations
       </button>
+      {addSlot && <span className={styles.addChip}>{addSlot}</span>}
     </nav>
   );
 }

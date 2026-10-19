@@ -174,7 +174,10 @@
   50% { opacity: 0.35; }
 }
 
+.addChip { display: inline-flex; flex: none; align-items: center; }
+
 @media (max-width: 759px) {
   .rail { display: none; }
   .chips { display: flex; }
+  .addChip button { min-height: 40px; min-width: 40px; }
 }
