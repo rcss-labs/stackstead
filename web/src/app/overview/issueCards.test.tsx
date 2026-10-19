@@ -205,17 +205,34 @@ describe('issue cards on the overview', () => {
     await new Promise((r) => setTimeout(r, 5));
   });
 
-  it('Up stack on an exited card posts up, opens the operation and refetches alerts', async () => {
+  it('Up stack on an exited card posts up and opens the operation', async () => {
     alertsBody = [alert({ kind: 'exited', service: 'app', message: 'app exited (1)' })];
     install([stack('web', { status: 'partial' })], {
       extra: { 'POST /api/stacks/web/actions/up': { body: { id: 'op9', stack: 'web', action: 'up', state: 'running', startedAt: '2026-10-14T10:00:00Z' } } },
     });
     await mount();
-    const alertCalls = () => fake.calls.filter((c) => c.path === '/api/alerts').length;
     await userEvent.setup().click(await screen.findByRole('button', { name: 'Up stack' }));
     await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/stacks/web?tab=operations&op=op9'));
     expect(fake.calls.filter((c) => c.path === '/api/stacks/web/actions/up')).toHaveLength(1);
-    await waitFor(() => expect(alertCalls()).toBe(2));
+  });
+
+  it('while its action is in flight the card button is aria-busy', async () => {
+    alertsBody = [alert({ kind: 'exited', service: 'app', message: 'app exited (1)' })];
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    install([stack('web', { status: 'partial' })], {
+      extra: {
+        'POST /api/stacks/web/actions/up': async () => {
+          await gate;
+          return { body: { id: 'op9', stack: 'web', action: 'up', state: 'running', startedAt: '2026-10-14T10:00:00Z' } };
+        },
+      },
+    });
+    await mount();
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Up stack' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Up stack' }).getAttribute('aria-busy')).toBe('true'));
+    release();
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/stacks/web?tab=operations&op=op9'));
   });
 
   it('a busy stack disables its card and its row together', async () => {

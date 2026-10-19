@@ -25,7 +25,7 @@ export function TopConsumers({ top, stackNames }: TopConsumersProps) {
   const max = Math.max(0, ...rows.map((r) => r.value));
   const ratio = (v: number) => (max > 0 ? Math.round((v / max) * 100) : 0);
   const label = (r: TopEntry) => {
-    const owner = stackNames[r.project] ?? r.project;
+    const owner = (Object.hasOwn(stackNames, r.project) ? stackNames[r.project] : undefined) ?? r.project;
     return owner ? `${r.container} · ${owner}` : r.container;
   };
 

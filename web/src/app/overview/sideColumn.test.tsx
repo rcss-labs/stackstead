@@ -135,6 +135,11 @@ describe('TopConsumers', () => {
     expect(screen.getByText('lone')).toBeTruthy();
   });
 
+  it('a project named like an object prototype key shows its own name', () => {
+    renderIn(<TopConsumers top={{ cpu: [entry('x-1', 'constructor', 2)], mem: [] }} stackNames={{}} />);
+    expect(screen.getByText('x-1 · constructor')).toBeTruthy();
+  });
+
   it('rows link to the container page', () => {
     renderIn(<TopConsumers top={top} stackNames={{}} />);
     expect(screen.getByRole('link', { name: 'web-1 · web' }).getAttribute('href')).toBe('/containers/web-1');

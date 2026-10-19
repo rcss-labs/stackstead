@@ -6,7 +6,7 @@ export type PanelTone = 'danger' | 'success' | 'muted';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const allUnknown = (items: StackSummary[]) => items.length > 0 && items.every((s) => s.status === 'unknown');
-const runningCount = (items: StackSummary[]) => items.filter((s) => s.status === 'running').length;
+const runningCount = (items: StackSummary[]) => items.filter((s) => s.status === 'running' && !stackNeedsAttention(s)).length;
 
 export function panelLabel(items: StackSummary[]): { text: string; tone: PanelTone; pulse: boolean } {
   if (items.length === 0) return { text: 'no stacks', tone: 'muted', pulse: false };

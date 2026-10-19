@@ -26,16 +26,11 @@ export default function Overview() {
   const recentEvents = useStore(events);
   const { connection } = useStore(live);
   // Alerts, summary and storage feed the issue cards and the side column; the controller runs while the screen is mounted.
-  const { alerts, summary, storage, refreshAlerts } = useDashboard();
+  const { alerts, summary, storage } = useDashboard();
   const running = useStore(runningOps);
   const { act, acting, reasonFor } = useStackAction();
   const [query, setQuery] = useState('');
   const [retrying, setRetrying] = useState(false);
-
-  async function actOnIssue(name: string, action: 'up' | 'restart') {
-    // Failures are toasted by act(); only a started operation changes what the alerts say.
-    if (await act(name, action)) refreshAlerts();
-  }
 
   async function retry() {
     setRetrying(true);
@@ -89,7 +84,7 @@ export default function Overview() {
             stackStatus={(name) => items.find((s) => s.name === name)?.status}
             reasonFor={reasonFor}
             acting={acting}
-            onAct={(name, action) => void actOnIssue(name, action)}
+            onAct={(name, action) => void act(name, action)}
           />
           <div className={styles.columns}>
             {items.length === 0 ? (

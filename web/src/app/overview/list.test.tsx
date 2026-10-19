@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, useLocation } from 'react-router';
+import { MemoryRouter, useLocation, useNavigate } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { get, writable } from '$lib/store';
 import type { Alert, Change, HostSnapshot, Operation, StackSummary } from '$lib/api/types';
@@ -83,25 +83,30 @@ function install(items: StackSummary[], opts: { ops?: Operation[]; extra?: Param
   stops.push(startRunningOps({ list: () => fetch('/api/operations?state=running').then((r) => r.json()), changes, refresh: operationsRefresh }));
 }
 
-/** Every distinct location the router visited, to count history entries. */
-let visited: string[] = [];
-
 function Where() {
   const l = useLocation();
-  if (visited[visited.length - 1] !== l.key) visited.push(l.key);
   return <output data-testid="where">{l.pathname + l.search}</output>;
 }
 
 async function mount() {
-  visited = [];
   const view = render(
     <MemoryRouter>
       <Overview />
       <Where />
+      <Back />
     </MemoryRouter>,
   );
   await screen.findByRole('table', { name: 'Stacks' });
   return view;
+}
+
+function Back() {
+  const navigate = useNavigate();
+  return (
+    <button type="button" onClick={() => void navigate(-1)}>
+      test-back
+    </button>
+  );
 }
 
 const where = () => screen.getByTestId('where').textContent;
@@ -195,7 +200,7 @@ describe('stacks list', () => {
     expect(screen.getByText('No stacks match the current filter.')).toBeTruthy();
   });
 
-  it('names the table, keeps six column headers and labels the groups', async () => {
+  it('names the table, keeps seven column headers and labels the groups', async () => {
     install([stack('alpha')]);
     await mount();
     const table = screen.getByRole('table', { name: 'Stacks' });
@@ -275,10 +280,10 @@ describe('stacks list', () => {
     expect(where()).toBe('/');
     await user.click(within(rowOf('alpha')).getByRole('link', { name: ':8123' }));
     expect(where()).toBe('/');
-    const entries = visited.length;
     await user.click(within(rowOf('alpha')).getByRole('link', { name: 'alpha' }));
     expect(where()).toBe('/stacks/alpha');
-    expect(visited).toHaveLength(entries + 1); // exactly one push
+    await user.click(screen.getByRole('button', { name: 'test-back' })); // one history entry: back lands on the overview
+    expect(where()).toBe('/');
     cleanup();
     await mount();
     await user.click(within(rowOf('alpha')).getByRole('link', { name: 'Logs' }));
