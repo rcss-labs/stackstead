@@ -287,6 +287,36 @@ export interface MetricsHistory {
   points: MetricPoint[];
 }
 
+export type HealthState =
+  | 'running'
+  | 'healthy'
+  | 'unhealthy'
+  | 'starting'
+  | 'restarting'
+  | 'exited'
+  | 'removed'
+  | 'nodata';
+
+/** A stretch of one state; `from` and `to` are Unix seconds. */
+export interface HealthRun {
+  state: HealthState;
+  from: number;
+  to: number;
+}
+
+export interface ServiceHealth {
+  service: string;
+  restarts: number;
+  runs: HealthRun[];
+}
+
+/** Per-service health timeline; `from` and `to` are Unix seconds. */
+export interface HealthHistory {
+  from: number;
+  to: number;
+  services: ServiceHealth[];
+}
+
 /** Raw per-container sample from the live metrics stream (counters are cumulative). */
 export interface Sample {
   time: string;

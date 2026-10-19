@@ -193,13 +193,16 @@ func newObserveEnv(t *testing.T, fake *fakeObserve) (*testEnv, *http.Cookie) {
 	return newObserveEnvWith(t, fake, newFakeStacks())
 }
 
-func newObserveEnvWith(t *testing.T, fake *fakeObserve, st *fakeStacks) (*testEnv, *http.Cookie) {
+func newObserveEnvWith(t *testing.T, fake *fakeObserve, st *fakeStacks, tweaks ...func(*api.Options)) (*testEnv, *http.Cookie) {
 	t.Helper()
 	env := newEnvWith(t, "", func(o *api.Options) {
 		o.Stacks, o.Operations, o.FSRoots, o.Status = st, fakeOps{st}, st.roots, st.status
 		o.Observe = fake
 		o.NetworkEngine = lanNetworkEngine()
 		o.SSEHeartbeat = 20 * time.Millisecond
+		for _, tweak := range tweaks {
+			tweak(o)
+		}
 	})
 	env.createAdmin(t)
 	return env, env.login(t)

@@ -17,6 +17,7 @@ import type {
   ImportRequest,
   LoginRequest,
   Me,
+  HealthHistory,
   MetricsHistory,
   MetricsSummary,
   MetricsToken,
@@ -248,6 +249,13 @@ export const api = {
     request<MetricsHistory>(
       'GET',
       `/api/stacks/${seg(name)}/metrics${query({ from: p.from, to: p.to, step: p.step, service: p.service })}`,
+      undefined,
+      { signal },
+    ).then((r) => r.data),
+  healthHistory: (name: string, p?: { span?: string }, signal?: AbortSignal) =>
+    request<HealthHistory>(
+      'GET',
+      `/api/stacks/${seg(name)}/health${query({ span: p?.span })}`,
       undefined,
       { signal },
     ).then((r) => r.data),

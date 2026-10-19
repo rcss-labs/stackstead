@@ -288,6 +288,26 @@ type MetricsHistory struct {
 	Points []MetricPoint `json:"points"`
 }
 
+// HealthHistory is a stack's per-service state timeline; times are Unix seconds.
+type HealthHistory struct {
+	From     int64           `json:"from"`
+	To       int64           `json:"to"`
+	Services []ServiceHealth `json:"services"`
+}
+
+type ServiceHealth struct {
+	Service  string      `json:"service"`
+	Restarts int         `json:"restarts"`
+	Runs     []HealthRun `json:"runs"`
+}
+
+// HealthRun is one contiguous stretch of a single state.
+type HealthRun struct {
+	State string `json:"state"`
+	From  int64  `json:"from"`
+	To    int64  `json:"to"`
+}
+
 // Sample is one raw per-container reading with cumulative counters.
 type Sample struct {
 	Time      string  `json:"time"`

@@ -59,6 +59,9 @@ type Options struct {
 	Host    HostAPI
 	Alerts  AlertsAPI
 	Summary SummaryAPI
+	// History backs /api/stacks/{name}/health; the route exists only when
+	// Stacks and History are both set.
+	History HistoryAPI
 	// Interfaces backs /api/host/interfaces independently of Docker sources.
 	Interfaces InterfacesAPI
 	// Restarts feeds the restarts24h column of /api/containers; nil reports
@@ -132,6 +135,9 @@ func New(opts Options) http.Handler {
 		mux.Handle("GET /api/actions", s.requireSession(s.handleActions))
 	}
 	s.registerDashboardRoutes(mux)
+	if opts.Stacks != nil && opts.History != nil {
+		mux.Handle("GET /api/stacks/{name}/health", s.requireSession(s.handleHealthHistory))
+	}
 	if opts.Updates != nil {
 		s.registerUpdateRoutes(mux)
 	}

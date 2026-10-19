@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rcss-labs/stackstead/internal/api"
 	"github.com/rcss-labs/stackstead/internal/client"
+	"github.com/rcss-labs/stackstead/internal/history"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 )
 
@@ -36,7 +38,9 @@ func TestClientAgainstRealRouter(t *testing.T) {
 	fake.done <- stacks.Operation{ID: "op1", Stack: "web", Action: "up", State: stacks.OpSucceeded,
 		StartedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), ExitCode: 0}
 
-	env, _ := newObserveEnvWith(t, newFakeObserve(), fake)
+	env, _ := newObserveEnvWith(t, newFakeObserve(), fake, func(o *api.Options) {
+		o.History = &fakeHistory{timeline: history.Timeline{Services: []history.ServiceTimeline{{Service: "app"}}}}
+	})
 	srv := httptest.NewServer(env.handler)
 	t.Cleanup(srv.Close)
 	u, _ := url.Parse(srv.URL)
@@ -144,6 +148,9 @@ func TestClientAgainstRealRouter(t *testing.T) {
 	}
 	if hist, err := c.MetricsHistory(ctx, "web", client.MetricsQuery{Step: time.Minute}); err != nil {
 		t.Fatalf("MetricsHistory = %+v %v", hist, err)
+	}
+	if hh, err := c.HealthHistory(ctx, "web", 30*time.Minute); err != nil || len(hh.Services) != 1 {
+		t.Fatalf("HealthHistory = %+v %v", hh, err)
 	}
 
 	if roots, err := c.FS(ctx, ""); err != nil || len(roots) != 1 || !roots[0].IsDir || roots[0].Name != fake.roots[0] {
