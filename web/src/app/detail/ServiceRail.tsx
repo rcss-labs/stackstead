@@ -21,8 +21,6 @@ export interface ServiceRailProps {
   adding?: boolean;
 }
 
-
-
 const isService = (selected: DetailItem | undefined, name: string) => selected?.kind === 'service' && selected.name === name;
 
 function StackItemIcon({ d }: { d: string }) {

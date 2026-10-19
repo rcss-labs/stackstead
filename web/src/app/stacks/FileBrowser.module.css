@@ -10,7 +10,7 @@
 .step {
   display: inline-flex;
   gap: 4px;
-  align-items: center;
+  align-items: baseline;
   min-width: 0;
   max-width: 100%;
 }
