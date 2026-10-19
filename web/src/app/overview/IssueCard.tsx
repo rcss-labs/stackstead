@@ -16,7 +16,7 @@ export interface IssueCardProps {
   onAct: (stack: string, action: 'up' | 'restart') => void;
 }
 
-const KIND_TONE = { danger: 'danger', warning: 'warning', info: 'muted' } as const;
+const KIND_TONE = { danger: 'danger', warning: 'warning', info: 'info' } as const;
 
 export function IssueCard({ card, disabledReason, acting, onAct }: IssueCardProps) {
   const titleId = useId();

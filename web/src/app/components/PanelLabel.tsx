@@ -3,7 +3,7 @@ import styles from './PanelLabel.module.css';
 
 export interface PanelLabelProps {
   children: ReactNode;
-  tone?: 'muted' | 'faint' | 'danger' | 'warning' | 'success';
+  tone?: 'muted' | 'faint' | 'danger' | 'warning' | 'success' | 'info';
   as?: 'div' | 'span' | 'h2' | 'th';
   id?: string;
 }

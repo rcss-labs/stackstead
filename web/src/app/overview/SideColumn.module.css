@@ -18,7 +18,7 @@
 .title,
 .titleText {
   margin: 0;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -145,6 +145,7 @@
 
 .line {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
   font-family: var(--mono);

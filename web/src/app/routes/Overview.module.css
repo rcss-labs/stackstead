@@ -54,7 +54,7 @@
 .columns {
   display: flex;
   flex-wrap: wrap;
-  gap: 20px;
+  gap: 16px;
   align-items: flex-start;
 }
 
