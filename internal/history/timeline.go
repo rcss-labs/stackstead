@@ -124,10 +124,25 @@ func buildRuns(byContainer map[string][]stateChange, f, t int64) []Run {
 	}
 	sort.Slice(boundaries, func(i, j int) bool { return boundaries[i] < boundaries[j] })
 
+	// Walk the sorted boundaries once, moving a forward cursor per container,
+	// so each change is visited once rather than once per boundary.
+	cursors := make([]int, len(containerNames))
+	current := make([]string, len(containerNames))
 	runs := []Run{}
 	for i := 0; i+1 < len(boundaries); i++ {
-		state := worstStateAt(byContainer, containerNames, boundaries[i])
-		start, end := time.Unix(boundaries[i], 0), time.Unix(boundaries[i+1], 0)
+		at := boundaries[i]
+		state := StateNoData
+		for ci, name := range containerNames {
+			changes := byContainer[name]
+			for cursors[ci] < len(changes) && changes[cursors[ci]].at <= at {
+				current[ci] = changes[cursors[ci]].state
+				cursors[ci]++
+			}
+			if current[ci] != "" && Rank(current[ci]) > Rank(state) {
+				state = current[ci]
+			}
+		}
+		start, end := time.Unix(at, 0), time.Unix(boundaries[i+1], 0)
 		if n := len(runs); n > 0 && runs[n-1].State == state {
 			runs[n-1].To = end
 			continue
@@ -135,21 +150,4 @@ func buildRuns(byContainer map[string][]stateChange, f, t int64) []Run {
 		runs = append(runs, Run{State: state, From: start, To: end})
 	}
 	return runs
-}
-
-func worstStateAt(byContainer map[string][]stateChange, containerNames []string, at int64) string {
-	worst := StateNoData
-	for _, name := range containerNames {
-		current := ""
-		for _, c := range byContainer[name] {
-			if c.at > at {
-				break
-			}
-			current = c.state
-		}
-		if current != "" && Rank(current) > Rank(worst) {
-			worst = current
-		}
-	}
-	return worst
 }
