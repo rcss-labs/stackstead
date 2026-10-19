@@ -3,7 +3,7 @@ import styles from './Led.module.css';
 export interface LedProps {
   tone: 'success' | 'warning' | 'danger' | 'info' | 'muted' | 'faint';
   pulse?: boolean;
-  size?: 7 | 8;
+  size?: 7 | 8 | 10;
   label?: string;
 }
 

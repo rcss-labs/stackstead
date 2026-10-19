@@ -2,7 +2,7 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 10px 14px;
 }
 
 .name {
@@ -14,23 +14,33 @@
   overflow-wrap: anywhere;
 }
 
+/*
+ * Meta stays on the name's row: a zero basis keeps a long path from wrapping the row, the path shrinks to an
+ * ellipsis (its full text is the title), and growing into the free space acts as the design's spacer that
+ * keeps the actions right-aligned on the same row.
+ */
 .meta {
   display: flex;
   align-items: center;
   gap: 4px;
+  flex: 1 1 0;
   min-width: 0;
   margin: 0;
   color: var(--muted);
   font-size: 12.5px;
+  white-space: nowrap;
 }
 
 .path {
+  min-width: 0;
   font-family: var(--mono);
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .actions {
-  margin-inline-start: auto;
+  flex: none;
+  margin-inline-start: auto; /* right-aligned on mobile too, where the meta is hidden */
 }
 
 @media (max-width: 759px) {

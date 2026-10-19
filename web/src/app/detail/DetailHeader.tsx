@@ -25,11 +25,13 @@ export function DetailHeader({ detail, busy, lifecycleReason, onAct, onRemove }:
   const led = LED[detail.status] ?? LED.unknown;
   return (
     <header className={styles.header}>
-      <Led tone={led.tone} pulse={led.pulse} />
+      <Led tone={led.tone} pulse={led.pulse} size={10} />
       <h1 className={styles.name}>{detail.name}</h1>
       <StatusBadge status={detail.status} />
       <p className={styles.meta}>
-        {detail.running}/{detail.serviceCount} up · {detail.origin} · <span className={styles.path}>{detail.path}</span>
+        {detail.running}/{detail.serviceCount} up · {detail.origin} · <span className={styles.path} title={detail.path}>
+          {detail.path}
+        </span>
         <CopyButton text={detail.path} variant="icon" label="Copy path" />
       </p>
       <div className={styles.actions}>

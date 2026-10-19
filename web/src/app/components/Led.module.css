@@ -13,6 +13,12 @@
   height: 7px;
 }
 
+.led[data-size='10'] {
+  width: 10px;
+  height: 10px;
+  box-shadow: 0 0 0 4px var(--tone-soft);
+}
+
 .led[data-tone='success'] { --tone: var(--success); --tone-soft: var(--success-soft); }
 .led[data-tone='warning'] { --tone: var(--warning); --tone-soft: var(--warning-soft); }
 .led[data-tone='danger'] { --tone: var(--danger); --tone-soft: var(--danger-soft); }

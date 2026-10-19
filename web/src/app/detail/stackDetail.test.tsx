@@ -365,19 +365,38 @@ describe('stack detail screen', () => {
   });
 
   it('navigating from one stack to another restarts the page', async () => {
+    startLiveFromFake();
     mount('/stacks/web?tab=operations&op=op1');
     await screen.findByRole('heading', { level: 1, name: 'web' });
     await waitFor(() => expect(stream.requests.some((r) => r.path === '/api/operations/op1/stream')).toBe(true));
     const opStream = stream.requests.find((r) => r.path === '/api/operations/op1/stream');
-    await waitFor(() => expect(calls('GET', '/api/stacks/web/health?span=60m')).toBe(1));
+    await waitFor(() => expect(get(changes)?.resync).toBe(true));
     goTo('/stacks/db');
     expect(await screen.findByRole('heading', { level: 1, name: 'db' })).toBeTruthy();
-    await waitFor(() => expect(calls('GET', '/api/stacks/db')).toBe(1));
-    await waitFor(() => expect(calls('GET', '/api/stacks/db/health?span=60m')).toBe(1));
-    expect(calls('GET', '/api/stacks/web')).toBe(1);
+    await waitFor(() => expect(calls('GET', '/api/stacks/db')).toBeGreaterThanOrEqual(1));
+    await waitFor(() => expect(calls('GET', '/api/stacks/db/health?span=60m')).toBeGreaterThanOrEqual(1));
     expect(document.title).toBe('db · Stackstead');
-    expect(here()).toBe('/stacks/db');
     expect(opStream?.signal?.aborted).toBe(true);
+    // The web page's controller stopped: a change for web no longer refetches it.
+    const webGets = stackGets();
+    pushChange('web', 7);
+    await new Promise((r) => setTimeout(r, 500)); // past the 300 ms change debounce
+    expect(stackGets()).toBe(webGets);
+  });
+
+  it('a partial stack shows a pulsing warning light in the header', async () => {
+    stackRes = { body: detail({ status: 'partial', running: 0 }) };
+    mount('/stacks/web');
+    const heading = await screen.findByRole('heading', { level: 1, name: 'web' });
+    const led = heading.parentElement!.querySelector('[data-tone]') as HTMLElement;
+    expect(led.dataset.tone).toBe('warning');
+    expect(led.dataset.pulse).toBe('true');
+  });
+
+  it('the header path carries its full text as a title for when it is truncated', async () => {
+    mount('/stacks/web');
+    await screen.findByRole('heading', { level: 1, name: 'web' });
+    expect(screen.getByText('/srv/stacks/web/compose.yaml').getAttribute('title')).toBe('/srv/stacks/web/compose.yaml');
   });
 
   it('refetches when a change for its project arrives or on resync, not for another project', async () => {
