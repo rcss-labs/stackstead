@@ -72,13 +72,13 @@ func TestContainerListJoinsSources(t *testing.T) {
 		t.Fatalf("status = %d, body %s", res.Code, res.Body)
 	}
 	want := `[
-	 {"id":"bbbbbbbbbbbb","name":"adhoc-db","image":"postgres:16","state":"exited","status":"Exited (137) 1 hour ago","health":"none",
+	 {"id":"bbbbbbbbbbbb","name":"adhoc-db","image":"postgres:16","imageId":"","state":"exited","status":"Exited (137) 1 hour ago","health":"none",
 	  "exitCode":137,"createdAt":"2026-10-01T13:00:00Z","project":"","service":"","stack":"","managed":"none",
 	  "ports":[],"networks":{},"cpu":null,"mem":null,"memLimit":null,"restarts24h":0},
-	 {"id":"cccccccccccc","name":"other-cron-1","image":"cron:1","state":"running","status":"Up 1 minute","health":"none",
+	 {"id":"cccccccccccc","name":"other-cron-1","image":"cron:1","imageId":"","state":"running","status":"Up 1 minute","health":"none",
 	  "exitCode":null,"createdAt":"0001-01-01T00:00:00Z","project":"other","service":"cron","stack":"","managed":"compose",
 	  "ports":[],"networks":{},"cpu":0.5,"mem":10,"memLimit":20,"restarts24h":0},
-	 {"id":"aaaaaaaaaaaa","name":"web-web-1","image":"web:1","state":"running","status":"Up 2 hours (unhealthy)","health":"unhealthy",
+	 {"id":"aaaaaaaaaaaa","name":"web-web-1","image":"web:1","imageId":"","state":"running","status":"Up 2 hours (unhealthy)","health":"unhealthy",
 	  "exitCode":null,"createdAt":"2026-10-01T13:00:00Z","project":"web","service":"web","stack":"web","managed":"stack",
 	  "ports":["0.0.0.0:8080->80/tcp"],"networks":{"web_default":"172.18.0.2"},"cpu":12.5,"mem":1000,"memLimit":4000,"restarts24h":3}
 	]`
@@ -417,11 +417,11 @@ func TestDetailsMapsInspect(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
 	}
-	want := `{"id":"` + idWeb + `","name":"web-web-1","image":"web:1","state":"running","status":"Up 2 hours (unhealthy)","health":"unhealthy",
+	want := `{"id":"` + idWeb + `","name":"web-web-1","image":"web:1","imageId":"","state":"running","status":"Up 2 hours (unhealthy)","health":"unhealthy",
 	 "startedAt":"2026-10-15T06:00:00Z","finishedAt":null,"exitCode":null,"restartPolicy":"unless-stopped","restarts24h":3,"memoryLimit":536870912,
 	 "project":"web","service":"web","stack":"web","managed":"stack",
 	 "ports":["0.0.0.0:8080->80/tcp"],"networks":{"web_default":"172.18.0.2"},
-	 "mounts":[{"type":"bind","source":"/srv/web","destination":"/data","readOnly":true}],
+	 "mounts":[{"name":"","type":"bind","source":"/srv/web","destination":"/data","readOnly":true}],
 	 "labels":{"com.docker.compose.project":"web","com.docker.compose.service":"web"}}`
 	var got, exp any
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
@@ -464,7 +464,7 @@ func TestDetailsBodyHasNoEnvOrCmd(t *testing.T) {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	want := []string{"exitCode", "finishedAt", "health", "id", "image", "labels", "managed", "memoryLimit", "mounts", "name", "networks",
+	want := []string{"exitCode", "finishedAt", "health", "id", "image", "imageId", "labels", "managed", "memoryLimit", "mounts", "name", "networks",
 		"ports", "project", "restartPolicy", "restarts24h", "service", "stack", "startedAt", "state", "status"}
 	if !reflect.DeepEqual(keys, want) {
 		t.Errorf("keys = %v\nwant %v", keys, want)
@@ -920,5 +920,21 @@ func TestContainerListDockerRefusalIs502(t *testing.T) {
 	_, get := containersEnv(t, containerObserve(), func(o *api.Options) { o.ContainerEngine = eng })
 	if res := get("/api/containers"); res.Code != 502 {
 		t.Errorf("= %d %s, want 502", res.Code, res.Body)
+	}
+}
+
+func TestContainerStorageLinkIdentifiers(t *testing.T) {
+	obs := containerObserve()
+	obs.containers[0].ImageID = storageImageID
+	eng := newFakeEngine()
+	eng.inspect[idWeb] = engine.ContainerInspect{ID: idWeb, Image: "mutable:tag", ImageID: storageImageID, Mounts: []engine.Mount{{Type: "volume", Name: "stable_data", Source: "/host/volume", Destination: "/data"}}}
+	_, get := containersEnv(t, obs, func(o *api.Options) { o.ContainerEngine = eng; eng.list = obs.containers })
+	r := get("/api/containers")
+	if r.Code != 200 || !strings.Contains(string(r.Body), `"imageId":"`+storageImageID+`"`) {
+		t.Fatalf("image link missing=%d %s", r.Code, r.Body)
+	}
+	r = get("/api/containers/" + idWeb[:12])
+	if r.Code != 200 || !strings.Contains(string(r.Body), `"imageId":"`+storageImageID+`"`) || !strings.Contains(string(r.Body), `"name":"stable_data"`) {
+		t.Fatalf("detail link missing=%d %s", r.Code, r.Body)
 	}
 }

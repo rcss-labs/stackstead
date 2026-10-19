@@ -9,11 +9,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rcss-labs/stackstead/internal/actionlog"
 	"github.com/rcss-labs/stackstead/internal/apitypes"
 	"github.com/rcss-labs/stackstead/internal/auth"
+	"github.com/rcss-labs/stackstead/internal/storage"
 )
 
 type Options struct {
+	// Storage and Actions are registered independently; action history works
+	// even when Docker is unavailable. Serve shares these with the host collector.
+	Storage    *storage.Service
+	Actions    *actionlog.Store
 	Auth       *auth.Service
 	Limiter    *auth.LoginLimiter
 	SetupToken string // empty once an admin exists
@@ -41,7 +47,7 @@ type Options struct {
 	Closing <-chan struct{}
 
 	// Version is reported by /api/status; empty means unknown. Now is the
-	// clock for the metrics-token cache (default time.Now).
+	// clock for response metadata and API caches (default time.Now).
 	Version string
 	Now     func() time.Time
 
@@ -118,6 +124,12 @@ func New(opts Options) http.Handler {
 
 	if opts.Stacks != nil && opts.NetworkEngine != nil {
 		s.registerNetworkRoutes(mux)
+	}
+	if opts.Storage != nil {
+		s.registerStorageRoutes(mux)
+	}
+	if opts.Actions != nil {
+		mux.Handle("GET /api/actions", s.requireSession(s.handleActions))
 	}
 	s.registerDashboardRoutes(mux)
 	if opts.Updates != nil {

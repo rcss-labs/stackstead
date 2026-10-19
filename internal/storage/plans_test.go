@@ -873,3 +873,29 @@ func TestCleanupRefusalNamesAtMostThreeConsumers(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPlanReadExpiryCopyAndNoEngineIO(t *testing.T) {
+	now := time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC)
+	size := int64(12)
+	s := NewService(ServiceConfig{Engine: &cleanupEngine{unavailable: true}, Now: func() time.Time { return now }})
+	s.plans = []Plan{{ID: "p_test", ExpiresAt: now.Add(time.Minute), Items: []PlanItem{{ID: "one", Bytes: &size}}, Warnings: []string{"original"}, Reclaim: Reclaim{Min: &size, Max: &size}}}
+	p, err := s.Plan("p_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Items[0].ID = "changed"
+	*p.Items[0].Bytes = 99
+	*p.Reclaim.Min = 99
+	p.Warnings[0] = "changed"
+	again, err := s.Plan("p_test")
+	if err != nil || again.Items[0].ID != "one" || *again.Items[0].Bytes != 12 || *again.Reclaim.Min != 12 || again.Warnings[0] != "original" {
+		t.Fatalf("copy=%+v %v", again, err)
+	}
+	now = now.Add(time.Minute)
+	if _, err = s.Plan("p_test"); !errors.Is(err, ErrPlanNotFound) {
+		t.Fatalf("expiry=%v", err)
+	}
+	if _, err = s.Plan("missing"); !errors.Is(err, ErrPlanNotFound) {
+		t.Fatalf("unknown=%v", err)
+	}
+}

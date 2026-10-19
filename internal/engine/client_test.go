@@ -812,7 +812,7 @@ func TestInspectContainerDecodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ID != "abc123def456" || got.Name != "demo-postgres-1" || got.Image != "postgres:16.9" ||
+	if got.ID != "abc123def456" || got.Name != "demo-postgres-1" || got.Image != "postgres:16.9" || got.ImageID != "sha256:0123456789abcdef" ||
 		got.State != "running" || got.Status != "running" || got.Health != "healthy" || !got.Running || got.ExitCode != 0 {
 		t.Errorf("scalars: %+v", got)
 	}

@@ -448,3 +448,50 @@ func (c *Client) StreamMetricsLive(ctx context.Context, name string, opts Stream
 func (c *Client) StreamEvents(ctx context.Context, opts StreamOptions, fn func(Event) error) error {
 	return c.Stream(ctx, "/api/events", opts, fn)
 }
+
+func (c *Client) StorageOverview(ctx context.Context) (apitypes.StorageOverview, error) {
+	var out apitypes.StorageOverview
+	_, err := c.authed(ctx, http.MethodGet, "/api/storage", nil, &out)
+	return out, err
+}
+func (c *Client) CreateStoragePlan(ctx context.Context, req apitypes.StoragePlanRequest) (apitypes.StoragePlan, error) {
+	var out apitypes.StoragePlan
+	_, err := c.authed(ctx, http.MethodPost, "/api/storage/plans", req, &out)
+	return out, err
+}
+func (c *Client) ConfirmStoragePlan(ctx context.Context, id, phrase string) (apitypes.Operation, error) {
+	var out apitypes.Operation
+	_, err := c.authed(ctx, http.MethodPost, "/api/storage/plans/"+esc(id)+"/confirm", apitypes.StorageConfirmRequest{Confirm: phrase}, &out)
+	return out, err
+}
+func (c *Client) RefreshStorage(ctx context.Context) (apitypes.StorageRefresh, error) {
+	var out apitypes.StorageRefresh
+	_, err := c.authed(ctx, http.MethodPost, "/api/storage/refresh", nil, &out)
+	return out, err
+}
+
+// ActionsQuery filters persisted actions independently of Docker.
+type ActionsQuery struct {
+	Kind, Scope string
+	Limit       int
+}
+
+func (c *Client) RecentActions(ctx context.Context, q ActionsQuery) ([]apitypes.ActionEntry, error) {
+	v := url.Values{}
+	if q.Kind != "" {
+		v.Set("kind", q.Kind)
+	}
+	if q.Scope != "" {
+		v.Set("scope", q.Scope)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", strconv.Itoa(q.Limit))
+	}
+	path := "/api/actions"
+	if len(v) > 0 {
+		path += "?" + v.Encode()
+	}
+	var out []apitypes.ActionEntry
+	_, err := c.authed(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}

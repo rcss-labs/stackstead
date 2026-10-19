@@ -506,6 +506,7 @@ type ContainerRow struct {
 	ID          string            `json:"id"` // first 12 hex
 	Name        string            `json:"name"`
 	Image       string            `json:"image"`
+	ImageID     string            `json:"imageId"`
 	State       string            `json:"state"`
 	Status      string            `json:"status"`
 	Health      string            `json:"health"`
@@ -525,6 +526,7 @@ type ContainerRow struct {
 
 // ContainerMount is one mount in ContainerDetail.
 type ContainerMount struct {
+	Name        string `json:"name"`
 	Type        string `json:"type"`
 	Source      string `json:"source"`
 	Destination string `json:"destination"`
@@ -537,6 +539,7 @@ type ContainerDetail struct {
 	ID            string            `json:"id"` // full
 	Name          string            `json:"name"`
 	Image         string            `json:"image"`
+	ImageID       string            `json:"imageId"`
 	State         string            `json:"state"`
 	Status        string            `json:"status"`
 	Health        string            `json:"health"`
@@ -579,4 +582,187 @@ type UpdateStatus struct {
 	NotesURL  string    `json:"notesURL"`
 	CheckedAt time.Time `json:"checkedAt,omitzero"`
 	Error     string    `json:"error"`
+}
+
+// Storage response DTOs deliberately expose only safe inventory metadata.
+type StorageConsumer struct {
+	ContainerID string `json:"containerId"`
+	Name        string `json:"name"`
+	State       string `json:"state"`
+	Project     string `json:"project"`
+	Service     string `json:"service"`
+	Stack       string `json:"stack"`
+}
+
+type StorageDeclaration struct {
+	Stack      string `json:"stack"`
+	Service    string `json:"service"`
+	Ref        string `json:"ref"`
+	StackState string `json:"stackState"`
+}
+
+type StorageProtection struct {
+	Reason string `json:"reason"`
+	Stack  string `json:"stack"`
+}
+
+type StorageImage struct {
+	ID         string               `json:"id"`
+	Tags       []string             `json:"tags"`
+	Digests    []string             `json:"digests"`
+	Created    time.Time            `json:"created"`
+	Size       *int64               `json:"size"`
+	SharedSize *int64               `json:"sharedSize"`
+	Containers []StorageConsumer    `json:"containers"`
+	DeclaredBy []StorageDeclaration `json:"declaredBy"`
+	Dangling   bool                 `json:"dangling"`
+	Status     string               `json:"status"`
+}
+
+type StorageVolume struct {
+	Name         string               `json:"name"`
+	Driver       string               `json:"driver"`
+	Scope        string               `json:"scope"`
+	Project      string               `json:"project"`
+	CreatedAt    time.Time            `json:"createdAt"`
+	Labels       map[string]string    `json:"labels"`
+	Size         *int64               `json:"size"`
+	RefCount     *int64               `json:"refCount"`
+	SizesPending bool                 `json:"sizesPending"`
+	Containers   []StorageConsumer    `json:"containers"`
+	DeclaredBy   []StorageDeclaration `json:"declaredBy"`
+	Protection   *StorageProtection   `json:"protection"`
+	Status       string               `json:"status"`
+}
+
+type StorageBuildRecord struct {
+	ID          string     `json:"id"`
+	Type        string     `json:"type"`
+	Description string     `json:"description"`
+	Size        *int64     `json:"size"`
+	InUse       bool       `json:"inUse"`
+	Shared      bool       `json:"shared"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	LastUsedAt  *time.Time `json:"lastUsedAt"`
+	UsageCount  int64      `json:"usageCount"`
+}
+
+type StorageKindTotals struct {
+	Count       int        `json:"count"`
+	Size        *int64     `json:"size"`
+	Reclaimable *int64     `json:"reclaimable"`
+	SizesAt     *time.Time `json:"sizesAt"`
+	Refreshing  bool       `json:"refreshing"`
+	Error       string     `json:"error"`
+}
+
+type StorageTopContainer struct {
+	Name   string `json:"name"`
+	Stack  string `json:"stack"`
+	SizeRw *int64 `json:"sizeRw"`
+}
+
+type StorageOverview struct {
+	Images              StorageKindTotals     `json:"images"`
+	Containers          StorageKindTotals     `json:"containers"`
+	Volumes             StorageKindTotals     `json:"volumes"`
+	BuildCache          StorageKindTotals     `json:"buildCache"`
+	TopContainers       []StorageTopContainer `json:"topContainers"`
+	DeclarationsUnknown []string              `json:"declarationsUnknown"`
+}
+
+type StorageImages struct {
+	Images []StorageImage    `json:"images"`
+	Totals StorageKindTotals `json:"totals"`
+}
+
+type StorageVolumes struct {
+	Volumes []StorageVolume   `json:"volumes"`
+	Totals  StorageKindTotals `json:"totals"`
+}
+
+type StorageBuildCache struct {
+	Records []StorageBuildRecord `json:"records"`
+	Totals  StorageKindTotals    `json:"totals"`
+}
+
+type StoragePlanRequest struct {
+	Kind      string `json:"kind"`
+	Selection string `json:"selection,omitempty"`
+	Ref       string `json:"ref,omitempty"`
+	Name      string `json:"name,omitempty"`
+}
+
+type StoragePlanItem struct {
+	Kind  string `json:"kind"`
+	ID    string `json:"id"`
+	Ref   string `json:"ref"`
+	Bytes *int64 `json:"bytes"`
+}
+
+type StorageProtectedItem struct {
+	Kind       string `json:"kind"`
+	ID         string `json:"id"`
+	Ref        string `json:"ref"`
+	Reason     string `json:"reason"`
+	Stack      string `json:"stack"`
+	StackState string `json:"stackState"`
+}
+
+type StorageReclaim struct {
+	Min   *int64 `json:"min"`
+	Max   *int64 `json:"max"`
+	Exact bool   `json:"exact"`
+}
+
+type StoragePlan struct {
+	ID            string                 `json:"id"`
+	Kind          string                 `json:"kind"`
+	Mode          string                 `json:"mode,omitempty"`
+	CreatedAt     time.Time              `json:"createdAt"`
+	ExpiresAt     time.Time              `json:"expiresAt"`
+	Items         []StoragePlanItem      `json:"items"`
+	Protected     []StorageProtectedItem `json:"protected"`
+	Warnings      []string               `json:"warnings"`
+	Reclaim       StorageReclaim         `json:"reclaim"`
+	ConfirmPhrase string                 `json:"confirmPhrase"`
+}
+
+type StorageConfirmRequest struct {
+	Confirm string `json:"confirm"`
+}
+
+type StorageRefresh struct {
+	StartedAt time.Time `json:"startedAt"`
+}
+
+type StorageRateLimit struct {
+	Error      string `json:"error"`
+	RetryAfter int    `json:"retryAfter"`
+}
+
+type ActionEntry struct {
+	ID          int64     `json:"id"`
+	TS          time.Time `json:"ts"`
+	Username    string    `json:"username"`
+	Kind        string    `json:"kind"`
+	Scope       string    `json:"scope"`
+	Target      string    `json:"target"`
+	Detail      string    `json:"detail"`
+	Bytes       *int64    `json:"bytes"`
+	Result      string    `json:"result"`
+	OperationID string    `json:"operationId"`
+}
+
+type StorageImageDetail struct {
+	StorageImage
+	Architecture string            `json:"architecture"`
+	OS           string            `json:"os"`
+	Layers       int               `json:"layers"`
+	Labels       map[string]string `json:"labels"`
+}
+
+type StorageVolumeDetail struct {
+	StorageVolume
+	Mountpoint string `json:"mountpoint"`
 }

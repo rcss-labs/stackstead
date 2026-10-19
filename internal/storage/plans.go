@@ -186,6 +186,17 @@ func (s *Service) CreatePlan(ctx context.Context, r PlanRequest) (Plan, error) {
 	low, high := sizeSum{}, sizeSum{}
 	switch kind {
 	case engine.DFImages:
+		if r.Kind == "image" {
+			matches := 0
+			for _, i := range inv.Images {
+				if imageMatches(i, r.Ref) {
+					matches++
+				}
+			}
+			if matches > 1 {
+				return Plan{}, fmt.Errorf("%w: ambiguous image reference", ErrConflict)
+			}
+		}
 		found := false
 		for _, i := range inv.Images {
 			if r.Kind == "image" && !imageMatches(i, r.Ref) {
@@ -252,7 +263,10 @@ func (s *Service) CreatePlan(ctx context.Context, r PlanRequest) (Plan, error) {
 			found = true
 			if v.Protection != nil {
 				if r.Kind == "volume" {
-					return Plan{}, fmt.Errorf("%w: volume %s is protected by stack %s", ErrConflict, v.Name, v.Protection.Stack)
+					if len(v.DeclaredBy) > 0 {
+						return Plan{}, fmt.Errorf("%w: volume %s is declared by stack %s; remove it with the stack (Remove → also delete volumes)", ErrConflict, v.Name, v.Protection.Stack)
+					}
+					return Plan{}, fmt.Errorf("%w: volume %s is protected by stack %s; remove it with the stack (Remove → also delete volumes)", ErrConflict, v.Name, v.Protection.Stack)
 				}
 				if v.Status == "unused" {
 					state := ""
@@ -421,4 +435,21 @@ func (s *Service) ConfirmPlan(ctx context.Context, id, phrase, username string) 
 	s.plans = append(s.plans[:at], s.plans[at+1:]...)
 	ready <- o.ID
 	return o, nil
+}
+
+// Plan reads a copy of public plan state without contacting Docker.
+func (s *Service) Plan(id string) (Plan, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, p := range s.plans {
+		if p.ID != id {
+			continue
+		}
+		if !s.cfg.Now().Before(p.ExpiresAt) {
+			s.plans = append(s.plans[:i], s.plans[i+1:]...)
+			return Plan{}, ErrPlanNotFound
+		}
+		return clonePlan(p), nil
+	}
+	return Plan{}, ErrPlanNotFound
 }

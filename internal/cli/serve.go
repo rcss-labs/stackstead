@@ -206,6 +206,8 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	srv := &http.Server{
 		Addr: cfg.Listen,
 		Handler: api.New(api.Options{
+			Storage:          storageSvc,
+			Actions:          actions,
 			Auth:             authSvc,
 			Limiter:          auth.NewLoginLimiter(5, 15*time.Minute, time.Now),
 			SetupToken:       setupToken,

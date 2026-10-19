@@ -78,16 +78,16 @@ type Mount struct {
 // ContainerInspect is the safe subset of a container's inspect output:
 // deliberately without Env, Cmd, Entrypoint or User, which can hold secrets.
 type ContainerInspect struct {
-	ID, Name, Image, State, Status, Health string    // Name has no leading "/"; Health is healthy|unhealthy|starting|none
-	StartedAt, FinishedAt                  time.Time // zero when Docker reports none
-	ExitCode                               int
-	Running                                bool
-	RestartPolicy                          string
-	MemoryLimit                            int64 // HostConfig.Memory in bytes; 0 = unlimited
-	Labels                                 map[string]string
-	Ports                                  []Port
-	Networks                               map[string]string // network name -> IPv4 address
-	Mounts                                 []Mount
+	ID, Name, Image, ImageID, State, Status, Health string    // Name has no leading "/"; Health is healthy|unhealthy|starting|none
+	StartedAt, FinishedAt                           time.Time // zero when Docker reports none
+	ExitCode                                        int
+	Running                                         bool
+	RestartPolicy                                   string
+	MemoryLimit                                     int64 // HostConfig.Memory in bytes; 0 = unlimited
+	Labels                                          map[string]string
+	Ports                                           []Port
+	Networks                                        map[string]string // network name -> IPv4 address
+	Mounts                                          []Mount
 }
 
 // Network is a Docker network with its IPv4 IPAM configuration.
@@ -216,7 +216,7 @@ type apiInspect struct {
 
 func (r apiInspect) toInspect() ContainerInspect {
 	out := ContainerInspect{
-		ID: r.ID, Name: strings.TrimPrefix(r.Name, "/"), Image: r.Config.Image,
+		ID: r.ID, Name: strings.TrimPrefix(r.Name, "/"), Image: r.Config.Image, ImageID: r.Image,
 		State: r.State.Status, Status: r.State.Status, Health: "none",
 		StartedAt: r.State.StartedAt, FinishedAt: r.State.FinishedAt,
 		ExitCode: r.State.ExitCode, Running: r.State.Running,

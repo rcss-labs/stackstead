@@ -111,7 +111,7 @@ func (s *server) computeContainerList(ctx context.Context) ([]apitypes.Container
 	for _, c := range list {
 		managed, stack := containerManaged(c, projectToStack)
 		row := apitypes.ContainerRow{
-			ID: shortID(c.ID), Name: c.Name, Image: c.Image, State: c.State, Status: c.Status,
+			ID: shortID(c.ID), Name: c.Name, Image: c.Image, ImageID: c.ImageID, State: c.State, Status: c.Status,
 			Health: c.Health(), CreatedAt: c.Created.UTC(),
 			Project: c.Project(), Service: c.ComposeService(), Stack: stack, Managed: managed,
 			Ports: formatPorts(c.Ports), Networks: map[string]string{}, Restarts24h: restarts[c.ID],
@@ -333,7 +333,7 @@ func (s *server) handleContainerDetails(w http.ResponseWriter, r *http.Request) 
 		memoryLimit = &limit
 	}
 	d := apitypes.ContainerDetail{
-		ID: insp.ID, Name: insp.Name, Image: insp.Image, State: insp.State, Status: status, Health: insp.Health,
+		ID: insp.ID, Name: insp.Name, Image: insp.Image, ImageID: insp.ImageID, State: insp.State, Status: status, Health: insp.Health,
 		StartedAt: timeOrNil(insp.StartedAt), FinishedAt: timeOrNil(insp.FinishedAt), ExitCode: exitCodeOf(insp),
 		RestartPolicy: insp.RestartPolicy, MemoryLimit: memoryLimit, Restarts24h: restarts,
 		Project: owner.Project(), Service: owner.ComposeService(), Stack: stack, Managed: managed,
@@ -347,7 +347,7 @@ func (s *server) handleContainerDetails(w http.ResponseWriter, r *http.Request) 
 		d.Labels[k] = v
 	}
 	for _, m := range insp.Mounts {
-		d.Mounts = append(d.Mounts, apitypes.ContainerMount{Type: m.Type, Source: m.Source, Destination: m.Destination, ReadOnly: m.ReadOnly})
+		d.Mounts = append(d.Mounts, apitypes.ContainerMount{Name: m.Name, Type: m.Type, Source: m.Source, Destination: m.Destination, ReadOnly: m.ReadOnly})
 	}
 	writeJSON(w, http.StatusOK, d)
 }
@@ -411,7 +411,7 @@ func (s *server) actionRow(ctx context.Context, insp engine.ContainerInspect) ap
 	}
 	status, created := s.liveStatus(ctx, insp)
 	row := apitypes.ContainerRow{
-		ID: shortID(insp.ID), Name: insp.Name, Image: insp.Image, State: insp.State, Status: status,
+		ID: shortID(insp.ID), Name: insp.Name, Image: insp.Image, ImageID: insp.ImageID, State: insp.State, Status: status,
 		Health: insp.Health, ExitCode: exitCodeOf(insp), CreatedAt: created.UTC(),
 		Project: owner.Project(), Service: owner.ComposeService(), Stack: stack, Managed: managed,
 		Ports: formatPorts(insp.Ports), Networks: map[string]string{},
