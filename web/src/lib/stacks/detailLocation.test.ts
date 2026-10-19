@@ -53,6 +53,7 @@ describe('resolveDetailLocation', () => {
     const loc = resolveDetailLocation(q('tab=services&service=db'), two);
     expect(loc.item).toEqual({ kind: 'service', name: 'db' });
     expect(loc.serviceTab).toBe('overview');
+    expect(loc.logsRequested).toBe(false);
   });
 
   it('a parse error forces compose, a missing file forces operations', () => {
@@ -60,6 +61,29 @@ describe('resolveDetailLocation', () => {
     expect(resolveDetailLocation(q('service=app'), broken).item).toEqual({ kind: 'compose' });
     const missing = detail(['app'], 'open /srv/web/compose.yaml: no such file or directory');
     expect(resolveDetailLocation(q('service=app'), missing).item).toEqual({ kind: 'operations' });
+  });
+
+  it('under a parse error ?tab=operations keeps the operations item and its op', () => {
+    const broken = detail(['app'], 'yaml: bad indent');
+    const loc = resolveDetailLocation(q('tab=operations&op=x'), broken);
+    expect(loc.item).toEqual({ kind: 'operations' });
+    expect(loc.op).toBe('x');
+    expect(resolveDetailLocation(q(''), broken).item).toEqual({ kind: 'compose' });
+    expect(resolveDetailLocation(q('tab=compose'), broken).item).toEqual({ kind: 'compose' });
+    for (const tab of ['services', 'metrics', 'config', 'bogus']) {
+      expect(resolveDetailLocation(q(`tab=${tab}`), broken).item).toEqual({ kind: 'compose' });
+    }
+  });
+
+  it('under a parse error the console is not requested', () => {
+    const loc = resolveDetailLocation(q('tab=logs&service=app'), detail(['app'], 'yaml: bad indent'));
+    expect(loc.item).toEqual({ kind: 'compose' });
+    expect(loc.logsRequested).toBe(false);
+  });
+
+  it('op is only returned for the operations item', () => {
+    expect(resolveDetailLocation(q('tab=services&op=x'), two).op).toBeUndefined();
+    expect(resolveDetailLocation(q('tab=compose&op=x'), two).op).toBeUndefined();
   });
 
   it('no services and no parse error gives none', () => {

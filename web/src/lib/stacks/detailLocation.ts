@@ -33,7 +33,7 @@ export function resolveDetailLocation(
   const op = query.get('op') || undefined;
 
   let item: DetailItem;
-  if (detail.parseError) item = missingComposeFile(detail.parseError) ? { kind: 'operations' } : { kind: 'compose' };
+  if (detail.parseError) item = missingComposeFile(detail.parseError) || tab === 'operations' ? { kind: 'operations' } : { kind: 'compose' };
   else if (tab === 'compose') item = { kind: 'compose' };
   else if (tab === 'operations') item = { kind: 'operations' };
   else if (known ?? names[0]) item = { kind: 'service', name: (known ?? names[0])! };
@@ -42,7 +42,7 @@ export function resolveDetailLocation(
   return {
     item,
     serviceTab: tab === 'metrics' || tab === 'config' ? tab : 'overview',
-    logsRequested: tab === 'logs',
+    logsRequested: tab === 'logs' && !detail.parseError,
     logService: known,
     op: item.kind === 'operations' ? op : undefined,
   };

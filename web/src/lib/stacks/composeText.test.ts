@@ -46,6 +46,26 @@ services:
   });
 });
 
+describe('serviceBlock comments and later mappings', () => {
+  it('keeps lines after an interior column-0 comment and drops comments of the next sibling', () => {
+    const text = `services:
+  app:
+    image: x
+#    ports:
+    environment:
+      A: b
+# about db
+  db:
+    image: y
+`;
+    expect(serviceBlock(text, 'app')).toBe('  app:\n    image: x\n#    ports:\n    environment:\n      A: b');
+  });
+
+  it('does not find a key under a later top-level mapping', () => {
+    expect(serviceBlock(compose, 'data')).toBeUndefined();
+  });
+});
+
 describe('serviceConfigYaml', () => {
   it('formats a config as YAML in a fixed order', () => {
     const yaml = serviceConfigYaml('app', {

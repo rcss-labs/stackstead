@@ -32,13 +32,18 @@ export function serviceBlock(compose: string, service: string): string | undefin
   let stop = body.length;
   for (let i = start + 1; i < body.length; i++) {
     const line = body[i]!;
-    if (!isBlank(line) && indentOf(line) <= keyIndent) {
+    if (!isBlank(line) && !isComment(line) && indentOf(line) <= keyIndent) {
       stop = i;
       break;
     }
   }
   const block = body.slice(start, stop);
-  while (block.length > 1 && isBlank(block[block.length - 1]!)) block.pop();
+  // Blank lines and outdented comments after the last content line belong to what follows.
+  while (block.length > 1) {
+    const tail = block[block.length - 1]!;
+    if (isBlank(tail) || (isComment(tail) && indentOf(tail) <= keyIndent)) block.pop();
+    else break;
+  }
   return block.join('\n');
 }
 

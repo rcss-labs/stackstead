@@ -104,6 +104,15 @@ describe('timeline', () => {
     ]);
   });
 
+  it('merges equal adjacent states into one segment', () => {
+    const h = history([{ service: 'app', restarts: 0, runs: [{ state: 'nodata', from: start + 1200, to: start + 2000 }, { state: 'healthy', from: start + 2000, to: now }] }], start + 1200, now);
+    const segs = timelineLanes(h, ['app'], now)[0]!.segments;
+    expect(segs.map((s) => [s.state, s.from, s.to, s.weight, s.title])).toEqual([
+      ['nodata', start, start + 2000, 2000, 'no data · 33 min'],
+      ['healthy', start + 2000, now, 1600, 'healthy · 27 min'],
+    ]);
+  });
+
   it('an omitted service and a missing history are one nodata segment', () => {
     const h = history([{ service: 'db', restarts: 2, runs: [{ state: 'healthy', from: start, to: now }] }]);
     const omitted = timelineLanes(h, ['app'], now)[0]!;

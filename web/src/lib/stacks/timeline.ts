@@ -75,9 +75,16 @@ function laneSegments(runs: HealthRun[], historyFrom: number, windowStart: numbe
   }
   for (const run of clipped) segments.push(segment(run.state, run.from, run.to));
 
-  const tail = segments[segments.length - 1]!;
+  // Equal neighbours (e.g. a leading gap and a nodata run) read as one stretch.
+  const merged: TimelineSegment[] = [];
+  for (const seg of segments) {
+    const prev = merged[merged.length - 1];
+    if (prev && prev.state === seg.state) merged[merged.length - 1] = segment(seg.state, prev.from, seg.to);
+    else merged.push(seg);
+  }
+  const tail = merged[merged.length - 1]!;
   tail.pulse = tail.tone === 'danger';
-  return segments;
+  return merged;
 }
 
 export function timelineLanes(history: HealthHistory | undefined, services: string[], nowSeconds: number): TimelineLane[] {
