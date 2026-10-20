@@ -6,7 +6,7 @@ export type DetailItem =
   | { kind: 'operations' }
   | { kind: 'none' };
 
-export type ServiceTab = 'overview' | 'metrics' | 'config';
+export type ServiceTab = 'overview' | 'metrics' | 'config' | 'dockerfile';
 
 export interface DetailLocation {
   item: DetailItem;
@@ -41,7 +41,7 @@ export function resolveDetailLocation(
 
   return {
     item,
-    serviceTab: tab === 'metrics' || tab === 'config' ? tab : 'overview',
+    serviceTab: tab === 'metrics' || tab === 'config' || tab === 'dockerfile' ? tab : 'overview',
     logsRequested: tab === 'logs' && !detail.parseError,
     logService: known,
     op: item.kind === 'operations' ? op : undefined,

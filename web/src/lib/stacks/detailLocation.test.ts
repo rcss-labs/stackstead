@@ -31,6 +31,13 @@ describe('resolveDetailLocation', () => {
     expect(resolveDetailLocation(q('tab=config'), two).serviceTab).toBe('config');
   });
 
+  it('detailLocation round-trips tab=dockerfile', () => {
+    const loc = resolveDetailLocation(q('service=db&tab=dockerfile'), two);
+    expect(loc.item).toEqual({ kind: 'service', name: 'db' });
+    expect(loc.serviceTab).toBe('dockerfile');
+    expect(itemHref('web', loc.item, loc.serviceTab)).toBe('/stacks/web?service=db&tab=dockerfile');
+  });
+
   it('?tab=compose and ?tab=operations&op=x select stack items', () => {
     expect(resolveDetailLocation(q('tab=compose'), two).item).toEqual({ kind: 'compose' });
     const ops = resolveDetailLocation(q('tab=operations&op=x'), two);

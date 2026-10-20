@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import type { Action } from '$lib/api/types';
 import { timelineLanes } from '$lib/stacks/timeline';
@@ -34,6 +34,8 @@ import { useNowSeconds } from './useNowSeconds';
 import { useStackDetail } from './useStackDetail';
 
 import { useServer } from '../servers/ServerContext';
+// Lazy: keeps the Dockerfile editor out of the entry chunk.
+const DockerfilePanel = lazy(() => import('./DockerfilePanel').then((m) => ({ default: m.DockerfilePanel })));
 // README: the split pane is two columns from 760px; keep in step with the 759px rules in the pane modules.
 const wideQuery = mediaQuery('(min-width: 760px)');
 
@@ -382,6 +384,10 @@ export function StackDetailScreen({ name }: { name: string }) {
                     metricsRetentionSeconds={liveState.metricsRetentionSeconds}
                     allServices={detail.services.map((s) => s.name)}
                   />
+                ) : tab === 'dockerfile' ? (
+                  <Suspense fallback={<Spinner />}>
+                    <DockerfilePanel key={`${name}/${selectedService.name}`} stackName={name} service={selectedService.name} />
+                  </Suspense>
                 ) : tab === 'config' ? (
                   <ConfigTab
                     service={selectedService}
