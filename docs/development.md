@@ -79,6 +79,10 @@ the only filter state is the query; no store is mirrored in React state. After
 the side column landed the entry measured 102.6 kB gz (ceiling 115, gate 110),
 so the side column stays in the entry and nothing inside the screen is lazy.
 
+In-flight operations are tracked by `lib/stores/operationTracker.ts`: every entry
+point that starts one calls `trackOperation`, and the tracker resolves the
+toast from `runningOps` plus one `GET /api/operations/{id}`.
+
 ## Tests
 
 ```bash

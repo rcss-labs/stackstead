@@ -8,7 +8,9 @@ import { api } from '$lib/api/client';
 import type { Operation, StackSummary } from '$lib/api/types';
 import { effectiveTheme, setTheme, theme } from '$lib/stores/appearance';
 import { changes, live, startLive, stopLive } from '$lib/stores/live';
-import { startStacks, stacks } from '$lib/stores/stacks';
+import { startOperationTracker } from '$lib/stores/operationTracker';
+import { runningOps, startRunningOps } from '$lib/stores/runningOps';
+import { operationsRefresh, refreshRunningOps, startStacks, stacks } from '$lib/stores/stacks';
 import { toasts } from '$lib/stores/toasts';
 import { installFakeFetch, installFakeStream, type FakeFetch, type FakeStream } from '../../vitest-setup';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -36,14 +38,19 @@ const operation: Operation = { id: 'op1', stack: 'web', action: 'restart', state
 let fake: FakeFetch;
 let stream: FakeStream;
 let composeStatus: string;
+let runningNow: Operation[];
+let operationState: Operation['state'];
 
 beforeEach(() => {
   toasts.reset();
   composeStatus = '2.29.0';
+  runningNow = [];
+  operationState = 'running';
   fake = installFakeFetch({
     'GET /api/stacks': { body: [stack('web', 'running', 2, 2), stack('db', 'stopped', 0, 1)] },
     'GET /api/status': () => ({ body: { docker: 'ok', compose: composeStatus, events: 'connected', metricsDegraded: false } }),
-    'GET /api/operations?state=running': { body: [] },
+    'GET /api/operations?state=running': () => ({ body: runningNow }),
+    'GET /api/operations/op1': () => ({ body: { ...operation, state: operationState, lines: [] } }),
     'POST /api/stacks/web/actions/restart': { body: operation },
   });
   stream = installFakeStream({ '/api/events': [] });
@@ -179,7 +186,10 @@ describe('CommandPalette', () => {
     expect(where()).toBe('/stacks/db');
   });
 
-  it('running an action posts the lifecycle request, closes and pushes a pending toast with a View link', async () => {
+  it('running an action posts the lifecycle request, closes and pushes a pending toast with a View link that resolves when the operation ends', async () => {
+    const stopOps = startRunningOps({ list: api.runningOperations, changes, refresh: operationsRefresh });
+    const stopTracker = startOperationTracker({ runningOps, get: api.operation });
+    afterEachStops.push(stopTracker, stopOps);
     const user = await renderPalette();
     await user.keyboard('{Meta>}k{/Meta}');
     await palette();
@@ -194,6 +204,14 @@ describe('CommandPalette', () => {
       pending: true,
       link: { label: 'View', href: '/stacks/web?tab=operations&op=op1' },
     });
+    runningNow = [operation];
+    refreshRunningOps();
+    await waitFor(() => expect(get(runningOps)).toHaveLength(1));
+    runningNow = [];
+    operationState = 'succeeded';
+    refreshRunningOps();
+    await waitFor(() => expect(get(toasts)[0]).toMatchObject({ kind: 'success', message: 'restart · web succeeded' }));
+    expect(get(toasts)).toHaveLength(1);
   });
 
   it('a failed action pushes a danger toast with the error message', async () => {

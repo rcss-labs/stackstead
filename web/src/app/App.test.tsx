@@ -12,6 +12,8 @@ import { get } from '$lib/store';
 import { rearmUnauthorized } from '$lib/api/client';
 import { expireSession, session } from '$lib/api/session';
 import { stopLive } from '$lib/stores/live';
+import { trackOperation } from '$lib/stores/operationTracker';
+import { refreshRunningOps } from '$lib/stores/stacks';
 import { stacks } from '$lib/stores/stacks';
 import { setUnsavedChanges } from '$lib/stores/guard';
 import { toasts } from '$lib/stores/toasts';
@@ -250,6 +252,35 @@ describe('App routing and session', () => {
     const before = runs();
     await sleep(2600); // past the first 2 s recheck of a running operation
     expect(runs()).toBe(before);
+  });
+
+  it('the operation tracker stops with the session', async () => {
+    fake.restore();
+    fake = installFakeFetch({
+      'GET /api/me': () => me,
+      'GET /api/setup/status': () => ({ body: { needsSetup: false } }),
+      'GET /api/status': () => ({ body: status }),
+      'GET /api/stacks': () => stacksRes,
+      'GET /api/host': () => ({ body: {} }),
+      'GET /api/operations?state=running': () => ({ body: [] }),
+      'GET /api/operations/op1': { body: { id: 'op1', stack: 'web', action: 'restart', state: 'running', startedAt: '2026-10-19T10:00:00Z', lines: [] } },
+      'POST /api/logout': { status: 204 },
+    });
+    at('/');
+    render(<App />);
+    await screen.findByRole('heading', { level: 1 });
+    trackOperation({ id: 'op1', stack: 'web', action: 'restart' });
+    const checks = () => fake.calls.filter((c) => c.path === '/api/operations/op1').length;
+    refreshRunningOps();
+    await waitFor(() => expect(checks()).toBeGreaterThan(0));
+    const beforeLogout = checks();
+    await user().click(screen.getByRole('button', { name: 'Log out' }));
+    expect(await screen.findByLabelText('Username')).toBeTruthy();
+    // Stopping the running-ops store empties its list; a tracker still alive would check the absent id.
+    expect(checks()).toBe(beforeLogout);
+    const before = checks();
+    await sleep(2100); // past the 2 s recheck of a still-running operation
+    expect(checks()).toBe(before);
   });
 
   it('nav links navigate through the router without a reload and mark the current page', async () => {
