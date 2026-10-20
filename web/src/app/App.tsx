@@ -79,7 +79,7 @@ function AppFrame() {
   useEffect(() => {
     if (!authenticated) return;
     startLive({ fetchStatus: api.status });
-    const stopPeers = startPeers({ list: api.peers });
+    const stopPeers = startPeers({ list: api.peers, self: api.serverSelf });
     const stopStacks = startStacks({ list: api.stacks, changes });
     const releaseHost = startHost({ host: api.host });
     const stopRunningOps = startRunningOps({ list: api.runningOperations, changes, refresh: operationsRefresh });

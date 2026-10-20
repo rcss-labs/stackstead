@@ -101,7 +101,7 @@ describe('nextIndex', () => {
 
 describe('paletteEntries across servers', () => {
   const servers: FleetServer[] = [
-    { id: 'self', name: 'this server', slug: '', local: true, status: 'reachable', error: '', lastSeenAt: null, version: 'v0.4.0' },
+    { id: 'self', name: 'ratsrv01', slug: '', local: true, status: 'reachable', error: '', lastSeenAt: null, version: 'v0.4.0' },
     { id: 'b1', name: 'mini-02', slug: 'mini-02', local: false, status: 'reachable', error: '', lastSeenAt: null, version: 'v0.4.0' },
   ];
   const remote: FleetStack[] = [{ ...stack('pihole', 'running', 1, 1), server: 'b1' }, { ...stack('web', 'running', 2, 2), server: 'self' }];

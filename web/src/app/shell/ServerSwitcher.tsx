@@ -1,6 +1,6 @@
 import { useLocation, useNavigate } from 'react-router';
 import { splitServerPath } from '$lib/router';
-import { connectedPeers, peers } from '$lib/servers/peers';
+import { connectedPeers, peers, selfName } from '$lib/servers/peers';
 import { useStore } from '../hooks/useStore';
 import styles from './MobileTopBar.module.css';
 
@@ -10,6 +10,7 @@ export interface ServerSwitcherProps {
 
 /** Mobile server picker; absent until a server is connected. */
 export function ServerSwitcher({ onNavigate }: ServerSwitcherProps) {
+  const ownName = useStore(selfName);
   const items = connectedPeers(useStore(peers).items);
   const { pathname } = useLocation();
   const navigate = useNavigate();
@@ -25,7 +26,7 @@ export function ServerSwitcher({ onNavigate }: ServerSwitcherProps) {
         (onNavigate ?? navigate)(next === '' ? '/' : `/s/${encodeURIComponent(next)}`);
       }}
     >
-      <option value="">this server</option>
+      <option value="">{ownName ? `${ownName} (this server)` : 'this server'}</option>
       {items.map((peer) => (
         <option key={peer.id} value={peer.slug}>
           {peer.name}
