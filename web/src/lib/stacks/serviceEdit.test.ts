@@ -308,13 +308,37 @@ describe('createServiceEdit with a Dockerfile', () => {
     expect(get(edit.dirty)).toBe(false);
   });
 
-  it('keeps an outside Dockerfile as Existing build', async () => {
+  it('keeps the build form editable when the Dockerfile is not editable, and can switch to a managed Dockerfile', async () => {
     const loadDockerfile = vi.fn(async () => view({ editable: false, content: '', reason: 'outside' }));
-    const { edit } = setup({ loadDockerfile }, [], buildConfig);
-    await vi.waitFor(() => expect(loadDockerfile).toHaveBeenCalled());
+    const { edit, deps } = setup({ loadDockerfile }, [], buildConfig);
     await vi.waitFor(() => expect(get(edit.dockerfileView)?.editable).toBe(false));
+    const f = get(edit.form);
+    expect(f.source).toBe('build');
+    expect(f.readOnly.has('build')).toBe(false);
+    // Editing the existing build fields works as today.
+    edit.form.update((x) => ({ ...x, buildContext: './other' }));
+    await edit.preview();
+    expect(deps.preview.mock.calls[0][0].build).toEqual({ context: './other', dockerfile: 'Dockerfile.dev' });
+    edit.cancelPreview();
+    // Switching to Write a Dockerfile uses the managed layout.
+    edit.form.update((x) => ({ ...x, source: 'dockerfile', dockerfileText: 'FROM alpine:3.21\n' }));
+    await edit.preview();
+    expect(deps.preview.mock.calls[1][0].build).toEqual({ context: './app' });
+    expect(await edit.save()).toBe(true);
+    expect(deps.update.mock.calls[0][2]).toEqual({ content: 'FROM alpine:3.21\n', hash: '' });
+  });
+
+  it('seeds an editable but empty Dockerfile as Existing build so other fields can be saved', async () => {
+    const loadDockerfile = vi.fn(async () => view({ content: '' }));
+    const { edit, deps } = setup({ loadDockerfile }, [], buildConfig);
+    await vi.waitFor(() => expect(loadDockerfile).toHaveBeenCalled());
+    await vi.waitFor(() => expect(get(edit.dockerfileView)).toBeDefined());
     expect(get(edit.form).source).toBe('build');
-    expect(get(edit.form).readOnly.has('build')).toBe(true);
+    edit.form.update((f) => ({ ...f, ports: ['81:81'] }));
+    await edit.preview();
+    expect(deps.preview).toHaveBeenCalled();
+    expect(await edit.save()).toBe(true);
+    expect(deps.update.mock.calls[0][2]).toBeUndefined();
   });
 
   it('does not load a Dockerfile for an image service', () => {

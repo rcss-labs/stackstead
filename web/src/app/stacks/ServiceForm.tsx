@@ -47,6 +47,8 @@ export interface ServiceFormProps {
   idPrefix?: string;
   /** Shown above a read-only group; defaults to the raw-YAML-editor hint. */
   readOnlyHint?: string;
+  /** Shown in the Source group while Existing build is selected and editable (Edit: why the Dockerfile itself cannot be edited). */
+  sourceNote?: string;
   /**
    * Called with the newly picked source before it is applied. A returned form replaces the current one as the
    * base of the change (Edit uses it to prefill the image tag); returning nothing keeps the current form.
@@ -127,6 +129,7 @@ export function ServiceForm({
   lead,
   idPrefix = 'svc',
   readOnlyHint = RO_HINT,
+  sourceNote,
   onSourceChange,
   ref,
 }: ServiceFormProps) {
@@ -449,6 +452,7 @@ export function ServiceForm({
       <fieldset className={styles.group} aria-describedby={sourceReadOnly ? id(`ro-${ro('build') ? 'build' : 'image'}`) : undefined}>
         <legend className={styles.title}>Source</legend>
         {readonlyNote(ro('build') ? 'build' : 'image')}
+        {sourceNote && form.source === 'build' && !sourceReadOnly && <p className={styles.note}>{sourceNote}</p>}
         <div className={styles.segmented} role="radiogroup" aria-label="Source type">
           {SOURCES.map(([value, text]) => (
             <label key={value} className={styles.seg}>

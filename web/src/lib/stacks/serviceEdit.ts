@@ -39,12 +39,11 @@ const GROUP_NAMES: Field[][] = [['image', 'build'], ['ports'], ['volumes'], ['en
 
 /**
  * The form for a service, given the Dockerfile view when there is one: an editable existing file becomes the
- * 'dockerfile' source; one the form may not edit leaves the build as read-only text.
+ * 'dockerfile' source. A file the form may not edit (or an empty one) leaves today's Existing build form untouched.
  */
 function seedForm(cfg: ServiceConfig, readOnly: Field[], view: DockerfileView | undefined): ServiceForm {
-  const locked: Field[] = view && !view.editable && !readOnly.includes('build') ? [...readOnly, 'build'] : readOnly;
-  const f = toForm(cfg, locked);
-  if (view?.editable && view.exists && cfg.build) {
+  const f = toForm(cfg, readOnly);
+  if (view?.editable && view.exists && view.content !== '' && cfg.build) {
     f.source = 'dockerfile';
     f.dockerfileText = view.content;
     f.dockerfileAt = { context: cfg.build.context, dockerfile: cfg.build.dockerfile ?? '' };

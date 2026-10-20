@@ -127,7 +127,7 @@ describe('ServiceEditor', () => {
     expect(await screen.findByText("This Dockerfile can't be edited here: uses variables")).toBeTruthy();
   });
 
-  it('shows an outside Dockerfile as a read-only build with its note', async () => {
+  it('keeps the build form editable for an outside Dockerfile and shows the note by the Source group', async () => {
     const built: ServiceDetail = { ...svc, config: { build: { context: '/elsewhere' }, limits: {} } };
     fake.restore();
     fake = installFakeFetch({
@@ -137,6 +137,9 @@ describe('ServiceEditor', () => {
     mount({ stack: stack('h1', built), service: built });
     expect(await screen.findByText("This Dockerfile is outside the stack's folder and can't be edited here.")).toBeTruthy();
     expect(screen.queryByLabelText('Dockerfile for app')).toBeNull();
+    expect((screen.getByLabelText('Build context') as HTMLInputElement).readOnly).toBe(false);
+    expect((screen.getByRole('radio', { name: 'Write a Dockerfile' }) as HTMLInputElement).disabled).toBe(false);
+    expect(screen.queryByText(/raw YAML editor/i)).toBeNull();
   });
 
   it('previews the diff, saves with the same hash and then offers Apply', async () => {

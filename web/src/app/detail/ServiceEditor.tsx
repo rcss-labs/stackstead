@@ -82,7 +82,7 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
   const isDirty = useStore(edit.dirty);
   const dockerfileView = useStore(edit.dockerfileView);
   const dockerfileConflict = useStore(edit.dockerfileConflict);
-  // A Dockerfile the form cannot edit leaves the build read-only; say why above it.
+  // A Dockerfile the form cannot edit leaves the build form as it is; say why next to the Source group.
   const notEditableNote = dockerfileView && !dockerfileView.editable ? dockerfileNote(dockerfileView.reason) : undefined;
 
   // The form is controlled here and pushed to the state machine as a copy on every change.
@@ -298,7 +298,7 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
           errors={errors}
           idPrefix="svc"
           name={serviceName}
-          readOnlyHint={notEditableNote}
+          sourceNote={notEditableNote}
           onSourceChange={(source) => {
             const current = formRef.current;
             // Building replaces the image, so a pulled image's name must not become the built image's tag.
