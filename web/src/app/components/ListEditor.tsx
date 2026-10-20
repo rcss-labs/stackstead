@@ -43,7 +43,7 @@ export function ListEditor<T>({ items, onChange, addLabel, newItem, row, readonl
   // If the parent ignored the change the length never moves; drop the request once the
   // render for this event has had its chance, so it cannot steal focus from a later update.
   // The clear relies on React flushing a synchronous parent update first; parents that update
-  // in a transition or asynchronously get no focus move (same as the Svelte version).
+  // in a transition or asynchronously get no focus move (same as the previous UI).
   function change(next: T[], focus: PendingFocus) {
     pendingFocus.current = focus;
     onChange(next);

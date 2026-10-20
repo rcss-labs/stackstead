@@ -1,5 +1,5 @@
 // One ref-counted live metrics stream per stack page, shared by everything that
-// shows "now" values (the aside and the Metrics tab). Free of Svelte components.
+// shows "now" values (the aside and the Metrics tab). Free of UI components.
 import { writable, type Readable } from '$lib/store';
 import type { Sample } from '../api/types';
 import { createLiveAggregator, type SeriesPoint } from '../metrics/series';
