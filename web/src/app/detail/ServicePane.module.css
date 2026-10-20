@@ -49,3 +49,7 @@
   .tabs [role='tabpanel'] { margin-inline: -14px; }
   .tabs [role='tab'] { height: 40px; } /* touch target */
 }
+
+/* Design: Edit is a transparent outlined button (hover fills), unlike the filled Logs button. */
+.edit > button { background: transparent; }
+.edit > button:hover { background: var(--hover); }

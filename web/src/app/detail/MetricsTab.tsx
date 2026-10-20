@@ -81,7 +81,7 @@ function MetricsBody({ ctl, service, metricsDegraded, metricsIntervalSeconds, me
         </Banner>
       )}
       <div className={styles.toolbar}>
-        <Segmented label="Range" size="sm" options={RANGE_OPTIONS} value={range} onChange={(r) => ctl.range.set(r as Range)} />
+        <Segmented label="Range" size="sm" className={styles.range} options={RANGE_OPTIONS} value={range} onChange={(r) => ctl.range.set(r as Range)} />
         <span className={styles.spacer} />
         {metricsIntervalSeconds !== undefined && metricsRetentionSeconds !== undefined && (
           <span className={styles.note}>

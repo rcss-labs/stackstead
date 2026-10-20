@@ -16,3 +16,11 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* Design: the rail's "+ Add" is a 22px, radius-5, 500/11px ghost button; narrow screens keep Button's 40px hit area. */
+.addEntry { display: inline-flex; }
+.addEntry > button[data-size] { border-radius: 5px; font-weight: 500; font-size: 11px; }
+.addEntry > button[data-current='true'] { background: var(--hover); color: var(--text); }
+@media (min-width: 760px) {
+  .addEntry > button[data-size] { height: 22px; }
+}

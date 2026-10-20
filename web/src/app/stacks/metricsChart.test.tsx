@@ -183,6 +183,26 @@ describe('MetricsChart', () => {
     expect(screen.getByRole('table', { hidden: true }).textContent).toContain('12.3%');
   });
 
+  it('rebuilds the plot with new colour slots when a service is added to the stack', async () => {
+    document.documentElement.style.setProperty('--series-1', '#111111');
+    document.documentElement.style.setProperty('--series-2', '#222222');
+    try {
+      const { createPlot } = fakePlot();
+      const series: ChartSeries[] = [{ label: 'db', service: 'db', metric: 'cpu' }];
+      const ui = (services: string[]) => <MetricsChart title="CPU" series={series} data={data} unit="percent" allServices={services} createPlot={createPlot} />;
+      const view = render(ui(['db']));
+      await flush();
+      expect(optsOf(createPlot, 0).series[1]!.stroke).toBe('#111111');
+      view.rerender(ui(['api', 'db'])); // db moves from the first colour slot to the second
+      await flush();
+      expect(createPlot).toHaveBeenCalledTimes(2);
+      expect(optsOf(createPlot, 1).series[1]!.stroke).toBe('#222222');
+    } finally {
+      document.documentElement.style.removeProperty('--series-1');
+      document.documentElement.style.removeProperty('--series-2');
+    }
+  });
+
   it('series colours come from the tokens and a second metric of the same service takes the next slot', async () => {
     document.documentElement.style.setProperty('--series-1', '#123456');
     document.documentElement.style.setProperty('--series-2', '#654321');

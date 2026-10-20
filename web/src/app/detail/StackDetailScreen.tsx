@@ -4,6 +4,7 @@ import type { Action } from '$lib/api/types';
 import { timelineLanes } from '$lib/stacks/timeline';
 import { lifecycleDisabledReason } from '$lib/stacks/lifecycle';
 import { detailHref, missingComposeFile, type DetailItem } from '$lib/stacks/detailLocation';
+import { removeServiceReason } from '$lib/stacks/detail';
 import { setUnsavedChanges } from '$lib/stores/guard';
 import { live } from '$lib/stores/live';
 import { mediaQuery } from '$lib/stores/media';
@@ -23,6 +24,8 @@ import { LogConsole } from './LogConsole';
 import { MetricsTab } from './MetricsTab';
 import { OperationsPane } from './OperationsPane';
 import { ServiceChips, ServiceRail } from './ServiceRail';
+import { AddServicePanel } from './AddServicePanel';
+import { ServiceEditor } from './ServiceEditor';
 import { ServicePane } from './ServicePane';
 import { SplitPane } from './SplitPane';
 import styles from './StackDetailScreen.module.css';
@@ -74,7 +77,6 @@ export function StackDetailScreen({ name }: { name: string }) {
     document.title = `${name} · Stackstead`;
   }, [name]);
   useEffect(() => () => setUnsavedChanges(false), []);
-  // The compose editor is the only producer of unsaved changes for now (18e adds the service and add flags).
   const parseErrorPresent = !!detail?.parseError;
   const rawOnly = parseErrorPresent && !missingComposeFile(detail?.parseError);
   const [editRequested, setEditRequested] = useState(false);
@@ -95,7 +97,30 @@ export function StackDetailScreen({ name }: { name: string }) {
     if (overviewService) void ctl.loadCpuHour(overviewService);
   }, [ctl, overviewService, detail]);
 
-  const dirty = editingCompose && composeDirty;
+  const [editingService, setEditingService] = useState<string | undefined>();
+  const [serviceDirty, setServiceDirty] = useState(false);
+  // The service editor counts only while it is open on the selected service.
+  const serviceEditorOpen = item.kind === 'service' && editingService === item.name;
+  const [addingService, setAddingService] = useState(false);
+  const [addDirty, setAddDirty] = useState(false);
+  const dirty = (editingCompose && composeDirty) || (serviceEditorOpen && serviceDirty) || (addingService && addDirty);
+  const closeAdd = () => {
+    setAddingService(false);
+    setAddDirty(false);
+  };
+  // The add panel belongs to the item it was opened on and to a parseable file.
+  const itemKey = item.kind === 'service' ? `service:${item.name}` : item.kind;
+  const [addOpenedOn, setAddOpenedOn] = useState<string | undefined>();
+  useEffect(() => {
+    if (addingService && (!!parseErrorText || itemKey !== addOpenedOn)) closeAdd();
+  }, [addingService, parseErrorText, itemKey, addOpenedOn]);
+  // Selecting anything but the edited service ends the edit; its draft goes with the editor.
+  useEffect(() => {
+    if (!serviceEditorOpen) {
+      setEditingService(undefined);
+      setServiceDirty(false);
+    }
+  }, [serviceEditorOpen]);
   useEffect(() => {
     setUnsavedChanges(dirty);
   }, [dirty]);
@@ -125,7 +150,19 @@ export function StackDetailScreen({ name }: { name: string }) {
     setEditRequested(false);
     setFocusEditor(false);
     setComposeDirty(false);
+    setEditingService(undefined);
+    setServiceDirty(false);
+    closeAdd();
     action?.();
+  }
+
+  function openAdd() {
+    guarded(() => {
+      setEditingService(undefined);
+      setServiceDirty(false);
+      setAddOpenedOn(itemKey);
+      setAddingService(true);
+    });
   }
 
   async function retry() {
@@ -136,6 +173,28 @@ export function StackDetailScreen({ name }: { name: string }) {
       setRetrying(false);
     }
   }
+
+  // A removed service that the URL still names sends the page to the first remaining service. The name is
+  // remembered from the dialog until the refreshed detail no longer lists it, so a 404 or a cancelled-but-accepted
+  // removal (the controller clears the dialog before load() replaces the detail) is covered too.
+  const removedService = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (removing) {
+      removedService.current = removing.service;
+      return;
+    }
+    const gone = removedService.current;
+    if (!gone) return;
+    if (query.get('service') !== gone) {
+      removedService.current = undefined; // the page already moved elsewhere
+      return;
+    }
+    const first = detail?.services[0];
+    if (first && !detail.services.some((svc) => svc.name === gone)) {
+      removedService.current = undefined;
+      void navigate(location.hrefFor({ kind: 'service', name: first.name }), { replace: true });
+    }
+  }, [removing, detail, query, navigate, location.hrefFor]);
 
   const parseError = detail?.parseError;
   const hasRunning = operations.some((o) => o.state === 'running');
@@ -170,7 +229,29 @@ export function StackDetailScreen({ name }: { name: string }) {
       selected: item,
       operationsCount: operations.length,
       latest,
-      onSelect: (target: DetailItem) => guarded(() => location.go(location.hrefFor(target))),
+      onSelect: (target: DetailItem) =>
+        guarded(() => {
+          closeAdd();
+          location.go(location.hrefFor(target));
+        }),
+      adding: addingService,
+      addSlot:
+        parseError || serviceEditorOpen ? undefined : (
+          <span className={styles.addEntry}>
+            <Button
+              variant="ghost"
+              size="xs"
+              aria-label="Add service"
+              aria-current={addingService ? 'true' : undefined}
+              data-current={addingService}
+              onClick={() => {
+                if (!addingService) openAdd();
+              }}
+            >
+              + Add
+            </Button>
+          </span>
+        ),
     };
     body = (
       <section className={styles.page}>
@@ -199,7 +280,12 @@ export function StackDetailScreen({ name }: { name: string }) {
           <HealthTimeline
             lanes={timelineLanes(health, detail.services.map((s) => s.name), nowSeconds)}
             selected={location.item.kind === 'service' ? location.item.name : undefined}
-            onSelect={(service) => guarded(() => location.go(location.hrefFor({ kind: 'service', name: service })))}
+            onSelect={(service) =>
+              guarded(() => {
+                closeAdd();
+                location.go(location.hrefFor({ kind: 'service', name: service }));
+              })
+            }
           />
         )}
         <SplitPane
@@ -222,7 +308,21 @@ export function StackDetailScreen({ name }: { name: string }) {
             )
           }
         >
-          {item.kind === 'service' && selectedService ? (
+          {addingService && !parseError ? (
+            <AddServicePanel
+              key={name}
+              stack={detail}
+              onDirtyChange={setAddDirty}
+              onReload={ctl.reloadDetail}
+              onCancel={() => guarded(closeAdd)}
+              onAdded={(added, _partial, service) => {
+                const selected = service || added.services.at(-1)?.name;
+                ctl.acceptDetail(added);
+                closeAdd();
+                if (selected) location.go(location.hrefFor({ kind: 'service', name: selected }));
+              }}
+            />
+          ) : item.kind === 'service' && selectedService ? (
             <ServicePane
               service={selectedService}
               tab={serviceTab}
@@ -231,6 +331,41 @@ export function StackDetailScreen({ name }: { name: string }) {
                 setLogService(selectedService.name);
                 setLogsOpen(true);
               }}
+              onEdit={parseError ? undefined : () => guarded(() => setEditingService(selectedService.name))}
+              onCloseEditor={() => guarded(() => setEditingService(undefined))}
+              editor={
+                serviceEditorOpen && (
+                  <ServiceEditor
+                    key={`${name}/${selectedService.name}`}
+                    stack={detail}
+                    service={selectedService}
+                    onSaved={() => void ctl.load()}
+                    onApplied={() => void ctl.loadOperations()}
+                    onRawEditor={() =>
+                      guarded(() => {
+                        setEditingService(undefined);
+                        location.go(location.hrefFor({ kind: 'compose' }));
+                        setEditRequested(true);
+                        setFocusEditor(true);
+                      })
+                    }
+                    onReload={ctl.reloadDetail}
+                    lifecycleDisabledReason={lifecycleReason}
+                    onDirtyChange={setServiceDirty}
+                    removeSlot={
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        aria-label={`Remove service ${selectedService.name}`}
+                        disabledReason={removeServiceReason(detail)}
+                        onClick={() => guarded(() => ctl.askRemoveService(selectedService.name))}
+                      >
+                        Remove service
+                      </Button>
+                    }
+                  />
+                )
+              }
               latestCpu={latest.get(selectedService.name)?.cpu}
               cpuHour={cpuHour.get(selectedService.name)}
             >

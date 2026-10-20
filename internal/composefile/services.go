@@ -36,12 +36,7 @@ func (f *File) AddService(name string, cfg ServiceConfig) (*File, error) {
 		return nil, fmt.Errorf("%w: %s", ErrServiceExists, name)
 	}
 	edits := []edit{{path: []string{"services", name}, value: serviceNode(cfg)}}
-	networks := mappingValue(f.root, "networks")
-	for _, net := range cfg.Networks {
-		if mappingValue(networks, net.Name) == nil {
-			edits = append(edits, edit{path: []string{"networks", net.Name}, value: mapNode("external", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})})
-		}
-	}
+	edits = append(edits, undeclaredNetworkEdits(f.root, cfg.Networks)...)
 	out, err := applyEdits(f.src, edits)
 	if err != nil {
 		return nil, err

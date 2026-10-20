@@ -15,11 +15,13 @@ export interface ServiceRailProps {
   operationsCount: number;
   latest: Map<string, SeriesPoint>;
   onSelect: (item: DetailItem) => void;
-  /** Where the add-service control goes (a later plan fills it). */
+  /** The add-service control: beside the Services label on the rail and as a trailing chip on narrow screens. */
   addSlot?: ReactNode;
+  /** The add-service panel is open: it, not any rail item, is the current one. */
+  adding?: boolean;
 }
 
-const isService = (selected: DetailItem, name: string) => selected.kind === 'service' && selected.name === name;
+const isService = (selected: DetailItem | undefined, name: string) => selected?.kind === 'service' && selected.name === name;
 
 function StackItemIcon({ d }: { d: string }) {
   return (
@@ -38,7 +40,9 @@ function netText(totals: ReturnType<typeof totalsNow>): string | undefined {
   return `${part(totals.netRx)} · ${part(totals.netTx)}`;
 }
 
-export function ServiceRail({ services, selected, operationsCount, latest, onSelect, addSlot }: ServiceRailProps) {
+export function ServiceRail({ services, selected: openItem, operationsCount, latest, onSelect, addSlot, adding }: ServiceRailProps) {
+  // With the add panel open no rail item is current; the add entry carries that state.
+  const selected = adding ? undefined : openItem;
   const totals = totalsNow(latest);
   const net = netText(totals);
   const total = (text: string | undefined) => (text === undefined ? <dd data-empty="true">—</dd> : <dd>{text}</dd>);
@@ -90,9 +94,9 @@ export function ServiceRail({ services, selected, operationsCount, latest, onSel
         <button
           type="button"
           className={styles.item}
-          data-selected={selected.kind === 'compose'}
+          data-selected={selected?.kind === 'compose'}
           data-item="compose"
-          aria-current={selected.kind === 'compose' ? 'true' : undefined}
+          aria-current={selected?.kind === 'compose' ? 'true' : undefined}
           onClick={() => onSelect({ kind: 'compose' })}
         >
           <StackItemIcon d={FILE_ICON} />
@@ -102,9 +106,9 @@ export function ServiceRail({ services, selected, operationsCount, latest, onSel
         <button
           type="button"
           className={styles.item}
-          data-selected={selected.kind === 'operations'}
+          data-selected={selected?.kind === 'operations'}
           data-item="operations"
-          aria-current={selected.kind === 'operations' ? 'true' : undefined}
+          aria-current={selected?.kind === 'operations' ? 'true' : undefined}
           onClick={() => onSelect({ kind: 'operations' })}
         >
           <StackItemIcon d={OPS_ICON} />
@@ -125,7 +129,9 @@ export function ServiceRail({ services, selected, operationsCount, latest, onSel
 }
 
 /** The rail as a horizontal chip scroller for narrow screens; the same selection, shown under 760px only. */
-export function ServiceChips({ services, selected, onSelect }: ServiceRailProps) {
+export function ServiceChips({ services, selected: openItem, onSelect, addSlot, adding }: ServiceRailProps) {
+  // With the add panel open no rail item is current; the add entry carries that state.
+  const selected = adding ? undefined : openItem;
   return (
     <nav className={styles.chips} aria-label="Service chips">
       {services.map((service) => {
@@ -145,12 +151,13 @@ export function ServiceChips({ services, selected, onSelect }: ServiceRailProps)
           </button>
         );
       })}
-      <button type="button" className={styles.chip} data-plain data-selected={selected.kind === 'compose'} aria-pressed={selected.kind === 'compose'} onClick={() => onSelect({ kind: 'compose' })}>
+      <button type="button" className={styles.chip} data-plain data-selected={selected?.kind === 'compose'} aria-pressed={selected?.kind === 'compose'} onClick={() => onSelect({ kind: 'compose' })}>
         Compose
       </button>
-      <button type="button" className={styles.chip} data-plain data-selected={selected.kind === 'operations'} aria-pressed={selected.kind === 'operations'} onClick={() => onSelect({ kind: 'operations' })}>
+      <button type="button" className={styles.chip} data-plain data-selected={selected?.kind === 'operations'} aria-pressed={selected?.kind === 'operations'} onClick={() => onSelect({ kind: 'operations' })}>
         Operations
       </button>
+      {addSlot && <span className={styles.addChip}>{addSlot}</span>}
     </nav>
   );
 }

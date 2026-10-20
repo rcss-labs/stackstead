@@ -15,8 +15,11 @@ export interface ServicePaneProps {
   onLogs: () => void;
   latestCpu: number | undefined;
   cpuHour: (number | null)[] | undefined;
-  /** Where the Edit control goes (a later plan fills it). */
-  editSlot?: ReactNode;
+  /** Shows Edit (or Close editor while `editor` is open) when given. */
+  onEdit?: () => void;
+  onCloseEditor?: () => void;
+  /** The service editor; while present it replaces the tabs and their panel. */
+  editor?: ReactNode;
   /** Content for the Metrics and Config tabs (a later plan fills it). */
   children?: (tab: ServiceTab) => ReactNode;
 }
@@ -27,7 +30,7 @@ const TABS: { id: ServiceTab; label: string }[] = [
   { id: 'config', label: 'Config' },
 ];
 
-export function ServicePane({ service, tab, onTab, onLogs, latestCpu, cpuHour, editSlot, children }: ServicePaneProps) {
+export function ServicePane({ service, tab, onTab, onLogs, latestCpu, cpuHour, onEdit, onCloseEditor, editor, children }: ServicePaneProps) {
   const state = serviceState(service);
   return (
     <div className={styles.pane}>
@@ -41,19 +44,35 @@ export function ServicePane({ service, tab, onTab, onLogs, latestCpu, cpuHour, e
         <Button variant="secondary" size="sm" aria-label={`Logs for ${service.name}`} onClick={onLogs}>
           Logs
         </Button>
-        {editSlot}
+        {editor ? (
+          <Button variant="ghost" size="sm" onClick={onCloseEditor}>
+            Close editor
+          </Button>
+        ) : (
+          onEdit && (
+            <span className={styles.edit}>
+              <Button variant="secondary" size="sm" aria-label={`Edit ${service.name}`} onClick={onEdit}>
+                Edit
+              </Button>
+            </span>
+          )
+        )}
       </header>
-      <div className={styles.tabs}>
-        <Tabs tabs={TABS} selected={tab} onSelect={(id) => onTab(id as ServiceTab)} ariaLabel="Service sections" activation="manual">
-          {(selected) =>
-            selected === 'overview' ? (
-              <ServiceOverview service={service} latestCpu={latestCpu} cpuHour={cpuHour} />
-            ) : (
-              children?.(selected as ServiceTab)
-            )
-          }
-        </Tabs>
-      </div>
+      {editor ? (
+        editor
+      ) : (
+        <div className={styles.tabs}>
+          <Tabs tabs={TABS} selected={tab} onSelect={(id) => onTab(id as ServiceTab)} ariaLabel="Service sections" activation="manual">
+            {(selected) =>
+              selected === 'overview' ? (
+                <ServiceOverview service={service} latestCpu={latestCpu} cpuHour={cpuHour} />
+              ) : (
+                children?.(selected as ServiceTab)
+              )
+            }
+          </Tabs>
+        </div>
+      )}
     </div>
   );
 }
