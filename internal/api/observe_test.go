@@ -59,6 +59,7 @@ type fakeObserve struct {
 	changeSubs     int
 	changeCancels  int
 	containerCalls int
+	onSubscribe    func() // runs inside SubscribeChanges, before it returns
 
 	points     []metrics.ContainerBucket
 	queryErr   error
@@ -118,7 +119,11 @@ func (f *fakeObserve) SubscribeChanges() (<-chan state.Change, func()) {
 	f.mu.Lock()
 	f.changeSubs++
 	ch := f.changes
+	hook := f.onSubscribe
 	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	return ch, func() {
 		f.mu.Lock()
 		f.changeCancels++
@@ -172,11 +177,15 @@ func (f *fakeObserve) Logs(ctx context.Context, c engine.Container, opts engine.
 	f.mu.Unlock()
 	out := make(chan engine.LogLine)
 	errs := make(chan error, 1)
+	lines := spec.lines
+	if opts.Tail >= 0 && opts.Tail < len(lines) { // like the daemon, keep only the last Tail lines
+		lines = lines[len(lines)-opts.Tail:]
+	}
 	go func() {
 		defer close(errs)
 		defer close(out)
 		defer func() { f.mu.Lock(); f.openLogStreams--; f.mu.Unlock() }()
-		for _, l := range spec.lines {
+		for _, l := range lines {
 			// Like the daemon, `since` is inclusive: only lines strictly before it are dropped.
 			if !opts.Since.IsZero() && l.Time.Before(opts.Since) {
 				continue
@@ -1666,7 +1675,7 @@ func TestLogsFollowServiceFilterAppliesToReattach(t *testing.T) {
 	fake.pushChange(state.Change{Project: "web"})
 	// A second change after the first reconcile proves the first was handled.
 	fake.pushChange(state.Change{Project: "web"})
-	eventually(t, "both changes reconciled", func() bool { return fake.containersCalls() >= 3 })
+	eventually(t, "both changes reconciled", func() bool { return fake.containersCalls() >= 4 })
 	expectQuiet(t, ch, 100*time.Millisecond)
 	if n := fake.logCallsFor("c-db2"); n != 0 {
 		t.Errorf("a db replica was read %d times, want 0", n)
@@ -1845,4 +1854,113 @@ func TestContainerLogsFollowEndsWhenRemoved(t *testing.T) {
 	obs.pushChange(state.Change{Project: "web"})
 	expectEnd(t, ch)
 	eventually(t, "the stream closed", func() bool { return obs.openStreams() == 0 })
+}
+
+// ---- follow mode: fix round 1 ----
+
+func oneContainerFake(lines ...engine.LogLine) *fakeObserve {
+	f := newFakeObserve()
+	f.containers = []engine.Container{container("c-app", "web-app-1", "web", "app")}
+	f.logs["c-app"] = fakeLogSpec{lines: lines}
+	return f
+}
+
+func logTexts(t *testing.T, evs ...sseEvent) []string {
+	t.Helper()
+	var out []string
+	for _, le := range logsOf(t, evs) {
+		out = append(out, le.Text)
+	}
+	return out
+}
+
+func TestLogsFollowReattachWithoutALineYetStartsFromTheFirstAttach(t *testing.T) {
+	fake := oneContainerFake() // tail=0 and an empty log: nothing delivered yet, so no cursor
+	env, cookie := newObserveEnv(t, fake)
+	_, ch := openSSE(t, env, cookie, context.Background(), "/api/stacks/web/logs?follow=1&tail=0")
+	eventually(t, "the first attach", func() bool { return fake.logCallsFor("c-app") == 1 })
+
+	// Written right after the restart, before the re-attach.
+	fresh := time.Now().Add(time.Second)
+	fake.setLogs("c-app", fakeLogSpec{lines: []engine.LogLine{{Stream: "stdout", Time: fresh, Text: "after restart"}}})
+	fake.endLogs("c-app")
+	fake.pushChange(state.Change{Project: "web"})
+
+	ev := nextLogEvent(t, ch)
+	if got := logTexts(t, ev); len(got) != 1 || got[0] != "after restart" {
+		t.Fatalf("log = %v, want after restart", got)
+	}
+	if o := fake.logCall("c-app", 1); o.Tail != -1 || o.Since.IsZero() || o.Since.After(fresh) {
+		t.Errorf("re-attach opts = %+v, want tail -1 and since the first attach", o)
+	}
+	expectQuiet(t, ch, 100*time.Millisecond) // exactly once
+}
+
+func TestLogsFollowKeepsTheCursorOfAContainerThatLeavesTheListingForAWhile(t *testing.T) {
+	fake := twoContainerFake()
+	env, cookie := newObserveEnv(t, fake)
+	_, ch := openSSE(t, env, cookie, context.Background(), "/api/stacks/web/logs?follow=1&tail=200")
+	readLines(t, ch, 3)
+
+	all := append([]engine.Container{}, fake.containers...)
+	fake.setContainers([]engine.Container{all[1], all[2]}) // c-app drops out
+	fake.pushChange(state.Change{Project: "web"})
+	eventually(t, "c-app's stream closed", func() bool { return fake.openStreams() == 1 })
+	// Another change while it is absent: the cursor must survive it.
+	time.Sleep(50 * time.Millisecond) // let the first change settle
+	before := fake.containersCalls()
+	fake.pushChange(state.Change{Project: "web"})
+	eventually(t, "that change reconciled", func() bool { return fake.containersCalls() > before })
+
+	fake.setLogs("c-app", fakeLogSpec{lines: []engine.LogLine{
+		{Stream: "stdout", Time: t0, Text: "app one"}, {Stream: "stderr", Time: t0, Text: "app two"},
+		{Stream: "stdout", Time: t0.Add(time.Second), Text: "app later"}}})
+	fake.setContainers(all)
+	fake.pushChange(state.Change{Project: "web"})
+	ev := nextLogEvent(t, ch)
+	if got := logTexts(t, ev); len(got) != 1 || got[0] != "app later" {
+		t.Fatalf("log = %v, want only app later (no replay from tail)", got)
+	}
+	if o := fake.logCall("c-app", 1); o.Tail != -1 || !o.Since.Equal(t0) {
+		t.Errorf("re-attach opts = %+v, want tail -1, since t0", o)
+	}
+	expectQuiet(t, ch, 100*time.Millisecond)
+}
+
+func TestLogsFollowAttachesAContainerCreatedBeforeTheSubscription(t *testing.T) {
+	fake := oneContainerFake()
+	fake.setLogs("c-new", fakeLogSpec{lines: []engine.LogLine{{Stream: "stdout", Time: t0, Text: "new replica"}}})
+	// The replica appears after the handler's snapshot, before the subscription is live.
+	fake.onSubscribe = func() {
+		fake.setContainers([]engine.Container{
+			container("c-app", "web-app-1", "web", "app"), container("c-new", "web-app-2", "web", "app")})
+	}
+	env, cookie := newObserveEnv(t, fake)
+	_, ch := openSSE(t, env, cookie, context.Background(), "/api/stacks/web/logs?follow=1")
+	ev := nextLogEvent(t, ch)
+	if got := logTexts(t, ev); len(got) != 1 || got[0] != "new replica" {
+		t.Fatalf("log = %v, want new replica without any change event", got)
+	}
+}
+
+func TestContainerLogsFollowReattachesAContainerWithoutAProject(t *testing.T) {
+	// The cache publishes no change for a container outside any compose project.
+	fake := newFakeObserve()
+	fake.containers = []engine.Container{{ID: "dddddddddddd", Name: "solo-1", State: "running"}}
+	fake.logs["dddddddddddd"] = fakeLogSpec{lines: []engine.LogLine{{Stream: "stdout", Time: t0, Text: "solo one"}}}
+	env, cookie := newObserveEnv(t, fake)
+	_, ch := openSSE(t, env, cookie, context.Background(), "/api/containers/dddddddddddd/logs?follow=1")
+	readLines(t, ch, 1)
+
+	fake.setLogs("dddddddddddd", fakeLogSpec{lines: []engine.LogLine{
+		{Stream: "stdout", Time: t0, Text: "solo one"}, {Stream: "stdout", Time: t0.Add(time.Second), Text: "solo two"}}})
+	fake.endLogs("dddddddddddd")
+	ev := nextLogEvent(t, ch) // no pushChange
+	if got := logTexts(t, ev); len(got) != 1 || got[0] != "solo two" {
+		t.Fatalf("log = %v, want solo two", got)
+	}
+	// Removal ends the stream, again without a change event.
+	fake.setContainers(nil)
+	expectEnd(t, ch)
+	eventually(t, "the stream closed", func() bool { return fake.openStreams() == 0 })
 }

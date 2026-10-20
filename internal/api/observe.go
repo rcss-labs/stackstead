@@ -258,10 +258,15 @@ func parseLogCursors(header string) map[string]logCursor {
 //
 // Events: "log" {service, container, stream, time, text} per line; "error"
 // {service, container, error} when one container's stream failed (the others
-// continue); "end" once every stream has finished, which for a follow request
-// means every container's stream ended on its own. A stack with no containers
-// (or none matching service) gets just "end". At most 50 containers (by name)
-// are read. Closing the request cancels every Docker stream.
+// continue); "end" once every stream has finished (without follow), or, with
+// follow, once the stack (or the service named in service) has no listed
+// container left. A follow stream outlives restarts and recreation: the status
+// cache's change events trigger a reconcile that re-attaches containers that
+// started again (resumed from their cursor, so nothing repeats), attaches
+// replacements that appeared with a new id, and closes the streams of
+// containers that are gone. A stack with no containers (or none matching
+// service) gets just "end". At most 50 containers (by name) are read. Closing
+// the request cancels every Docker stream.
 //
 // Every "log" event has an id (a logCursor). With a Last-Event-ID header, each
 // container that has a cursor is read from that timestamp with tail=all and
@@ -433,6 +438,8 @@ type logPump struct {
 	fromPumpEnd bool // the running stream was started because another stream ended
 	sawChange   bool // a change arrived while the stream was running, so a retry has fresh information
 	cancel      context.CancelFunc
+	attachedAt  time.Time // when the stream was last attached; re-attach reads from here when no line has been delivered
+	goneAt      time.Time // when the container dropped out of the listing; zero while listed
 }
 
 type pumpDone struct {
@@ -471,10 +478,28 @@ func (f *logFollower) run(initial []engine.Container) {
 		f.sendEnd()
 		return
 	}
+	// A container created after the caller's snapshot but before the
+	// subscription went live is in neither; catch it now.
+	if f.reconcile(false) {
+		return
+	}
+	// The cache publishes no change for containers outside a compose project,
+	// so a request for one (the single-container route) polls the cached
+	// listing instead; it is cheap and bounded by the interval.
+	var poll <-chan time.Time
+	if f.project == "" {
+		ticker := time.NewTicker(f.s.statusPollInterval())
+		defer ticker.Stop()
+		poll = ticker.C
+	}
 	for {
 		select {
 		case <-f.ctx.Done():
 			return
+		case <-poll:
+			if f.reconcile(false) {
+				return
+			}
 		case d := <-f.done:
 			f.pumpEnded(d)
 			if f.reconcile(true) {
@@ -523,13 +548,19 @@ func (f *logFollower) start(c engine.Container, fromPumpEnd bool) {
 		}
 	}
 	pumpCtx, cancel := context.WithCancel(f.ctx)
-	p.c, p.active, p.fromPumpEnd, p.sawChange, p.cancel = c, true, fromPumpEnd, false, cancel
-	cur := p.cursor
+	p.c, p.active, p.fromPumpEnd, p.sawChange, p.cancel, p.goneAt = c, true, fromPumpEnd, false, cancel, time.Time{}
+	cur, previousAttach := p.cursor, p.attachedAt
+	p.attachedAt = time.Now()
 	f.mu.Unlock()
 
 	copts, skip := f.opts, 0
-	if cur.TS != 0 {
+	switch {
+	case cur.TS != 0:
 		copts.Tail, copts.Since, skip = -1, time.Unix(0, cur.TS), cur.Ordinal
+	case !previousAttach.IsZero():
+		// Nothing was delivered before (for example tail=0): everything written
+		// since the stream was first attached is new, so do not fall back to tail.
+		copts.Tail, copts.Since = -1, previousAttach
 	}
 	cur.Container = cursorContainer(c.ID)
 	record := func(cur logCursor) {
@@ -553,6 +584,36 @@ func (f *logFollower) pumpEnded(d pumpDone) {
 	if p := f.pumps[d.id]; p != nil {
 		p.active = false
 		p.quiet = p.fromPumpEnd && d.delivered == 0 && !p.sawChange
+	}
+}
+
+// Cursors of containers that left the listing are kept for keptCursorTTL, and
+// at most maxKeptCursors of them (the longest gone are dropped first).
+const (
+	keptCursorTTL  = 10 * time.Minute
+	maxKeptCursors = 256
+)
+
+// pruneGone drops the entries of containers that have been gone too long.
+// The caller holds f.mu.
+func (f *logFollower) pruneGone(now time.Time) {
+	var gone []string
+	for id, p := range f.pumps {
+		if p.goneAt.IsZero() || p.active {
+			continue
+		}
+		if now.Sub(p.goneAt) > keptCursorTTL {
+			delete(f.pumps, id)
+			continue
+		}
+		gone = append(gone, id)
+	}
+	if len(gone) <= maxKeptCursors {
+		return
+	}
+	sort.Slice(gone, func(i, j int) bool { return f.pumps[gone[i]].goneAt.Before(f.pumps[gone[j]].goneAt) })
+	for _, id := range gone[:len(gone)-maxKeptCursors] {
+		delete(f.pumps, id)
 	}
 }
 
@@ -594,15 +655,22 @@ func (f *logFollower) reconcile(fromPumpEnd bool) (ended bool) {
 	}
 
 	f.mu.Lock()
+	now := time.Now()
 	for id, p := range f.pumps {
 		switch {
 		case present[id]:
+			p.goneAt = time.Time{}
 		case p.active:
 			p.cancel() // the container is gone; its pump then reports back
 		default:
-			delete(f.pumps, id)
+			// Keep the cursor for a while: the same id can reappear in the listing
+			// and must not be replayed from tail.
+			if p.goneAt.IsZero() {
+				p.goneAt = now
+			}
 		}
 	}
+	f.pruneGone(now)
 	var attach []engine.Container
 	for _, c := range listed {
 		p := f.pumps[c.ID]
@@ -789,6 +857,16 @@ func eventMessage(ev engine.Event) apitypes.EventMessage {
 		msg.Health = ev.Health
 	}
 	return msg
+}
+
+// statusPollInterval is how often handlers that poll a cheap in-memory state
+// do so: the heartbeat, capped at maxStatusPoll.
+func (s *server) statusPollInterval() time.Duration {
+	every := s.opts.SSEHeartbeat
+	if every <= 0 || every > maxStatusPoll {
+		every = maxStatusPoll
+	}
+	return every
 }
 
 // handleEvents streams the status cache: "status" {events, metricsDegraded}
