@@ -185,13 +185,18 @@ Writing a Dockerfile that is not editable is refused: 422 with the reason, or
 403 for a path outside the stack folder. A save that fails validation returns
 400, and an unknown or non-building service returns 404.
 
-Create and add refuse build contexts and `additional_contexts` values that use
-variables (`build context must not use variables`), and absolute contexts that
-are symlinks (`build context must not be a symlink; use the real path`), because
-the value cannot be confined before compose reads it. On create, each `extra`
-must be a single JSON object with no duplicate keys, may not set `services` or
-`name`, and must not clash with a value the form sets (for example a list where
-the form sets a mapping); such a clash is an error, never a silent drop.
+Create and add refuse build contexts that use variables
+(`build context must not use variables`), because the value cannot be confined
+before compose reads it. Only create carries `extra`, so only create sees
+`additional_contexts` values, and it refuses those that use variables too.
+Contexts that come from an `extra` are also refused when they are absolute
+symlinks (`build context must not be a symlink; use the real path`); a context
+set by the form is resolved instead, as before. On create, each `extra` must be
+a single JSON object with no duplicate keys and may not set `services` or
+`name`. Where an `extra` and the form both set a key, mappings are merged
+recursively; a scalar against a scalar, or a list against a list, keeps the
+form's value and drops the extra's; a different kind (for example a list where
+the form sets a mapping) is an error.
 
 Rebuilding one service:
 `POST /api/stacks/{name}/services/{service}/actions/up` runs
