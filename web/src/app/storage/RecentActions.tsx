@@ -14,12 +14,17 @@ const COLUMNS = [
   { key: 'bytes', label: 'Bytes', width: '90px' },
 ];
 
+const HEADING_ID = 'storage-actions-heading';
+
 export function RecentActions({ actions, error }: { actions: ActionEntry[]; error: string }) {
   return (
-    <section aria-labelledby="storage-actions-heading" className={styles.section}>
-      <h2 id="storage-actions-heading" className={styles.sectionTitle}>
-        Recent storage actions
-      </h2>
+    <section aria-labelledby={HEADING_ID} className={styles.section}>
+      {/* With rows the table title is the section heading; the section heading only stands in when there is no table. */}
+      {(error || actions.length === 0) && (
+        <h2 id={HEADING_ID} className={styles.sectionTitle}>
+          Recent storage actions
+        </h2>
+      )}
       {error ? (
         <Banner kind="warning" title="Could not load recent actions">
           {error}
@@ -27,7 +32,7 @@ export function RecentActions({ actions, error }: { actions: ActionEntry[]; erro
       ) : actions.length === 0 ? (
         <p className={styles.muted}>No storage actions yet.</p>
       ) : (
-        <StorageTable label="Recent storage actions" columns={COLUMNS} status={`${actions.length} actions`}>
+        <StorageTable label="Recent storage actions" titleId={HEADING_ID} columns={COLUMNS} status={`${actions.length} actions`}>
           {actions.slice(0, 20).map((action) => (
             <StorageRow key={action.id}>
               <StorageCell place="sub">

@@ -15,8 +15,10 @@ export interface StorageColumn {
 export interface StorageTableProps {
   label: string;
   columns: StorageColumn[];
-  /** Announced politely when the table changes, e.g. `3 images · sorted by size`. */
+  /** Visible summary such as `3 images · sorted by size`; the screen announces it through its own persistent status region. */
   status: string;
+  /** Id for the title, so a surrounding section can label itself with it instead of repeating the heading. */
+  titleId?: string;
   sizes?: StorageKindTotals;
   children: ReactNode;
   empty?: string;
@@ -34,15 +36,15 @@ function SizesAge({ sizes }: { sizes: StorageKindTotals }) {
   return <>{sizes.refreshing ? 'Sizes calculating…' : 'Sizes not available yet'}</>;
 }
 
-export function StorageTable({ label, columns, status, sizes, children, empty }: StorageTableProps) {
+export function StorageTable({ label, columns, status, titleId, sizes, children, empty }: StorageTableProps) {
   const cols = columns.map((c) => c.width ?? 'minmax(0, 1fr)').join(' ');
   return (
     <div className={styles.card}>
       <div className={styles.header}>
-        <h2 className={styles.title}>{label}</h2>
-        <p className={styles.status} role="status">
-          {status}
-        </p>
+        <h2 id={titleId} className={styles.title}>
+          {label}
+        </h2>
+        <p className={styles.status}>{status}</p>
         <span className={styles.spacer} />
         {sizes && (
           <span className={styles.age}>

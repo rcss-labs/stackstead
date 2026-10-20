@@ -40,7 +40,8 @@ export function UsageCard({ overview, selected, dockerDown, danglingLabel, onSel
               className={styles.segment}
               data-kind={segment.kind}
               aria-pressed={segment.kind === selected}
-              aria-label={`${info.label} · ${sizeText(segment.bytes, totals.refreshing)} · ${segment.percent}%`}
+              // An unknown size gets a placeholder share, which is not worth announcing.
+              aria-label={`${info.label} · ${sizeText(segment.bytes, totals.refreshing)}${segment.bytes === null ? '' : ` · ${segment.percent}%`}`}
               // A zero share keeps a 4px sliver so the kind stays reachable.
               style={{ ...kindStyle(info.color), flex: segment.share > 0 ? segment.share : '0 0 4px' }}
               onClick={() => onSelect(segment.kind)}

@@ -89,10 +89,12 @@ function Lead({ overview }: { overview: StorageOverview }) {
   );
 }
 
+const layersStatus = (overview: StorageOverview) => `${overview.topContainers.length} container layers · sorted by size`;
+
 function LayersTable({ overview }: { overview: StorageOverview }) {
   const layers = sortBySize(overview.topContainers, (c) => c.sizeRw);
   return (
-    <StorageTable label="Container layers" columns={LAYER_COLUMNS} status={`${layers.length} container layers · sorted by size`} sizes={overview.containers} empty={layers.length ? undefined : 'No container layers.'}>
+    <StorageTable label="Container layers" columns={LAYER_COLUMNS} status={layersStatus(overview)} sizes={overview.containers} empty={layers.length ? undefined : 'No container layers.'}>
       {layers.map((layer) => (
         <StorageRow key={layer.name}>
           <StorageCell mono>
@@ -126,6 +128,8 @@ export function StorageScreen() {
   const candidates = (data?.images?.images ?? []).filter((image) => image.dangling && !image.containers.length);
   const danglingLabel = `Clean up dangling images (${candidates.length} · ${imageReclaimRange(candidates)})`;
   const unknown = data?.overview?.declarationsUnknown ?? [];
+  // One region for the whole screen: it stays mounted across kind changes so the new selection is announced as a text change.
+  const statusText = data?.overview && kind === 'layers' ? layersStatus(data.overview) : '';
 
   return (
     <section className={styles.page} aria-labelledby="storage-heading">
@@ -142,6 +146,9 @@ export function StorageScreen() {
           </Button>
         </div>
       </header>
+      <p className="visually-hidden" role="status" aria-label="Selected storage kind">
+        {statusText}
+      </p>
       {recalc.error && (
         <Banner kind="warning" title="Could not recalculate">
           {recalc.error}

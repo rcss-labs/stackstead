@@ -28,10 +28,13 @@ beforeEach(() => {
   fake = installFakeFetch(routes());
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
   fake.restore();
   vi.useRealTimers();
+  // Live state is shared module state; restore it here so a failing assertion cannot leak Docker-down into later tests.
+  const { live } = await liveMocks();
+  live.update((l) => ({ ...l, docker: 'ok' }));
 });
 
 describe('Storage screen', () => {
@@ -89,10 +92,9 @@ describe('Storage screen', () => {
     await user.click(within(bar).getByRole('button', { name: 'Volumes · 60.0 GiB · 60%' }));
     expect(location()).toBe('/storage?tab=volumes');
     expect(within(screen.getByRole('group', { name: 'Storage kinds' })).getByRole('button', { name: /^Volumes/ }).getAttribute('aria-pressed')).toBe('true');
-    // The volumes table arrives with Task 4, which asserts its `volumes · sorted by size` status; the layers table announces the same way.
     await user.click(within(bar).getByRole('button', { name: /^Container layers/ }));
     expect(location()).toBe('/storage?tab=layers');
-    expect(screen.getAllByRole('status').some((s) => s.textContent === '1 container layers · sorted by size')).toBe(true);
+    expect(screen.getByRole('status', { name: 'Selected storage kind' }).textContent).toBe('1 container layers · sorted by size');
     act(() => within(bar).getByRole('button', { name: /^Build cache/ }).focus());
     await user.keyboard('{Enter}');
     expect(location()).toBe('/storage?tab=build-cache');
@@ -103,7 +105,33 @@ describe('Storage screen', () => {
     const bar = await screen.findByRole('group', { name: 'Usage by kind' });
     const segments = within(bar).getAllByRole('button');
     expect(segments).toHaveLength(4);
-    for (const segment of segments) expect(segment.getAttribute('aria-label')).toMatch(/25%$/);
+    // The 25% is only a placeholder share, so it must not be announced as a measurement.
+    for (const segment of segments) expect(segment.getAttribute('aria-label')).not.toMatch(/%/);
+  });
+
+  it('one persistent status region changes its text when the kind changes', async () => {
+    const user = userEvent.setup();
+    mountAt('/storage');
+    const region = await screen.findByRole('status', { name: 'Selected storage kind' });
+    const before = region.textContent;
+    await selectKind(user, 'Container layers');
+    expect(screen.getByRole('status', { name: 'Selected storage kind' })).toBe(region);
+    expect(region.textContent).toBe('1 container layers · sorted by size');
+    expect(region.textContent).not.toBe(before);
+  });
+
+  it('lists Recent storage actions once in heading navigation, with data and when empty', async () => {
+    mountAt('/storage');
+    await screen.findByText('old-image');
+    expect(screen.getAllByRole('heading', { name: 'Recent storage actions' })).toHaveLength(1);
+    expect(screen.getByRole('region', { name: 'Recent storage actions' })).toBeTruthy();
+    cleanup();
+    fake.restore();
+    fake = installFakeFetch(routes({ 'GET /api/actions?kind=storage.&limit=20': { body: [] } }));
+    mountAt('/storage');
+    await screen.findByText('No storage actions yet.');
+    expect(screen.getAllByRole('heading', { name: 'Recent storage actions' })).toHaveLength(1);
+    expect(screen.getByRole('region', { name: 'Recent storage actions' })).toBeTruthy();
   });
 
   it('Recalculate starts refresh, prevents another use for 60 seconds and explains why', async () => {
@@ -138,7 +166,6 @@ describe('Storage screen', () => {
     const button = await screen.findByRole('button', { name: 'Recalculate' });
     act(() => live.update((l) => ({ ...l, docker: 'unavailable' })));
     await waitFor(() => expect(button.title).toBe('Docker is unavailable'));
-    act(() => live.update((l) => ({ ...l, docker: 'ok' })));
   });
 
   it('a failed overview shows the error with Retry and keeps the page', async () => {
