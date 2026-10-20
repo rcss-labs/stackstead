@@ -255,6 +255,21 @@ describe('CleanupDialog', () => {
     expect(within(region).getByRole('listitem').textContent).toBe('dbdeclared by stack · media (not deployed)');
   });
 
+  it('sends the execute request once for two clicks dispatched in the same task', async () => {
+    open();
+    const input = await screen.findByRole('textbox');
+    type(input, plan.confirmPhrase);
+    const button = screen.getByRole('button', { name: 'Delete' });
+    // One act batches both dispatches, so React cannot re-render (and disable the button) in between.
+    act(() => {
+      button.click();
+      button.click();
+    });
+    await waitFor(() => expect(fake.calls.filter((c) => c.path.endsWith('/confirm'))).toHaveLength(1));
+    await act(() => Promise.resolve());
+    expect(fake.calls.filter((c) => c.path.endsWith('/confirm'))).toHaveLength(1);
+  });
+
   it('the plan is created once per mount under StrictMode', async () => {
     open(vi.fn(), vi.fn(), true);
     expect(await screen.findByRole('textbox')).toBeTruthy();

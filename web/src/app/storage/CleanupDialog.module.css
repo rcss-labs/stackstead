@@ -1,20 +1,21 @@
+.body { display: contents; }
 .cluster { display: flex; align-items: center; gap: var(--space-2); }
-h3 { font-size: 13px; margin: 0; }
-p { margin: 0; overflow-wrap: anywhere; }
-ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
-li { display: flex; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; overflow-wrap: anywhere; }
-.scroll { max-height: 40vh; overflow: auto; flex-shrink: 0; padding: var(--space-1); border: 1px solid var(--border); border-radius: 7px; }
+.body h3 { font-size: 13px; margin: 0; }
+.body p { margin: 0; overflow-wrap: anywhere; }
+.body ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.body li { display: flex; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; overflow-wrap: anywhere; }
+.scroll { max-height: 40vh; overflow: auto; flex-shrink: 0; padding: var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .scroll[data-shared] { max-height: 22vh; }
 .protected { color: var(--muted); }
-.mono, code { font-family: var(--mono); overflow-wrap: anywhere; }
+.body .mono, .body code { font-family: var(--mono); overflow-wrap: anywhere; }
 .muted { color: var(--muted); }
 .warning { color: var(--warning); }
 .error { color: var(--danger); }
-label { font-size: 13px; overflow-wrap: anywhere; }
-input { width: 100%; box-sizing: border-box; min-width: 0; }
+.body label { font-size: 13px; overflow-wrap: anywhere; }
+.body input { width: 100%; box-sizing: border-box; min-width: 0; }
 .actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
 
 @media (max-width: 760px) {
   .actions { flex-wrap: wrap; }
-  .actions > button, input { min-height: 40px; }
+  .actions > button, .body input { min-height: 40px; }
 }

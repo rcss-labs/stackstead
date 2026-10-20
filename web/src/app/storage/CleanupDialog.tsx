@@ -42,6 +42,8 @@ export function CleanupDialog({ request, onClose, onFinished }: CleanupDialogPro
   const generation = useRef(0);
   const mounted = useRef(false);
   const checkStarted = useRef(false);
+  // Set synchronously so two clicks dispatched before a re-render still send one execute request.
+  const confirmingRef = useRef(false);
   const endedOnce = useRef(false);
   const field = useRef<HTMLInputElement>(null);
   const actions = useRef<HTMLDivElement>(null);
@@ -106,7 +108,6 @@ export function CleanupDialog({ request, onClose, onFinished }: CleanupDialogPro
     return () => {
       mounted.current = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -116,8 +117,11 @@ export function CleanupDialog({ request, onClose, onFinished }: CleanupDialogPro
   }, [plan, operation]);
 
   async function confirm() {
-    setNow(Date.now());
-    if (!plan || stale || confirming || phrase !== plan.confirmPhrase) return;
+    const clickedAt = Date.now();
+    setNow(clickedAt);
+    const planExpired = !!plan && Date.parse(plan.expiresAt) <= clickedAt;
+    if (!plan || expired || planExpired || confirmingRef.current || phrase !== plan.confirmPhrase) return;
+    confirmingRef.current = true;
     setConfirming(true);
     setError('');
     setFieldError('');
@@ -132,6 +136,7 @@ export function CleanupDialog({ request, onClose, onFinished }: CleanupDialogPro
         pendingFocus.current = 'field';
       } else setError(messageOf(e));
     } finally {
+      confirmingRef.current = false;
       if (mounted.current) setConfirming(false);
     }
   }
@@ -152,151 +157,163 @@ export function CleanupDialog({ request, onClose, onFinished }: CleanupDialogPro
     try {
       await api.cancel(id);
     } catch (e) {
-      toasts.push({ kind: 'danger', message: `Could not cancel: ${messageOf(e)}` });
+      toasts.push({
+        kind: 'danger',
+        message: `Could not cancel: ${messageOf(e)}`,
+      });
     }
   }
 
   return (
     <Dialog open title="Clean up storage" onClose={close}>
-      {operation ? (
-        <>
-          <OperationPanel operationId={operation.id} onCancel={cancel} onFinished={ended} />
-          {finished && (
+      <div className={styles.body}>
+        {operation ? (
+          <>
+            <OperationPanel operationId={operation.id} onCancel={cancel} onFinished={ended} />
+            {finished && (
+              <div className={styles.actions}>
+                <Button variant="secondary" onClick={close}>
+                  Close
+                </Button>
+              </div>
+            )}
+          </>
+        ) : checking ? (
+          <>
+            <p className={styles.cluster}>
+              <Spinner /> Checking current state…
+            </p>
             <div className={styles.actions}>
               <Button variant="secondary" onClick={close}>
                 Close
               </Button>
             </div>
-          )}
-        </>
-      ) : checking ? (
-        <>
-          <p className={styles.cluster}>
-            <Spinner /> Checking current state…
-          </p>
-          <div className={styles.actions}>
-            <Button variant="secondary" onClick={close}>
-              Close
-            </Button>
-          </div>
-        </>
-      ) : (
-        <>
-          {error && (
-            <p role="alert" className={styles.error}>
-              {error}
-            </p>
-          )}
-          {plan && (
-            <>
-              {plan.items.length === 0 ? (
-                <p>Nothing to clean</p>
-              ) : (
-                <>
-                  <h3 id={`${uid}-items`}>
-                    {plan.mode === 'all-unused' ? 'Expected items' : 'Items to delete'} ({plan.items.length})
-                  </h3>
-                  <div className={styles.scroll} data-shared={sharedBudget ? 'true' : undefined} role="region" aria-labelledby={`${uid}-items`} tabIndex={0}>
-                    <ul>
-                      {plan.items.map((item) => (
-                        <li key={`${item.kind}:${item.id}`}>
-                          <span className={styles.mono}>{item.ref}</span>
-                          <span className={`${styles.mono} ${styles.muted}`}>{sizeText(item.bytes)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                  <p>{reclaimText(plan.reclaim)}</p>
-                </>
-              )}
-              {plan.protected.length > 0 && (
-                <>
-                  <h3 id={`${uid}-protected`}>Protected ({plan.protected.length})</h3>
-                  <div className={styles.scroll} data-shared={sharedBudget ? 'true' : undefined} role="region" aria-labelledby={`${uid}-protected`} tabIndex={0}>
-                    <ul>
-                      {plan.protected.map((item) => (
-                        <li key={`${item.kind}:${item.id}`} className={styles.protected}>
-                          <span className={styles.mono}>{item.ref}</span>
-                          <span>
-                            {item.reason}
-                            {item.stack && (
-                              <>
-                                {' · '}
-                                <Link to={`/stacks/${encodeURIComponent(item.stack)}`}>{item.stack}</Link> ({stateText(item.stackState)})
-                              </>
-                            )}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </>
-              )}
-              {plan.warnings.map((warning) => (
-                <p key={warning} className={styles.warning}>
-                  {warning}
-                </p>
-              ))}
-              {plan.items.length > 0 && (
-                <>
-                  {volumePlan && <p className={styles.warning}>Volumes hold data. This cannot be undone.</p>}
-                  <p className={styles.muted}>
-                    Expires in {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}
+          </>
+        ) : (
+          <>
+            {error && (
+              <p role="alert" className={styles.error}>
+                {error}
+              </p>
+            )}
+            {plan && (
+              <>
+                {plan.items.length === 0 ? (
+                  <p>Nothing to clean</p>
+                ) : (
+                  <>
+                    <h3 id={`${uid}-items`}>
+                      {plan.mode === 'all-unused' ? 'Expected items' : 'Items to delete'} ({plan.items.length})
+                    </h3>
+                    <div className={styles.scroll} data-shared={sharedBudget ? 'true' : undefined} role="region" aria-labelledby={`${uid}-items`} tabIndex={0}>
+                      <ul>
+                        {plan.items.map((item) => (
+                          <li key={`${item.kind}:${item.id}`}>
+                            <span className={styles.mono}>{item.ref}</span>
+                            <span className={`${styles.mono} ${styles.muted}`}>{sizeText(item.bytes)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <p>{reclaimText(plan.reclaim)}</p>
+                  </>
+                )}
+                {plan.protected.length > 0 && (
+                  <>
+                    <h3 id={`${uid}-protected`}>Protected ({plan.protected.length})</h3>
+                    <div
+                      className={styles.scroll}
+                      data-shared={sharedBudget ? 'true' : undefined}
+                      role="region"
+                      aria-labelledby={`${uid}-protected`}
+                      tabIndex={0}
+                    >
+                      <ul>
+                        {plan.protected.map((item) => (
+                          <li key={`${item.kind}:${item.id}`} className={styles.protected}>
+                            <span className={styles.mono}>{item.ref}</span>
+                            <span>
+                              {item.reason}
+                              {item.stack && (
+                                <>
+                                  {' · '}
+                                  <Link to={`/stacks/${encodeURIComponent(item.stack)}`}>{item.stack}</Link> ({stateText(item.stackState)})
+                                </>
+                              )}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </>
+                )}
+                {plan.warnings.map((warning) => (
+                  <p key={warning} className={styles.warning}>
+                    {warning}
                   </p>
-                  {stale ? (
-                    <p>This plan has expired. Re-check current state before deleting.</p>
-                  ) : (
-                    <>
-                      <p id={`${uid}-phrase`}>
-                        <code>{plan.confirmPhrase}</code>
-                        {plan.mode === 'all-unused' && (
-                          <>
-                            {' '}
-                            <span className={styles.warning}>not exact</span>
-                          </>
-                        )}
-                      </p>
-                      <label htmlFor={`${uid}-confirm`}>Type {plan.confirmPhrase} to confirm</label>
-                      <input
-                        id={`${uid}-confirm`}
-                        className={styles.mono}
-                        ref={field}
-                        value={phrase}
-                        onChange={(event) => setPhrase(event.target.value)}
-                        disabled={confirming}
-                        aria-describedby={`${uid}-phrase${fieldError ? ` ${uid}-error` : ''}`}
-                        aria-invalid={fieldError ? 'true' : undefined}
-                        autoComplete="off"
-                        spellCheck={false}
-                      />
-                      {fieldError && (
-                        <p id={`${uid}-error`} className={styles.error} role="alert">
-                          {fieldError}
+                ))}
+                {plan.items.length > 0 && (
+                  <>
+                    {volumePlan && <p className={styles.warning}>Volumes hold data. This cannot be undone.</p>}
+                    <p className={styles.muted}>
+                      Expires in {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}
+                    </p>
+                    {stale ? (
+                      <p>This plan has expired. Re-check current state before deleting.</p>
+                    ) : (
+                      <>
+                        <p id={`${uid}-phrase`}>
+                          <code>{plan.confirmPhrase}</code>
+                          {plan.mode === 'all-unused' && (
+                            <>
+                              {' '}
+                              <span className={styles.warning}>not exact</span>
+                            </>
+                          )}
                         </p>
-                      )}
-                    </>
-                  )}
-                </>
-              )}
-            </>
-          )}
-          <div className={styles.actions} ref={actions}>
-            <Button variant="secondary" disabled={confirming} onClick={close}>
-              Close
-            </Button>
-            {plan && plan.items.length > 0 &&
-              (stale ? (
-                <Button variant="secondary" onClick={() => void check()}>
-                  Re-check
-                </Button>
-              ) : (
-                <Button variant="danger" confirm disabled={phrase !== plan.confirmPhrase || confirming} loading={confirming} onClick={() => void confirm()}>
-                  Delete
-                </Button>
-              ))}
-          </div>
-        </>
-      )}
+                        <label htmlFor={`${uid}-confirm`}>Type {plan.confirmPhrase} to confirm</label>
+                        <input
+                          id={`${uid}-confirm`}
+                          className={styles.mono}
+                          ref={field}
+                          value={phrase}
+                          onChange={(event) => setPhrase(event.target.value)}
+                          disabled={confirming}
+                          aria-describedby={`${uid}-phrase${fieldError ? ` ${uid}-error` : ''}`}
+                          aria-invalid={fieldError ? 'true' : undefined}
+                          autoComplete="off"
+                          spellCheck={false}
+                        />
+                        {fieldError && (
+                          <p id={`${uid}-error`} className={styles.error} role="alert">
+                            {fieldError}
+                          </p>
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+            <div className={styles.actions} ref={actions}>
+              <Button variant="secondary" disabled={confirming} onClick={close}>
+                Close
+              </Button>
+              {plan &&
+                plan.items.length > 0 &&
+                (stale ? (
+                  <Button variant="secondary" onClick={() => void check()}>
+                    Re-check
+                  </Button>
+                ) : (
+                  <Button variant="danger" confirm disabled={phrase !== plan.confirmPhrase || confirming} loading={confirming} onClick={() => void confirm()}>
+                    Delete
+                  </Button>
+                ))}
+            </div>
+          </>
+        )}
+      </div>
     </Dialog>
   );
 }
