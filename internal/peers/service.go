@@ -269,6 +269,7 @@ func (s *Service) AddServer(ctx context.Context, req apitypes.AddPeerRequest) (a
 	if _, err := s.probe(ctx, plan.base); err != nil {
 		return apitypes.PeerView{}, err
 	}
+	s.fillSelfTrust(ctx, &plan)
 	own, err := s.identity(ctx)
 	if err != nil {
 		return apitypes.PeerView{}, err
@@ -349,6 +350,26 @@ func (s *Service) AddServer(ctx context.Context, req apitypes.AddPeerRequest) (a
 	}
 	s.cfg.Logger.Info("server paired", "peer", stored.Name, "instance", stored.InstanceID)
 	return s.viewOf(stored), nil
+}
+
+// fillSelfTrust tells the other server how to verify this one (spec 6.1 step
+// 2). When the person gave neither a CA certificate nor a fingerprint for an
+// https advertised address, this server probes its own address and pins the
+// certificate it presents unless system roots already verify it. A probe that
+// fails changes nothing: the other server reports the TLS problem itself.
+func (s *Service) fillSelfTrust(ctx context.Context, plan *addPlan) {
+	if plan.selfTrust.Plaintext || plan.selfTrust.CAPEM != "" || normalizeFingerprint(plan.selfTrust.PinSHA256) != "" {
+		return
+	}
+	base, err := url.Parse(plan.advertised)
+	if err != nil || base.Scheme != "https" {
+		return
+	}
+	res, err := Probe(ctx, base)
+	if err != nil || res.SystemTrusted || res.FingerprintSHA256 == "" {
+		return
+	}
+	plan.selfTrust.PinSHA256 = res.FingerprintSHA256
 }
 
 // mapPairError turns the other server's answer to a pairing request into

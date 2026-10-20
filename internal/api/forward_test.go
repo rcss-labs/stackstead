@@ -468,7 +468,7 @@ func TestForwardRejectsUnsafePaths(t *testing.T) {
 	defer upstream.Close()
 	rig := newForwardRig(t, upstream, peers.TLSOptions{Plaintext: true})
 
-	for _, tail := range []string{"/%2E%2E/%2E%2E/admin", "/foo%2F..%2F..%2Fadmin", "/%2Fadmin", "/a%5Cb", "/a/%2e/b", "/", ""} {
+	for _, tail := range []string{"/%2E%2E/%2E%2E/admin", "/foo%2F..%2F..%2Fadmin", "/%2Fadmin", "/a%5Cb", "/a/%2e/b", "/", "", "/peer/pair", "/peer/hello"} {
 		resp, body := rig.do("GET", tail, "")
 		if resp.StatusCode != 400 || decodeFields(t, body).Code != "peer_bad_path" {
 			t.Errorf("tail %q = %d %s, want 400 peer_bad_path", tail, resp.StatusCode, body)

@@ -167,15 +167,15 @@ func (s *server) fetchPeerFleet(ctx context.Context, view apitypes.PeerView, use
 // answer. Failures are classified (*peers.PeerError or *peers.RemoteError)
 // and never contain the credential.
 func getPeerJSON(ctx context.Context, client *http.Client, base *url.URL, peer peers.Peer, user, path string, into any) error {
-	server := base.String()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server+path, nil)
+	// Errors name the peer, not its address: the banner shows them to the person.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base.String()+path, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set(peers.PeerHeader, peer.OutCredential.Reveal())
 	req.Header.Set(peerUserHeader, user)
 	resp, err := client.Do(req)
-	if cerr := peers.Classify(server, resp, err); cerr != nil {
+	if cerr := peers.Classify(peer.Name, resp, err); cerr != nil {
 		if resp != nil {
 			resp.Body.Close()
 		}
@@ -183,7 +183,7 @@ func getPeerJSON(ctx context.Context, client *http.Client, base *url.URL, peer p
 	}
 	defer resp.Body.Close()
 	if err := json.NewDecoder(io.LimitReader(resp.Body, fleetMaxBody)).Decode(into); err != nil {
-		return &peers.PeerError{Code: peers.CodeProxy, Server: server, Msg: server + " did not answer like Stackstead"}
+		return &peers.PeerError{Code: peers.CodeProxy, Server: peer.Name, Msg: peer.Name + " did not answer like Stackstead"}
 	}
 	return nil
 }

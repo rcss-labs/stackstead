@@ -173,8 +173,9 @@ http:
 
 If a peer's address answers with a login page or another non-Stackstead
 response, the other server shows "{name}'s proxy answered instead of
-Stackstead". It does not treat that as a connection problem to retry, and it
-does not remove the connection.
+Stackstead". The status checker keeps retrying and shows the server as
+unreachable with that message; it does not remove the connection, so it
+recovers once the proxy lets Stackstead's peer requests through.
 
 ## Security notes
 

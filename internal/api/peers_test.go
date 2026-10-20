@@ -2,6 +2,8 @@ package api_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,6 +37,18 @@ type peerNode struct {
 
 func newPeerNode(t *testing.T, name string) *peerNode {
 	t.Helper()
+	return startPeerNode(t, name, false)
+}
+
+// newTLSPeerNode is a peerNode served over https with httptest's self-signed
+// certificate, which no system root verifies.
+func newTLSPeerNode(t *testing.T, name string) *peerNode {
+	t.Helper()
+	return startPeerNode(t, name, true)
+}
+
+func startPeerNode(t *testing.T, name string, useTLS bool) *peerNode {
+	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), name+".db"))
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +71,11 @@ func newPeerNode(t *testing.T, name string) *peerNode {
 		Static: fstest.MapFS{"index.html": {Data: []byte("<html></html>")}}, Logger: slog.New(slog.DiscardHandler),
 	})
 	n := &peerNode{t: t, name: name, svc: svc, store: st}
-	n.srv = httptest.NewServer(handler)
+	if useTLS {
+		n.srv = httptest.NewTLSServer(handler)
+	} else {
+		n.srv = httptest.NewServer(handler)
+	}
 	t.Cleanup(n.srv.Close)
 	return n
 }
@@ -67,7 +85,7 @@ func (n *peerNode) url() string { return n.srv.URL }
 func (n *peerNode) login() {
 	n.t.Helper()
 	body := fmt.Sprintf(`{"username":"admin","password":%q}`, adminPassword)
-	resp, err := http.Post(n.url()+"/api/login", "application/json", strings.NewReader(body))
+	resp, err := n.srv.Client().Post(n.url()+"/api/login", "application/json", strings.NewReader(body))
 	if err != nil {
 		n.t.Fatal(err)
 	}
@@ -96,7 +114,7 @@ func (n *peerNode) do(method, path, body string, opts ...func(*http.Request)) (i
 	for _, opt := range opts {
 		opt(req)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := n.srv.Client().Do(req)
 	if err != nil {
 		n.t.Fatal(err)
 	}
@@ -376,5 +394,38 @@ func TestCheckRouteReturnsFreshStatus(t *testing.T) {
 
 	if status, _ := a.do("POST", "/api/peers/nope/check", ""); status != 404 {
 		t.Errorf("unknown peer check = %d, want 404", status)
+	}
+}
+
+// pin is the SHA-256 fingerprint of the node's self-signed certificate.
+func (n *peerNode) pin() string {
+	sum := sha256.Sum256(n.srv.Certificate().Raw)
+	return hex.EncodeToString(sum[:])
+}
+
+// Two self-signed servers pair when A sends no selfTrust at all: A pins its own
+// certificate from a probe of its advertised address, so B can verify A.
+func TestAddServerPairsSelfSignedServersWithoutSelfTrust(t *testing.T) {
+	a, b := newTLSPeerNode(t, "mini-a"), newTLSPeerNode(t, "mini-b")
+	a.login()
+	b.login()
+	raw, _ := json.Marshal(apitypes.AddPeerRequest{
+		URL: b.url(), Token: b.token(), AdvertisedURL: a.url(),
+		Trust: apitypes.PeerTrust{PinSHA256: b.pin()},
+	})
+	status, body := a.do("POST", "/api/peers", string(raw))
+	if status != 201 {
+		t.Fatalf("pair = %d %s", status, body)
+	}
+	for _, n := range []*peerNode{a, b} {
+		list := n.list()
+		if len(list) != 1 || list[0].Status != "reachable" {
+			t.Errorf("%s sees %+v, want one reachable peer", n.name, list)
+		}
+	}
+	// A forwarded call proves A's stored trust for B works end to end.
+	status, body = a.do("GET", "/api/servers/"+a.list()[0].ID+"/api/health", "")
+	if status != 200 || !strings.Contains(body, `"ok":true`) {
+		t.Errorf("forwarded GET = %d %s", status, body)
 	}
 }

@@ -89,7 +89,10 @@ would give a root password to.
   link-local) and you tick "I accept sending a root-equivalent credential
   unencrypted". Self-signed certificates work with a CA certificate or a
   pinned SHA-256 fingerprint. A pin is used only when the certificate is not
-  publicly trusted.
+  publicly trusted. When you add a server, this server tells the other one how
+  to verify it: the CA certificate you gave for this server's address, or else
+  the fingerprint of the certificate this server presents at its own advertised
+  address (found by probing it) unless that certificate is publicly trusted.
 - Peer credentials cannot reach `/api/peers`, `/api/settings`, `/api/password`,
   `/api/logout`, `/api/setup`, `/api/servers` or `/api/fleet`. Those answer
   403 `peer_forbidden`. This stops a connected server from chaining further

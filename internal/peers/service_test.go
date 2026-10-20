@@ -2,6 +2,7 @@ package peers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -153,5 +154,82 @@ func TestAddServerAlreadyPairedLocallyIsAFieldError(t *testing.T) {
 	}
 	if !unpaired.Load() {
 		t.Error("the other server was not asked to drop its half")
+	}
+}
+
+// pairStub is a fake "other server" that records the pairing request it gets.
+func pairStub(t *testing.T, got *atomic.Pointer[apitypes.PeerPairRequest]) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/health":
+			_, _ = w.Write([]byte(`{"ok":true,"peering":1}`))
+		case "/api/peer/pair":
+			var req apitypes.PeerPairRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			got.Store(&req)
+			_ = json.NewEncoder(w).Encode(apitypes.PeerPairResponse{
+				Protocol: Protocol, InstanceID: "real-b", Name: "mini-b", Version: "1.0.0", Credential: "ssp_from-b",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestAddServerFillsSelfTrustFromProbeOfOwnAddress(t *testing.T) {
+	// A's own advertised address is served with a certificate no system root
+	// verifies, so B can only trust it through a pin A learns by probing.
+	own, _, pin, caPEM := tlsServer(t, jsonHandler(`{"ok":true,"peering":1}`))
+	cases := []struct {
+		name      string
+		selfTrust apitypes.PeerTrust
+		wantPin   string
+	}{
+		{"nothing supplied", apitypes.PeerTrust{Plaintext: true}, pin},
+		{"CA certificate supplied", apitypes.PeerTrust{Plaintext: true, CAPEM: caPEM}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc, _ := newTestService(t)
+			var got atomic.Pointer[apitypes.PeerPairRequest]
+			b := pairStub(t, &got)
+			_, err := svc.AddServer(context.Background(), apitypes.AddPeerRequest{
+				URL: b.URL, Token: "ssc_x", AdvertisedURL: own.URL,
+				Trust: apitypes.PeerTrust{Plaintext: true}, SelfTrust: c.selfTrust,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := got.Load()
+			if req == nil {
+				t.Fatal("the other server never got a pairing request")
+			}
+			if req.Trust.PinSHA256 != c.wantPin {
+				t.Errorf("selfTrust pin = %q, want %q", req.Trust.PinSHA256, c.wantPin)
+			}
+			if req.Trust.CAPEM != c.selfTrust.CAPEM {
+				t.Errorf("selfTrust CA PEM was changed")
+			}
+		})
+	}
+}
+
+func TestAddServerContinuesWhenOwnAddressCannotBeProbed(t *testing.T) {
+	svc, _ := newTestService(t)
+	var got atomic.Pointer[apitypes.PeerPairRequest]
+	b := pairStub(t, &got)
+	_, err := svc.AddServer(context.Background(), apitypes.AddPeerRequest{
+		URL: b.URL, Token: "ssc_x", AdvertisedURL: "https://127.0.0.1:1",
+		Trust: apitypes.PeerTrust{Plaintext: true}, SelfTrust: apitypes.PeerTrust{Plaintext: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req := got.Load(); req == nil || req.Trust.PinSHA256 != "" {
+		t.Errorf("pairing request = %+v, want an empty selfTrust pin", req)
 	}
 }

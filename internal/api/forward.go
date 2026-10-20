@@ -20,6 +20,11 @@ func (s *server) registerForwardRoutes(mux *http.ServeMux) {
 	mux.Handle("/api/servers/{id}/api/{rest...}", s.requireSession(s.handleForward))
 }
 
+// forwardHeaderTimeout bounds the wait for a forwarded call's response
+// headers; stack actions on a busy host can take longer than the 30 s that
+// suits hello and fleet calls.
+const forwardHeaderTimeout = 60 * time.Second
+
 // forwardTransports keeps one transport per peer so connections are reused.
 // An entry is replaced (and its idle connections closed) when the peer's
 // address or trust settings change.
@@ -40,7 +45,7 @@ func (t *forwardTransports) get(p peers.Peer, base *url.URL) (*http.Client, erro
 	if e, ok := t.entries[p.InstanceID]; ok && e.key == key {
 		return e.client, nil
 	}
-	client, err := peers.NewHTTPClient(base, p.TLS, 0)
+	client, err := peers.NewHTTPClient(base, p.TLS, forwardHeaderTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -91,10 +96,15 @@ func (d *deadlineWriter) Unwrap() http.ResponseWriter { return d.ResponseWriter 
 // /api/servers/{id}/api/ and its decoded form. Anything that could climb out
 // of the peer's /api/ prefix once a path-normalizing proxy sits in front of it
 // is refused: empty, "." and ".." segments, encoded slashes and backslashes.
+// So is the peer protocol itself (/api/peer/...).
 func forwardTail(r *http.Request) (escaped, decoded string, ok bool) {
 	p := strings.TrimPrefix(r.URL.EscapedPath(), "/api/servers/")
 	_, escaped, found := strings.Cut(p, "/api/")
 	if !found || escaped == "" {
+		return "", "", false
+	}
+	if first, _, _ := strings.Cut(escaped, "/"); first == "peer" {
+		// /api/peer/* is the pairing protocol between servers, not something to relay.
 		return "", "", false
 	}
 	for _, seg := range strings.Split(escaped, "/") {
