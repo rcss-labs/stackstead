@@ -70,7 +70,8 @@
   .sections { display: none; }
   .title { font-size: 20px; margin-bottom: 0; }
   .status { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .tokenInput { height: 40px; }
+  /* Two classes outrank Field's `.field input` (32px). */
+  .cluster .tokenInput { height: 40px; }
   .appearance button { min-height: 40px; }
 }
 @media (prefers-reduced-motion: reduce) {
