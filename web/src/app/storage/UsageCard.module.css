@@ -38,12 +38,25 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: 9px;
   padding: 12px;
   transition: background 0.12s, border-color 0.12s;
 }
 .tile[data-selected='true'] { background: var(--hover); border-color: var(--border-strong); }
+
+/* The cleanup label can be long (dangling count and size range); wrap it inside the tile instead of overflowing onto the neighbour's button. */
+.cleanup[data-size] {
+  white-space: normal;
+  max-width: 100%;
+  min-width: 0;
+  height: auto;
+  min-height: 26px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  text-align: left;
+}
 
 .pick {
   display: flex;
@@ -68,4 +81,5 @@
 @media (max-width: 759px) {
   .segment { min-height: 24px; }
   .bar { height: 24px; }
+  .cleanup[data-size] { min-height: 40px; }
 }

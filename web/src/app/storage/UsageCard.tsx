@@ -68,7 +68,7 @@ export function UsageCard({ overview, selected, dockerDown, danglingLabel, dangl
                 </span>
               </button>
               {request && cleanupLabel && (
-                <Button variant="danger" size="sm" disabledReason={dockerDown ? 'Docker is unavailable' : info.id === 'images' ? danglingUnavailable : undefined} onClick={() => onCleanup(request)}>
+                <Button variant="danger" size="sm" className={styles.cleanup} disabledReason={dockerDown ? 'Docker is unavailable' : info.id === 'images' ? danglingUnavailable : undefined} onClick={() => onCleanup(request)}>
                   {cleanupLabel}
                 </Button>
               )}

@@ -15,7 +15,7 @@
 .body input { width: 100%; box-sizing: border-box; min-width: 0; }
 .actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
 
-@media (max-width: 760px) {
+@media (max-width: 759px) {
   .actions { flex-wrap: wrap; }
   .actions > button, .body input { min-height: 40px; }
 }
