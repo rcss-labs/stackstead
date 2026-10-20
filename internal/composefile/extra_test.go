@@ -210,3 +210,18 @@ func TestNewStackKindMismatchIsAnError(t *testing.T) {
 		t.Errorf("top err = %v", err)
 	}
 }
+
+func TestExtraKeyNamedMergeIsQuotedNotAMergeKey(t *testing.T) {
+	extra := mustExtra(t, `{"x-meta":{"<<":{"a":"b"},"keep":"1"}}`)
+	src, err := NewStack([]NamedService{{Name: "web", Config: ServiceConfig{Image: "nginx"}}}, extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), `"<<":`) {
+		t.Errorf("key << must be double-quoted:\n%s", src)
+	}
+	meta := decode(t, src)["x-meta"].(map[string]any)
+	if _, ok := meta["<<"]; !ok || meta["keep"] != "1" || meta["a"] != nil {
+		t.Errorf("x-meta = %v; << must stay a literal key", meta)
+	}
+}

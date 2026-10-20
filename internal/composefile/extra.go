@@ -124,13 +124,21 @@ func mergeExtra(base, extra *yaml.Node, path string) error {
 
 // plainStyle drops the double quotes JSON puts on every string so keys and
 // values render the way a person would write YAML; the encoder re-quotes the
-// strings that need it, such as "2" or "true".
+// strings that need it, such as "2" or "true". A key written << stays quoted:
+// plain, it would be read back as a YAML merge key instead of a key named <<.
 func plainStyle(n *yaml.Node) *yaml.Node {
 	if n.Kind == yaml.ScalarNode {
 		n.Style &^= yaml.DoubleQuotedStyle
 	}
 	for _, c := range n.Content {
 		plainStyle(c)
+	}
+	if n.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if key := n.Content[i]; key.Kind == yaml.ScalarNode && key.Value == "<<" {
+				key.Style = yaml.DoubleQuotedStyle
+			}
+		}
 	}
 	return n
 }
