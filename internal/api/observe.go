@@ -439,6 +439,7 @@ type logPump struct {
 	sawChange   bool // a change arrived while the stream was running, so a retry has fresh information
 	cancel      context.CancelFunc
 	attachedAt  time.Time // when the stream was last attached; re-attach reads from here when no line has been delivered
+	listing     string    // identity and state of the last listing entry, to spot a real restart
 	goneAt      time.Time // when the container dropped out of the listing; zero while listed
 }
 
@@ -550,6 +551,7 @@ func (f *logFollower) start(c engine.Container, fromPumpEnd bool) {
 	pumpCtx, cancel := context.WithCancel(f.ctx)
 	p.c, p.active, p.fromPumpEnd, p.sawChange, p.cancel, p.goneAt = c, true, fromPumpEnd, false, cancel, time.Time{}
 	cur, previousAttach := p.cursor, p.attachedAt
+	p.listing = c.ID + "|" + c.State + "|" + c.Created.String()
 	p.attachedAt = time.Now()
 	f.mu.Unlock()
 
@@ -632,8 +634,10 @@ func (f *logFollower) noteChange() {
 
 // reconcile attaches streams to listed running containers that have none,
 // closes the streams of containers that are gone, and reports whether it sent
-// "end" (nothing left to follow). fromPumpEnd skips containers whose last
-// retry came to nothing, which bounds a stale listing to one retry.
+// "end" (nothing left to follow). Containers whose last retry came to nothing
+// are skipped until the next change or a restart visible in the listing, which
+// bounds a stale listing to one retry. fromPumpEnd only records why a stream
+// was started.
 func (f *logFollower) reconcile(fromPumpEnd bool) (ended bool) {
 	all, err := f.s.opts.Observe.Containers(f.ctx)
 	if err != nil {
@@ -674,7 +678,16 @@ func (f *logFollower) reconcile(fromPumpEnd bool) (ended bool) {
 	var attach []engine.Container
 	for _, c := range listed {
 		p := f.pumps[c.ID]
-		if c.State == "running" && (p == nil || !p.active) && !(fromPumpEnd && p != nil && p.quiet) {
+		// The listing carries no start time, so a restart that the listing shows
+		// is a change of state (or of creation time).
+		listing := c.ID + "|" + c.State + "|" + c.Created.String()
+		changed := p != nil && p.listing != listing
+		if p != nil {
+			p.listing = listing
+		}
+		// A stream that came to nothing stays quiet (whatever triggered this
+		// reconcile) until a change event or a visible restart.
+		if c.State == "running" && (p == nil || (!p.active && (!p.quiet || changed))) {
 			attach = append(attach, c)
 		}
 	}

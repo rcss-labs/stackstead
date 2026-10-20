@@ -1964,3 +1964,57 @@ func TestContainerLogsFollowReattachesAContainerWithoutAProject(t *testing.T) {
 	expectEnd(t, ch)
 	eventually(t, "the stream closed", func() bool { return fake.openStreams() == 0 })
 }
+
+// collectEvents returns the non-ping events that arrive within d.
+func collectEvents(t *testing.T, ch <-chan sseEvent, d time.Duration) []sseEvent {
+	t.Helper()
+	var out []sseEvent
+	timeout := time.After(d)
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				t.Fatal("stream ended unexpectedly")
+			}
+			if ev.name != "ping" {
+				out = append(out, ev)
+			}
+		case <-timeout:
+			return out
+		}
+	}
+}
+
+// ---- follow mode: fix round 2 ----
+
+func TestContainerLogsFollowProjectlessFailingStreamIsNotRetriedByThePoll(t *testing.T) {
+	fake := newFakeObserve()
+	fake.containers = []engine.Container{{ID: "dddddddddddd", Name: "solo-1", State: "running"}}
+	fake.logs["dddddddddddd"] = fakeLogSpec{err: fmt.Errorf("%w: no log driver", engine.ErrUnavailable)}
+	env, cookie := newObserveEnv(t, fake) // the 20 ms heartbeat is also the poll interval
+	_, ch := openSSE(t, env, cookie, context.Background(), "/api/containers/dddddddddddd/logs?follow=1")
+
+	settled := collectEvents(t, ch, 200*time.Millisecond)
+	calls := fake.logCallsFor("dddddddddddd")
+	if calls > 2 || len(settled) > 2 {
+		t.Fatalf("after 200 ms: %d Logs calls and %d events, want at most 2 each", calls, len(settled))
+	}
+	more := collectEvents(t, ch, 300*time.Millisecond) // many poll ticks
+	if len(more) != 0 || fake.logCallsFor("dddddddddddd") != calls {
+		t.Fatalf("poll kept retrying: %d more events, Logs calls %d -> %d", len(more), calls, fake.logCallsFor("dddddddddddd"))
+	}
+
+	// A restart the listing shows (exited, then running again) is attached anew.
+	fake.setLogs("dddddddddddd", fakeLogSpec{lines: []engine.LogLine{{Stream: "stdout", Time: time.Now().Add(time.Second), Text: "back"}}})
+	fake.setContainers([]engine.Container{{ID: "dddddddddddd", Name: "solo-1", State: "exited"}})
+	before := fake.containersCalls()
+	eventually(t, "the poll to see exited", func() bool { return fake.containersCalls() > before+1 })
+	fake.setContainers([]engine.Container{{ID: "dddddddddddd", Name: "solo-1", State: "running"}})
+	ev := nextLogEvent(t, ch)
+	if got := logTexts(t, ev); len(got) != 1 || got[0] != "back" {
+		t.Fatalf("log = %v, want back", got)
+	}
+	if n := fake.logCallsFor("dddddddddddd"); n != calls+1 {
+		t.Errorf("Logs calls = %d, want %d (one attempt for the restart)", n, calls+1)
+	}
+}
