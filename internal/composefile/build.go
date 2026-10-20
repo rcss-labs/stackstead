@@ -246,8 +246,28 @@ func normalize(cfg ServiceConfig) ServiceConfig {
 // the services join are declared external once, sorted by name: Stackstead
 // attaches services to networks that already exist on the host.
 func New(services []NamedService) ([]byte, error) {
+	return NewStack(services, Extra{})
+}
+
+// NewStack renders like New, then deep-merges each service's extra into its
+// service and top into the file. The form's values win where both set a leaf.
+// A network declared in top replaces the automatic external declaration.
+func NewStack(services []NamedService, top Extra) ([]byte, error) {
 	if len(services) == 0 {
 		return nil, fmt.Errorf("%w: no services", ErrInvalidConfig)
+	}
+	for _, reserved := range []string{"services", "name"} {
+		if top.node != nil && mappingValue(top.node, reserved) != nil {
+			return nil, fmt.Errorf("%w: extra may not set services or name", ErrInvalidExtra)
+		}
+	}
+	declared := map[string]bool{}
+	if top.node != nil {
+		if nets := mappingValue(top.node, "networks"); nets != nil && nets.Kind == yaml.MappingNode {
+			for i := 0; i < len(nets.Content); i += 2 {
+				declared[nets.Content[i].Value] = true
+			}
+		}
 	}
 	serviceMap := &yaml.Node{Kind: yaml.MappingNode}
 	seenServices := map[string]bool{}
@@ -264,9 +284,13 @@ func New(services []NamedService) ([]byte, error) {
 		if err := ValidateConfig(cfg); err != nil {
 			return nil, fmt.Errorf("service %s: %w", service.Name, err)
 		}
-		serviceMap.Content = append(serviceMap.Content, strNode(service.Name), serviceNode(cfg))
+		node := serviceNode(cfg)
+		mergeExtra(node, service.Extra.node)
+		serviceMap.Content = append(serviceMap.Content, strNode(service.Name), node)
 		for _, network := range cfg.Networks {
-			networkNames[network.Name] = true
+			if !declared[network.Name] {
+				networkNames[network.Name] = true
+			}
 		}
 	}
 	root := mapNode("services", serviceMap)
@@ -282,5 +306,6 @@ func New(services []NamedService) ([]byte, error) {
 		}
 		root.Content = append(root.Content, strNode("networks"), nets)
 	}
+	mergeExtra(root, top.node)
 	return []byte(encode(root, 2) + "\n"), nil
 }
