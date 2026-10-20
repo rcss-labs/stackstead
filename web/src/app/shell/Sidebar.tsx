@@ -71,18 +71,24 @@ export function Sidebar({ username, onLogout, current, stackCount, attention, on
       <div className={styles.bottom}>
         <div className={styles.group}>{NAV.filter((e) => e.group === 'settings').map(item)}</div>
         <div className={styles.user}>
-        <button type="button" className={styles.avatar} aria-label={username ? `Log out ${username}` : 'Log out'} title={`${username ?? ''} · Log out`} onClick={onLogout}>
-          {initials}
-        </button>
-        <div className={styles.who}>
-          <span className={styles.name}>{username}</span>
-          <span className={styles.versions}>{versions}</span>
-        </div>
-        <button type="button" className={styles.theme} aria-label={themeLabel} title={themeLabel} onClick={() => setTheme(dark ? 'light' : 'dark')}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d={dark ? ICONS.sun : ICONS.moon} />
-          </svg>
-        </button>
+          <button
+            type="button"
+            className={styles.avatar}
+            aria-label={username ? `Log out ${username}` : 'Log out'}
+            title={`${username ?? ''} · Log out`}
+            onClick={onLogout}
+          >
+            {initials}
+          </button>
+          <div className={styles.who}>
+            <span className={styles.name}>{username}</span>
+            <span className={styles.versions}>{versions}</span>
+          </div>
+          <button type="button" className={styles.theme} aria-label={themeLabel} title={themeLabel} onClick={() => setTheme(dark ? 'light' : 'dark')}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d={dark ? ICONS.sun : ICONS.moon} />
+            </svg>
+          </button>
         </div>
       </div>
     </nav>

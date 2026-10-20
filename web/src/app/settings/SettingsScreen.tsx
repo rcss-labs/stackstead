@@ -33,10 +33,9 @@ const DENSITY_OPTIONS = [
 ];
 
 /**
- * Section links scroll to a card and move focus to its heading. The default fragment navigation would
- * blur the heading again (the target div is not focusable), so scroll, focus and the hash are done here.
- * scroll-margin-top on the target keeps the heading below the sticky bar; `behavior: 'auto'` follows the
- * page's own scroll-behavior (instant under reduced motion).
+ * Scrolls to a section card and moves focus to its heading. `behavior: 'auto'` follows the page's own
+ * scroll-behavior (instant under reduced motion); scroll-margin-top on the target keeps the heading
+ * below the sticky bar.
  */
 function scrollToSection(sectionId: string): boolean {
   const target = document.getElementById(sectionId);
@@ -46,6 +45,10 @@ function scrollToSection(sectionId: string): boolean {
   return true;
 }
 
+/**
+ * Section links scroll to a card and move focus to its heading. The default fragment navigation would
+ * blur the heading again (the target div is not focusable), so scroll, focus and the hash are done here.
+ */
 function goToSection(event: MouseEvent<HTMLAnchorElement>, sectionId: string) {
   // Modified and non-primary clicks open the section in a new tab or window; leave those to the browser.
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
