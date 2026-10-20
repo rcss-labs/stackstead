@@ -322,6 +322,13 @@ func (s *Store) DeletePeer(ctx context.Context, id string) error {
 	return affectedOrNotFound(res, err)
 }
 
+// DeletePendingBefore removes pending rows created before cutoff: pairings
+// that never finished (a crash or a killed request left them behind).
+func (s *Store) DeletePendingBefore(ctx context.Context, cutoff time.Time) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM peers WHERE state = ? AND created_at < ?`, string(StatePending), cutoff.Unix())
+	return err
+}
+
 func affectedOrNotFound(res sql.Result, err error) error {
 	if err != nil {
 		return err

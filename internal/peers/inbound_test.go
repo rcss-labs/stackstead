@@ -102,3 +102,47 @@ func TestPeerNamesLoseControlAndFormatCharacters(t *testing.T) {
 		t.Errorf("blank-after-strip = %v", err)
 	}
 }
+
+func TestStalePendingRowsCannotAuthenticateAndAreRemoved(t *testing.T) {
+	ctx := context.Background()
+	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	st := newTestStore(t, clock.now)
+	svc := NewService(ServiceConfig{
+		Store: st, Version: "1.0.0", Now: clock.now, Logger: slog.New(slog.DiscardHandler),
+		Hostname: func() (string, error) { return "b-host", nil },
+	})
+	if err := st.InsertPeer(ctx, Peer{InstanceID: "p-old", Name: "old", State: StatePending}, HashSecret("ssp_old")); err != nil {
+		t.Fatal(err)
+	}
+	clock.advance(90 * time.Second)
+	if err := st.InsertPeer(ctx, Peer{InstanceID: "p-new", Name: "new", State: StatePending}, HashSecret("ssp_new")); err != nil {
+		t.Fatal(err)
+	}
+	clock.advance(90 * time.Second) // p-old is now 3 minutes old, p-new 90 seconds
+
+	if _, err := svc.Authenticate(ctx, "ssp_old", true); !errors.Is(err, ErrNotPaired) {
+		t.Errorf("a 3-minute-old pending row authenticated hello: %v", err)
+	}
+	if _, err := svc.Authenticate(ctx, "ssp_new", true); err != nil {
+		t.Errorf("a fresh pending row was refused: %v", err)
+	}
+
+	views, err := svc.Views(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(views) != 1 || views[0].Name != "new" {
+		t.Errorf("Views = %+v, want only the fresh pending row", views)
+	}
+	if _, err := st.Peer(ctx, "p-old"); !errors.Is(err, ErrPeerNotFound) {
+		t.Errorf("stale pending row still stored: %v", err)
+	}
+
+	clock.advance(time.Minute) // p-new is now stale too; the checker's pass removes it
+	if _, err := svc.checkAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := st.CountPeers(ctx); n != 0 {
+		t.Errorf("%d rows left after a checker pass, want 0", n)
+	}
+}

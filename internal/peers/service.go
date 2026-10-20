@@ -473,6 +473,7 @@ func (s *Service) Remove(ctx context.Context, id string) error {
 
 // Views lists the connected servers as Settings shows them.
 func (s *Service) Views(ctx context.Context) ([]apitypes.PeerView, error) {
+	s.expirePending(ctx)
 	list, err := s.cfg.Store.Peers(ctx)
 	if err != nil {
 		return nil, err
@@ -482,6 +483,14 @@ func (s *Service) Views(ctx context.Context) ([]apitypes.PeerView, error) {
 		views = append(views, s.viewOf(p))
 	}
 	return views, nil
+}
+
+// expirePending drops pending rows older than pendingTTL; a failure only means
+// they are tried again next time.
+func (s *Service) expirePending(ctx context.Context) {
+	if err := s.cfg.Store.DeletePendingBefore(ctx, s.cfg.Now().Add(-pendingTTL)); err != nil {
+		s.cfg.Logger.Warn("could not remove stale pairing records", "err", err)
+	}
 }
 
 // viewOf shows a peer with the checker's last verdict. Without one (just

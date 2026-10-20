@@ -90,6 +90,7 @@ func (s *Service) interval() time.Duration {
 // checkAll says hello to every active peer in parallel and returns how many
 // there were.
 func (s *Service) checkAll(ctx context.Context) (int, error) {
+	s.expirePending(ctx)
 	list, err := s.cfg.Store.Peers(ctx)
 	if err != nil {
 		return 0, err

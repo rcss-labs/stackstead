@@ -28,6 +28,10 @@ const PeerHeader = "X-Stackstead-Peer"
 
 const maxPeerNameLength = 64
 
+// pendingTTL is how long a pending row (a pairing in progress) is honoured.
+// A pairing takes seconds; older rows are leftovers and are ignored and removed.
+const pendingTTL = 2 * time.Minute
+
 var (
 	// ErrSelfPair is returned when a server is asked to pair with itself.
 	ErrSelfPair = errors.New("cannot pair with itself")
@@ -128,7 +132,7 @@ func (s *Service) Authenticate(ctx context.Context, credential string, helloOnly
 	case StateActive:
 		return p, nil
 	case StatePending:
-		if helloOnly {
+		if helloOnly && s.cfg.Now().Sub(p.CreatedAt) <= pendingTTL {
 			return p, nil
 		}
 	}
