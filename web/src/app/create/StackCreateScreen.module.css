@@ -48,8 +48,9 @@
   padding: 14px;
   position: sticky;
   top: 72px;
+  /* Stuck below the 72px header with a 16px margin: Create stays on screen, the preview scrolls. */
+  max-height: calc(100vh - 88px);
 }
-.side[data-mobile] { position: static; }
 .check { display: flex; gap: 8px; align-items: center; font-size: 12.5px; }
 .check code { font-family: var(--mono); font-size: 12px; }
 .actions { display: flex; gap: 8px; }
@@ -71,5 +72,5 @@
   .header h1 { font-size: 20px; }
   .actions > * { min-height: 40px; }
   .cancel, .create { flex: 1; }
-  .side { position: static; }
+  .side { position: static; max-height: none; }
 }

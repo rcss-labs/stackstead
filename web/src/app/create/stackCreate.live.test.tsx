@@ -47,12 +47,6 @@ afterEach(async () => {
 
 const addPort = async (user: ReturnType<typeof userEvent.setup>) => user.click(screen.getByRole('button', { name: 'Add port' }));
 const preview = () => within(screen.getByRole('region', { name: 'compose.yaml' })).getByText(/^services:/, { selector: 'pre' });
-const stubMobile = (mobile: boolean) =>
-  vi.stubGlobal('matchMedia', (query: string) => ({
-    matches: mobile && query === '(max-width: 759px)',
-    addEventListener: () => {},
-    removeEventListener: () => {},
-  }));
 
 describe('New stack port check', () => {
   it('shows a conflict from a published container port and a free note otherwise', async () => {
@@ -115,6 +109,16 @@ describe('New stack port check', () => {
     await user.type(screen.getByLabelText('Port 1'), '8080:5432');
     expect(await screen.findByText('Port 8080 is also published by web in this stack')).toBeTruthy();
     expect(screen.getByLabelText('Port 1').getAttribute('data-check')).toBe('warning');
+  });
+
+  it('flags a duplicate port between two unnamed cards', async () => {
+    const user = await mount();
+    await addPort(user);
+    await user.type(screen.getByLabelText('Port 1'), '8080:80');
+    await user.click(screen.getByRole('button', { name: '+ Add another service' }));
+    await addPort(user);
+    await user.type(screen.getByLabelText('Port 1'), '8080:80');
+    expect(await screen.findByText('Port 8080 is also published by another service in this stack')).toBeTruthy();
   });
 
   it('the note is protocol-aware and ignores the host ip', async () => {
@@ -223,23 +227,5 @@ describe('New stack unsaved-changes guard', () => {
     } finally {
       stream.restore();
     }
-  });
-});
-
-describe('New stack on a narrow screen', () => {
-  it('renders one column with a static preview under 760px', async () => {
-    stubMobile(true);
-    await mount();
-    const aside = screen.getByRole('region', { name: 'compose.yaml' }).closest('aside');
-    await waitFor(() => expect(aside?.hasAttribute('data-mobile')).toBe(true));
-    expect(screen.getByRole('button', { name: 'Create stack' }).parentElement?.hasAttribute('data-mobile')).toBe(true);
-  });
-
-  it('is not marked mobile on a wide screen', async () => {
-    stubMobile(false);
-    await mount();
-    const aside = screen.getByRole('region', { name: 'compose.yaml' }).closest('aside');
-    expect(aside?.hasAttribute('data-mobile')).toBe(false);
-    expect(screen.getByRole('button', { name: 'Create stack' }).parentElement?.hasAttribute('data-mobile')).toBe(false);
   });
 });

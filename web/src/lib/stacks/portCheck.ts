@@ -18,6 +18,8 @@ export interface PublishedPort {
 export type PortVerdict = { tone: 'danger' | 'warning' | 'success'; text: string };
 
 export interface FormPort {
+  /** Card id: names may be empty or repeated, so they cannot identify a row. */
+  card: number;
   service: string;
   index: number;
   spec: string;
@@ -96,14 +98,14 @@ export function publishedPorts(rows: ContainerRow[]): PublishedPort[] {
 
 export function portVerdict(
   spec: string,
-  own: { service: string; index: number },
+  own: { card: number; service: string; index: number },
   formPorts: FormPort[],
   published: PublishedPort[] | undefined,
 ): PortVerdict | undefined {
   const host = hostPorts(spec);
   if (!host || !published) return undefined;
 
-  const ownAt = formPorts.findIndex((p) => p.service === own.service && p.index === own.index);
+  const ownAt = formPorts.findIndex((p) => p.card === own.card && p.index === own.index);
   const earlier = (ownAt < 0 ? formPorts : formPorts.slice(0, ownAt)).flatMap((p) => {
     const h = hostPorts(p.spec);
     return h && h.proto === host.proto ? [{ service: p.service, lo: h.lo, hi: h.hi }] : [];

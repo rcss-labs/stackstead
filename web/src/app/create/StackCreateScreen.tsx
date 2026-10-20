@@ -2,7 +2,6 @@ import { Link } from 'react-router';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { Field } from '../components/Field';
-import { useIsMobile } from '../hooks/useIsMobile';
 import { previewYaml } from '$lib/stacks/createPreview';
 import { BROWSE_TITLES } from '../stacks/ServiceForm';
 import { FileBrowser } from '../stacks/FileBrowser';
@@ -16,7 +15,6 @@ export function StackCreateScreen() {
   const form = useCreateForm();
   const { cards, browser, pending } = form;
   const frozen = pending || browser !== null;
-  const mobile = useIsMobile();
   const portNoteFor = usePortCheck(cards);
 
   return (
@@ -87,7 +85,7 @@ export function StackCreateScreen() {
         </form>
       </div>
 
-      <aside className={styles.side} data-mobile={mobile || undefined}>
+      <aside className={styles.side}>
         <ComposePreview text={previewYaml(cards)} />
         <label className={styles.check}>
           <input type="checkbox" checked={form.startNow} onChange={(e) => form.setStartNow(e.target.checked)} />
@@ -95,7 +93,7 @@ export function StackCreateScreen() {
             Start now (<code>up --build</code>)
           </span>
         </label>
-        <div className={styles.actions} data-mobile={mobile || undefined}>
+        <div className={styles.actions}>
           <Link to="/" className={styles.cancel}>
             Cancel
           </Link>

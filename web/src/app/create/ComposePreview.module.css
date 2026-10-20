@@ -3,6 +3,10 @@
   border: 1px solid var(--hi);
   border-radius: 12px;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 0 1 auto;
 }
 .header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; }
 .header h2 { margin: 0; font-size: 13px; font-weight: 600; }
@@ -28,6 +32,8 @@
   background: var(--bg);
   overflow: auto;
   max-height: 60vh;
+  min-height: 0;
+  flex: 1 1 auto;
 }
 
 @media (max-width: 759px) {

@@ -306,9 +306,10 @@ describe('New stack screen', () => {
     await mount();
     const create = screen.getByRole('button', { name: 'Create stack' }) as HTMLButtonElement;
     const stackName = screen.getByLabelText('Stack name') as HTMLInputElement;
-    expect(create.type).toBe('submit');
-    expect(create.form).toBe(stackName.form);
-    expect(stackName.form?.contains(create)).toBe(false);
+    const form = stackName.form as HTMLFormElement;
+    const defaultButton = [...form.elements].find((el) => (el as HTMLButtonElement).type === 'submit');
+    expect(defaultButton).toBe(create);
+    expect(form.contains(create)).toBe(false);
   });
 
   it('a stale build error is dropped when switching back to image', async () => {

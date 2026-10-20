@@ -65,7 +65,7 @@ describe('publishedPorts', () => {
 });
 
 describe('portVerdict', () => {
-  const own = { service: 'web', index: 0 };
+  const own = { card: 0, service: 'web', index: 0 };
   const tcp = (port: number, who: string): PublishedPort => ({ port, proto: 'tcp', who });
 
   it('reports a published port as used', () => {
@@ -93,10 +93,10 @@ describe('portVerdict', () => {
 
   it('flags a port another card published earlier in the form', () => {
     const formPorts = [
-      { service: 'web', index: 0, spec: '8080:80' },
-      { service: 'db', index: 0, spec: '8080:5432' },
+      { card: 0, service: 'web', index: 0, spec: '8080:80' },
+      { card: 1, service: 'db', index: 0, spec: '8080:5432' },
     ];
-    expect(portVerdict('8080:5432', { service: 'db', index: 0 }, formPorts, [])).toEqual({
+    expect(portVerdict('8080:5432', { card: 1, service: 'db', index: 0 }, formPorts, [])).toEqual({
       tone: 'warning',
       text: 'Port 8080 is also published by web in this stack',
     });
@@ -104,28 +104,40 @@ describe('portVerdict', () => {
 
   it('does not flag the same row against itself or against later rows', () => {
     const formPorts = [
-      { service: 'web', index: 0, spec: '8080:80' },
-      { service: 'db', index: 0, spec: '8080:80' },
+      { card: 0, service: 'web', index: 0, spec: '8080:80' },
+      { card: 1, service: 'db', index: 0, spec: '8080:80' },
     ];
     expect(portVerdict('8080:80', own, formPorts, [])?.tone).toBe('success');
   });
 
+  it('tells two cards with the same name apart by card id', () => {
+    const formPorts = [
+      { card: 0, service: '', index: 0, spec: '8080:80' },
+      { card: 1, service: '', index: 0, spec: '8080:80' },
+    ];
+    expect(portVerdict('8080:80', { card: 1, service: '', index: 0 }, formPorts, [])).toEqual({
+      tone: 'warning',
+      text: 'Port 8080 is also published by another service in this stack',
+    });
+    expect(portVerdict('8080:80', { card: 0, service: '', index: 0 }, formPorts, [])?.tone).toBe('success');
+  });
+
   it('names an unnamed card "another service"', () => {
     const formPorts = [
-      { service: '', index: 0, spec: '8080:80' },
-      { service: 'db', index: 0, spec: '8080:80' },
+      { card: 0, service: '', index: 0, spec: '8080:80' },
+      { card: 1, service: 'db', index: 0, spec: '8080:80' },
     ];
-    expect(portVerdict('8080:80', { service: 'db', index: 0 }, formPorts, [])?.text).toBe(
+    expect(portVerdict('8080:80', { card: 1, service: 'db', index: 0 }, formPorts, [])?.text).toBe(
       'Port 8080 is also published by another service in this stack',
     );
   });
 
   it('prefers the container conflict over the in-form one', () => {
     const formPorts = [
-      { service: 'web', index: 0, spec: '8080:80' },
-      { service: 'db', index: 0, spec: '8080:80' },
+      { card: 0, service: 'web', index: 0, spec: '8080:80' },
+      { card: 1, service: 'db', index: 0, spec: '8080:80' },
     ];
-    expect(portVerdict('8080:80', { service: 'db', index: 0 }, formPorts, [tcp(8080, 'proxy')])?.tone).toBe('danger');
+    expect(portVerdict('8080:80', { card: 1, service: 'db', index: 0 }, formPorts, [tcp(8080, 'proxy')])?.tone).toBe('danger');
   });
 
   it('is silent for container-only, templated and malformed specs', () => {

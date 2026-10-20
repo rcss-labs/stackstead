@@ -12,9 +12,9 @@ import type { Card } from './useCreateForm';
 export function usePortCheck(cards: Card[]): (cardId: number) => (spec: string, index: number) => PortVerdict | undefined {
   const { rows } = useContainerList();
   const published = useMemo(() => rows && publishedPorts(rows), [rows]);
-  const formPorts: FormPort[] = cards.flatMap((card) => card.form.ports.map((spec, index) => ({ service: card.name, index, spec })));
+  const formPorts: FormPort[] = cards.flatMap((card) => card.form.ports.map((spec, index) => ({ card: card.id, service: card.name, index, spec })));
   return (cardId) => {
     const card = cards.find((candidate) => candidate.id === cardId);
-    return (spec, index) => (card ? portVerdict(spec, { service: card.name, index }, formPorts, published) : undefined);
+    return (spec, index) => (card ? portVerdict(spec, { card: card.id, service: card.name, index }, formPorts, published) : undefined);
   };
 }
