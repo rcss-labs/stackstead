@@ -208,12 +208,42 @@ x-common:
     expect(card.form.ports).toEqual([]);
   });
 
-  it('numeric env values and ports keep their source text', () => {
-    const text = 'services:\n  a:\n    image: x\n    ports: [0x1F]\n    environment:\n      MODE: 0755\n      HEX: 0x1F\n';
+  it('plain numbers are read the way the Go server reads them', () => {
+    const text = `services:
+  a:
+    image: x
+    ports: ["8080:80", 0x1F]
+    environment:
+      MODE: 0755
+      H: 0x1F
+      US: 1_000
+      Q: "0755"
+    deploy:
+      resources:
+        limits: {memory: 0755}
+`;
     const card = mustParse(text).cards[0];
-    expect(card.form.env).toEqual([{ name: 'MODE', value: '0755' }, { name: 'HEX', value: '0x1F' }]);
-    expect(card.form.ports).toEqual(['0x1F']);
+    expect(card.form.env).toEqual([
+      { name: 'MODE', value: '493' },
+      { name: 'H', value: '31' },
+      { name: 'US', value: '1_000' },
+      { name: 'Q', value: '0755' },
+    ]);
+    expect(card.form.ports).toEqual(['8080:80', '31']);
+    expect(card.form.memory).toBe('493');
     expect(card.form.readOnly.size).toBe(0);
+    const [y1, y2] = roundTrip(text);
+    const again = mustParse(y1).cards[0];
+    expect(again.form).toEqual(card.form);
+    expect(parsed(y2)).toEqual(parsed(y1));
+  });
+
+  it('legacy octal is read through anchors and merge keys and in extras', () => {
+    const text = 'x-e: &e {MODE: 0755}\nx-plain: {m: 0755, q: "0755"}\nservices:\n  a:\n    image: x\n    environment:\n      <<: *e\n';
+    const r = mustParse(text);
+    expect(r.cards[0].form.env).toEqual([{ name: 'MODE', value: '493' }]);
+    expect(r.extra).toEqual({ 'x-e': { MODE: 493 }, 'x-plain': { m: 493, q: '0755' } });
+    expect(parsed(stackToYaml(r.cards, r.extra))['x-e']).toEqual({ MODE: 493 });
   });
 
   it('numeric ports and env values become strings', () => {

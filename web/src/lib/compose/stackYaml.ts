@@ -1,4 +1,4 @@
-import { Document, isMap, isScalar, isSeq, parseDocument, Pair, YAMLMap } from 'yaml';
+import { Document, isMap, isScalar, isSeq, parseDocument, Pair, visit, YAMLMap } from 'yaml';
 import type { Field } from '../api/types';
 import { emptyForm, fromForm, type ServiceForm } from './form';
 
@@ -376,23 +376,19 @@ function hasNonFinite(v: unknown): boolean {
   return false;
 }
 
-/** YAML 1.2 reads 0755 as 755 but the Go server reads octal, so numbers in ports, volumes and env keep their source text. */
-function keepNumberSources(doc: Document.Parsed): void {
-  const asText = (node: unknown) => {
-    if (isScalar(node) && typeof node.value === 'number' && typeof node.source === 'string') node.value = node.source;
-  };
-  const services = doc.get('services', true);
-  if (!isMap(services)) return;
-  for (const pair of services.items) {
-    const service = pair.value;
-    if (!isMap(service)) continue;
-    for (const key of ['ports', 'volumes']) {
-      const list = service.get(key, true);
-      if (isSeq(list)) list.items.forEach(asText);
-    }
-    const env = service.get('environment', true);
-    if (isMap(env)) env.items.forEach((p) => asText(p.value));
-  }
+/**
+ * YAML 1.2 core reads a plain 0755 as decimal 755, but the Go server (yaml.v3) reads legacy octal as 493. The create request
+ * carries JSON values the server re-renders, so plain scalars are read the way Go reads them. Hex (0x1F) and 1_000 already agree.
+ * Visiting the whole document also covers anchored values, merge keys and top-level x-* blocks. Quoted scalars are untouched.
+ */
+function readLegacyOctal(doc: Document.Parsed): void {
+  visit(doc, {
+    Scalar(_key, node) {
+      if (node.type === 'PLAIN' && typeof node.value === 'number' && typeof node.source === 'string' && /^[-+]?0[0-7]+$/.test(node.source)) {
+        node.value = parseInt(node.source, 8);
+      }
+    },
+  });
 }
 
 export function yamlToStack(text: string, dockerfiles: Record<string, string>, maxServices: number): ParseResult {
@@ -405,7 +401,7 @@ export function yamlToStack(text: string, dockerfiles: Record<string, string>, m
   let root: unknown;
   try {
     // JSON round trip: expands aliases into independent copies (no shared references that would be written back as anchors).
-    keepNumberSources(doc);
+    readLegacyOctal(doc);
     const js = doc.toJS({ maxAliasCount: 1000 });
     if (hasNonFinite(js)) return { ok: false, message: 'Values such as .inf and .nan cannot be kept' };
     root = js === undefined ? undefined : JSON.parse(JSON.stringify(js));
