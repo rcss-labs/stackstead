@@ -229,6 +229,22 @@ describe('build shape', () => {
     for (const file of eagerFiles) expect(readFileSync(join(dist, file), 'utf8'), `${file} must not contain the Dockerfile mode`).not.toContain('stopsignal');
   });
 
+  it.skipIf(!existsSync(manifestPath))('keeps the YAML library out of the eager entry', () => {
+    const sizes = measure(dist);
+    const lazyFiles = sizes.lazy.map((l: { file: string }) => l.file);
+    const eagerFiles = readdirSync(join(dist, 'assets'))
+      .filter((f) => f.endsWith('.js'))
+      .map((f) => `assets/${f}`)
+      .filter((f) => !lazyFiles.includes(f));
+    // One string from the yaml parser and one from stackYaml.ts. The eager code is one merged chunk, so they reveal folded-in code.
+    // Presence in a lazy chunk is not asserted here: it holds once the lazy New stack screen imports stackYaml.ts (a later task),
+    // and until then the bundler drops the unused module entirely.
+    const markers = ['Implicit map keys need to be followed by map values', 'A stack needs a services: section'];
+    for (const marker of markers) {
+      for (const file of eagerFiles) expect(readFileSync(join(dist, file), 'utf8'), `${file} must not contain ${marker}`).not.toContain(marker);
+    }
+  });
+
   it.skipIf(!existsSync(manifestPath))('keeps the networks, settings and auth screens out of the eager entry', () => {
     const sizes = measure(dist);
     const lazyFiles = sizes.lazy.map((l: { file: string }) => l.file);
