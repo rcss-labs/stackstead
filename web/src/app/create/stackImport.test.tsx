@@ -40,9 +40,8 @@ async function mount(extra: Record<string, unknown> = {}) {
 const submit = (user: ReturnType<typeof userEvent.setup>) => user.click(screen.getByRole('button', { name: 'Import stack' }));
 const importCall = () => fake.calls.find((c) => c.path === '/api/stacks/import');
 
-afterEach(async () => {
+afterEach(() => {
   cleanup();
-  await new Promise((resolve) => setTimeout(resolve, 0)); // let the media store release, so each test reads its own width
   fake?.restore();
   toasts.reset();
   vi.unstubAllGlobals();
@@ -152,11 +151,5 @@ describe('Import stack screen', () => {
 describe('Import stack route and layout', () => {
   it('the route table titles /stacks/import as Import stack', () => {
     expect(findRoute('/stacks/import')?.title).toBe('Import stack');
-  });
-
-  it('the Import button and Browse are 40px targets on mobile', async () => {
-    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(max-width: 759px)', addEventListener: () => {}, removeEventListener: () => {} }));
-    await mount();
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Import stack' }).closest('footer')?.getAttribute('data-mobile')).toBe('true'));
   });
 });

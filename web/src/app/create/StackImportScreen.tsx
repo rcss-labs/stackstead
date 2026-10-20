@@ -7,13 +7,11 @@ import { toasts } from '$lib/stores/toasts';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { Field } from '../components/Field';
-import { useIsMobile } from '../hooks/useIsMobile';
 import { FileBrowser } from '../stacks/FileBrowser';
 import styles from './StackImportScreen.module.css';
 
 export function StackImportScreen() {
   const navigate = useNavigate();
-  const mobile = useIsMobile();
   const [path, setPath] = useState('');
   const [pathError, setPathError] = useState('');
   const [composeError, setComposeError] = useState('');
@@ -32,6 +30,7 @@ export function StackImportScreen() {
     setFocusRequest((n) => n + 1);
   }
 
+  // composeError is read at the render a focus request commits with, so [focusRequest] is the only dep that matters.
   useLayoutEffect(() => {
     if (!pendingFocus.current) return;
     pendingFocus.current = false;
@@ -114,7 +113,7 @@ export function StackImportScreen() {
             </div>
           )}
         </div>
-        <footer className={styles.footer} data-mobile={mobile ? 'true' : undefined}>
+        <footer className={styles.footer}>
           <Link to="/" className={styles.cancel}>
             Cancel
           </Link>
