@@ -63,6 +63,47 @@ stream (logs, metrics or an operation). HTTP/1.1 allows only 6 connections per
 origin, so behind an HTTP/1.1 proxy more than about two tabs can starve regular
 requests. Use an HTTP/2 reverse proxy, or keep at most two tabs open.
 
+## Connected servers
+
+Two Stackstead servers can be connected, so each web UI can show and manage
+both. On one server, Settings → Connected servers creates a connection token.
+Pasting it into the other server's Add server form pairs them.
+
+**A connection is root on both machines.** Anyone signed in to one server can
+do on the other whatever that server's admin can. Connect only servers you
+would give a root password to.
+
+- Connection tokens start with `ssc_`. A token is shown once, works once and
+  expires after 15 minutes. At most five are outstanding; a sixth invalidates
+  the oldest. Only its SHA-256 is stored.
+- Each direction has its own peer credential, starting with `ssp_`. The server
+  that issued a credential keeps only its SHA-256. The server that holds it
+  keeps the plaintext in SQLite, in the 0700 state directory. `stackstead db
+  backup` includes it, so a backup is as sensitive as the database. No API
+  returns a credential after it is created, and none is logged.
+- Peers send the credential in an `X-Stackstead-Peer` header, never in
+  `Authorization`. A proxy's own login can stay in place; see
+  [install.md](install.md#connected-servers-behind-a-login-proxy).
+- HTTPS is required. Plain `http://` is allowed only when every resolved
+  address of both servers is private (loopback, RFC 1918, `fc00::/7`, or
+  link-local) and you tick "I accept sending a root-equivalent credential
+  unencrypted". Self-signed certificates work with a CA certificate or a
+  pinned SHA-256 fingerprint. A pin is used only when the certificate is not
+  publicly trusted.
+- Peer credentials cannot reach `/api/peers`, `/api/settings`, `/api/password`,
+  `/api/logout`, `/api/setup`, `/api/servers` or `/api/fleet`. Those answer
+  403 `peer_forbidden`. This stops a connected server from chaining further
+  or changing this server's settings by accident. **It is not a security
+  boundary.** A peer can read this server's database through the file browser
+  or compose, and from there reach anything else this server holds. Do not
+  rely on it to keep connected servers apart.
+- Removing a connection takes effect at once on the server where you remove
+  it. The other side is told immediately if it can be reached, otherwise at
+  its next status check.
+- A backup restored onto a different machine keeps the original instance ID,
+  so the copy looks like the original server. Remove the connection on both
+  sides and pair again.
+
 ## First-run setup
 
 The first visit creates the admin account. From the machine itself no extra
