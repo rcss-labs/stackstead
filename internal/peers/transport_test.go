@@ -2,6 +2,7 @@ package peers
 
 import (
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
@@ -138,5 +139,31 @@ func TestProbeReportsFingerprint(t *testing.T) {
 	res, err = Probe(t.Context(), u2)
 	if err != nil || res.Peering != 0 {
 		t.Errorf("got %+v, %v; want peering 0", res, err)
+	}
+}
+
+func TestNewHTTPClientRejectsHTTPWithoutPlaintext(t *testing.T) {
+	u, _ := url.Parse("http://127.0.0.1:1")
+	if _, err := NewHTTPClient(u, TLSOptions{}, time.Second); err == nil {
+		t.Error("want error for http without plaintext acceptance")
+	}
+}
+
+func TestProbeSystemTrustedWithRootInPool(t *testing.T) {
+	srv, u, _, _ := tlsServer(t, jsonHandler(`{"ok":true,"peering":1}`))
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	res, err := probe(t.Context(), u, pool)
+	if err != nil || !res.SystemTrusted {
+		t.Errorf("got %+v, %v; want trusted", res, err)
+	}
+}
+
+func TestProbeUnreadableHealthIsProxy(t *testing.T) {
+	_, u, _, _ := tlsServer(t, jsonHandler(`not json`))
+	_, err := Probe(t.Context(), u)
+	var pe *PeerError
+	if !errors.As(err, &pe) || pe.Code != "peer_proxy" {
+		t.Fatalf("err = %v, want peer_proxy", err)
 	}
 }

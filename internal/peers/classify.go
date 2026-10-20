@@ -9,6 +9,9 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strings"
+
+	"github.com/rcss-labs/stackstead/internal/apitypes"
 )
 
 // Peer error codes surfaced to the UI and API.
@@ -47,9 +50,29 @@ func newPeerError(code, server, format string, cause error) *PeerError {
 	return &PeerError{Code: code, Server: server, Msg: fmt.Sprintf(format, server), cause: cause}
 }
 
-// Classify turns the outcome of a peer call into a PeerError, or nil when the
-// peer answered with JSON. It only reads the body of a 401, to look for the
-// peer_not_paired code; callers still own and close resp.Body.
+// RemoteError is a Stackstead error answer from the peer (for example a 409
+// or field errors) that callers can propagate as is.
+type RemoteError struct {
+	Status int
+	Server string
+	Body   apitypes.ErrorBody
+}
+
+func (e *RemoteError) Error() string { return e.Server + ": " + e.Body.Error }
+
+// Classify turns the outcome of a peer call into an error, or nil when the
+// peer answered normally. Contract:
+//   - err != nil: redirect refusal -> peer_proxy, TLS failures -> peer_tls,
+//     anything else -> peer_unreachable.
+//   - 204, 2xx application/json, 2xx text/event-stream -> nil; any other 2xx
+//     content type (an HTML page) -> peer_proxy.
+//   - 401 JSON with code "peer_not_paired" -> peer_unpaired (ErrNotPaired).
+//   - 3xx and every other 401/403 -> peer_proxy.
+//   - other non-2xx with a Stackstead JSON error body -> *RemoteError.
+//   - other non-2xx, non-JSON or without "error" -> peer_proxy.
+//
+// It reads (a bounded part of) the body only for non-2xx answers; callers
+// still own and close resp.Body.
 func Classify(server string, resp *http.Response, err error) error {
 	if err != nil {
 		return classifyTransportError(server, err)
@@ -57,21 +80,35 @@ func Classify(server string, resp *http.Response, err error) error {
 	if resp == nil {
 		return newPeerError(CodeUnreachable, server, "%s did not answer", nil)
 	}
-	if resp.StatusCode == http.StatusUnauthorized && isJSON(resp) {
+	status := resp.StatusCode
+	switch {
+	case status == http.StatusNoContent:
+		return nil
+	case status >= 200 && status < 300:
+		if isJSON(resp) || mediaType(resp) == "text/event-stream" {
+			return nil
+		}
+		return proxyError(server)
+	case status >= 300 && status < 400, status == http.StatusForbidden:
+		return proxyError(server)
+	case !isJSON(resp):
+		return proxyError(server)
+	}
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if status == http.StatusUnauthorized {
 		var body struct {
 			Code string `json:"code"`
 		}
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		if json.Unmarshal(data, &body) == nil && body.Code == codeInboundNotPaired {
 			return newPeerError(CodeUnpaired, server, "%s no longer recognises this server; pair it again", ErrNotPaired)
 		}
 		return proxyError(server)
 	}
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden ||
-		(resp.StatusCode >= 300 && resp.StatusCode < 400) || !isJSON(resp) {
+	var body apitypes.ErrorBody
+	if json.Unmarshal(data, &body) != nil || body.Error == "" {
 		return proxyError(server)
 	}
-	return nil
+	return &RemoteError{Status: status, Server: server, Body: body}
 }
 
 func proxyError(server string) error {
@@ -79,9 +116,14 @@ func proxyError(server string) error {
 		"something in front of %s (a reverse proxy or login page) answered instead of Stackstead", ErrProxyAnswered)
 }
 
+func mediaType(resp *http.Response) string {
+	mt, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	return mt
+}
+
 func isJSON(resp *http.Response) bool {
-	mt, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	return err == nil && (mt == "application/json" || (len(mt) > 5 && mt[len(mt)-5:] == "+json"))
+	mt := mediaType(resp)
+	return mt == "application/json" || strings.HasSuffix(mt, "+json")
 }
 
 // classifyTransportError never wraps err into the message: Go's url.Error

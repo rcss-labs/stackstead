@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
@@ -28,14 +27,21 @@ func (*pinMismatchError) Error() string {
 // and sets no overall Timeout so streams can run; timeout bounds the wait for
 // response headers.
 func NewHTTPClient(base *url.URL, opts TLSOptions, timeout time.Duration) (*http.Client, error) {
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	if base.Scheme == "http" && !opts.Plaintext {
+		return nil, errors.New("plain http needs the plaintext acceptance")
+	}
 	t := &http.Transport{
+		IdleConnTimeout:       90 * time.Second,
 		Proxy:                 nil,
 		ResponseHeaderTimeout: timeout,
 		TLSHandshakeTimeout:   timeout,
 		ForceAttemptHTTP2:     true,
 	}
 	dialer := &net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}
-	if base.Scheme == "http" {
+	if opts.Plaintext {
 		// Check the IP actually dialed, so DNS changing after validation
 		// cannot send a plaintext credential to a public address.
 		dialer.Control = func(_, address string, _ syscall.RawConn) error {
@@ -45,7 +51,8 @@ func NewHTTPClient(base *url.URL, opts TLSOptions, timeout time.Duration) (*http
 			}
 			return nil
 		}
-	} else {
+	}
+	if base.Scheme == "https" {
 		cfg, err := tlsConfig(opts)
 		if err != nil {
 			return nil, err
@@ -130,8 +137,9 @@ func probe(ctx context.Context, base *url.URL, roots *x509.CertPool) (ProbeResul
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
-			Proxy:           nil,
-			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true}, //nolint:gosec // probe only reads the certificate
+			Proxy:             nil,
+			DisableKeepAlives: true,
+			TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true}, //nolint:gosec // probe only reads the certificate
 		},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return ErrProxyAnswered },
 	}
@@ -156,7 +164,7 @@ func probe(ctx context.Context, base *url.URL, roots *x509.CertPool) (ProbeResul
 		Peering int `json:"peering"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
-		return res, fmt.Errorf("%s returned an unreadable health response", base.Host)
+		return res, proxyError(base.Host)
 	}
 	res.Peering = health.Peering
 	return res, nil

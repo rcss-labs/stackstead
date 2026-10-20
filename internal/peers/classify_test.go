@@ -40,6 +40,11 @@ func TestClassify(t *testing.T) {
 		{"302 sso", fakeResponse(302, "", ``), nil, "peer_proxy"},
 		{"403 json no code", fakeResponse(403, "application/json", `{"error":"no"}`), nil, "peer_proxy"},
 		{"dial refused", nil, refused, "peer_unreachable"},
+		{"204 no content type", fakeResponse(204, "", ``), nil, ""},
+		{"200 event stream", fakeResponse(200, "text/event-stream", ``), nil, ""},
+		{"200 no content type", fakeResponse(200, "", `x`), nil, "peer_proxy"},
+		{"500 html", fakeResponse(500, "text/html", `<html>`), nil, "peer_proxy"},
+		{"502 json without error", fakeResponse(502, "application/json", `{"x":1}`), nil, "peer_proxy"},
 		{"redirect refused", nil, ErrProxyAnswered, "peer_proxy"},
 	}
 	for _, c := range cases {
@@ -69,5 +74,21 @@ func TestClassifyDoesNotLeakCredentialFromError(t *testing.T) {
 	err := Classify("s", nil, errors.New(`Get "https://h/x?token=ssp_abc": dial tcp: refused`))
 	if strings.Contains(err.Error(), "ssp_") {
 		t.Errorf("leaked: %v", err)
+	}
+}
+
+func TestClassifyRemoteError(t *testing.T) {
+	resp := fakeResponse(409, "application/json",
+		`{"error":"stack is busy","fields":[{"field":"name","message":"taken"}]}`)
+	err := Classify("mini-02", resp, nil)
+	var re *RemoteError
+	if !errors.As(err, &re) {
+		t.Fatalf("err = %v, want *RemoteError", err)
+	}
+	if re.Status != 409 || re.Body.Error != "stack is busy" || len(re.Body.Fields) != 1 {
+		t.Errorf("got %+v", re)
+	}
+	if want := "mini-02: stack is busy"; err.Error() != want {
+		t.Errorf("message = %q, want %q", err.Error(), want)
 	}
 }

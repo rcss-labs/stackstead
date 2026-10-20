@@ -2,6 +2,7 @@ package peers
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -34,5 +35,12 @@ func TestNewCredential(t *testing.T) {
 	other, _, _ := NewCredential()
 	if other == s {
 		t.Error("credentials must be random")
+	}
+}
+
+func TestSecretMarshalsRedacted(t *testing.T) {
+	out, err := json.Marshal(struct{ S Secret }{"ssp_x"})
+	if err != nil || strings.Contains(string(out), "ssp_") || !strings.Contains(string(out), "[redacted]") {
+		t.Errorf("got %s, %v", out, err)
 	}
 }
