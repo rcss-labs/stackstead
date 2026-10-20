@@ -14,8 +14,8 @@ var (
 	ErrAlreadyPaired = errors.New("server is already paired")
 )
 
-// Secret is a credential that must not leak into logs or API output; Task 2
-// adds the methods that enforce that.
+// Secret is a credential that must not leak into logs or API output; its
+// methods (secret.go) redact it everywhere except Reveal.
 type Secret string
 
 type PeerState string
