@@ -322,7 +322,7 @@ function PeerRow({ peer, selfVersion, onRemove }: { peer: PeerView; selfVersion:
         <span className={styles.peerName}>{peer.name}</span>
         <span className={styles.meta}>
           {peer.url}
-          {peer.version && ` · v${peer.version.replace(/^v/, '')}`}
+          {peer.version && ` · ${/^v?\d+\.\d+/.test(peer.version) ? `v${peer.version.replace(/^v/, '')}` : peer.version}`}
           {peer.lastSeenAt && ` · seen ${relativeTime(peer.lastSeenAt, new Date())}`}
         </span>
         {removed && <span>{`${peer.name} removed this connection`}</span>}

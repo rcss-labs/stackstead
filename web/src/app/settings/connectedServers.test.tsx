@@ -188,6 +188,7 @@ describe('ConnectedServersCard', () => {
     expect(await screen.findByText('Alpha runs v0.4, this server v0.4. Update to match')).toBeTruthy();
     expect(screen.getByText('Beta runs dev, this server v0.4. Update to match')).toBeTruthy();
     expect(screen.queryByText(/Gamma runs/)).toBeNull();
+    expect(screen.queryByText(/vdev/)).toBeNull();
   });
 
   it('shows errors for hidden fields in the general banner', async () => {
@@ -219,7 +220,7 @@ describe('ConnectedServersCard', () => {
     const add = await screen.findByRole('button', { name: 'Add server' });
     await user.click(add);
     expect(fake.calls.some((c) => c.method === 'POST' && c.path === '/api/peers')).toBe(false);
-    expect(screen.getByText(/This server/, { selector: 'span, [role=tooltip], p' })).toBeTruthy();
+    expect(screen.getByText('Set this server\'s advertised address under "This server" first.')).toBeTruthy();
   });
 
   it('renaming this server sends PUT /api/peers/self', async () => {
