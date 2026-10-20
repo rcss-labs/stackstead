@@ -20,6 +20,7 @@ const (
 type NamedService struct {
 	Name   string
 	Config ServiceConfig
+	Extra  Extra // compose keys the form does not model, merged under the form's values
 }
 
 // ServiceConfig is the subset of a compose service that Stackstead edits
