@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import react from '@vitejs/plugin-react';
 import type { Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
 
@@ -20,14 +21,43 @@ function keepDistGitignore(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [svelte(), keepDistGitignore()],
+  plugins: [svelte(), react(), keepDistGitignore()],
   resolve: {
     alias: { $lib: fileURLToPath(new URL('./src/lib', import.meta.url)) },
     // Svelte 5 resolves to its server build under node unless told otherwise;
     // tests mount components in jsdom and need the browser build.
     ...(process.env.VITEST ? { conditions: ['browser'] } : {}),
   },
-  build: { outDir: 'dist', emptyOutDir: true, target: 'es2022', manifest: true },
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+    target: 'es2022',
+    manifest: true,
+    rollupOptions: {
+      output: {
+        chunkFileNames: 'assets/[name]-[hash].js',
+        // Rolldown stops merging entry-reachable common chunks into the entry once two lazy routes share modules
+        // (+2 kB gz of glue); naming every statically reachable module keeps all eager code in one chunk.
+        codeSplitting: {
+          groups: [
+            {
+              debugName: 'eager-shell',
+              name: (id, ctx) => {
+                const seen = new Set<string>();
+                const eager = (m: string): boolean => {
+                  if (seen.has(m)) return false;
+                  seen.add(m);
+                  const info = ctx.getModuleInfo(m);
+                  return !!info && (info.isEntry || info.importers.some(eager));
+                };
+                return eager(id) ? 'shell' : null;
+              },
+            },
+          ],
+        },
+      },
+    },
+  },
   // Dev goes through this proxy so the SameSite=Strict session cookie stays
   // same-origin with the page. SSE passes through unchanged.
   server: {

@@ -1,6 +1,6 @@
-# Stackstead build entry point. Only `ui`, `ui-app`, `build`, `release`, `ui-check`,
+# Stackstead build entry point. Only `ui`, `build`, `release`, `ui-check`,
 # `ui-test` and `check` need Node; `test` and `e2e` do not build the UI.
-.PHONY: help ui ui-app ui-check ui-test build build-go binaries release dist verify-release dist-clean packages pkg pkg-skip package-lint lint-image print-lint-image installer-test test check e2e clean
+.PHONY: help ui ui-check ui-test build build-go binaries release dist verify-release dist-clean packages pkg pkg-skip package-lint lint-image print-lint-image installer-test test check e2e clean
 
 BIN := bin
 
@@ -27,11 +27,8 @@ ui: web/node_modules/.package-lock.json ## Build the web UI into web/dist (needs
 ui-check: web/node_modules/.package-lock.json ## Type-check the web UI (svelte-check)
 	cd web && npm run check
 
-ui-app: web/node_modules/.package-lock.json ## Build the React app into web/dist-app (budget check included)
-	cd web && npm run build:app
-
-# Depends on ui-app so bundle.test.ts finds dist-app and the React build-shape test runs instead of skipping.
-ui-test: ui-app ## Run the web UI unit tests (vitest)
+# Depends on ui so bundle.test.ts finds web/dist and the build-shape tests run instead of skipping.
+ui-test: ui ## Run the web UI unit tests (vitest; builds first so bundle.test.ts measures web/dist)
 	cd web && npm run test
 
 build: ui ## Build the UI, then the static binary

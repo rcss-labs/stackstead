@@ -13,8 +13,6 @@
     "check": "svelte-check --tsconfig ./tsconfig.json && npm run check:app",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev:app": "vite -c vite.app.config.ts",
-    "build:app": "vite build -c vite.app.config.ts && node scripts/check-bundle.mjs dist-app",
     "check:app": "tsc --noEmit -p tsconfig.app.json"
   },
   "devDependencies": {

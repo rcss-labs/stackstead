@@ -88,20 +88,20 @@ describe('public logos', () => {
   });
 });
 
-describe('react app build shape', () => {
-  const dist = join(process.cwd(), 'dist-app');
+describe('build shape', () => {
+  const dist = join(process.cwd(), 'dist');
   const manifestPath = join(dist, '.vite', 'manifest.json');
   const lazyNames = [
     'StackDetail', 'StackCreate', 'StackImport', 'ContainerList', 'ContainerDetail', 'NetworkList',
     'Storage', 'StorageImage', 'StorageVolume', 'Settings', 'Login', 'Setup', 'NotFound',
     'CommandPalette', 'cm', 'uPlot.esm',
   ];
-  // Chunk files are named assets/<Name>-<hash>.js (see chunkFileNames in vite.app.config.ts).
+  // Chunk files are named assets/<Name>-<hash>.js (see chunkFileNames in vite.config.ts).
   const chunkName = (file: string) => file.replace(/^assets\//, '').replace(/-[\w-]{8}\.js$/, '');
 
   it.skipIf(!existsSync(manifestPath))('keeps every screen and the palette out of the eager entry', () => {
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-    expect(Object.keys(manifest).find((k) => manifest[k].isEntry)).toBe('app.html');
+    expect(Object.keys(manifest).find((k) => manifest[k].isEntry)).toBe('index.html');
 
     const sizes = measure(dist);
     const eager = readdirSync(join(dist, 'assets'))
@@ -126,7 +126,7 @@ describe('react app build shape', () => {
     expect(eagerFiles.map(chunkName).some((name) => /Container|LogConsole|Peek/i.test(name))).toBe(false);
     expect(sizes.entry).toBeLessThanOrEqual(106 * 1024);
 
-    // The eager code is one merged chunk (codeSplitting group in vite.app.config.ts), so a chunk name cannot reveal
+    // The eager code is one merged chunk (codeSplitting group in vite.config.ts), so a chunk name cannot reveal
     // container code folded into it; a string literal unique to each lazy screen can.
     const screens = [
       { chunk: 'ContainerList', marker: 'Could not load containers' },
