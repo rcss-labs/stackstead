@@ -124,6 +124,13 @@ export function useCreateForm(): CreateForm {
   // The shared guard asks before the user navigates away from a form they have typed into.
   useEffect(() => setUnsavedChanges(isCreateDirty({ stackName, cards })), [stackName, cards]);
   useEffect(() => () => setUnsavedChanges(false), []);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   function setStackName(name: string) {
     stackNameRef.current = name;
@@ -235,6 +242,8 @@ export function useCreateForm(): CreateForm {
           toasts.push({ kind: 'danger', message: `Stack created, but starting it failed: ${err instanceof Error ? err.message : String(err)}` });
         }
       }
+      // The user may have discarded and left while the request was in flight; do not pull them back.
+      if (!mountedRef.current) return;
       setUnsavedChanges(false);
       navigate(`/stacks/${encodeURIComponent(data.name)}?${query}`);
     } catch (err) {
@@ -270,7 +279,6 @@ export function useCreateForm(): CreateForm {
       }
       setFormError(nextFormError);
       setStackNameError(nextStackNameError);
-      setPending(false);
       focusFirstError();
     } finally {
       setPending(false);

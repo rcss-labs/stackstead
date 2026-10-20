@@ -394,6 +394,31 @@ describe('New stack screen', () => {
     expect(get(toasts).some((t) => t.message === 'Stack created, but starting it failed: busy')).toBe(true);
   });
 
+  it('states what is written and that nothing is written before confirming', async () => {
+    const user = await mount();
+    const lead = () => document.querySelector('header p')?.textContent;
+    expect(lead()).toBe('Writes compose.yaml into a folder named my-stack in the stacks directory. Nothing is written until you confirm.');
+    await user.type(screen.getByLabelText('Stack name'), 'blog');
+    expect(lead()).toBe('Writes compose.yaml into a folder named blog in the stacks directory. Nothing is written until you confirm.');
+  });
+
+  it('does not navigate to the new stack when the user left the page while the create was in flight', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    routes({ 'POST /api/stacks': async () => { await gate; return { status: 201, body: SUMMARY }; } });
+    const mounted = mountAt('/stacks/new');
+    await screen.findByLabelText('Stack name');
+    const user = userEvent.setup();
+    await fillImage(user);
+    await submit(user);
+    await waitFor(() => expect(post()).toBeTruthy());
+    await mounted.goTo('/');
+    expect(location()).toBe('/');
+    release();
+    await waitFor(() => expect(get(toasts).some((t) => t.message === 'Stack web created')).toBe(true));
+    expect(location()).toBe('/');
+  });
+
   it('the route table titles /stacks/new as New stack', () => {
     expect(findRoute('/stacks/new')?.title).toBe('New stack');
   });

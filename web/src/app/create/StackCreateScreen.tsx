@@ -23,7 +23,7 @@ export function StackCreateScreen() {
         <header className={styles.header}>
           <h1>New stack</h1>
           <p className={styles.lead}>
-            One or more services. Stackstead writes <code>compose.yaml</code> into a folder named <code>{form.stackName || 'my-stack'}</code> in its stacks directory.
+            Writes <code>compose.yaml</code> into a folder named <code>{form.stackName || 'my-stack'}</code> in the stacks directory. Nothing is written until you confirm.
           </p>
         </header>
         {form.unavailable && (
