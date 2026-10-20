@@ -167,7 +167,7 @@ describe('react app build shape', () => {
       for (const file of eagerFiles) expect(read(file), `${file} must not contain ${chunk} code`).not.toContain(marker);
     }
     const shared = [
-      { name: 'ServiceForm', marker: 'Open raw YAML editor' },
+      { name: 'ServiceForm', marker: 'Open raw YAML editor for ' },
       { name: 'FileBrowser', marker: 'This path is outside the allowed directories.' },
       { name: 'NetworkPicker', marker: 'Static IPv4 (optional)' },
     ];
