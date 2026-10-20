@@ -13,6 +13,11 @@ export interface PeersState {
 const state = writable<PeersState>({ items: [], loaded: false });
 export const peers: Readable<PeersState> = { subscribe: state.subscribe };
 
+/** Peers the rest of the app treats as existing: a pairing still in progress is not one yet. */
+export function connectedPeers(items: PeerView[]): PeerView[] {
+  return items.filter((p) => p.status !== 'pending');
+}
+
 let list: (() => Promise<PeerView[]>) | null = null;
 let seq = 0;
 

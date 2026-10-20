@@ -3,7 +3,7 @@ import { Route, Routes, useNavigate, useParams } from 'react-router';
 import { api, createApi } from '$lib/api/client';
 import type { PeerView } from '$lib/api/types';
 import { relativeTime } from '$lib/format';
-import { peers, refreshPeers } from '$lib/servers/peers';
+import { connectedPeers, peers, refreshPeers } from '$lib/servers/peers';
 import { scopedOpen } from '$lib/sse/client';
 import { createHostStore } from '$lib/stores/host';
 import { createLiveStore } from '$lib/stores/live';
@@ -25,8 +25,8 @@ const NotFound = lazy(() => import('../routes/NotFound'));
 /** The screens of `/s/:server/*`: the same routes as this server, fed by a connected server. */
 export default function RemoteServer() {
   const { server: slug } = useParams();
-  const { items, loaded } = useStore(peers);
-  const peer = items.find((p) => p.slug === slug);
+  const { items: allPeers, loaded } = useStore(peers);
+  const peer = connectedPeers(allPeers).find((p) => p.slug === slug);
   if (!loaded) return <Spinner label="Loading server" />;
   if (!peer) return <NotFoundPage />;
   // Keyed so another server (or this one under a new slug, which rebuilds its scope) never inherits stopped stores.

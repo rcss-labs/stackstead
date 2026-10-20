@@ -3,7 +3,7 @@ import type { KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router';
 import { api } from '$lib/api/client';
 import type { FleetStacks, Operation } from '$lib/api/types';
-import { peers } from '$lib/servers/peers';
+import { connectedPeers, peers } from '$lib/servers/peers';
 import { effectiveTheme, setTheme } from '$lib/stores/appearance';
 import { live } from '$lib/stores/live';
 import { trackOperation } from '$lib/stores/operationTracker';
@@ -34,7 +34,7 @@ export default function CommandPalette({ open, runningOps, onClose, onNavigate, 
   const { items } = useStore(stacks);
   const liveState = useStore(live);
   const theme = useStore(effectiveTheme);
-  const hasPeers = useStore(peers).items.length > 0;
+  const hasPeers = connectedPeers(useStore(peers).items).length > 0;
   const [fleet, setFleet] = useState<FleetStacks>();
   const [query, setQuery] = useState(initialQuery ?? '');
   const [selected, setSelected] = useState(0);

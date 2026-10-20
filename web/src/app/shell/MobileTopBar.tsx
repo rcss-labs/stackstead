@@ -1,4 +1,5 @@
-import { Link } from 'react-router';
+import { Link, useLocation } from 'react-router';
+import { splitServerPath } from '$lib/router';
 import { ICONS } from '$lib/shell/icons';
 import { Led } from '../components/Led';
 import { ServerSwitcher } from './ServerSwitcher';
@@ -14,6 +15,9 @@ export interface MobileTopBarProps {
 }
 
 export function MobileTopBar({ title, mono, attention, onOpenPalette, onNavigate }: MobileTopBarProps) {
+  // New stack belongs to the server being viewed, not always this one.
+  const { slug } = splitServerPath(useLocation().pathname);
+  const newStack = slug === null ? '/stacks/new' : `/s/${encodeURIComponent(slug)}/stacks/new`;
   return (
     <header className={styles.bar}>
       <Link to="/" className={styles.logo} aria-label="Stackstead">
@@ -29,7 +33,7 @@ export function MobileTopBar({ title, mono, attention, onOpenPalette, onNavigate
           <path d={ICONS.search} />
         </svg>
       </button>
-      <Link to="/stacks/new" className={`${styles.action} ${styles.primary}`} aria-label="New stack">
+      <Link to={newStack} className={`${styles.action} ${styles.primary}`} aria-label="New stack">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d={ICONS.plus} />
         </svg>

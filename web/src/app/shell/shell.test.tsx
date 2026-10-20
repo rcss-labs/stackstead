@@ -580,6 +580,25 @@ describe('server navigation', () => {
     expect(order.every((i) => i >= 0)).toBe(true);
   });
 
+  it('a pairing still pending does not turn the sidebar or switcher into the multi-server view', async () => {
+    await withPeers([peer({ status: 'pending' })]);
+    renderIn(<Sidebar {...props} current="/" />);
+    await screen.findByRole('link', { name: 'Stacks' });
+    expect(screen.queryByRole('link', { name: 'All stacks' })).toBeNull();
+    expect(screen.queryByText('this server')).toBeNull();
+    cleanup();
+    renderIn(<MobileTopBar title="Stacks" mono={false} attention={false} onOpenPalette={() => {}} />);
+    expect(screen.queryByRole('combobox', { name: 'Server' })).toBeNull();
+  });
+
+  it('mobile New stack creates on the viewed server, or locally when none is viewed', () => {
+    renderIn(<MobileTopBar title="Stacks" mono={false} attention={false} onOpenPalette={() => {}} />, '/s/mini-02/stacks');
+    expect(screen.getByRole('link', { name: 'New stack' }).getAttribute('href')).toBe('/s/mini-02/stacks/new');
+    cleanup();
+    renderIn(<MobileTopBar title="Stacks" mono={false} attention={false} onOpenPalette={() => {}} />, '/stacks');
+    expect(screen.getByRole('link', { name: 'New stack' }).getAttribute('href')).toBe('/stacks/new');
+  });
+
   it('the mobile switcher appears only with peers and navigates to /s/{slug}', async () => {
     const user = userEvent.setup();
     renderIn(<MobileTopBar title="Stacks" mono={false} attention={false} onOpenPalette={() => {}} />);
