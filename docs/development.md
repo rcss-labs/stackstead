@@ -142,6 +142,22 @@ the entry once two lazy routes share modules (about +2 kB gz of glue),
 reachable from the entry into one `app` chunk, which keeps the entry under that
 106 kB ceiling.
 
+The React New stack and Import screens live under `web/src/app/create/`. The New
+stack form state is `useCreateForm` (today's card identities, validation and
+error mapping through `lib/compose/form.ts`); the port-conflict verdicts and the
+preview text are the pure `lib/stacks/portCheck.ts` and
+`lib/stacks/createPreview.ts`. The check reads the live containers list through
+`useContainerList`, is advisory and never blocks a request (the server stays
+authoritative). The preview is `serviceConfigYaml` over `fromForm` in a `<pre>`,
+not CodeMirror. The shared `ServiceForm` gained the optional `advanced`
+disclosure, `portNote` and volume `Browse…` props; the stack-detail editors use
+neither of the first two. The New stack form feeds the one `unsavedChanges`
+store, and `Start now` tracks the `up` operation through `trackOperation`.
+Import is a one-field form over `api.importStack` with the shared `FileBrowser`
+in file mode. Both screens ride in the lazy `StackCreate` / `StackImport`
+chunks, and `bundle.test.ts` pins that nothing of theirs, nor `ServiceForm`,
+`FileBrowser`, `NetworkPicker` or `cm`, is eager.
+
 ## Tests
 
 ```bash
