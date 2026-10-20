@@ -239,6 +239,8 @@ export interface FieldError {
 /** `{error}` body of every failed JSON response. */
 export interface ErrorBody {
   error: string;
+  /** Machine-readable reason; set on peer failures. */
+  code?: string;
 }
 
 /** 400 body for validation failures: per-field messages next to the summary. */
@@ -669,3 +671,98 @@ export interface ActionEntry {
   result: string;
   operationId: string;
 }
+
+// Connected servers.
+
+export interface PeerTrust {
+  caPem: string;
+  pinSha256: string;
+  plaintext: boolean;
+}
+
+export interface ServerSelf {
+  instanceId: string;
+  name: string;
+  slug: string;
+  advertisedUrl: string;
+  suggestedUrl: string;
+  version: string;
+}
+
+export interface ServerSelfUpdate {
+  name: string;
+  advertisedUrl: string;
+}
+
+export interface ConnectionToken {
+  token: string;
+  /** RFC 3339 time. */
+  expiresAt: string;
+}
+
+export interface AddPeerRequest {
+  url: string;
+  token: string;
+  trust: PeerTrust;
+  selfTrust: PeerTrust;
+  advertisedUrl: string;
+}
+
+export interface PeerProbeRequest {
+  url: string;
+}
+
+export interface PeerProbe {
+  peering: number;
+  fingerprintSha256: string;
+  systemTrusted: boolean;
+  plaintextAllowed: boolean;
+}
+
+export type PeerStatus = 'reachable' | 'unreachable' | 'wrong_instance' | 'incompatible' | 'removed' | 'pending';
+
+export interface PeerView {
+  id: string;
+  name: string;
+  slug: string;
+  url: string;
+  version: string;
+  status: PeerStatus;
+  stackCount: number;
+  lastSeenAt: string | null;
+  lastError: string;
+  compatible: boolean;
+  plaintext: boolean;
+}
+
+export interface FleetServer {
+  id: string;
+  name: string;
+  slug: string;
+  local: boolean;
+  status: string;
+  error: string;
+  lastSeenAt: string | null;
+}
+
+/** A stack row tagged with the instance ID of the server that owns it. */
+export type FleetStack = StackSummary & { server: string };
+
+/** A Docker event tagged with the instance ID of the server it came from. */
+export type FleetEvent = DockerEvent & { server: string };
+
+export interface FleetStacks {
+  servers: FleetServer[];
+  stacks: FleetStack[];
+  events: FleetEvent[];
+}
+
+/** Peer failure codes carried in `ApiError.code`. */
+export type PeerErrorCode =
+  | 'peer_unreachable'
+  | 'peer_tls'
+  | 'peer_unpaired'
+  | 'peer_proxy'
+  | 'peer_version'
+  | 'peer_wrong_instance'
+  | 'peer_unknown';

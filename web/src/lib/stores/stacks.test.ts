@@ -1,7 +1,7 @@
 import { get, writable } from '$lib/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Change, StackSummary } from '../api/types';
-import { refreshStacks, stacks, startStacks } from './stacks';
+import { createStacksStore, refreshStacks, stacks, startStacks } from './stacks';
 
 type Ch = (Change & { resync?: true }) | null;
 
@@ -154,5 +154,20 @@ describe('stacks store', () => {
     emit('web');
     await tick(300);
     expect(list).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('createStacksStore', () => {
+  it('two stacks stores are independent', async () => {
+    const a = createStacksStore();
+    const b = createStacksStore();
+    const stopA = a.startStacks({ list: async () => [stack('a1')], changes: writable<Ch>(null) });
+    const stopB = b.startStacks({ list: async () => [stack('b1'), stack('b2')], changes: writable<Ch>(null) });
+    await tick();
+    expect(get(a.stacks).items.map((s) => s.name)).toEqual(['a1']);
+    expect(get(b.stacks).items.map((s) => s.name)).toEqual(['b1', 'b2']);
+    stopA();
+    expect(get(b.stacks).items).toHaveLength(2);
+    stopB();
   });
 });

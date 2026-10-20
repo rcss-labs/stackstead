@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installFakeStream, type FakeStream } from '../../vitest-setup';
-import { openSSE, type SSEMessage, type SSEStatus } from './client';
+import { openSSE, scopedOpen, type SSEMessage, type SSEStatus } from './client';
 
 let fake: FakeStream;
 beforeEach(() => {
@@ -390,5 +390,15 @@ describe('openSSE', () => {
     expect(fake.requests).toHaveLength(1);
     expect(h.status).toBe(expected);
     expect(c.statuses.at(-1)).toBe(expected);
+  });
+});
+
+describe('scopedOpen', () => {
+  it('prefixes the stream URL', async () => {
+    fake = installFakeStream({ '/api/servers/b1/api/events': [] });
+    const h = scopedOpen('/api/servers/b1')({ url: '/api/events', onMessage: () => {} });
+    await tick();
+    expect(fake.requests.map((r) => r.path)).toEqual(['/api/servers/b1/api/events']);
+    h.close();
   });
 });

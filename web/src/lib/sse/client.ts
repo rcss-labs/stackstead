@@ -222,3 +222,8 @@ export function openSSE(o: SSEOptions): SSEHandle {
   };
   return handle;
 }
+
+/** An opener whose stream URLs are relative to a connected server's base path. */
+export function scopedOpen(base: string): typeof openSSE {
+  return (o) => openSSE({ ...o, url: base + o.url });
+}
