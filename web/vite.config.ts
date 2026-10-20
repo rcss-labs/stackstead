@@ -1,6 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { svelte } from '@sveltejs/vite-plugin-svelte';
 import react from '@vitejs/plugin-react';
 import type { Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
@@ -21,12 +20,9 @@ function keepDistGitignore(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [svelte(), react(), keepDistGitignore()],
+  plugins: [react(), keepDistGitignore()],
   resolve: {
     alias: { $lib: fileURLToPath(new URL('./src/lib', import.meta.url)) },
-    // Svelte 5 resolves to its server build under node unless told otherwise;
-    // tests mount components in jsdom and need the browser build.
-    ...(process.env.VITEST ? { conditions: ['browser'] } : {}),
   },
   build: {
     outDir: 'dist',

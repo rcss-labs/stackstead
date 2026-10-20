@@ -1,6 +1,5 @@
-// The stack detail page's data and state machines, ported from StackDetail.svelte's script so a React screen
-// can be a thin renderer. All I/O goes through `deps` (the React hook passes the api methods and the shared
-// stores); every response is sequence-guarded so a late answer never replaces a newer one, and stop() leaves
+// The stack detail page's data and state machines, so a React screen can be a thin renderer. All I/O
+// goes through `deps` (the React hook passes the api methods and the shared stores); every response is sequence-guarded so a late answer never replaces a newer one, and stop() leaves
 // no timer, subscription or request behind. start() after stop() resumes, so one controller survives a
 // remounted effect.
 import { get, writable, type Readable, type Unsubscriber } from '$lib/store';
@@ -117,7 +116,7 @@ export function createStackDetail(name: string, deps: StackDetailDeps): StackDet
   const acting = writable(false);
   const removing = writable<RemovalSession | undefined>(undefined);
 
-  // `alive` mirrors the Svelte component's lifetime; `generation` invalidates every answer still in flight
+  // `alive` mirrors the owning screen's lifetime; `generation` invalidates every answer still in flight
   // when the controller stops.
   let alive = false;
   let generation = 0;
@@ -374,7 +373,7 @@ export function createStackDetail(name: string, deps: StackDetailDeps): StackDet
     loadError.set('');
   }
 
-  // The dialog's session is a private mutable record; ownership is its identity (as in the Svelte page),
+  // The dialog's session is a private mutable record; ownership is its identity,
   // and every change publishes a fresh copy so readers comparing snapshots see it.
   let session: RemovalSession | undefined;
   function setSession(next: RemovalSession | undefined): void {

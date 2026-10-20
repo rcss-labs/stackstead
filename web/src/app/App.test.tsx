@@ -1,4 +1,4 @@
-// Port of web/src/App.test.ts for the React app frame (routing, session guards, focus, titles,
+// Tests for the React app frame (routing, session guards, focus, titles,
 // banners, unsaved-changes guard). Screens are real since Plan 22; screen behaviour is tested beside each screen.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';

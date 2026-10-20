@@ -26,7 +26,7 @@ export interface UnsavedGuard {
 }
 
 /**
- * The App.svelte link guard (divergence 1: React Router's blocker needs a data router, so this is a
+ * The link guard (React Router's blocker needs a data router, so this is a
  * click capture plus the logout path; back/forward are not guarded, as today).
  */
 export function useUnsavedGuard({ navigate, loggingOut }: UnsavedGuardOptions): UnsavedGuard {

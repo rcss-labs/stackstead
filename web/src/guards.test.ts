@@ -11,21 +11,13 @@ function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = join(dir, e.name);
     if (e.isDirectory()) return sourceFiles(p);
-    return /\.(svelte|ts|tsx)$/.test(e.name) && p !== thisFile ? [p] : [];
+    return /\.(ts|tsx)$/.test(e.name) && p !== thisFile ? [p] : [];
   });
-}
-
-function findHtmlTag(files: Record<string, string>): string[] {
-  return Object.entries(files)
-    .filter(([, text]) => /\{\s*@html\b/.test(text))
-    .map(([name]) => name);
 }
 
 function findRawHtml(files: Record<string, string>): string[] {
   return Object.entries(files)
-    .filter(([name, text]) =>
-      /\.(ts|tsx)$/.test(name) ? /\bdangerouslySetInnerHTML\b/.test(text) : /\{\s*@html\b/.test(text),
-    )
+    .filter(([, text]) => /\bdangerouslySetInnerHTML\b/.test(text))
     .map(([name]) => name);
 }
 
@@ -53,26 +45,14 @@ function findRangedVersions(pkg: Record<string, unknown>): string[] {
 }
 
 describe('guards: detectors', () => {
-  it('flags raw HTML interpolation', () => {
-    expect(
-      findHtmlTag({
-        'a.svelte': '<p>{@html x}</p>',
-        'b.svelte': '<p>{x}</p>',
-        'c.svelte': '<p>{ @html x}</p>',
-        'd.svelte': '<p>{\n@html x}</p>',
-        'e.svelte': '<p>{\t\n  @html\ty}</p>',
-      }),
-    ).toEqual(['a.svelte', 'c.svelte', 'd.svelte', 'e.svelte']);
-  });
   it('flags dangerouslySetInnerHTML in tsx and ts but not plain markup', () => {
     expect(
       findRawHtml({
         'a.tsx': 'const x = <div dangerouslySetInnerHTML={{ __html: y }} />;',
         'b.tsx': 'const x = <div>{y}</div>;',
         'c.ts': 'const p = { dangerouslySetInnerHTML: 1 };',
-        'd.svelte': '<p>{@html x}</p>',
       }),
-    ).toEqual(['a.tsx', 'c.ts', 'd.svelte']);
+    ).toEqual(['a.tsx', 'c.ts']);
   });
   it('flags references to the design handoff folder', () => {
     expect(
@@ -87,10 +67,10 @@ describe('guards: detectors', () => {
       findSvelteStoreImports({
         'a.ts': "import { writable } from 'svelte/store';",
         'b.ts': "import { writable } from '$lib/store';",
-        'c.svelte': '<script>import { get } from "svelte/store";</script>',
+        'c.tsx': 'import { get } from "svelte/store";',
         'd.ts': "const { writable } = await import('svelte/store');",
       }),
-    ).toEqual(['a.ts', 'c.svelte', 'd.ts']);
+    ).toEqual(['a.ts', 'c.tsx', 'd.ts']);
   });
   it('flags anything that is not an exact version', () => {
     const bad = findRangedVersions({
@@ -108,11 +88,6 @@ describe('guards: detectors', () => {
 });
 
 describe('guards: repository', () => {
-  it('has no {@html anywhere in src/', () => {
-    const files = Object.fromEntries(sourceFiles(srcDir).map((p) => [p, readFileSync(p, 'utf8')]));
-    expect(findHtmlTag(files)).toEqual([]);
-  });
-
   it('has no dangerouslySetInnerHTML in src/', () => {
     const files = Object.fromEntries(sourceFiles(srcDir).map((p) => [p, readFileSync(p, 'utf8')]));
     expect(findRawHtml(files)).toEqual([]);

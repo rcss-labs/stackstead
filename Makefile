@@ -24,11 +24,11 @@ web/node_modules/.package-lock.json: web/package-lock.json
 ui: web/node_modules/.package-lock.json ## Build the web UI into web/dist (needs Node)
 	cd web && npm run build
 
-ui-check: web/node_modules/.package-lock.json ## Type-check the web UI (svelte-check)
+ui-check: web/node_modules/.package-lock.json ## Type-check the web UI (tsc --noEmit)
 	cd web && npm run check
 
 # Depends on ui so bundle.test.ts finds web/dist and the build-shape tests run instead of skipping.
-ui-test: ui ## Run the web UI unit tests (vitest; builds first so bundle.test.ts measures web/dist)
+ui-test: ui ## Run the web UI unit tests (vitest, after a build)
 	cd web && npm run test
 
 build: ui ## Build the UI, then the static binary
