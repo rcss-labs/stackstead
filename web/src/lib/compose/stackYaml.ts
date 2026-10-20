@@ -89,12 +89,53 @@ export function joinService(card: StackCard): Record<string, unknown> {
 
 // --- compose keys -> form -------------------------------------------------
 
-/** Spelling differences that mean the same thing to compose, so a value is not pushed to extra over them. */
-function canonical(key: string, value: unknown): unknown {
-  if ((key === 'ports' || key === 'volumes') && Array.isArray(value)) return value.map((v) => (isScalarValue(v) ? String(v) : v));
-  if (key === 'environment' && isPlain(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, isScalarValue(v) ? String(v) : v]));
-  if (key === 'build' && typeof value === 'string') return { context: value };
-  return value;
+const ABSENT = Symbol('absent');
+
+function envListToMap(list: unknown[]): Plain | null {
+  const out: Plain = {};
+  for (const item of list) {
+    if (typeof item !== 'string') return null;
+    const eq = item.indexOf('=');
+    if (eq <= 0) return null; // a bare name means pass-through (null), which the form cannot hold
+    const name = item.slice(0, eq);
+    if (name in out) return null;
+    out[name] = item.slice(eq + 1);
+  }
+  return out;
+}
+
+/**
+ * Spelling differences that mean the same thing to compose, folded into the shape the form renders, so a value is
+ * not pushed to extra over them. Empty collections count as absent (a formatting-only loss).
+ */
+function normalize(key: string, value: unknown): unknown {
+  switch (key) {
+    case 'ports':
+    case 'volumes':
+      if (!Array.isArray(value)) return value;
+      return value.length === 0 ? ABSENT : value.map((v) => (isScalarValue(v) ? String(v) : v));
+    case 'environment': {
+      const map = Array.isArray(value) ? envListToMap(value) ?? value : value;
+      if (Array.isArray(map)) return map.length === 0 ? ABSENT : map;
+      if (!isPlain(map)) return map;
+      if (Object.keys(map).length === 0) return ABSENT;
+      return Object.fromEntries(Object.entries(map).map(([k, v]) => [k, isScalarValue(v) ? String(v) : v]));
+    }
+    case 'networks': {
+      if (Array.isArray(value)) return value.length === 0 ? ABSENT : value;
+      if (!isPlain(value)) return value;
+      const empty = (v: unknown) => v === null || (isPlain(v) && Object.keys(v).length === 0);
+      if (Object.keys(value).length === 0) return ABSENT;
+      if (Object.values(value).every(empty)) return Object.keys(value);
+      return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, empty(v) ? null : v]));
+    }
+    case 'healthcheck':
+      return isPlain(value) && typeof value.test === 'string' ? { ...value, test: ['CMD-SHELL', value.test] } : value;
+    case 'build':
+      return typeof value === 'string' ? { context: value } : value;
+    default:
+      return value;
+  }
 }
 
 const trimmedNonEmpty = (v: unknown): v is string => typeof v === 'string' && v !== '' && v === v.trim();
@@ -203,13 +244,23 @@ export function splitService(name: string, value: unknown, dockerfiles: Record<s
   const moved = new Set<string>();
 
   for (const group of GROUPS) {
-    const present = group.keys.filter((k) => k in service);
+    const inDoc = group.keys.filter((k) => k in service);
+    const normalized: Plain = {};
+    const present: string[] = [];
+    for (const k of inDoc) {
+      const n = normalize(k, service[k]);
+      if (n === ABSENT) moved.add(k);
+      else {
+        normalized[k] = n;
+        present.push(k);
+      }
+    }
     if (present.length === 0) continue;
     // Merge the candidates for every present key of the group into one form, then verify each key by rendering.
     const trial = emptyForm();
     let ok = true;
     for (const key of present) {
-      const c = candidate(key, service[key], name, dockerfiles);
+      const c = candidate(key, normalized[key], name, dockerfiles);
       if (!c) {
         ok = false;
         break;
@@ -218,7 +269,7 @@ export function splitService(name: string, value: unknown, dockerfiles: Record<s
     }
     if (ok) {
       const rendered = formToCompose(trial, name);
-      ok = present.every((k) => k in rendered && deepEqual(canonical(k, rendered[k]), canonical(k, service[k])));
+      ok = present.every((k) => k in rendered && deepEqual(normalize(k, rendered[k]), normalized[k]));
       // A key the form renders but the document does not have would add settings out of nowhere.
       ok = ok && group.keys.every((k) => k in service || !(k in rendered));
     }
@@ -258,15 +309,22 @@ function splitDeploy(deploy: unknown, form: ServiceForm): unknown {
   const limits = resources.limits;
   if (!limits) return deploy;
 
+  // Numbers become strings. If either limit is unrepresentable neither moves, so extra never repeats a limit the form holds.
+  const amount = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? String(v) : trimmedNonEmpty(v) ? v : undefined);
+  const cpus = 'cpus' in limits ? amount(limits.cpus) : undefined;
+  const memory = 'memory' in limits ? amount(limits.memory) : undefined;
+  if (('cpus' in limits && cpus === undefined) || ('memory' in limits && memory === undefined)) {
+    form.readOnly.add('limits');
+    return deploy;
+  }
   const rest: Plain = { ...limits };
-  for (const [key, field] of [['cpus', 'cpus'], ['memory', 'memory']] as const) {
-    if (!(key in limits)) continue;
-    if (trimmedNonEmpty(limits[key])) {
-      form[field] = limits[key];
-      delete rest[key];
-    } else {
-      form.readOnly.add('limits'); // e.g. a number: keep it as written, and keep the form from overwriting it
-    }
+  if (cpus !== undefined) {
+    form.cpus = cpus;
+    delete rest.cpus;
+  }
+  if (memory !== undefined) {
+    form.memory = memory;
+    delete rest.memory;
   }
   if (Object.keys(rest).length === Object.keys(limits).length) return deploy; // nothing moved
 
@@ -318,6 +376,25 @@ function hasNonFinite(v: unknown): boolean {
   return false;
 }
 
+/** YAML 1.2 reads 0755 as 755 but the Go server reads octal, so numbers in ports, volumes and env keep their source text. */
+function keepNumberSources(doc: Document.Parsed): void {
+  const asText = (node: unknown) => {
+    if (isScalar(node) && typeof node.value === 'number' && typeof node.source === 'string') node.value = node.source;
+  };
+  const services = doc.get('services', true);
+  if (!isMap(services)) return;
+  for (const pair of services.items) {
+    const service = pair.value;
+    if (!isMap(service)) continue;
+    for (const key of ['ports', 'volumes']) {
+      const list = service.get(key, true);
+      if (isSeq(list)) list.items.forEach(asText);
+    }
+    const env = service.get('environment', true);
+    if (isMap(env)) env.items.forEach((p) => asText(p.value));
+  }
+}
+
 export function yamlToStack(text: string, dockerfiles: Record<string, string>, maxServices: number): ParseResult {
   const doc = parseDocument(text, { merge: true, uniqueKeys: true });
   const err = doc.errors[0];
@@ -328,6 +405,7 @@ export function yamlToStack(text: string, dockerfiles: Record<string, string>, m
   let root: unknown;
   try {
     // JSON round trip: expands aliases into independent copies (no shared references that would be written back as anchors).
+    keepNumberSources(doc);
     const js = doc.toJS({ maxAliasCount: 1000 });
     if (hasNonFinite(js)) return { ok: false, message: 'Values such as .inf and .nan cannot be kept' };
     root = js === undefined ? undefined : JSON.parse(JSON.stringify(js));

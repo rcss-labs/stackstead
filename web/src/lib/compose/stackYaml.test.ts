@@ -130,11 +130,90 @@ x-common:
     });
   });
 
-  it('numeric limits stay in extra and lock the limits group', () => {
-    const { form, extra } = splitService('a', { image: 'x', deploy: { resources: { limits: { cpus: 0.5 } } } }, {});
-    expect(form.cpus).toBe('');
-    expect(form.readOnly.has('limits')).toBe(true);
-    expect(extra).toEqual({ deploy: { resources: { limits: { cpus: 0.5 } } } });
+  it('numeric limits become strings in the form', () => {
+    const { form, extra } = splitService('a', { image: 'x', deploy: { resources: { limits: { cpus: 0.5, memory: 512 } } } }, {});
+    expect(form.cpus).toBe('0.5');
+    expect(form.memory).toBe('512');
+    expect(form.readOnly.size).toBe(0);
+    expect(extra).toEqual({});
+  });
+
+  it('mixed numeric and string limits survive a round trip', () => {
+    for (const limits of ['{cpus: 0.5, memory: 512M}', '{cpus: "0.5", memory: 512}']) {
+      const text = `services:\n  a:\n    image: x\n    deploy:\n      resources:\n        limits: ${limits}\n`;
+      const [y1, y2] = roundTrip(text);
+      const limitsOf = (y: string) => (parsed(y).services as any).a.deploy.resources.limits;
+      expect(Object.keys(limitsOf(y1)).sort()).toEqual(['cpus', 'memory']);
+      expect(limitsOf(y2)).toEqual(limitsOf(y1));
+      const card = mustParse(text).cards[0];
+      expect(card.form.readOnly.size).toBe(0);
+      expect(card.extra).toEqual({});
+    }
+  });
+
+  it('unrepresentable limits lock the group and move neither limit to the form', () => {
+    const text = 'services:\n  a:\n    image: x\n    deploy:\n      resources:\n        limits: {cpus: true, memory: 512M}\n';
+    const card = mustParse(text).cards[0];
+    expect(card.form.cpus).toBe('');
+    expect(card.form.memory).toBe('');
+    expect(card.form.readOnly.has('limits')).toBe(true);
+    expect(card.extra).toEqual({ deploy: { resources: { limits: { cpus: true, memory: '512M' } } } });
+    const [y1, y2] = roundTrip(text);
+    expect(parsed(y1)).toEqual(parsed(text));
+    expect(parsed(y2)).toEqual(parsed(text));
+  });
+
+  it('an environment list of K=V goes into the form', () => {
+    const text = 'services:\n  a:\n    image: x\n    environment:\n      - A=b\n      - C=d=e\n      - EMPTY=\n';
+    const card = mustParse(text).cards[0];
+    expect(card.form.env).toEqual([{ name: 'A', value: 'b' }, { name: 'C', value: 'd=e' }, { name: 'EMPTY', value: '' }]);
+    expect(card.form.readOnly.size).toBe(0);
+    expect(card.extra).toEqual({});
+    const [y1, y2] = roundTrip(text);
+    expect(parsed(y2)).toEqual(parsed(y1));
+  });
+
+  it('a bare name in an environment list stays in extra', () => {
+    const text = 'services:\n  a:\n    image: x\n    environment:\n      - A=b\n      - PASS\n';
+    const card = mustParse(text).cards[0];
+    expect(card.extra.environment).toEqual(['A=b', 'PASS']);
+    expect(card.form.readOnly.has('environment')).toBe(true);
+    expect(parsed(roundTrip(text)[1])).toEqual(parsed(text));
+  });
+
+  it('a healthcheck test string goes into the form', () => {
+    const text = 'services:\n  a:\n    image: x\n    healthcheck:\n      test: curl -f http://x\n      retries: 2\n';
+    const card = mustParse(text).cards[0];
+    expect(card.form.healthcheck.test).toBe('curl -f http://x');
+    expect(card.form.readOnly.size).toBe(0);
+    const [y1, y2] = roundTrip(text);
+    expect((parsed(y1).services as any).a.healthcheck.test).toEqual(['CMD-SHELL', 'curl -f http://x']);
+    expect(parsed(y2)).toEqual(parsed(y1));
+  });
+
+  it('a networks mapping of null or empty values goes into the form as a list', () => {
+    const text = 'services:\n  a:\n    image: x\n    networks:\n      lan:\n      other: {}\n';
+    const card = mustParse(text).cards[0];
+    expect(card.form.networks).toEqual([{ name: 'lan', ipv4Address: '' }, { name: 'other', ipv4Address: '' }]);
+    expect(card.form.readOnly.size).toBe(0);
+    const [y1, y2] = roundTrip(text);
+    expect((parsed(y1).services as any).a.networks).toEqual(['lan', 'other']);
+    expect(parsed(y2)).toEqual(parsed(y1));
+  });
+
+  it('empty ports, volumes and environment count as absent', () => {
+    const card = mustParse('services:\n  a:\n    image: x\n    ports: []\n    volumes: []\n    environment: {}\n').cards[0];
+    expect(card.form.readOnly.size).toBe(0);
+    expect(card.extra).toEqual({});
+    expect(card.form.ports).toEqual([]);
+  });
+
+  it('numeric env values and ports keep their source text', () => {
+    const text = 'services:\n  a:\n    image: x\n    ports: [0x1F]\n    environment:\n      MODE: 0755\n      HEX: 0x1F\n';
+    const card = mustParse(text).cards[0];
+    expect(card.form.env).toEqual([{ name: 'MODE', value: '0755' }, { name: 'HEX', value: '0x1F' }]);
+    expect(card.form.ports).toEqual(['0x1F']);
+    expect(card.form.readOnly.size).toBe(0);
   });
 
   it('numeric ports and env values become strings', () => {
