@@ -12,6 +12,7 @@ export interface YamlEditorProps {
   value: string;
   readonly?: boolean;
   ariaLabel: string;
+  language?: 'yaml' | 'dockerfile';
   /** Baseline for the changed-line marks; none are drawn when absent. */
   original?: string;
   onChange?: (value: string) => void;
@@ -19,15 +20,15 @@ export interface YamlEditorProps {
 }
 
 // Expects a controlled parent: `value` echoes what `onChange` reported (the editor itself is uncontrolled).
-export function YamlEditor({ value, readonly = false, ariaLabel, original, onChange, ref }: YamlEditorProps) {
+export function YamlEditor({ value, readonly = false, ariaLabel, language = 'yaml', original, onChange, ref }: YamlEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const handleRef = useRef<EditorHandle | undefined>(undefined);
   const [ready, setReady] = useState(false);
 
   // The editor is created once; it reads the freshest props through this ref.
-  const latest = useRef({ value, readonly, ariaLabel, original, onChange });
-  latest.current = { value, readonly, ariaLabel, original, onChange };
+  const latest = useRef({ value, readonly, ariaLabel, language, original, onChange });
+  latest.current = { value, readonly, ariaLabel, language, original, onChange };
 
   useEffect(() => {
     let destroyed = false;
@@ -47,6 +48,7 @@ export function YamlEditor({ value, readonly = false, ariaLabel, original, onCha
           value: text,
           readonly: now.readonly,
           ariaLabel: now.ariaLabel,
+          language: now.language,
           original: now.original,
           onchange: (v) => latest.current.onChange?.(v),
         });

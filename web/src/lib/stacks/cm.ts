@@ -1,6 +1,8 @@
 // The only module that imports CodeMirror. Components load it with a dynamic
 // import() so the editor lands in its own chunk and the stack list stays small.
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile';
+import { StreamLanguage } from '@codemirror/language';
 import { yaml } from '@codemirror/lang-yaml';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { unifiedMergeView } from '@codemirror/merge';
@@ -14,6 +16,8 @@ export interface EditorOptions {
   value: string;
   readonly: boolean;
   ariaLabel: string;
+  /** Syntax mode; defaults to YAML. */
+  language?: 'yaml' | 'dockerfile';
   /** Baseline for changed-line marks; none are drawn while it is undefined. */
   original?: string;
   onchange: (value: string) => void;
@@ -40,12 +44,18 @@ const highlightStyle = HighlightStyle.define([
   // plain values, so spec 6.4's "numbers --warning" is not applied.
   { tag: [tags.string, tags.special(tags.string), tags.content], color: 'var(--success)' },
   { tag: [tags.comment, tags.lineComment], color: 'var(--faint)' },
+  { tag: tags.keyword, color: 'var(--info)' },
 ]);
 
-function baseExtensions(ariaLabel: string): Extension[] {
+function languageExtension(language: 'yaml' | 'dockerfile'): Extension {
+  // The legacy mode has no name, which would leave .cm-content without data-language; the name is set here.
+  return language === 'dockerfile' ? StreamLanguage.define({ ...dockerFile, name: 'dockerfile' }) : yaml();
+}
+
+function baseExtensions(ariaLabel: string, language: 'yaml' | 'dockerfile'): Extension[] {
   return [
     lineNumbers(),
-    yaml(),
+    languageExtension(language),
     syntaxHighlighting(highlightStyle),
     EditorView.lineWrapping,
     EditorView.contentAttributes.of({ 'aria-label': ariaLabel }),
@@ -144,7 +154,7 @@ export function createEditor(opts: EditorOptions): EditorHandle {
     state: EditorState.create({
       doc: opts.value,
       extensions: [
-        ...baseExtensions(opts.ariaLabel),
+        ...baseExtensions(opts.ariaLabel, opts.language ?? 'yaml'),
         ...changedLinesExtensions,
         originalField.init(() => opts.original),
         readonlyCompartment.of(readonlyExtensions(opts.readonly)),
@@ -190,6 +200,7 @@ export interface DiffOptions {
   original: string;
   modified: string;
   ariaLabel: string;
+  language?: 'yaml' | 'dockerfile';
 }
 
 /** Read-only unified diff; unchanged stretches collapse to 3 lines of context. */
@@ -199,7 +210,7 @@ export function createDiffView(opts: DiffOptions): { destroy(): void } {
     state: EditorState.create({
       doc: opts.modified,
       extensions: [
-        ...baseExtensions(opts.ariaLabel),
+        ...baseExtensions(opts.ariaLabel, opts.language ?? 'yaml'),
         ...readonlyExtensions(true),
         unifiedMergeView({
           original: opts.original,
