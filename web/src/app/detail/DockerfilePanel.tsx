@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router';
 import type { DockerfileView } from '$lib/api/types';
 import { DOCKERFILE_TEMPLATE } from '$lib/compose/form';
-import { dockerfileNote, OUTSIDE_NOTE } from '$lib/stacks/dockerfileNote';
+import { dockerfileNote } from '$lib/stacks/dockerfileNote';
 import { createComposeEditor } from '$lib/stacks/compose';
 import { get } from '$lib/store';
 import { toasts } from '$lib/stores/toasts';
@@ -63,6 +63,16 @@ export function DockerfilePanel({ stackName, service, onDirtyChange }: { stackNa
     dirtyCallback.current?.(unsaved);
   }, [unsaved]);
   useEffect(() => () => dirtyCallback.current?.(false), []);
+  // Leaving the page would lose the draft.
+  useEffect(() => {
+    if (!unsaved) return;
+    const guard = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', guard);
+    return () => window.removeEventListener('beforeunload', guard);
+  }, [unsaved]);
   const previewing = st.phase === 'previewing';
   const loading = st.phase === 'loading' || st.phase === 'loadFailed';
   const busy = st.phase === 'saving' || rebuilding;

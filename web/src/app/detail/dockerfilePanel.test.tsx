@@ -167,6 +167,26 @@ describe('Dockerfile panel states', () => {
   });
 });
 
+describe('unload guard', () => {
+  it('cancels beforeunload only while the Dockerfile draft is unsaved', async () => {
+    render(
+      <MemoryRouter>
+        <DockerfilePanel stackName="web" service="web" />
+      </MemoryRouter>,
+    );
+    const ta = await editor();
+    await waitFor(() => expect(ta.value).toMatch(/^FROM alpine/));
+    const prevented = () => {
+      const e = new Event('beforeunload', { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    expect(prevented()).toBe(false);
+    edit(ta, 'FROM alpine:3.21\n');
+    await waitFor(() => expect(prevented()).toBe(true));
+  });
+});
+
 describe('operations list', () => {
   it('operations list names the rebuilt service', () => {
     const op: Operation = { id: 'o', stack: 'web', action: 'up', service: 'web', state: 'succeeded', startedAt: '2026-01-01T00:00:00Z' };
