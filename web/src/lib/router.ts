@@ -48,5 +48,11 @@ export function safeNext(next: string | null): string {
 export function splitServerPath(path: string): { slug: string | null; inner: string } {
   const m = /^\/s\/([^/]+)(\/.*)?$/.exec(path);
   if (!m) return { slug: null, inner: path };
-  return { slug: decodeURIComponent(m[1]), inner: m[2] || '/' };
+  let slug = m[1];
+  try {
+    slug = decodeURIComponent(slug);
+  } catch {
+    // keep the raw segment
+  }
+  return { slug, inner: m[2] || '/' };
 }

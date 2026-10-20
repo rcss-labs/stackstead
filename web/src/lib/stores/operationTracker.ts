@@ -41,7 +41,7 @@ export function operationToast(op: Pick<Operation, 'stack' | 'action' | 'state'>
 }
 
 /** One independent set of tracked operations; the module-level exports below are the local server's instance. */
-export function createOperationTracker(opts: { href?: (path: string) => string } = {}) {
+export function createOperationTracker(opts: { href?: (path: string) => string; stoppedMessage?: string } = {}) {
   const scopeHref = opts.href ?? ((path: string) => path);
   const tracked = new Map<string, Entry>();
   let stopActive: (() => void) | null = null;
@@ -146,7 +146,11 @@ export function createOperationTracker(opts: { href?: (path: string) => string }
       stopped = true;
       unsubscribe();
       doc.removeEventListener('visibilitychange', onVisibility);
-      for (const entry of tracked.values()) clearTimeout(entry.timer);
+      for (const entry of tracked.values()) {
+        clearTimeout(entry.timer);
+        // Nobody watches these any more; a pending toast would spin forever. The View link stays.
+        if (opts.stoppedMessage) toasts.update(entry.toastId, { kind: 'info', message: opts.stoppedMessage, pending: false });
+      }
       tracked.clear();
       if (stopActive === stop) stopActive = null;
     };

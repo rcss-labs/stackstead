@@ -109,6 +109,12 @@ describe('RemoteServer', () => {
     await waitFor(() => expect(fake.calls.some((c) => c.method === 'POST' && c.path === '/api/peers/b1/check')).toBe(true));
   });
 
+  it('omits the missing parts of the unreachable copy', async () => {
+    peerRes = peer({ status: 'unreachable', lastError: '', lastSeenAt: null });
+    mount('/s/mini-02');
+    await screen.findByText("Can't reach mini-02");
+  });
+
   it('incompatible peer shows the update message', async () => {
     peerRes = peer({ status: 'incompatible', compatible: false, version: '1.4' });
     mount('/s/mini-02');
@@ -119,6 +125,22 @@ describe('RemoteServer', () => {
     peerRes = peer({ status: 'removed' });
     mount('/s/mini-02');
     await screen.findByText('mini-02 removed this connection');
+  });
+
+  it('Remove on a removed connection deletes it and leaves', async () => {
+    peerRes = peer({ status: 'removed' });
+    fake.restore();
+    fake = installFakeFetch({
+      'GET /api/peers': () => ({ body: [peerRes] }),
+      'DELETE /api/peers/b1': () => {
+        peerRes = peer({ id: 'zz', slug: 'zz' });
+        return { status: 204 };
+      },
+    });
+    mount('/s/mini-02');
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove' }));
+    await screen.findByText('local home');
+    expect(fake.calls.some((c) => c.method === 'DELETE' && c.path === '/api/peers/b1')).toBe(true);
   });
 
   it('/s/mini-02/settings is not found', async () => {

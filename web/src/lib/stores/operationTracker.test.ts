@@ -284,4 +284,14 @@ describe('createOperationTracker with a scope href', () => {
     scoped.trackOperation({ id: 'op9', stack: 'web', action: 'up' });
     expect(toast().link?.href).toBe('/s/mini-02/stacks/web?tab=operations&op=op9');
   });
+
+  it('settles pending toasts when stopped, keeping the link', () => {
+    const scoped = createOperationTracker({ href: (path) => `/s/mini-02${path}`, stoppedMessage: 'Still running on mini-02' });
+    const stopScoped = scoped.startOperationTracker({ runningOps: ops, get: getOp });
+    scoped.trackOperation({ id: 'op9', stack: 'web', action: 'up' });
+    expect(toast().pending).toBe(true);
+    stopScoped();
+    expect(toast()).toMatchObject({ kind: 'info', message: 'Still running on mini-02', link: { href: '/s/mini-02/stacks/web?tab=operations&op=op9' } });
+    expect(toast().pending).toBeFalsy();
+  });
 });

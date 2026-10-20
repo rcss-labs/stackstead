@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
-import { Route, Routes, useParams } from 'react-router';
+import { Route, Routes, useNavigate, useParams } from 'react-router';
 import { api, createApi } from '$lib/api/client';
 import type { PeerView } from '$lib/api/types';
 import { relativeTime } from '$lib/format';
@@ -50,7 +50,7 @@ function createScope(peer: Pick<PeerView, 'id' | 'slug' | 'name'>) {
   const stacksStore = createStacksStore();
   const hostStore = createHostStore();
   const opsStore = createRunningOpsStore();
-  const tracker = createOperationTracker({ href });
+  const tracker = createOperationTracker({ href, stoppedMessage: `Still running on ${peer.name}` });
 
   const scope: ServerScope = {
     local: false,
@@ -134,7 +134,7 @@ function PeerState({ peer }: { peer: PeerView }) {
         />
       );
     case 'removed':
-      return <EmptyState title={`${peer.name} removed this connection`} />;
+      return <Removed peer={peer} />;
     default:
       return <Spinner label={`Connecting to ${peer.name}`} />;
   }
@@ -142,7 +142,8 @@ function PeerState({ peer }: { peer: PeerView }) {
 
 function Unreachable({ peer }: { peer: PeerView }) {
   const [retrying, setRetrying] = useState(false);
-  const seen = peer.lastSeenAt ? relativeTime(peer.lastSeenAt, new Date()) : 'never';
+  const seen = peer.lastSeenAt ? ` (last seen ${relativeTime(peer.lastSeenAt, new Date())})` : '';
+  const reason = peer.lastError ? `: ${peer.lastError}` : '';
 
   async function retry() {
     setRetrying(true);
@@ -160,7 +161,7 @@ function Unreachable({ peer }: { peer: PeerView }) {
 
   return (
     <div className={styles.state}>
-      <p className={styles.message} role="status">{`Can't reach ${peer.name} (last seen ${seen}): ${peer.lastError}`}</p>
+      <p className={styles.message} role="status">{`Can't reach ${peer.name}${seen}${reason}`}</p>
       <Button variant="secondary" loading={retrying} onClick={() => void retry()}>
         Retry
       </Button>
@@ -185,6 +186,31 @@ function Incompatible({ peer }: { peer: PeerView }) {
       <p className={styles.message} role="status">
         {`${peer.name} runs v${stripV(peer.version)}, this server v${self ? stripV(self) : '?'}. Update to match`}
       </p>
+    </div>
+  );
+}
+
+function Removed({ peer }: { peer: PeerView }) {
+  const navigate = useNavigate();
+  const [removing, setRemoving] = useState(false);
+
+  async function remove() {
+    setRemoving(true);
+    try {
+      await api.removePeer(peer.id);
+      await refreshPeers();
+      navigate('/');
+    } catch {
+      setRemoving(false);
+    }
+  }
+
+  return (
+    <div className={styles.state}>
+      <p className={styles.message} role="status">{`${peer.name} removed this connection`}</p>
+      <Button variant="secondary" loading={removing} onClick={() => void remove()}>
+        Remove
+      </Button>
     </div>
   );
 }

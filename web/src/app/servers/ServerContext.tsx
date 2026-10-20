@@ -45,7 +45,7 @@ export const localScope: ServerScope = {
   local: true,
   id: 'local',
   slug: '',
-  name: 'This server',
+  name: 'this server',
   api,
   open: openSSE,
   live,

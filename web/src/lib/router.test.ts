@@ -62,6 +62,7 @@ describe('splitServerPath', () => {
     ['/stacks/x', { slug: null, inner: '/stacks/x' }],
     ['/s/', { slug: null, inner: '/s/' }],
     ['/s', { slug: null, inner: '/s' }],
+    ['/s/%E0/stacks', { slug: '%E0', inner: '/stacks' }],
   ])('%s', (path, want) => {
     expect(splitServerPath(path)).toEqual(want);
   });
