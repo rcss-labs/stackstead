@@ -1,10 +1,8 @@
 // Port of web/src/App.test.ts for the React app frame (routing, session guards, focus, titles,
 // banners, unsaved-changes guard). Screens are placeholders until Plans 17–22, so these App tests
 // are deferred to the screen plans that make them meaningful:
-// - "shows Container not found (not no longer exists) after navigating between containers" (Plan 19)
-// - the "Image not found" / "Volume not found" text on storage detail paths (Plan 21)
 // - the Login and Setup form details beyond the minimal login used here (Plan 22)
-// - the /api/containers and /api/networks fetches asserted by the Containers/Networks route tests (Plans 19/21)
+// - the /api/networks fetch asserted by the Networks route test, once the Networks screen is ported (Plan 22)
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -227,6 +225,7 @@ describe('App routing and session', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Containers' })).toBeTruthy();
     await waitFor(() => expect(document.title).toBe('Containers · Stackstead'));
     expect(within(mainNav()).getByRole('link', { name: 'Containers' }).getAttribute('aria-current')).toBe('page');
+    await waitFor(() => expect(fake.calls.some((c) => c.path === '/api/containers')).toBe(true));
   });
 
   it('renders Networks at /networks with its title and current navigation', async () => {
@@ -235,6 +234,15 @@ describe('App routing and session', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Networks' })).toBeTruthy();
     await waitFor(() => expect(document.title).toBe('Networks · Stackstead'));
     expect(within(mainNav()).getByRole('link', { name: 'Networks' }).getAttribute('aria-current')).toBe('page');
+  });
+
+  it('shows "Container not found" (not "no longer exists") after navigating from a found container to an unknown one', async () => {
+    at('/containers/web');
+    render(<App />);
+    await screen.findByRole('heading', { level: 1, name: 'web' });
+    await push('/containers/b');
+    await screen.findByText('Container not found');
+    expect(screen.queryByText('This container no longer exists')).toBeNull();
   });
 
   it('shows a not-found view with a link home for unknown paths', async () => {
@@ -517,6 +525,15 @@ it.each([
   await screen.findByRole('heading', { level: 1 });
   await waitFor(() => expect(document.title).toBe('Storage · Stackstead'));
   expect(screen.getByRole('navigation', { name: 'Breadcrumb' }).textContent).toContain(crumb);
+});
+
+it.each([
+  ['/storage/images/aaaaaaaaaaaa', 'Image not found'],
+  ['/storage/volumes/missing', 'Volume not found'],
+])('shows %s as "%s" when the server does not know it', async (path, heading) => {
+  at(path);
+  render(<App />);
+  expect(await screen.findByText(heading)).toBeTruthy();
 });
 
 it('focuses the storage detail heading after navigation while its request is pending', async () => {

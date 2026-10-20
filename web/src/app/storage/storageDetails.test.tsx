@@ -1,4 +1,6 @@
-import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { StrictMode } from 'react';
+import { MemoryRouter } from 'react-router';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { get } from '$lib/store';
 import { consumer, declaration, image, volume } from '$lib/storage/fixtures';
@@ -6,6 +8,7 @@ import { operationsRefresh } from '$lib/stores/stacks';
 import { toasts } from '$lib/stores/toasts';
 import { installFakeFetch, installFakeStream, type FakeFetch, type FakeResponse, type FakeStream } from '../../vitest-setup';
 import { findRoute } from '../routes';
+import { StorageImageScreen } from './StorageImageScreen';
 import { location, mountAt } from './storageTestKit';
 
 vi.mock('$lib/stores/live', async (orig) => {
@@ -82,6 +85,20 @@ describe('Storage detail screens', () => {
     expect(screen.getAllByText(/declared by stack/).length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: 'Delete' }).getAttribute('aria-disabled')).toBe('true');
     expect(document.body.textContent).not.toContain('hidden-secret');
+  });
+
+  it('fetches the image detail exactly once under StrictMode', async () => {
+    fake = installFakeFetch({ 'GET /api/storage/images/aaaaaaaaaaaa': { body: imageDetail() } });
+    render(
+      <StrictMode>
+        <MemoryRouter>
+          <StorageImageScreen id="aaaaaaaaaaaa" />
+        </MemoryRouter>
+      </StrictMode>,
+    );
+    await screen.findByRole('heading', { name: 'redis:7', level: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fake.calls.filter((c) => c.path === '/api/storage/images/aaaaaaaaaaaa')).toHaveLength(1);
   });
 
   it.each(['image', 'volume'])('unknown %s has not found and matching back link', async (kind) => {

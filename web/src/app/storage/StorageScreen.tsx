@@ -110,7 +110,6 @@ function Lead({ overview }: { overview: StorageOverview }) {
   );
 }
 
-
 const countText = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
 const sortedStatus = (count: number, noun: string) => `${countText(count, noun)} · sorted by size`;
 

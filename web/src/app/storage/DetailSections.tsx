@@ -44,6 +44,7 @@ export function DeclarationsCard({ declarations }: { declarations: StorageDeclar
   );
 }
 
+/** Image or volume labels in a collapsed disclosure; escaped text, never markup. */
 export function LabelsDetails({ labels }: { labels: Record<string, string> }) {
   const entries = Object.entries(labels);
   return (
