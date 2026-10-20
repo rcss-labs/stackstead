@@ -6,11 +6,12 @@ too. Back to the [README](../README.md).
 ## API overview
 
 All routes except health, setup and login need a session cookie. Errors are
-`{"error": "..."}`, with `"fields": [{field, message}]` for validation.
+`{"error": "..."}`, with `"fields": [{field, message}]` for validation. Errors
+from connected servers also carry a `"code"`; see [Connected servers](#connected-servers).
 
 | Method and path | Purpose |
 | --- | --- |
-| `GET /api/health` | liveness, no authentication: `{"ok": true}` (used by installers and monitors) |
+| `GET /api/health` | liveness, no authentication: `{"ok": true, "peering": 1}`; `peering` is the connected-servers protocol version, so a server without it predates the feature (used by installers and monitors) |
 | `GET /api/stacks` | list stacks with status |
 | `POST /api/stacks` | create with `{name, services: [{service, config}]}` or legacy `{name, service, config}` |
 | `POST /api/stacks/import` | register an existing compose file without modifying it |
@@ -134,6 +135,70 @@ Notes on the stacks API:
 Removing a stack never deletes files: the compose file and its folder stay on
 disk, and volumes are removed only when `volumes=true`. Stopping Stackstead
 never stops containers.
+
+## Connected servers
+
+Servers are connected in Settings → Connected servers. The trust model is in
+[security.md](security.md#connected-servers) and the proxy setup is in
+[install.md](install.md#connected-servers-behind-a-login-proxy).
+
+Settings routes, with a session cookie:
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/peers` | connected servers with status, last seen and last error |
+| `POST /api/peers` | connect with `{url, token, trust, selfTrust, advertisedUrl}`; `trust` describes the other server's certificate (`caPem`, `pinSha256` or `plaintext`) and `selfTrust` describes this one; 201 |
+| `POST /api/peers/probe` | `{url}` reads the certificate an address presents: `fingerprintSha256`, `systemTrusted` (publicly trusted, so no pin is needed) and `plaintextAllowed` |
+| `POST /api/peers/tokens` | create a connection token, shown once; 201, `Cache-Control: no-store` |
+| `DELETE /api/peers/{id}` | remove the connection; 204. The other server is told when it can be reached |
+| `POST /api/peers/{id}/check` | check one server now |
+| `GET`/`PUT /api/peers/self` | this server's display name and advertised address; a change is pushed to every peer |
+
+Server-to-server routes. They take `X-Stackstead-Peer: <token or credential>`
+and no session cookie:
+
+| Method and path | Purpose |
+| --- | --- |
+| `POST /api/peer/pair` | pairs with a connection token; the token is used up only on success |
+| `GET /api/peer/hello` | instance ID, name, version, advertised URL and stack count |
+| `POST /api/peer/update` | the other server's new name or advertised address |
+| `POST /api/peer/unpair` | the other server removed the connection |
+
+A credential that is no longer paired gets `401 {"error": "...", "code": "peer_not_paired"}`.
+A peer credential is refused with `403 {"code": "peer_forbidden"}` on
+`/api/peers`, `/api/settings`, `/api/password`, `/api/logout`, `/api/setup`,
+`/api/servers` and `/api/fleet`.
+
+Forwarding, with a session cookie:
+
+| Method and path | Purpose |
+| --- | --- |
+| `/api/servers/{id}/api/…` | any `/api/` call, forwarded to connected server `{id}` with its credential; event streams are forwarded as they arrive |
+| `GET /api/fleet/stacks` | this server's stacks plus each connected server's, asked in parallel with a 3 second timeout per server. A server that does not answer is listed with its error instead of failing the call |
+| `GET /api/events/recent` | the last 50 events, for the All stacks screen |
+
+Forwarding turns a peer's answer into an error when it cannot be passed on:
+an upstream `401` becomes `502 peer_unpaired`, a redirect becomes `502
+peer_proxy`, and a path that would leave `/api/` gets `400 peer_bad_path`.
+Other answers pass through unchanged.
+
+Error codes:
+
+| `code` | Meaning |
+| --- | --- |
+| `peer_unreachable` | the server could not be reached (502) |
+| `peer_tls` | the TLS handshake or certificate check failed (502) |
+| `peer_unpaired` | the other server no longer accepts the connection (502) |
+| `peer_proxy` | the address answered with a redirect or a non-Stackstead page, often a proxy login (502) |
+| `peer_version` | the servers' major.minor versions differ, so their screens are disabled (502) |
+| `peer_wrong_instance` | the address now answers for a different server; forwarding stops (502) |
+| `peer_old` | the other server predates connected servers (502) |
+| `peer_unknown` | no connection has that ID (404) |
+| `peer_bad_path`, `peer_not_paired`, `peer_forbidden` | see above |
+
+Status checks run every 30 seconds while a browser session on this server
+was active in the last 60 seconds, and every 5 minutes otherwise. With no
+connected servers, nothing is checked.
 
 ## Storage
 
