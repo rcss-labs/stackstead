@@ -1,32 +1,27 @@
-import { emptyForm, fromForm, type ServiceForm } from '../compose/form';
-import { serviceConfigYaml } from './composeText';
+import { emptyForm, type ServiceForm } from '../compose/form';
+import { stackToYaml, type Extra, type StackCard } from '../compose/stackYaml';
 
-export interface PreviewCard {
-  name: string;
-  form: ServiceForm;
-}
-
-/** Compose text for the cards as typed. Never throws: a new form has no read-only fields. */
-export function previewYaml(cards: PreviewCard[]): string {
-  const lines = ['services:'];
-  cards.forEach((card, i) => {
-    const block = serviceConfigYaml(card.name || `service-${i + 1}`, fromForm(card.form, null)).split('\n');
-    if (block.length === 1) block[0] += ' {}';
-    for (const line of block) lines.push(`  ${line}`);
-  });
-  return lines.join('\n');
+/** The compose.yaml Create would write. An unnamed card gets a placeholder key so the preview never fails. */
+export function previewStack(cards: StackCard[], stackExtra: Extra): string {
+  return stackToYaml(
+    cards.map((card, i) => ({ ...card, name: card.name || `service-${i + 1}` })),
+    stackExtra,
+  );
 }
 
 export interface CreateDirtyInput {
   stackName: string;
-  cards: { name: string; autoName: boolean; form: ServiceForm }[];
+  cards: { name: string; autoName: boolean; form: ServiceForm; extra: Extra }[];
+  stackExtra: Extra;
+  /** The YAML text was typed into since it was last generated from the cards. */
+  yamlEdited: boolean;
 }
 
 const withoutReadOnly = ({ readOnly: _readOnly, ...rest }: ServiceForm) => JSON.stringify(rest);
 
 /** True once the user has changed anything from the untouched New stack screen. */
-export function isCreateDirty({ stackName, cards }: CreateDirtyInput): boolean {
-  if (stackName !== '' || cards.length > 1) return true;
+export function isCreateDirty({ stackName, cards, stackExtra, yamlEdited }: CreateDirtyInput): boolean {
+  if (stackName !== '' || cards.length !== 1 || yamlEdited || Object.keys(stackExtra).length > 0) return true;
   const blank = withoutReadOnly(emptyForm());
-  return cards.some((c) => (!c.autoName && c.name !== '') || withoutReadOnly(c.form) !== blank);
+  return cards.some((c) => Object.keys(c.extra).length > 0 || (!c.autoName && c.name !== '') || withoutReadOnly(c.form) !== blank);
 }

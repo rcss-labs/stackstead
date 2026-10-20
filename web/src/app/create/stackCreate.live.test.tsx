@@ -151,7 +151,7 @@ describe('New stack compose preview', () => {
     await user.click(screen.getByRole('button', { name: '+ Add another service' }));
     await user.type(screen.getByLabelText('Service name'), 'db');
     await user.type(screen.getByLabelText('Image'), 'postgres:17');
-    expect(preview().textContent).toBe('services:\n  web:\n    image: nginx:1.27\n    ports:\n      - "8080:80"\n  db:\n    image: postgres:17');
+    expect(preview().textContent).toBe('services:\n  web:\n    image: nginx:1.27\n    ports:\n      - "8080:80"\n  db:\n    image: postgres:17\n');
     await submit(user);
     await waitFor(() => expect(post()).toBeDefined());
     expect((post()?.body as { services: { service: string; config: unknown }[] }).services).toEqual([
@@ -166,13 +166,12 @@ describe('New stack compose preview', () => {
     expect(preview().textContent).toContain('  app:');
     await user.click(screen.getByLabelText('From Existing build'));
     await user.type(screen.getByLabelText('Build context'), '/srv/app');
-    expect(preview().textContent).toContain('build:');
-    expect(preview().textContent).toContain('context: /srv/app');
+    expect(preview().textContent).toContain('build: /srv/app');
   });
 
   it('starts as an empty service', async () => {
     await mount();
-    expect(preview().textContent).toBe('services:\n  service-1: {}');
+    expect(preview().textContent).toBe('services:\n  service-1: {}\n');
     expect(screen.getByText('my-stack')).toBeTruthy();
     expect(screen.getByText('new file')).toBeTruthy();
   });

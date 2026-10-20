@@ -2,13 +2,14 @@ import { Link } from 'react-router';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { Field } from '../components/Field';
-import { previewYaml } from '$lib/stacks/createPreview';
+import { previewStack } from '$lib/stacks/createPreview';
 import { BROWSE_TITLES } from '../stacks/ServiceForm';
 import { FileBrowser } from '../stacks/FileBrowser';
 import { MAX_SERVICES, useCreateForm } from './useCreateForm';
 import { ServiceCard } from './ServiceCard';
 import { ComposePreview } from './ComposePreview';
 import { usePortCheck } from './usePortCheck';
+import { YamlMode } from './YamlMode';
 import styles from './StackCreateScreen.module.css';
 
 import { useServer } from '../servers/ServerContext';
@@ -54,7 +55,20 @@ export function StackCreateScreen() {
               {form.formError}
             </div>
           )}
-          {cards.map((card, index) => (
+          <div className={styles.modeRow}>
+            <div className={styles.modeSwitch} role="radiogroup" aria-label="Editor mode">
+              {(['form', 'yaml'] as const).map((value) => (
+                <label key={value} className={styles.mode}>
+                  <input type="radio" name="editor-mode" value={value} checked={form.mode === value} disabled={frozen} onChange={() => form.setMode(value)} />
+                  {value === 'form' ? 'Form' : 'YAML'}
+                </label>
+              ))}
+            </div>
+          </div>
+          {form.mode === 'yaml' && (
+            <YamlMode text={form.yamlText} onChange={form.setYamlText} error={form.yamlError} fieldErrors={form.yamlFieldErrors} disabled={pending} />
+          )}
+          {form.mode === 'form' && cards.map((card, index) => (
             <ServiceCard
               key={card.id}
               card={card}
@@ -68,27 +82,30 @@ export function StackCreateScreen() {
               onRemove={() => form.removeCard(card.id)}
               onNameChange={(name) => form.setCardName(card.id, name)}
               onFormChange={(next) => form.setCardForm(card.id, next)}
+              onSourceChange={(source) => form.sourceChange(card.id, source)}
               onBrowse={(mode, set, purpose) => form.browse(card.id, mode, set, purpose)}
               portNote={portNoteFor(card.id)}
               formRef={form.serviceFormRef}
             />
           ))}
-          <div className={styles.addRow}>
-            <Button
-              variant="secondary"
-              className={styles.addButton}
-              disabled={frozen}
-              disabledReason={cards.length >= MAX_SERVICES ? 'A stack can have at most 20 services.' : undefined}
-              onClick={form.addCard}
-            >
-              + Add another service
-            </Button>
-          </div>
+          {form.mode === 'form' && (
+            <div className={styles.addRow}>
+              <Button
+                variant="secondary"
+                className={styles.addButton}
+                disabled={frozen}
+                disabledReason={cards.length >= MAX_SERVICES ? 'A stack can have at most 20 services.' : undefined}
+                onClick={form.addCard}
+              >
+                + Add another service
+              </Button>
+            </div>
+          )}
         </form>
       </div>
 
       <aside className={styles.side}>
-        <ComposePreview text={previewYaml(cards)} />
+        {form.mode === 'form' && <ComposePreview text={previewStack(cards, form.stackExtra)} />}
         <label className={styles.check}>
           <input type="checkbox" checked={form.startNow} onChange={(e) => form.setStartNow(e.target.checked)} />
           <span>
@@ -99,7 +116,7 @@ export function StackCreateScreen() {
           <Link to={href('/')} className={styles.cancel}>
             Cancel
           </Link>
-          <Button variant="primary" type="submit" form="create-form" className={styles.create} loading={pending}>
+          <Button variant="primary" type="submit" form="create-form" className={styles.create} loading={pending} disabledReason={form.createBlocked || undefined}>
             Create stack
           </Button>
         </div>

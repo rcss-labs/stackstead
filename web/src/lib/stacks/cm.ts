@@ -23,11 +23,20 @@ export interface EditorOptions {
   onchange: (value: string) => void;
 }
 
+export interface AriaState {
+  invalid?: boolean;
+  describedBy?: string;
+}
+
 export interface EditorHandle {
   getValue(): string;
   setValue(value: string): void;
   setReadonly(readonly: boolean): void;
   setOriginal(original: string | undefined): void;
+  /** The accessible name changes when the owner does (a Dockerfile editor follows its service's name). */
+  setAriaLabel(label: string): void;
+  /** Ties a validation message to the editor; an empty object clears both attributes. */
+  setAriaState(state: AriaState): void;
   goToLine(line: number): void;
   focus(): void;
   destroy(): void;
@@ -52,13 +61,20 @@ function languageExtension(language: 'yaml' | 'dockerfile'): Extension {
   return language === 'dockerfile' ? StreamLanguage.define({ ...dockerFile, name: 'dockerfile' }) : yaml();
 }
 
-function baseExtensions(ariaLabel: string, language: 'yaml' | 'dockerfile'): Extension[] {
+function ariaExtension(label: string, state: AriaState = {}): Extension {
+  const attributes: Record<string, string> = { 'aria-label': label };
+  if (state.invalid) attributes['aria-invalid'] = 'true';
+  if (state.describedBy) attributes['aria-describedby'] = state.describedBy;
+  return EditorView.contentAttributes.of(attributes);
+}
+
+function baseExtensions(ariaLabel: string, language: 'yaml' | 'dockerfile', aria: Extension = ariaExtension(ariaLabel)): Extension[] {
   return [
     lineNumbers(),
     languageExtension(language),
     syntaxHighlighting(highlightStyle),
     EditorView.lineWrapping,
-    EditorView.contentAttributes.of({ 'aria-label': ariaLabel }),
+    aria,
     EditorView.theme({
       '&': { background: 'var(--surface)', color: 'var(--text)' },
       '.cm-content': { fontFamily: 'var(--mono)', caretColor: 'var(--text)' },
@@ -149,12 +165,17 @@ const changedLinesExtensions: Extension[] = [
 
 export function createEditor(opts: EditorOptions): EditorHandle {
   const readonlyCompartment = new Compartment();
+  // contentAttributes are baked at creation; a compartment lets the label and error state follow later renders.
+  const ariaCompartment = new Compartment();
+  let ariaLabel = opts.ariaLabel;
+  let ariaState: AriaState = {};
+  const reconfigureAria = () => view.dispatch({ effects: ariaCompartment.reconfigure(ariaExtension(ariaLabel, ariaState)) });
   const view = new EditorView({
     parent: opts.parent,
     state: EditorState.create({
       doc: opts.value,
       extensions: [
-        ...baseExtensions(opts.ariaLabel, opts.language ?? 'yaml'),
+        ...baseExtensions(opts.ariaLabel, opts.language ?? 'yaml', ariaCompartment.of(ariaExtension(ariaLabel))),
         ...changedLinesExtensions,
         originalField.init(() => opts.original),
         readonlyCompartment.of(readonlyExtensions(opts.readonly)),
@@ -183,6 +204,16 @@ export function createEditor(opts: EditorOptions): EditorHandle {
     setOriginal(original) {
       if (original === view.state.field(originalField)) return;
       view.dispatch({ effects: setOriginalEffect.of(original) });
+    },
+    setAriaLabel(label) {
+      if (label === ariaLabel) return;
+      ariaLabel = label;
+      reconfigureAria();
+    },
+    setAriaState(state) {
+      if (!!state.invalid === !!ariaState.invalid && state.describedBy === ariaState.describedBy) return;
+      ariaState = state;
+      reconfigureAria();
     },
     goToLine(line) {
       const n = Math.min(Math.max(1, line), view.state.doc.lines);
