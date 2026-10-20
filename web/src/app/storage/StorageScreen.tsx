@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router';
 import { api } from '$lib/api/client';
 import type { ActionEntry, StorageBuildCache, StorageImages, StorageOverview, StoragePlanRequest, StorageVolumes } from '$lib/api/types';
 import { filterImages, filterVolumes, imageChips, imageCounts, imageReclaimRange, pageView, sizeText, volumeChips, volumeCounts, type ImageChip, type VolumeChip } from '$lib/storage/storage';
-import { kindFromQuery, reclaimableText, sortBySize, usageSummary, usedText, type StorageKind } from '$lib/storage/usage';
+import { countText, kindFromQuery, reclaimableText, sortBySize, usageSummary, usedText, type StorageKind } from '$lib/storage/usage';
 import { live } from '$lib/stores/live';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
@@ -97,20 +97,20 @@ function Lead({ overview }: { overview: StorageOverview }) {
           <span className={styles.accent}>{reclaimable}</span>
         </>
       )}
-      {' · '}
       {summary.sizesAt ? (
         <>
-          sizes from <RelativeTime iso={summary.sizesAt} />
+          {' · sizes from '}
+          <RelativeTime iso={summary.sizesAt} />
+          {summary.refreshing && ' · refreshing…'}
         </>
       ) : (
-        'Sizes not available yet'
+        // While the first sizes are being calculated the used text already says so; do not also claim they are unavailable.
+        !summary.refreshing && ' · Sizes not available yet'
       )}
-      {summary.refreshing && ' · refreshing…'}
     </p>
   );
 }
 
-const countText = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
 const sortedStatus = (count: number, noun: string) => `${countText(count, noun)} · sorted by size`;
 
 function LayersTable({ overview, status }: { overview: StorageOverview; status: string }) {

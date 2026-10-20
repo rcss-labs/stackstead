@@ -72,6 +72,27 @@ describe('Storage screen', () => {
     mountAt('/storage');
     const lead = (await screen.findByText(/Size calculating…/)).closest('p')!;
     expect(lead.textContent).not.toMatch(/reclaimable/);
+    // One size state at a time: calculating must not also claim the sizes are unavailable.
+    expect(lead.textContent).toBe('Size calculating…');
+    expect(lead.textContent).not.toMatch(/not available yet|refreshing…/);
+  });
+
+  it('the lead says sizes are not available when nothing is calculating and no size is known', async () => {
+    const idle = { ...totals, refreshing: false };
+    fake.restore();
+    fake = installFakeFetch(routes({ 'GET /api/storage': { body: { ...overview, images: idle, volumes: idle, containers: idle, buildCache: idle } } }));
+    mountAt('/storage');
+    const lead = (await screen.findByText(/Sizes not available yet/)).closest('p')!;
+    expect(lead.textContent).not.toMatch(/calculating|refreshing…/);
+  });
+
+  it('the lead notes a refresh while dated sizes are shown', async () => {
+    const refreshing = { ...sizedOverview.images, refreshing: true };
+    fake.restore();
+    fake = installFakeFetch(routes({ 'GET /api/storage': { body: { ...sizedOverview, images: refreshing } } }));
+    mountAt('/storage');
+    const lead = (await screen.findByText(/sizes from/)).closest('p')!;
+    expect(lead.textContent).toMatch(/refreshing…/);
   });
 
   it('the lead says nothing reclaimable when a known value is zero', async () => {
@@ -134,6 +155,14 @@ describe('Storage screen', () => {
     await screen.findByText('No storage actions yet.');
     expect(screen.getAllByRole('heading', { name: 'Recent storage actions' })).toHaveLength(1);
     expect(screen.getByRole('region', { name: 'Recent storage actions' })).toBeTruthy();
+  });
+
+  it('counts a single recent action in the singular', async () => {
+    mountAt('/storage');
+    await screen.findByText('old-image');
+    const table = screen.getByRole('region', { name: 'Recent storage actions' });
+    expect(within(table).getByText('1 action')).toBeTruthy();
+    expect(within(table).queryByText('1 actions')).toBeNull();
   });
 
   it('selects the kind from ?tab, filters with counted chips and search; an unknown tab selects Images', async () => {

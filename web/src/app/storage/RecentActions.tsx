@@ -1,5 +1,6 @@
 import type { ActionEntry } from '$lib/api/types';
 import { sizeText } from '$lib/storage/storage';
+import { countText } from '$lib/storage/usage';
 import { Banner } from '../components/Banner';
 import { RelativeTime } from '../components/RelativeTime';
 import styles from './StorageScreen.module.css';
@@ -32,7 +33,7 @@ export function RecentActions({ actions, error }: { actions: ActionEntry[]; erro
       ) : actions.length === 0 ? (
         <p className={styles.muted}>No storage actions yet.</p>
       ) : (
-        <StorageTable label="Recent storage actions" titleId={HEADING_ID} columns={COLUMNS} status={`${actions.length} actions`}>
+        <StorageTable label="Recent storage actions" titleId={HEADING_ID} columns={COLUMNS} status={countText(actions.length, 'action')}>
           {actions.slice(0, 20).map((action) => (
             <StorageRow key={action.id}>
               <StorageCell place="sub">
