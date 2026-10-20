@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ServiceConfig } from '../api/types';
-import { emptyForm, fieldOf, fromForm, groupServiceErrors, mapServerErrors, toForm, validateForm, type ServiceForm } from './form';
+import {
+  DOCKERFILE_TEMPLATE,
+  defaultImageTag,
+  emptyForm,
+  fieldOf, fromForm, groupServiceErrors, mapServerErrors, toForm,
+  validateForm,
+  type ServiceForm,
+} from './form';
 
 const full: ServiceConfig = {
   build: { context: './app', dockerfile: 'Dockerfile.dev' },
@@ -352,5 +359,65 @@ describe('round-trip identity of real-world shapes', () => {
       expect(validateForm(f, { original: b })).toEqual({});
       expect(validateForm(f, { original: null })).toHaveProperty(['build.context']);
     });
+  });
+});
+
+describe('written Dockerfile source', () => {
+  const written = (patch: Partial<ServiceForm> = {}) => form({ source: 'dockerfile', dockerfileText: DOCKERFILE_TEMPLATE, ...patch });
+
+  it('has the exact template', () => {
+    expect(DOCKERFILE_TEMPLATE).toBe('FROM alpine:3.20\n# Add build steps below, for example:\n# RUN apk add --no-cache curl\n');
+  });
+
+  it('fromForm writes the managed build for a written Dockerfile', () => {
+    expect(fromForm(written({ image: 'my/web:1' }), null, 'web')).toEqual({ build: { context: './web' }, image: 'my/web:1', limits: {} });
+  });
+
+  it('fromForm keeps an in-place Dockerfile location', () => {
+    const at = { context: '.', dockerfile: 'Dockerfile.dev' };
+    expect(fromForm(written({ dockerfileAt: at }), null, 'web').build).toEqual(at);
+    expect(fromForm(written({ dockerfileAt: { context: '.', dockerfile: '' } }), null, 'web').build).toEqual({ context: '.' });
+  });
+
+  it('fromForm throws for a managed Dockerfile without a service name', () => {
+    expect(() => fromForm(written(), null)).toThrow();
+    expect(() => fromForm(written(), null, '')).toThrow();
+  });
+
+  it('validateForm requires Dockerfile text', () => {
+    expect(validateForm(written({ dockerfileText: '  \n' }), { original: null }).dockerfileText).toBe('Dockerfile is required');
+  });
+
+  it('rejects a Dockerfile over 1 MiB counting UTF-8 bytes', () => {
+    const msg = 'Dockerfile is larger than 1 MiB';
+    expect(validateForm(written({ dockerfileText: 'é'.repeat(524289) }), { original: null }).dockerfileText).toBe(msg);
+    expect(validateForm(written({ dockerfileText: 'é'.repeat(524288) }), { original: null }).dockerfileText).toBeUndefined();
+  });
+
+  it('rejects NUL', () => {
+    expect(validateForm(written({ dockerfileText: 'FROM a\0' }), { original: null }).dockerfileText).toBe('Dockerfile must not contain NUL bytes');
+  });
+
+  it('does not require image for a written Dockerfile', () => {
+    expect(validateForm(written({ image: '' }), { original: null })).toEqual({});
+  });
+
+  it('mapServerErrors maps dockerfile to dockerfileText', () => {
+    const f = written();
+    expect(mapServerErrors([{ field: 'dockerfile', message: 'bad' }], f)).toEqual({ dockerfileText: 'bad' });
+    expect(mapServerErrors([{ field: 'services.web.dockerfile', message: 'bad' }], f, 'web')).toEqual({ dockerfileText: 'bad' });
+    expect(fieldOf('dockerfileText')).toBe('build');
+  });
+
+  it('defaultImageTag', () => {
+    expect(defaultImageTag('web', 'web')).toBe('stackstead/web:latest');
+    expect(defaultImageTag('shop', 'api')).toBe('stackstead/shop-api:latest');
+  });
+
+  it('toForm and emptyForm start without Dockerfile text', () => {
+    for (const f of [emptyForm(), toForm(full, [])]) {
+      expect(f.dockerfileText).toBe('');
+      expect(f.dockerfileAt).toBeNull();
+    }
   });
 });
