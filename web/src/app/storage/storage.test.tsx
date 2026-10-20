@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { consumer, image } from '$lib/storage/fixtures';
 import { refreshRunningOps } from '$lib/stores/stacks';
 import { installFakeFetch, type FakeFetch } from '../../vitest-setup';
@@ -23,6 +23,12 @@ vi.mock('$lib/stores/live', async (orig) => {
 
 let fake: FakeFetch;
 const calls = (path: string) => fake.calls.filter((c) => c.path === path);
+
+// Load the lazy route chunk up front: on a cold cache, transforming it can outlast the first
+// test's default findBy timeout.
+beforeAll(async () => {
+  await import('../routes/Storage');
+}, 30_000);
 
 beforeEach(() => {
   resetState();
@@ -324,7 +330,7 @@ describe('Storage screen', () => {
     await selectKind(user, 'Volumes');
     await selectKind(user, 'Images');
     expect((screen.getByRole('searchbox', { name: 'Search images' }) as HTMLInputElement).value).toBe('');
-    // Chips are not part of the reset (as in the Svelte screen): Dangling is still pressed until All is chosen.
+    // Chips are not part of the reset (as in the previous UI): Dangling is still pressed until All is chosen.
     expect(screen.getByText('1–50 of 60')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: /^All/ }));
     expect(screen.getByText('1–50 of 120')).toBeTruthy();
