@@ -1,7 +1,7 @@
 import { Link } from 'react-router';
 import type { StorageImage, StorageKindTotals } from '$lib/api/types';
 import { formatBytes } from '$lib/format';
-import { deleteDisabledReason, imagePath, sizeText, type PageView } from '$lib/storage/storage';
+import { deleteDisabledReason, imagePath, knownTime, sizeText, type PageView } from '$lib/storage/storage';
 import { Button } from '../components/Button';
 import { RelativeTime } from '../components/RelativeTime';
 import { Tag } from '../components/Tag';
@@ -10,7 +10,6 @@ import { StorageCell, StorageRow } from './StorageTable';
 import { UsedBy } from './UsedBy';
 
 const shortId = (id: string) => id.replace(/^sha256:/, '').slice(0, 12);
-export const knownTime = (iso: string | null) => Boolean(iso) && !iso!.startsWith('0001-');
 
 const statusText = (image: StorageImage) => (image.containers.length ? 'in use' : image.dangling ? 'dangling' : 'no containers');
 

@@ -6,16 +6,18 @@ export interface KindToolbarProps {
   counts: Record<string, number>;
   pressed: string;
   onChip: (id: string) => void;
-  /** Also the chip group name and search placeholder, e.g. `Filter images`. */
+  /** Chip group name, e.g. `Filter images`. */
+  groupLabel: string;
+  /** Search box name and placeholder, e.g. `Search images`. */
   searchLabel: string;
   search: string;
   onSearch: (value: string) => void;
 }
 
-export function KindToolbar({ chips, counts, pressed, onChip, searchLabel, search, onSearch }: KindToolbarProps) {
+export function KindToolbar({ chips, counts, pressed, onChip, groupLabel, searchLabel, search, onSearch }: KindToolbarProps) {
   return (
     <div className={styles.toolbar}>
-      <div role="group" aria-label={searchLabel} className={styles.chips}>
+      <div role="group" aria-label={groupLabel} className={styles.chips}>
         {chips.map((chip) => (
           <Chip key={chip.id} pressed={chip.id === pressed} count={counts[chip.id]} onClick={() => onChip(chip.id)}>
             {chip.label}

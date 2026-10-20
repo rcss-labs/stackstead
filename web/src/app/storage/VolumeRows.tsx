@@ -35,14 +35,14 @@ export function VolumeRows({ page, dockerDown, onDelete }: { page: PageView<Stor
               </Link>
               <span className={styles.sub}>{`${status} · ${firstUser}`}</span>
               <div className={styles.driver}>{volume.driver}</div>
+              {/* Here rather than in the Used-by cell, which is hidden on narrow screens: it is the only explanation for the missing Delete. */}
+              <ProtectionNote volume={volume} />
             </StorageCell>
             <StorageCell place="end" mono>
               {sizeText(volume.size, volume.sizesPending)}
             </StorageCell>
             <StorageCell place="desktop">
-              <UsedBy consumers={volume.containers} declarations={volume.declaredBy}>
-                <ProtectionNote volume={volume} />
-              </UsedBy>
+              <UsedBy consumers={volume.containers} declarations={volume.declaredBy} />
             </StorageCell>
             <StorageCell place="desktop">
               <Tag tone={status === 'unused' ? 'warning' : 'muted'}>{status}</Tag>

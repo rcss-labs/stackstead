@@ -1,8 +1,7 @@
 import type { StorageBuildRecord, StorageKindTotals } from '$lib/api/types';
-import { sizeText, type PageView } from '$lib/storage/storage';
+import { knownTime, sizeText, type PageView } from '$lib/storage/storage';
 import { RelativeTime } from '../components/RelativeTime';
 import { Tag } from '../components/Tag';
-import { knownTime } from './ImageRows';
 import styles from './StorageTable.module.css';
 import { StorageCell, StorageRow } from './StorageTable';
 

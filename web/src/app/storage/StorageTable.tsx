@@ -78,16 +78,16 @@ export function StorageTable({ label, columns, status, titleId, sizes, children,
       ) : (
         <>
           {toolbar}
-        <div role="table" aria-label={label} className={styles.table} style={{ '--cols': cols } as CSSProperties}>
-          <div role="row" className={`${styles.row} ${styles.columns}`}>
-            {columns.map((c) => (
-              <div key={c.key} role="columnheader">
-                <PanelLabel as="div">{c.label}</PanelLabel>
-              </div>
-            ))}
+          <div role="table" aria-label={label} className={styles.table} style={{ '--cols': cols } as CSSProperties}>
+            <div role="row" className={`${styles.row} ${styles.columns}`}>
+              {columns.map((c) => (
+                <div key={c.key} role="columnheader">
+                  <PanelLabel as="div">{c.label}</PanelLabel>
+                </div>
+              ))}
+            </div>
+            <div role="rowgroup">{children}</div>
           </div>
-          <div role="rowgroup">{children}</div>
-        </div>
         </>
       )}
       {!failure && empty && <p className={styles.none}>{empty}</p>}

@@ -96,7 +96,7 @@ describe('Storage screen', () => {
     expect(screen.getByRole('status', { name: 'Selected storage kind' }).textContent).toBe('3 volumes · sorted by size');
     await user.click(within(bar).getByRole('button', { name: /^Container layers/ }));
     expect(location()).toBe('/storage?tab=layers');
-    expect(screen.getByRole('status', { name: 'Selected storage kind' }).textContent).toBe('1 container layers · sorted by size');
+    expect(screen.getByRole('status', { name: 'Selected storage kind' }).textContent).toBe('1 container layer · sorted by size');
     act(() => within(bar).getByRole('button', { name: /^Build cache/ }).focus());
     await user.keyboard('{Enter}');
     expect(location()).toBe('/storage?tab=build-cache');
@@ -118,7 +118,7 @@ describe('Storage screen', () => {
     const before = region.textContent;
     await selectKind(user, 'Container layers');
     expect(screen.getByRole('status', { name: 'Selected storage kind' })).toBe(region);
-    expect(region.textContent).toBe('1 container layers · sorted by size');
+    expect(region.textContent).toBe('1 container layer · sorted by size');
     expect(region.textContent).not.toBe(before);
   });
 
@@ -148,7 +148,7 @@ describe('Storage screen', () => {
     await user.click(dangling);
     expect(screen.queryByRole('link', { name: 'redis:7' })).toBeNull();
     expect(dangling.getAttribute('aria-pressed')).toBe('true');
-    await user.type(screen.getByRole('searchbox', { name: 'Filter images' }), 'missing');
+    await user.type(screen.getByRole('searchbox', { name: 'Search images' }), 'missing');
     expect(screen.getByText('No images match the current filter.')).toBeTruthy();
     await selectKind(user, 'Build cache');
     expect(location()).toBe('/storage?tab=build-cache');
@@ -168,6 +168,9 @@ describe('Storage screen', () => {
     expect(within(row).getAllByText(/stopped/).length).toBeGreaterThan(0);
     expect(within(row).queryByRole('button', { name: 'Delete' })).toBeNull();
     expect(within(row).getByText('calculating…')).toBeTruthy();
+    // The note explains the missing Delete at every width, so it must also sit in the name cell, which is never hidden.
+    const nameCell = within(row).getAllByRole('cell')[0];
+    expect(within(nameCell).getByText(/remove via the stack/)).toBeTruthy();
     expect(screen.getByRole('button', { name: /Clean up unused volumes/ }).getAttribute('aria-disabled')).toBeNull();
     const used = screen.getByRole('link', { name: 'used' }).closest('[role="row"]') as HTMLElement;
     expect(within(used).queryByRole('button', { name: 'Delete' })).toBeNull();
@@ -204,7 +207,7 @@ describe('Storage screen', () => {
     mountAt('/storage?tab=images');
     const button = await screen.findByRole('button', { name: /Clean up dangling images/ });
     expect(button.textContent).toContain(`(2 · ${expected})`);
-    await user.type(screen.getByRole('searchbox', { name: 'Filter images' }), 'no match');
+    await user.type(screen.getByRole('searchbox', { name: 'Search images' }), 'no match');
     expect(button.textContent).toContain(`(2 · ${expected})`);
     expect(button.getAttribute('aria-disabled')).toBeNull();
     expect(fake.calls.every((call) => call.method === 'GET')).toBe(true);
@@ -274,13 +277,18 @@ describe('Storage screen', () => {
     await user.click(screen.getByRole('button', { name: /^Dangling/ }));
     expect(screen.getByText('1–50 of 60')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Next' }));
-    await user.type(screen.getByRole('searchbox', { name: 'Filter images' }), 'app:');
+    expect(screen.getByText('51–60 of 60')).toBeTruthy();
+    await user.type(screen.getByRole('searchbox', { name: 'Search images' }), 'app:');
     expect(screen.getByText('1–50 of 60')).toBeTruthy();
-    await user.type(screen.getByRole('searchbox', { name: 'Filter images' }), '11');
+    await user.type(screen.getByRole('searchbox', { name: 'Search images' }), '11');
     expect(screen.queryByRole('button', { name: 'Next' })).toBeNull();
+    await user.clear(screen.getByRole('searchbox', { name: 'Search images' }));
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByText('51–60 of 60')).toBeTruthy();
+    // Page 2 is showing now, so only the kind change can bring back page 1.
     await selectKind(user, 'Volumes');
     await selectKind(user, 'Images');
-    expect((screen.getByRole('searchbox', { name: 'Filter images' }) as HTMLInputElement).value).toBe('');
+    expect((screen.getByRole('searchbox', { name: 'Search images' }) as HTMLInputElement).value).toBe('');
     // Chips are not part of the reset (as in the Svelte screen): Dangling is still pressed until All is chosen.
     expect(screen.getByText('1–50 of 60')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: /^All/ }));
@@ -302,6 +310,19 @@ describe('Storage screen', () => {
     expect(bulk.textContent).not.toMatch(/\(0 ·/);
     await user.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(calls('/api/storage/images')).toHaveLength(2));
+  });
+
+  it('counts in the status text are singular for one', async () => {
+    const user = userEvent.setup();
+    mountAt('/storage?tab=images');
+    const region = await screen.findByRole('status', { name: 'Selected storage kind' });
+    await waitFor(() => expect(region.textContent).toBe('2 images · sorted by size'));
+    await user.click(screen.getByRole('button', { name: /^Dangling/ }));
+    expect(region.textContent).toBe('1 image · sorted by size');
+    await selectKind(user, 'Container layers');
+    expect(region.textContent).toBe('1 container layer · sorted by size');
+    await selectKind(user, 'Build cache');
+    expect(region.textContent).toBe('1 record · sorted by size');
   });
 
   it('the mobile sub-line names the status and the first consumer', async () => {

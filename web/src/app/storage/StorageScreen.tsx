@@ -110,12 +110,14 @@ function Lead({ overview }: { overview: StorageOverview }) {
   );
 }
 
-const layersStatus = (overview: StorageOverview) => `${overview.topContainers.length} container layers · sorted by size`;
 
-function LayersTable({ overview }: { overview: StorageOverview }) {
+const countText = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
+const sortedStatus = (count: number, noun: string) => `${countText(count, noun)} · sorted by size`;
+
+function LayersTable({ overview, status }: { overview: StorageOverview; status: string }) {
   const layers = sortBySize(overview.topContainers, (c) => c.sizeRw);
   return (
-    <StorageTable label="Container layers" columns={LAYER_COLUMNS} status={layersStatus(overview)} sizes={overview.containers} empty={layers.length ? undefined : 'No container layers.'}>
+    <StorageTable label="Container layers" columns={LAYER_COLUMNS} status={status} sizes={overview.containers} empty={layers.length ? undefined : 'No container layers.'}>
       {layers.map((layer) => (
         <StorageRow key={layer.name}>
           <StorageCell mono>
@@ -173,11 +175,14 @@ export function StorageScreen() {
   const danglingLabel = imagesFailed ? 'Clean up dangling images' : `Clean up dangling images (${candidates.length} · ${imageReclaimRange(candidates)})`;
   const unknown = data?.overview?.declarationsUnknown ?? [];
   // One region for the whole screen: it stays mounted across kind changes so the new selection is announced as a text change.
-  let statusText = '';
-  if (kind === 'layers' && data?.overview) statusText = layersStatus(data.overview);
-  else if (kind === 'images' && data?.images) statusText = `${shownImages.length} images · sorted by size`;
-  else if (kind === 'volumes' && data?.volumes) statusText = `${shownVolumes.length} volumes · sorted by size`;
-  else if (kind === 'build-cache' && data?.cache) statusText = `${shownCache.length} records · sorted by size`;
+  const status: Record<StorageKind, string> = {
+    layers: sortedStatus(data?.overview?.topContainers.length ?? 0, 'container layer'),
+    images: sortedStatus(shownImages.length, 'image'),
+    volumes: sortedStatus(shownVolumes.length, 'volume'),
+    'build-cache': sortedStatus(shownCache.length, 'record'),
+  };
+  const loaded = { layers: data?.overview, images: data?.images, volumes: data?.volumes, 'build-cache': data?.cache }[kind];
+  const statusText = loaded ? status[kind] : '';
 
   return (
     <section className={styles.page} aria-labelledby="storage-heading">
@@ -214,7 +219,7 @@ export function StorageScreen() {
           {data.overview ? (
             <>
               <UsageCard overview={data.overview} selected={kind} dockerDown={dockerDown} danglingLabel={danglingLabel} danglingUnavailable={imagesFailed ? 'The image list could not be loaded' : undefined} onSelect={selectKind} onCleanup={setCleanup} />
-              {kind === 'layers' && <LayersTable overview={data.overview} />}
+              {kind === 'layers' && <LayersTable overview={data.overview} status={status.layers} />}
             </>
           ) : (
             <div className={styles.retry}>
@@ -230,7 +235,7 @@ export function StorageScreen() {
             <StorageTable
               label="Images"
               columns={IMAGE_COLUMNS}
-              status={`${shownImages.length} images · sorted by size`}
+              status={status.images}
               sizes={data.images?.totals}
               failure={kindError ? { message: kindError, onRetry: refresh } : undefined}
               toolbar={
@@ -242,7 +247,8 @@ export function StorageScreen() {
                     setImageChip(id as ImageChip);
                     setPage(1);
                   }}
-                  searchLabel="Filter images"
+                  groupLabel="Filter images"
+                  searchLabel="Search images"
                   search={search}
                   onSearch={changeSearch}
                 />
@@ -257,7 +263,7 @@ export function StorageScreen() {
             <StorageTable
               label="Volumes"
               columns={VOLUME_COLUMNS}
-              status={`${shownVolumes.length} volumes · sorted by size`}
+              status={status.volumes}
               sizes={data.volumes?.totals}
               failure={kindError ? { message: kindError, onRetry: refresh } : undefined}
               toolbar={
@@ -269,7 +275,8 @@ export function StorageScreen() {
                     setVolumeChip(id as VolumeChip);
                     setPage(1);
                   }}
-                  searchLabel="Filter volumes"
+                  groupLabel="Filter volumes"
+                  searchLabel="Search volumes"
                   search={search}
                   onSearch={changeSearch}
                 />
@@ -284,7 +291,7 @@ export function StorageScreen() {
             <StorageTable
               label="Build cache"
               columns={CACHE_COLUMNS}
-              status={`${shownCache.length} records · sorted by size`}
+              status={status['build-cache']}
               sizes={data.cache?.totals}
               failure={kindError ? { message: kindError, onRetry: refresh } : undefined}
               empty={shownCache.length ? undefined : 'No build cache records.'}
