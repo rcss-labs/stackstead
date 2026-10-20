@@ -38,6 +38,7 @@
 .row { transition: background 0.12s; }
 .row:hover { background: var(--hover); }
 .columns, .columns:hover { background: transparent; }
+.columns > [role='columnheader'] { min-width: 0; overflow: hidden; }
 
 .cell { position: relative; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cell[data-mono='true'] { font-family: var(--mono); font-size: 12.5px; }
