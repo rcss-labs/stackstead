@@ -268,6 +268,9 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 		if errors.As(err, &notEditable) {
 			return Summary{}, dockerfileFieldError(req.IndexedFields, df.index, notEditable.Reason)
 		}
+		if errors.Is(err, ErrNoBuild) {
+			return Summary{}, dockerfileFieldError(req.IndexedFields, df.index, "this service doesn't build an image, so it has no Dockerfile")
+		}
 		if err != nil || !inside {
 			return Summary{}, dockerfileOutsideError(req.IndexedFields, df.index)
 		}

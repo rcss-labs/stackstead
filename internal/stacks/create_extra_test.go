@@ -99,7 +99,6 @@ func TestCreateDockerfileRequiresBuildInsideStack(t *testing.T) {
 		name string
 		cfg  func(h *harness) composefile.ServiceConfig
 	}{
-		{"image only", func(*harness) composefile.ServiceConfig { return composefile.ServiceConfig{Image: "nginx:1"} }},
 		// both contexts are allowed (inside the allowed root) yet outside the stack folder
 		{"parent context", func(h *harness) composefile.ServiceConfig {
 			if err := os.MkdirAll(filepath.Join(h.dir, "x"), 0o755); err != nil {
@@ -294,6 +293,18 @@ func TestCreateRejectsSymlinkedExtraBuildContext(t *testing.T) {
 	req := multiRequest(composefile.NamedService{Name: "web", Extra: mustExtra(t, `{"build":{"context":"`+real+`"}}`)})
 	if _, err := h.svc.Create(context.Background(), req); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCreateDockerfileForServiceWithoutBuildSaysSo(t *testing.T) {
+	h := newHarness(t)
+	req := multiRequest(composefile.NamedService{Name: "ok", Config: webCfg()}, composefile.NamedService{Name: "web", Config: composefile.ServiceConfig{Image: "nginx:1"}})
+	req.Dockerfiles = map[int][]byte{1: []byte("FROM x\n")}
+	_, err := h.svc.Create(context.Background(), req)
+	fs := fieldsOf(t, err)
+	const want = "this service doesn't build an image, so it has no Dockerfile"
+	if len(fs) != 1 || fs[0].Field != "services[1].dockerfile" || fs[0].Message != want {
+		t.Fatalf("fields = %+v", fs)
 	}
 }
 
