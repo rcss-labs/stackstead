@@ -9,6 +9,14 @@ import { fieldLabel, ServiceForm, type BrowsePurpose, type ServiceFormHandle, ty
 
 afterEach(cleanup);
 
+// CodeMirror mounts fine in jsdom and replaces the textarea once its lazy chunk resolves, which races these
+// textarea assertions under load. A failing chunk keeps the textarea fallback; the real editor is covered in yamlEditor.test.tsx.
+vi.mock('$lib/stacks/cm', () => ({
+  createEditor: () => {
+    throw new Error('no editor in jsdom');
+  },
+}));
+
 const HINT = "This field uses YAML the form can't edit — open the raw YAML editor";
 
 interface HostHandle extends ServiceFormHandle {
