@@ -1,15 +1,15 @@
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
-import { api } from '$lib/api/client';
+import type { Api } from '$lib/api/client';
 import type { ActionEntry, StorageBuildCache, StorageImages, StorageOverview, StoragePlanRequest, StorageVolumes } from '$lib/api/types';
 import { filterImages, filterVolumes, imageChips, imageCounts, imageReclaimRange, pageView, sizeText, volumeChips, volumeCounts, type ImageChip, type VolumeChip } from '$lib/storage/storage';
 import { countText, kindFromQuery, reclaimableText, sortBySize, usageSummary, usedText, type StorageKind } from '$lib/storage/usage';
-import { live } from '$lib/stores/live';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { RelativeTime } from '../components/RelativeTime';
 import { Spinner } from '../components/Spinner';
 import { useStore } from '../hooks/useStore';
+import { useServer } from '../servers/ServerContext';
 import { Pager } from '../components/Pager';
 import { CacheRows } from './CacheRows';
 import { CleanupDialog } from './CleanupDialog';
@@ -35,7 +35,7 @@ export interface StorageData {
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Independent reads, so the persistent action log stays usable when Docker is down. */
-export async function loadStorage(): Promise<StorageData> {
+export async function loadStorage(api: Api): Promise<StorageData> {
   const [overview, images, volumes, cache, actions] = await Promise.allSettled([
     api.storageOverview(),
     api.storageImages(),
@@ -115,15 +115,16 @@ function Lead({ overview }: { overview: StorageOverview }) {
 const sortedStatus = (count: number, noun: string) => `${countText(count, noun)} · sorted by size`;
 
 function LayersTable({ overview, status }: { overview: StorageOverview; status: string }) {
+  const { href } = useServer();
   const layers = sortBySize(overview.topContainers, (c) => c.sizeRw);
   return (
     <StorageTable label="Container layers" columns={LAYER_COLUMNS} status={status} sizes={overview.containers} empty={layers.length ? undefined : 'No container layers.'}>
       {layers.map((layer) => (
         <StorageRow key={layer.name}>
           <StorageCell mono>
-            <Link to={`/containers/${encodeURIComponent(layer.name)}`}>{layer.name}</Link>
+            <Link to={href(`/containers/${encodeURIComponent(layer.name)}`)}>{layer.name}</Link>
           </StorageCell>
-          <StorageCell place="sub">{layer.stack ? <Link to={`/stacks/${encodeURIComponent(layer.stack)}`}>{layer.stack}</Link> : '—'}</StorageCell>
+          <StorageCell place="sub">{layer.stack ? <Link to={href(`/stacks/${encodeURIComponent(layer.stack)}`)}>{layer.stack}</Link> : '—'}</StorageCell>
           <StorageCell place="end" mono>
             {sizeText(layer.sizeRw)}
           </StorageCell>
@@ -137,7 +138,8 @@ export function StorageScreen() {
   const [query] = useSearchParams();
   const kind = kindFromQuery(query.get('tab'));
   const navigate = useNavigate();
-  const { data, refresh } = useStorageRefresh(loadStorage, isRefreshing);
+  const { api, live, href } = useServer();
+  const { data, refresh } = useStorageRefresh(() => loadStorage(api), isRefreshing);
   const liveState = useStore(live);
   const dockerDown = liveState.docker === 'unavailable' || liveState.events === 'disconnected';
   const recalc = useRecalculate(dockerDown, refresh);
@@ -152,7 +154,7 @@ export function StorageScreen() {
     if (id === kind) return;
     setSearch('');
     setPage(1);
-    void navigate(`/storage?tab=${id}`);
+    void navigate(href(`/storage?tab=${id}`));
   };
   const changeSearch = (value: string) => {
     setSearch(value);

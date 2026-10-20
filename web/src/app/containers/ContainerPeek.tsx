@@ -4,6 +4,7 @@ import type { ContainerRow } from '$lib/api/types';
 import { consoleStatus, logClock, logUtc } from '$lib/stacks/console';
 import { lineTone } from '$lib/stacks/logs';
 import { useLogStream } from '../detail/useLogStream';
+import { useServer } from '../servers/ServerContext';
 import { ContainerActions } from './ContainerActions';
 import styles from './ContainerPeek.module.css';
 import type { ContainerAction } from './useContainerAction';
@@ -22,6 +23,7 @@ export interface ContainerPeekProps {
 
 /** The last few log lines of one container, streamed while mounted. A recreated container arrives under a new id, which remounts the enclosing keyed fragment and so opens a new stream. */
 export function ContainerPeek({ row, id, mobile, reason, onRequest }: ContainerPeekProps) {
+  const { href } = useServer();
   const { lines, status, ended, errors } = useLogStream({ kind: 'container', id: row.id }, { tail: PEEK_LINES, follow: true });
   const state = consoleStatus({ status, ended, paused: false, sourceKind: 'container', containerState: row.state });
   const shown = lines.slice(-PEEK_LINES);
@@ -53,7 +55,7 @@ export function ContainerPeek({ row, id, mobile, reason, onRequest }: ContainerP
             <span className={styles.actions}>
               <ContainerActions row={row} size="md" reason={reason} onRequest={onRequest} />
             </span>
-            <Link to={`/containers/${encodeURIComponent(row.name)}?tab=logs`} className={styles.full}>
+            <Link to={href(`/containers/${encodeURIComponent(row.name)}?tab=logs`)} className={styles.full}>
               Open full logs
             </Link>
           </div>

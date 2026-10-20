@@ -1,17 +1,19 @@
 import { Fragment } from 'react';
 import { Link } from 'react-router';
 import type { StorageConsumer, StorageDeclaration } from '$lib/api/types';
+import { useServer } from '../servers/ServerContext';
 import styles from './DetailScreen.module.css';
 
 /** Containers using the item. Shared by the image and volume detail screens. */
 export function ConsumersCard({ consumers }: { consumers: StorageConsumer[] }) {
+  const { href } = useServer();
   return (
     <section className={styles.card}>
       <h2 className={styles.cardTitle}>Containers</h2>
       <ul className={styles.list}>
         {consumers.map((consumer) => (
           <li key={consumer.containerId}>
-            <Link className={styles.link} to={`/containers/${encodeURIComponent(consumer.name)}`}>
+            <Link className={styles.link} to={href(`/containers/${encodeURIComponent(consumer.name)}`)}>
               {consumer.name}
             </Link>{' '}
             <span className={styles.muted}>{consumer.state}</span>
@@ -25,13 +27,14 @@ export function ConsumersCard({ consumers }: { consumers: StorageConsumer[] }) {
 
 /** Stack services that declare the item. */
 export function DeclarationsCard({ declarations }: { declarations: StorageDeclaration[] }) {
+  const { href } = useServer();
   return (
     <section className={styles.card}>
       <h2 className={styles.cardTitle}>Declared by</h2>
       <ul className={styles.list}>
         {declarations.map((declaration) => (
           <li key={`${declaration.stack}/${declaration.service}/${declaration.ref}`}>
-            <Link className={styles.link} to={`/stacks/${encodeURIComponent(declaration.stack)}`}>
+            <Link className={styles.link} to={href(`/stacks/${encodeURIComponent(declaration.stack)}`)}>
               {declaration.stack}
             </Link>
             {' · '}

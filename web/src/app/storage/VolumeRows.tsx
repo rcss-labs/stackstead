@@ -1,6 +1,7 @@
 import { Link } from 'react-router';
 import type { StorageVolume } from '$lib/api/types';
 import { deleteDisabledReason, sizeText, type PageView } from '$lib/storage/storage';
+import { useServer } from '../servers/ServerContext';
 import { Button } from '../components/Button';
 import { Tag } from '../components/Tag';
 import styles from './StorageTable.module.css';
@@ -10,18 +11,20 @@ import { UsedBy } from './UsedBy';
 const statusText = (volume: StorageVolume) => (volume.containers.length ? 'in use' : volume.protection ? 'unused · protected' : 'unused');
 
 function ProtectionNote({ volume }: { volume: StorageVolume }) {
+  const { href } = useServer();
   if (!volume.protection) return null;
   const stack = volume.protection.stack;
   const declaration = volume.declaredBy.find((d) => d.stack === stack);
   return (
     <p className={styles.protection}>
-      {declaration ? 'declared by stack' : 'protected by stack'} <Link to={`/stacks/${encodeURIComponent(stack)}`}>{stack}</Link>
+      {declaration ? 'declared by stack' : 'protected by stack'} <Link to={href(`/stacks/${encodeURIComponent(stack)}`)}>{stack}</Link>
       {declaration && ` (${declaration.stackState})`} — remove via the stack
     </p>
   );
 }
 
 export function VolumeRows({ page, dockerDown, onDelete }: { page: PageView<StorageVolume>; dockerDown: boolean; onDelete: (volume: StorageVolume) => void }) {
+  const { href } = useServer();
   return (
     <>
       {page.rows.map((volume) => {
@@ -30,7 +33,7 @@ export function VolumeRows({ page, dockerDown, onDelete }: { page: PageView<Stor
         return (
           <StorageRow key={volume.name}>
             <StorageCell>
-              <Link className={styles.mono} to={`/storage/volumes/${encodeURIComponent(volume.name)}`}>
+              <Link className={styles.mono} to={href(`/storage/volumes/${encodeURIComponent(volume.name)}`)}>
                 {volume.name}
               </Link>
               <span className={styles.sub}>{`${status} · ${firstUser}`}</span>

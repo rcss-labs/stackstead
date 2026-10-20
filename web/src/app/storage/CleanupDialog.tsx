@@ -1,14 +1,14 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
-import { api, ApiError } from '$lib/api/client';
+import { ApiError } from '$lib/api/client';
 import type { Operation, StoragePlan, StoragePlanRequest } from '$lib/api/types';
 import { reclaimText, sizeText, stateText } from '$lib/storage/storage';
-import { refreshRunningOps } from '$lib/stores/stacks';
 import { toasts } from '$lib/stores/toasts';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
 import { Spinner } from '../components/Spinner';
 import { OperationPanel } from '../detail/OperationPanel';
+import { useServer } from '../servers/ServerContext';
 import styles from './CleanupDialog.module.css';
 
 export interface CleanupDialogProps {
@@ -27,6 +27,7 @@ const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * requires the exact phrase and an unexpired plan.
  */
 export function CleanupDialog({ request, onClose, onFinished }: CleanupDialogProps) {
+  const { api, refreshRunningOps, href } = useServer();
   const uid = useId();
   const [plan, setPlan] = useState<StoragePlan>();
   const [checking, setChecking] = useState(true);
@@ -237,7 +238,7 @@ export function CleanupDialog({ request, onClose, onFinished }: CleanupDialogPro
                               {item.stack && (
                                 <>
                                   {' · '}
-                                  <Link to={`/stacks/${encodeURIComponent(item.stack)}`}>{item.stack}</Link> ({stateText(item.stackState)})
+                                  <Link to={href(`/stacks/${encodeURIComponent(item.stack)}`)}>{item.stack}</Link> ({stateText(item.stackState)})
                                 </>
                               )}
                             </span>

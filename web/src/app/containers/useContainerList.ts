@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '$lib/api/client';
 import type { ContainerRow } from '$lib/api/types';
 import { createContainerList } from '$lib/containers/list';
-import { changes } from '$lib/stores/live';
 import { useStore } from '../hooks/useStore';
+import { useServer } from '../servers/ServerContext';
 
 export interface ContainerListState {
   rows: ContainerRow[] | undefined;
@@ -14,6 +13,7 @@ export interface ContainerListState {
 }
 
 export function useContainerList(): ContainerListState {
+  const { api, changes } = useServer();
   const [list] = useState(() => createContainerList({ list: api.containers, changes }));
   // StrictMode runs mount, cleanup, mount back to back. Deferring start to a microtask lets the cleanup
   // cancel it, so the throwaway first mount never fetches; start and stop are idempotent either way.

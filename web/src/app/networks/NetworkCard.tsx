@@ -4,6 +4,7 @@ import type { Network } from '$lib/api/types';
 import { isLanDriver, networkOwner, removeDisabledReason } from '$lib/networks/networks';
 import { Button } from '../components/Button';
 import { Tag } from '../components/Tag';
+import { useServer } from '../servers/ServerContext';
 import styles from './NetworkCard.module.css';
 
 export interface NetworkCardProps {
@@ -15,13 +16,15 @@ export interface NetworkCardProps {
 }
 
 function Owner({ network }: { network: Network }) {
+  const { href } = useServer();
   const owner = networkOwner(network);
-  if (owner.kind === 'stack') return <Link to={`/stacks/${encodeURIComponent(owner.stack)}`}>stack {owner.stack}</Link>;
+  if (owner.kind === 'stack') return <Link to={href(`/stacks/${encodeURIComponent(owner.stack)}`)}>stack {owner.stack}</Link>;
   if (owner.kind === 'compose') return <>compose {owner.project}</>;
   return <>{owner.kind === 'builtin' ? 'built-in' : 'unmanaged'}</>;
 }
 
 export function NetworkCard({ network, removing, busy, onRemove }: NetworkCardProps) {
+  const { href } = useServer();
   const uid = useId();
   const nameId = `${uid}-name`;
   const listId = `${uid}-containers`;
@@ -35,7 +38,7 @@ export function NetworkCard({ network, removing, busy, onRemove }: NetworkCardPr
     <div id={listId} className={styles.list}>
       {containers.map((container) => (
         <div key={container.name} className={styles.endpoint}>
-          <Link className={styles.endpointName} to={`/containers/${encodeURIComponent(container.name)}`}>
+          <Link className={styles.endpointName} to={href(`/containers/${encodeURIComponent(container.name)}`)}>
             {container.name}
           </Link>
           <span className={styles.ip}>{container.ipv4 || '—'}</span>

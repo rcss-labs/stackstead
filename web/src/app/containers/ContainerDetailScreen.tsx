@@ -1,12 +1,10 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
-import { api } from '$lib/api/client';
 import type { ContainerDetail } from '$lib/api/types';
 import { containerLed } from '$lib/containers/list';
 import { formatBytes, formatPercent } from '$lib/format';
 import { imagePath } from '$lib/storage/storage';
 import { debounce } from '$lib/stores/debounce';
-import { changes } from '$lib/stores/live';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { CopyButton } from '../components/CopyButton';
@@ -20,6 +18,7 @@ import { Tabs } from '../components/Tabs';
 import { Tag } from '../components/Tag';
 import { LogConsole } from '../detail/LogConsole';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useServer } from '../servers/ServerContext';
 import { ContainerActions, ContainerConfirmDialog } from './ContainerActions';
 import styles from './ContainerDetailScreen.module.css';
 import { useContainerAction } from './useContainerAction';
@@ -48,6 +47,7 @@ const unknownTime = (iso: string | null) => !iso || iso.startsWith('0001-');
 export function ContainerDetailScreen({ name }: { name: string }) {
   const [query] = useSearchParams();
   const navigate = useNavigate();
+  const { api, changes, href } = useServer();
   const mobile = useIsMobile();
   const requested = query.get('tab');
   const tab = TABS.find((t) => t.id === requested)?.id ?? 'details';
@@ -86,7 +86,7 @@ export function ContainerDetailScreen({ name }: { name: string }) {
       if (mine !== seq.current) return;
       setDetailError(e instanceof Error ? e.message : String(e));
     }
-  }, []);
+  }, [api]);
 
   // A recreated container keeps its name but not its id: drop the old details and load the new ones.
   // Keyed on the id primitive so a list refresh that changes nothing does not refetch the details.
@@ -131,7 +131,7 @@ export function ContainerDetailScreen({ name }: { name: string }) {
       unsubscribe();
       refetch.cancel();
     };
-  }, [refetch]);
+  }, [refetch, changes]);
 
   if (rows === undefined) {
     if (!listError) return <Spinner />;
@@ -155,7 +155,7 @@ export function ContainerDetailScreen({ name }: { name: string }) {
         title={gone ? 'This container no longer exists' : 'Container not found'}
         description={gone ? `"${name}" was removed.` : `There is no container named "${name}".`}
       >
-        <Link to="/containers">Back to containers</Link>
+        <Link to={href('/containers')}>Back to containers</Link>
       </EmptyState>
     );
   }
@@ -165,7 +165,7 @@ export function ContainerDetailScreen({ name }: { name: string }) {
   const led = containerLed(row);
   const fullId = shown?.id ?? row.id;
   const image = imagePath(row.imageId);
-  const stackUrl = `/stacks/${encodeURIComponent(row.stack)}`;
+  const stackUrl = href(`/stacks/${encodeURIComponent(row.stack)}`);
 
   return (
     <section className={styles.page}>
@@ -189,7 +189,7 @@ export function ContainerDetailScreen({ name }: { name: string }) {
           )}
           <p className={styles.meta}>
             {image ? (
-              <Link to={image} className={styles.mono}>
+              <Link to={href(image)} className={styles.mono}>
                 {row.image}
               </Link>
             ) : (
@@ -234,7 +234,7 @@ export function ContainerDetailScreen({ name }: { name: string }) {
         selected={tab}
         ariaLabel="Container sections"
         onSelect={(id) => {
-          if (id !== tab) navigate(`/containers/${encodeURIComponent(name)}?tab=${id}`);
+          if (id !== tab) navigate(href(`/containers/${encodeURIComponent(name)}?tab=${id}`));
         }}
       >
         {(selected) =>
@@ -278,6 +278,7 @@ export function ContainerDetailScreen({ name }: { name: string }) {
 }
 
 function DetailFacts({ detail: d }: { detail: ContainerDetail }) {
+  const { href } = useServer();
   const networks = Object.entries(d.networks);
   const labelCount = Object.keys(d.labels).length;
   return (
@@ -325,7 +326,7 @@ function DetailFacts({ detail: d }: { detail: ContainerDetail }) {
             : d.mounts.map((m) => (
                 <div key={m.destination} className={styles.mono}>
                   {m.type}{' '}
-                  {m.type === 'volume' && m.name ? <Link to={`/storage/volumes/${encodeURIComponent(m.name)}`}>{m.name}</Link> : m.source} → {m.destination}
+                  {m.type === 'volume' && m.name ? <Link to={href(`/storage/volumes/${encodeURIComponent(m.name)}`)}>{m.name}</Link> : m.source} → {m.destination}
                   {m.readOnly ? ' (ro)' : ''}
                 </div>
               ))}
