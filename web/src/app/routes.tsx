@@ -14,7 +14,7 @@ export interface AppRoute {
 export const ROUTES: AppRoute[] = [
   { path: '/', title: 'Stacks', screen: Overview },
   { path: '/stacks/new', title: 'New stack', screen: lazy(() => import('./routes/StackCreate')) },
-  { path: '/stacks/import', title: 'Import', screen: lazy(() => import('./routes/StackImport')) },
+  { path: '/stacks/import', title: 'Import stack', screen: lazy(() => import('./routes/StackImport')) },
   { path: '/stacks/:name', screen: lazy(() => import('./routes/StackDetail')) },
   { path: '/containers', title: 'Containers', screen: lazy(() => import('./routes/ContainerList')) },
   { path: '/containers/:name', screen: lazy(() => import('./routes/ContainerDetail')) },
