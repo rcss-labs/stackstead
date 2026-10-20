@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react';
-import { api } from '$lib/api/client';
 import type { Range, SeriesSet } from '$lib/metrics/series';
 import type { StackLiveMetrics } from '$lib/stacks/liveMetrics';
 import { createMetricsController, type MetricsController } from '$lib/stacks/metrics';
-import { host } from '$lib/stores/host';
 import { Banner } from '../components/Banner';
 import { EmptyState } from '../components/EmptyState';
 import { Segmented } from '../components/Segmented';
@@ -12,6 +10,7 @@ import { useStore } from '../hooks/useStore';
 import { MetricsChart, type CreatePlot } from '../stacks/MetricsChart';
 import styles from './MetricsTab.module.css';
 
+import { useServer } from '../servers/ServerContext';
 export interface MetricsTabProps {
   stackName: string;
   service: string;
@@ -30,13 +29,14 @@ const RANGE_OPTIONS = RANGES.map((r) => ({ value: r, label: r }));
 /** One controller per mount (the pane keys this by service); created in an effect so StrictMode replays stay clean. */
 export function MetricsTab(props: MetricsTabProps) {
   const { stackName, live } = props;
+  const { api } = useServer();
   const [ctl, setCtl] = useState<MetricsController | undefined>();
   useEffect(() => {
     const created = createMetricsController(stackName, { history: (q, signal) => api.metricsHistory(stackName, q, signal), live });
     setCtl(created);
     void created.reload();
     return () => created.close();
-  }, [stackName, live]);
+  }, [stackName, live, api]);
   return ctl ? <MetricsBody key={props.service} ctl={ctl} {...props} /> : <Spinner label="Loading metrics" />;
 }
 
@@ -52,6 +52,7 @@ function MetricsBody({ ctl, service, metricsDegraded, metricsIntervalSeconds, me
 
   const points = all.get(service);
   const data: SeriesSet = new Map(points ? [[service, points]] : []);
+  const { host } = useServer();
   const hostMemory = useStore(host)?.memory?.total;
   const lastLimit = points && points.length > 0 ? points[points.length - 1]!.memLimit : 0;
   // Without a mem_limit Docker reports the host's RAM as the limit, which would squash the usage line; draw it only when it is a real cap.

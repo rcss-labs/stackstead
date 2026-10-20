@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createStackLiveMetrics, type StackLiveMetrics } from '$lib/stacks/liveMetrics';
+import { useServer } from '../servers/ServerContext';
 
 /**
  * One live metrics stream per mounted screen, shared by the rail and the Metrics tab. The stream is open
@@ -8,7 +9,8 @@ import { createStackLiveMetrics, type StackLiveMetrics } from '$lib/stacks/liveM
  * replays: the last release already ends the request.
  */
 export function useLiveMetrics(name: string, needed: boolean): StackLiveMetrics {
-  const [live] = useState(() => createStackLiveMetrics(name));
+  const { open } = useServer();
+  const [live] = useState(() => createStackLiveMetrics(name, { open }));
   useEffect(() => {
     if (!needed) return;
     return live.acquire();

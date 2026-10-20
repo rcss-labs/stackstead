@@ -1,16 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent, RefObject } from 'react';
 import { useNavigate } from 'react-router';
-import { api, ApiError } from '$lib/api/client';
+import { ApiError } from '$lib/api/client';
 import { emptyForm, fromForm, groupServiceErrors, mapServerErrors, validateForm } from '$lib/compose/form';
 import type { FormErrors, ServiceForm } from '$lib/compose/form';
 import { isCreateDirty } from '$lib/stacks/createPreview';
-import { trackOperation } from '$lib/stores/operationTracker';
 import { setUnsavedChanges } from '$lib/stores/guard';
-import { refreshRunningOps, refreshStacks } from '$lib/stores/stacks';
 import { toasts } from '$lib/stores/toasts';
 import type { BrowsePurpose, ServiceFormHandle } from '../stacks/ServiceForm';
 
+import { useServer } from '../servers/ServerContext';
 export const MAX_SERVICES = 20;
 
 export interface Card {
@@ -64,6 +63,7 @@ const errorCount = (card: Card) => Object.keys(card.errors).filter((key) => key 
  */
 export function useCreateForm(): CreateForm {
   const navigate = useNavigate();
+  const { api, trackOperation, refreshRunningOps, refreshStacks, href } = useServer();
   const nextId = useRef(1);
   const serviceFormRef = useRef<ServiceFormHandle | null>(null);
 
@@ -245,7 +245,7 @@ export function useCreateForm(): CreateForm {
       // The user may have discarded and left while the request was in flight; do not pull them back.
       if (!mountedRef.current) return;
       setUnsavedChanges(false);
-      navigate(`/stacks/${encodeURIComponent(data.name)}?${query}`);
+      navigate(href(`/stacks/${encodeURIComponent(data.name)}?${query}`));
     } catch (err) {
       let nextFormError = '';
       let nextStackNameError = '';

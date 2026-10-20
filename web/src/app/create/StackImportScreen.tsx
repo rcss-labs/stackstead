@@ -1,8 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { api, ApiError } from '$lib/api/client';
-import { refreshRunningOps, refreshStacks } from '$lib/stores/stacks';
+import { ApiError } from '$lib/api/client';
 import { toasts } from '$lib/stores/toasts';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
@@ -10,8 +9,10 @@ import { Field } from '../components/Field';
 import { FileBrowser } from '../stacks/FileBrowser';
 import styles from './StackImportScreen.module.css';
 
+import { useServer } from '../servers/ServerContext';
 export function StackImportScreen() {
   const navigate = useNavigate();
+  const { api, refreshRunningOps, refreshStacks, href } = useServer();
   const [path, setPath] = useState('');
   const [pathError, setPathError] = useState('');
   const [composeError, setComposeError] = useState('');
@@ -62,7 +63,7 @@ export function StackImportScreen() {
           ? `Stack ${data.name} imported, but port/IP conflict checks could not run (Docker unreachable).`
           : `Stack ${data.name} imported`,
       });
-      navigate(`/stacks/${encodeURIComponent(data.name)}`);
+      navigate(href(`/stacks/${encodeURIComponent(data.name)}`));
     } catch (err) {
       if (!(err instanceof ApiError)) setPathError('Could not reach the server. Check your connection and try again.');
       else if (err.status === 422) setComposeError(err.message);
@@ -114,7 +115,7 @@ export function StackImportScreen() {
           )}
         </div>
         <footer className={styles.footer}>
-          <Link to="/" className={styles.cancel}>
+          <Link to={href('/')} className={styles.cancel}>
             Cancel
           </Link>
           <Button variant="primary" type="submit" className={styles.submit} loading={pending}>
