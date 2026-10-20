@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -122,7 +123,7 @@ func dockerfilePreSave(e Entry, edited *composefile.File, service string, df *Do
 	// (build: ., another service's file) it must find no file, like an update
 	// that loaded none.
 	var expected *string
-	if df.CheckHash || path != filepath.Join(stackDir, service, "Dockerfile") {
+	if df.CheckHash || !isManagedPath(stackDir, service, path) {
 		expected = &df.Hash
 	}
 	return func() (func() error, error) {
@@ -249,6 +250,21 @@ func (s *Service) commit(ctx context.Context, e Entry, old, edited *composefile.
 	return EditResult{Hash: composefile.Hash(candidate), ChecksPartial: partial}, nil
 }
 
+// isManagedPath reports whether path is <stackDir>/<service>/Dockerfile with
+// the service folder absent or a real folder. A link at the service folder
+// can lead to any other file, so it is never managed.
+func isManagedPath(stackDir, service, path string) bool {
+	folder := filepath.Join(stackDir, service)
+	if path != filepath.Join(folder, "Dockerfile") {
+		return false
+	}
+	info, err := os.Lstat(folder)
+	if errors.Is(err, fs.ErrNotExist) {
+		return true
+	}
+	return err == nil && info.Mode().IsDir()
+}
+
 // runPreSave runs preSave, which may be nil; the returned rollback is never nil
 // and logs, rather than drops, a failure to undo the write.
 func (s *Service) runPreSave(e Entry, preSave func() (func() error, error)) (func(), error) {
@@ -261,6 +277,10 @@ func (s *Service) runPreSave(e Entry, preSave func() (func() error, error)) (fun
 	}
 	return func() {
 		if err := undo(); err != nil {
+			var pathErr *fs.PathError
+			if errors.As(err, &pathErr) { // keep absolute paths out of the log
+				err = pathErr.Err
+			}
 			s.log.Error("Dockerfile rollback failed; the Dockerfile may disagree with the compose file",
 				"stack", e.Name, "err", err)
 		}

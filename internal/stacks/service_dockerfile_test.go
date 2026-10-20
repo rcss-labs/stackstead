@@ -278,3 +278,23 @@ func TestAddServiceDockerfileOutsideManagedPathNeedsHash(t *testing.T) {
 		t.Error("compose changed")
 	}
 }
+
+func TestAddServiceSymlinkedServiceFolderNeedsHash(t *testing.T) {
+	h := newHarness(t)
+	dir := dockerfileStack(t, h, "lab", imageOnlyCompose)
+	path := filepath.Join(dir, "Dockerfile")
+	if err := os.WriteFile(path, []byte("FROM mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(".", filepath.Join(dir, "api")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := h.svc.AddService(context.Background(), "lab", "api", buildCfg("./api"), composeHash(t, h, "lab"),
+		&stacks.DockerfileWrite{Content: []byte("FROM clobber\n")})
+	if !errors.Is(err, stacks.ErrDockerfileConflict) {
+		t.Fatalf("err = %v, want ErrDockerfileConflict", err)
+	}
+	if got := readTestFile(t, path); got != "FROM mine\n" {
+		t.Errorf("existing Dockerfile changed: %q", got)
+	}
+}
