@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { api, ApiError } from '$lib/api/client';
 import type { StorageImageDetail, StoragePlanRequest } from '$lib/api/types';
@@ -31,7 +31,14 @@ export function StorageImageScreen({ id }: { id: string }) {
   const liveState = useStore(live);
   const dockerDown = liveState.docker === 'unavailable' || liveState.events === 'disconnected';
   const reason = item ? deleteDisabledReason(item, dockerDown) : undefined;
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const [cleanup, setCleanup] = useState<StoragePlanRequest | undefined>();
+
+  // A refresh that turns the page into not-found removes the focused control; move focus to the heading instead of body.
+  const gone = item === null;
+  useEffect(() => {
+    if (gone) headingRef.current?.focus({ preventScroll: true });
+  }, [gone]);
 
   const title = item
     ? (item.tags[0] ?? item.id.replace(/^sha256:/, '').slice(0, 12))
@@ -47,7 +54,7 @@ export function StorageImageScreen({ id }: { id: string }) {
         Back to images
       </Link>
       <header className={styles.head}>
-        <h1 className={styles.title}>{title}</h1>
+        <h1 ref={headingRef} tabIndex={-1} className={styles.title}>{title}</h1>
         {item && (
           <>
             <Tag>{item.containers.length ? 'in use' : item.dangling ? 'dangling' : 'no containers'}</Tag>

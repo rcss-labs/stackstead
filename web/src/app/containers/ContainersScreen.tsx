@@ -80,7 +80,12 @@ export function ContainersScreen() {
     },
     onToggle: () => visible.length > 0 && togglePeek(focused),
     onRestart: () => visible.length > 0 && actions.request(visible[focused], 'restart'),
-    onClose: () => setOpenPeek(undefined),
+    onClose: () => {
+      if (openPeek === undefined) return;
+      setOpenPeek(undefined);
+      // The log region that held focus unmounts with the peek; hand focus back to the row instead of body.
+      rowRefs.current.get(visible[focused]?.id)?.focus();
+    },
   });
 
   return (

@@ -146,6 +146,8 @@ export function MetricsChart({ title, series, data, unit, allServices, memLimit,
       dash: [6, 4],
       points: { show: false },
     }));
+    // Sparkline-sized charts drop the time axis and narrow the value gutter so the plot keeps its height.
+    const compact = cur.height < 120;
     const unitNow = cur.unit;
     const opts = {
       width: el.clientWidth || 600,
@@ -155,7 +157,7 @@ export function MetricsChart({ title, series, data, unit, allServices, memLimit,
       cursor: { points: { size: 8 } },
       scales: { y: { range: (_u: unknown, _min: number, max: number) => (unitNow === 'percent' ? [0, Math.max(100, max)] : [0, Math.max(max, 1) * 1.1]) } },
       series: [{ label: 'Time', value: (_u: unknown, v: number | null) => (v == null ? '–' : new Date(v).toLocaleString()) }, ...lineSeries, ...limitSeries],
-      axes: [axis, { ...axis, size: 70, values: (_u: unknown, ticks: number[]) => ticks.map(cur.fmt) }],
+      axes: [{ ...axis, show: !compact }, { ...axis, size: compact ? 48 : 70, values: (_u: unknown, ticks: number[]) => ticks.map(cur.fmt) }],
     } as unknown as uPlot.Options;
 
     // Per-effect flag: a newer mount must not un-cancel an older, still-loading one.

@@ -24,7 +24,7 @@ function fakePlot() {
   return { plot, createPlot };
 }
 const flush = () => act(() => new Promise<void>((r) => setTimeout(r, 0)));
-type Opts = { ms: number; series: { label?: string; dash?: number[]; stroke?: string; value?: (u: unknown, v: number | null) => string }[]; legend: { show: boolean } };
+type Opts = { ms: number; series: { label?: string; dash?: number[]; stroke?: string; value?: (u: unknown, v: number | null) => string }[]; legend: { show: boolean }; axes: { show?: boolean; size?: number }[] };
 const optsOf = (createPlot: ReturnType<typeof fakePlot>['createPlot'], call = 0) => (createPlot.mock.calls[call] as unknown as [Opts, unknown[][]])[0];
 const dataOf = (createPlot: ReturnType<typeof fakePlot>['createPlot'], call = 0) => (createPlot.mock.calls[call] as unknown as [Opts, unknown[][]])[1];
 
@@ -45,6 +45,22 @@ describe('MetricsChart', () => {
     expect(d[0]).toEqual([T0, T0 + 5000]);
     expect(d[1]).toEqual([5, 12.34]);
     expect(d[2]).toEqual([null, 40]);
+  });
+
+  it('an 80px chart hides the time axis and narrows the value axis', async () => {
+    const { createPlot } = fakePlot();
+    render(<MetricsChart title="CPU" series={cpuSeries} data={data} unit="percent" allServices={all} createPlot={createPlot} height={80} />);
+    await flush();
+    expect(optsOf(createPlot).axes[0]!.show).toBe(false);
+    expect(optsOf(createPlot).axes[1]!.size).toBe(48);
+  });
+
+  it('a full-height chart keeps both axes', async () => {
+    const { createPlot } = fakePlot();
+    render(<MetricsChart title="CPU" series={cpuSeries} data={data} unit="percent" allServices={all} createPlot={createPlot} />);
+    await flush();
+    expect(optsOf(createPlot).axes[0]!.show).not.toBe(false);
+    expect(optsOf(createPlot).axes[1]!.size).toBe(70);
   });
 
   it('adds a dashed limit series for memory', async () => {

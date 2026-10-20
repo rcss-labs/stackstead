@@ -210,6 +210,18 @@ describe('Container keys', () => {
     expect(screen.queryByRole('region', { name: /^Logs of/ })).toBeNull();
   });
 
+  it('Escape from inside the log region closes the peek and returns focus to its row', async () => {
+    const user = mount(abc());
+    await screen.findByRole('link', { name: 'a' });
+    act(() => rowOf('a').focus());
+    await user.keyboard('{Enter}');
+    const log = (await screen.findByRole('region', { name: 'Logs of a' })).querySelector('[role="log"]') as HTMLElement;
+    act(() => log.focus());
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('log')).toBeNull();
+    expect(document.activeElement).toBe(rowOf('a'));
+  });
+
   it('arrow keys move the row focus only from inside the table; j and k work anywhere', async () => {
     const user = mount(abc());
     await screen.findByRole('link', { name: 'a' });

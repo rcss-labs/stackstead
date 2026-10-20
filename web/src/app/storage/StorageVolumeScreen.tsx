@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { api, ApiError } from '$lib/api/client';
 import type { StoragePlanRequest, StorageVolumeDetail } from '$lib/api/types';
@@ -30,7 +30,14 @@ export function StorageVolumeScreen({ name }: { name: string }) {
   const liveState = useStore(live);
   const dockerDown = liveState.docker === 'unavailable' || liveState.events === 'disconnected';
   const reason = item ? deleteDisabledReason(item, dockerDown) : undefined;
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const [cleanup, setCleanup] = useState<StoragePlanRequest | undefined>();
+
+  // A refresh that turns the page into not-found removes the focused control; move focus to the heading instead of body.
+  const gone = item === null;
+  useEffect(() => {
+    if (gone) headingRef.current?.focus({ preventScroll: true });
+  }, [gone]);
 
   const title = item ? item.name : error ? 'Volume unavailable' : item === null ? 'Volume not found' : 'Volume details';
 
@@ -40,7 +47,7 @@ export function StorageVolumeScreen({ name }: { name: string }) {
         Back to volumes
       </Link>
       <header className={styles.head}>
-        <h1 className={styles.title}>{title}</h1>
+        <h1 ref={headingRef} tabIndex={-1} className={styles.title}>{title}</h1>
         {item && (
           <>
             <Tag>{item.containers.length ? 'in use' : item.protection ? 'unused · protected' : 'unused'}</Tag>

@@ -201,6 +201,20 @@ describe('Storage detail screens', () => {
     expect(fake.calls.filter((c) => c.path.startsWith('/api/storage/volumes/'))).toHaveLength(2);
   });
 
+  it.each([
+    { kind: 'image' as const, target: 'aaaaaaaaaaaa', found: 'redis:7', gone: 'Image not found' },
+    { kind: 'volume' as const, target: 'free', found: 'free', gone: 'Volume not found' },
+  ])('when the $kind disappears the not-found heading takes focus', async ({ kind, target, found, gone }) => {
+    let detail: FakeResponse = { body: kind === 'image' ? imageDetail() : volumeDetail() };
+    fake = installFakeFetch({ [`GET /api/storage/${kind}s/${target}`]: () => detail });
+    mountAt(`/storage/${kind}s/${target}`);
+    await screen.findByRole('heading', { level: 1, name: found });
+    detail = { status: 404, body: { error: 'not found' } };
+    await act(async () => void document.dispatchEvent(new Event('visibilitychange')));
+    const heading = await screen.findByRole('heading', { level: 1, name: gone });
+    expect(document.activeElement).toBe(heading);
+  });
+
   it('the h1 is present while the request is pending', async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
