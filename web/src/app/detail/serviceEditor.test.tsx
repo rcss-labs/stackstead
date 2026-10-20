@@ -116,11 +116,22 @@ describe('ServiceEditor', () => {
     expect((calls('POST', '/preview')[0].body as Record<string, unknown>).dockerfile).toBeUndefined();
   });
 
+  it('explains a Dockerfile that is not editable for another reason', async () => {
+    const built: ServiceDetail = { ...svc, config: { build: { context: './app' }, limits: {} } };
+    fake.restore();
+    fake = installFakeFetch({
+      'GET /api/stacks/web/services/app/dockerfile': { body: { content: '', hash: '', exists: true, editable: false, path: 'app/Dockerfile', reason: 'uses variables' } },
+      'GET /api/networks': { body: [] },
+    });
+    mount({ stack: stack('h1', built), service: built });
+    expect(await screen.findByText("This Dockerfile can't be edited here: uses variables")).toBeTruthy();
+  });
+
   it('shows an outside Dockerfile as a read-only build with its note', async () => {
     const built: ServiceDetail = { ...svc, config: { build: { context: '/elsewhere' }, limits: {} } };
     fake.restore();
     fake = installFakeFetch({
-      'GET /api/stacks/web/services/app/dockerfile': { body: { content: '', hash: '', exists: true, editable: false, path: '/elsewhere/Dockerfile' } },
+      'GET /api/stacks/web/services/app/dockerfile': { body: { content: '', hash: '', exists: true, editable: false, path: '/elsewhere/Dockerfile', reason: 'outside the stack folder' } },
       'GET /api/networks': { body: [] },
     });
     mount({ stack: stack('h1', built), service: built });

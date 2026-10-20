@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router';
 import type { DockerfileView } from '$lib/api/types';
 import { DOCKERFILE_TEMPLATE } from '$lib/compose/form';
+import { dockerfileNote, OUTSIDE_NOTE } from '$lib/stacks/dockerfileNote';
 import { createComposeEditor } from '$lib/stacks/compose';
 import { get } from '$lib/store';
 import { toasts } from '$lib/stores/toasts';
@@ -13,8 +14,6 @@ import { DiffView } from '../stacks/DiffView';
 import { YamlEditor } from '../stacks/YamlEditor';
 import styles from './DockerfilePanel.module.css';
 
-const OUTSIDE_REASONS = ['outside the stack folder', 'outside the allowed directories'];
-export const OUTSIDE_NOTE = "This Dockerfile is outside the stack's folder and can't be edited here.";
 const CONFLICT_REASON = 'Resolve the conflict first (Reload or Discard)';
 
 /** A service's Dockerfile on the stack page: edit, save, or save and rebuild just that service. */
@@ -141,7 +140,7 @@ export function DockerfilePanel({ stackName, service, onDirtyChange }: { stackNa
         <div className={styles.card}>
           {!editable && (
             <Banner kind="info" title="Read-only">
-              {OUTSIDE_REASONS.includes(view.reason ?? '') ? OUTSIDE_NOTE : `This Dockerfile can't be edited here: ${view.reason ?? 'not editable'}`}
+              {dockerfileNote(view.reason)}
               {view.reason === 'outside the allowed directories' && <> Its content isn't shown because it's outside the allowed directories.</>}
             </Banner>
           )}

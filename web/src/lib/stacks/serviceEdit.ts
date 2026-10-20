@@ -97,6 +97,8 @@ export function createServiceEdit(
   previewText: Readable<{ original: string; modified: string } | undefined>;
   /** The service's Dockerfile as last loaded; undefined when there is none or it could not be loaded. */
   dockerfileView: Readable<DockerfileView | undefined>;
+  /** The last refusal was because the Dockerfile changed on disk. */
+  dockerfileConflict: Readable<boolean>;
   /** The file changed under the editor and the user's changes were applied on top of the new version. */
   rebased: Readable<boolean>;
   /** Groups whose edits a rebase dropped because the new file only allows editing them as raw YAML. */
@@ -132,6 +134,8 @@ export function createServiceEdit(
   const formVersion = writable(0);
   const previewText = writable<{ original: string; modified: string } | undefined>(undefined);
   const dockerfileView = writable<DockerfileView | undefined>(undefined);
+  const dockerfileConflict = writable(false);
+  let rebasedOnce = false;
 
   form.subscribe((f) => {
     const isDirty = fingerprint(f) !== baseline;
@@ -149,6 +153,18 @@ export function createServiceEdit(
   function loadView(cfg: ServiceConfig, readOnly: Field[]): Promise<DockerfileView | undefined> | undefined {
     if (!deps.loadDockerfile || !(cfg.build || readOnly.includes('build'))) return undefined;
     return deps.loadDockerfile().catch(() => undefined);
+  }
+
+  /**
+   * The view after a re-fetch. A failed fetch keeps the editable view the user is working from (a moved file
+   * then 409s on the next save) instead of silently dropping their Dockerfile edit.
+   */
+  async function resolveView(pending: Promise<DockerfileView | undefined> | undefined): Promise<DockerfileView | undefined> {
+    if (!pending) return undefined;
+    const fetched = await pending;
+    if (fetched) return fetched;
+    const previous = get(dockerfileView);
+    return previous?.editable && previous.exists ? previous : undefined;
   }
 
   function rememberView(view: DockerfileView | undefined, cfg: ServiceConfig) {
@@ -173,6 +189,7 @@ export function createServiceEdit(
       notice.set({ kind: 'error', message: `Service "${service}" no longer exists in this stack.` });
       return false;
     }
+    rebasedOnce = true;
     rememberView(view, svc.config);
     const fresh = seedForm(svc.config, svc.readOnly, view);
     const { form: merged, discarded } = rebaseForm(get(form), seeded, fresh);
@@ -192,6 +209,7 @@ export function createServiceEdit(
     previewed = undefined;
     if (e instanceof ApiError) {
       if (e.status === 409) {
+        dockerfileConflict.set(/dockerfile changed on disk/i.test(e.message));
         conflictMessage.set(e.message);
         phase.set('conflict');
         return;
@@ -218,7 +236,7 @@ export function createServiceEdit(
   const firstView = loadView(initial.config, initial.readOnly);
   if (firstView) {
     void firstView.then((view) => {
-      if (!view) return;
+      if (!view || rebasedOnce || get(phase) !== 'editing') return;
       rememberView(view, original);
       const fresh = seedForm(original, initial.readOnly, view);
       const { form: merged } = rebaseForm(get(form), seeded, fresh);
@@ -240,6 +258,7 @@ export function createServiceEdit(
     dirty: { subscribe: dirty.subscribe },
     previewText: { subscribe: previewText.subscribe },
     dockerfileView: { subscribe: dockerfileView.subscribe },
+    dockerfileConflict: { subscribe: dockerfileConflict.subscribe },
     rebased: { subscribe: rebased.subscribe },
     discardedGroups: { subscribe: discardedGroups.subscribe },
     formVersion: { subscribe: formVersion.subscribe },
@@ -259,7 +278,7 @@ export function createServiceEdit(
           const fresh = await deps.reloadDetail();
           const target = fresh.services.find((x) => x.name === service);
           const pending = target && loadView(target.config, target.readOnly);
-          if (!rebase(fresh, pending ? await pending : undefined)) {
+          if (!rebase(fresh, pending ? await resolveView(pending) : undefined)) {
             phase.set('editing');
             return;
           }
@@ -332,8 +351,9 @@ export function createServiceEdit(
     async reload(detail) {
       const target = detail.services.find((x) => x.name === service);
       const pending = target && loadView(target.config, target.readOnly);
-      if (!rebase(detail, pending ? await pending : undefined)) return;
+      if (!rebase(detail, pending ? await resolveView(pending) : undefined)) return;
       conflictMessage.set(undefined);
+      dockerfileConflict.set(false);
       notice.set(undefined);
       previewText.set(undefined);
       previewed = undefined;
@@ -347,7 +367,8 @@ export function createServiceEdit(
         return;
       }
       const pending = loadView(svc.config, svc.readOnly);
-      const view = pending ? await pending : undefined;
+      const view = pending ? await resolveView(pending) : undefined;
+      rebasedOnce = true;
       rememberView(view, svc.config);
       original = svc.config;
       setHash(detail.hash);
@@ -359,6 +380,7 @@ export function createServiceEdit(
       discardedGroups.set([]);
       errors.set({});
       conflictMessage.set(undefined);
+      dockerfileConflict.set(false);
       notice.set(undefined);
       previewText.set(undefined);
       previewed = undefined;

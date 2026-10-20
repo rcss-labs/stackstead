@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { ApiError } from '$lib/api/client';
 import type { Operation, ServiceDetail, StackDetail } from '$lib/api/types';
 import { defaultImageTag, type ServiceForm as Form } from '$lib/compose/form';
+import { dockerfileNote } from '$lib/stacks/dockerfileNote';
 import { createServiceEdit } from '$lib/stacks/serviceEdit';
 import { get } from '$lib/store';
 import { toasts } from '$lib/stores/toasts';
@@ -42,7 +43,6 @@ export interface ServiceEditorProps {
 
 type FocusRequest = { kind: 'preview' | 'save' | 'first'; n: number };
 
-const OUTSIDE_NOTE = "This Dockerfile is outside the stack's folder and can't be edited here.";
 const cloneForm = (f: Form): Form => ({ ...f, readOnly: new Set(f.readOnly) });
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -81,8 +81,9 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
   const formVersion = useStore(edit.formVersion);
   const isDirty = useStore(edit.dirty);
   const dockerfileView = useStore(edit.dockerfileView);
+  const dockerfileConflict = useStore(edit.dockerfileConflict);
   // A Dockerfile the form cannot edit leaves the build read-only; say why above it.
-  const dockerfileNote = dockerfileView && !dockerfileView.editable ? (dockerfileView.reason ?? OUTSIDE_NOTE) : undefined;
+  const notEditableNote = dockerfileView && !dockerfileView.editable ? dockerfileNote(dockerfileView.reason) : undefined;
 
   // The form is controlled here and pushed to the state machine as a copy on every change.
   const [form, setForm] = useState<Form>(() => cloneForm(get(edit.form)));
@@ -258,6 +259,7 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
         <div ref={conflictBox} tabIndex={-1}>
           <Banner kind="danger" title="Save refused">
             <span className={styles.msg}>{conflictMessage}</span>
+            {dockerfileConflict && <span className={styles.msg}> The Dockerfile changed on disk; your text will replace it.</span>}
           </Banner>
           <div className={styles.row}>
             <Button variant="primary" onClick={() => void reload(true)}>
@@ -296,7 +298,7 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
           errors={errors}
           idPrefix="svc"
           name={serviceName}
-          readOnlyHint={dockerfileNote}
+          readOnlyHint={notEditableNote}
           onSourceChange={(source) => {
             const current = formRef.current;
             // Building replaces the image, so a pulled image's name must not become the built image's tag.
