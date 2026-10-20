@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { api } from '$lib/api/client';
 import type { ActionEntry, StorageBuildCache, StorageImages, StorageOverview, StoragePlanRequest, StorageVolumes } from '$lib/api/types';
-import { imageReclaimRange, sizeText } from '$lib/storage/storage';
+import { filterImages, filterVolumes, imageChips, imageCounts, imageReclaimRange, pageView, sizeText, volumeChips, volumeCounts, type ImageChip, type VolumeChip } from '$lib/storage/storage';
 import { kindFromQuery, reclaimableText, sortBySize, usageSummary, usedText, type StorageKind } from '$lib/storage/usage';
 import { live } from '$lib/stores/live';
 import { Banner } from '../components/Banner';
@@ -10,11 +10,16 @@ import { Button } from '../components/Button';
 import { RelativeTime } from '../components/RelativeTime';
 import { Spinner } from '../components/Spinner';
 import { useStore } from '../hooks/useStore';
+import { Pager } from '../components/Pager';
+import { CacheRows } from './CacheRows';
 import { CleanupDialog } from './CleanupDialog';
+import { ImageRows } from './ImageRows';
+import { KindToolbar } from './KindToolbar';
 import { RecentActions } from './RecentActions';
 import styles from './StorageScreen.module.css';
 import { StorageCell, StorageRow, StorageTable } from './StorageTable';
 import { UsageCard } from './UsageCard';
+import { VolumeRows } from './VolumeRows';
 import { useRecalculate } from './useRecalculate';
 import { useStorageRefresh } from './useStorageRefresh';
 
@@ -57,6 +62,22 @@ export async function loadStorage(): Promise<StorageData> {
 /** Size reads poll only while some producer is still calculating. */
 export const isRefreshing = (d: StorageData) =>
   [d.overview?.images, d.overview?.containers, d.overview?.volumes, d.overview?.buildCache, d.images?.totals, d.volumes?.totals, d.cache?.totals].some((t) => t?.refreshing);
+
+const IMAGE_COLUMNS = [
+  { key: 'image', label: 'Image', width: 'minmax(220px, 1.6fr)' },
+  { key: 'size', label: 'Size', width: '100px' },
+  { key: 'usedBy', label: 'Used by', width: 'minmax(160px, 1.2fr)' },
+  { key: 'status', label: 'Status', width: '120px' },
+  { key: 'actions', label: 'Actions', width: '90px' },
+];
+const VOLUME_COLUMNS = [{ ...IMAGE_COLUMNS[0], key: 'name', label: 'Volume' }, ...IMAGE_COLUMNS.slice(1)];
+const CACHE_COLUMNS = [
+  { key: 'record', label: 'Record', width: 'minmax(220px, 1.6fr)' },
+  { key: 'size', label: 'Size', width: '100px' },
+  { key: 'lastUsed', label: 'Last used', width: '150px' },
+  { key: 'status', label: 'Status', width: '140px' },
+  { key: 'actions', label: 'Actions', width: '0px' },
+];
 
 const LAYER_COLUMNS = [
   { key: 'container', label: 'Container', width: 'minmax(200px, 1.6fr)' },
@@ -119,17 +140,42 @@ export function StorageScreen() {
   const dockerDown = liveState.docker === 'unavailable' || liveState.events === 'disconnected';
   const recalc = useRecalculate(dockerDown, refresh);
   const [cleanup, setCleanup] = useState<StoragePlanRequest | undefined>();
+  const [imageChip, setImageChip] = useState<ImageChip>('all');
+  const [volumeChip, setVolumeChip] = useState<VolumeChip>('all');
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
 
   // Same behaviour as the Svelte tabs: a new kind is a history entry, reselecting the current one does nothing.
   const selectKind = (id: StorageKind) => {
-    if (id !== kind) void navigate(`/storage?tab=${id}`);
+    if (id === kind) return;
+    setSearch('');
+    setPage(1);
+    void navigate(`/storage?tab=${id}`);
+  };
+  const changeSearch = (value: string) => {
+    setSearch(value);
+    setPage(1);
   };
 
-  const candidates = (data?.images?.images ?? []).filter((image) => image.dangling && !image.containers.length);
+  const images = data?.images?.images ?? [];
+  const volumes = data?.volumes?.volumes ?? [];
+  const records = data?.cache?.records ?? [];
+  const shownImages = sortBySize(filterImages(images, imageChip, search), (i) => i.size);
+  const shownVolumes = sortBySize(filterVolumes(volumes, volumeChip, search), (v) => v.size);
+  const shownCache = sortBySize(records, (r) => r.size);
+  const imagePage = pageView(shownImages, page);
+  const volumePage = pageView(shownVolumes, page);
+  const cachePage = pageView(shownCache, page);
+  const kindError = data?.errors[kind === 'layers' ? 'overview' : kind] ?? '';
+  const candidates = images.filter((image) => image.dangling && !image.containers.length);
   const danglingLabel = `Clean up dangling images (${candidates.length} · ${imageReclaimRange(candidates)})`;
   const unknown = data?.overview?.declarationsUnknown ?? [];
   // One region for the whole screen: it stays mounted across kind changes so the new selection is announced as a text change.
-  const statusText = data?.overview && kind === 'layers' ? layersStatus(data.overview) : '';
+  let statusText = '';
+  if (kind === 'layers' && data?.overview) statusText = layersStatus(data.overview);
+  else if (kind === 'images' && data?.images) statusText = `${shownImages.length} images · sorted by size`;
+  else if (kind === 'volumes' && data?.volumes) statusText = `${shownVolumes.length} volumes · sorted by size`;
+  else if (kind === 'build-cache' && data?.cache) statusText = `${shownCache.length} records · sorted by size`;
 
   return (
     <section className={styles.page} aria-labelledby="storage-heading">
@@ -177,6 +223,73 @@ export function StorageScreen() {
                 Retry
               </Button>
             </div>
+          )}
+          {kind === 'images' && (
+            <StorageTable
+              label="Images"
+              columns={IMAGE_COLUMNS}
+              status={`${shownImages.length} images · sorted by size`}
+              sizes={data.images?.totals}
+              failure={kindError ? { message: kindError, onRetry: refresh } : undefined}
+              toolbar={
+                <KindToolbar
+                  chips={imageChips}
+                  counts={imageCounts(images)}
+                  pressed={imageChip}
+                  onChip={(id) => {
+                    setImageChip(id as ImageChip);
+                    setPage(1);
+                  }}
+                  searchLabel="Filter images"
+                  search={search}
+                  onSearch={changeSearch}
+                />
+              }
+              empty={shownImages.length ? undefined : 'No images match the current filter.'}
+              footer={<Pager {...imagePage} label="Images" onPage={setPage} />}
+            >
+              {data.images && <ImageRows page={imagePage} totals={data.images.totals} dockerDown={dockerDown} onDelete={(image) => setCleanup({ kind: 'image', ref: image.id })} />}
+            </StorageTable>
+          )}
+          {kind === 'volumes' && (
+            <StorageTable
+              label="Volumes"
+              columns={VOLUME_COLUMNS}
+              status={`${shownVolumes.length} volumes · sorted by size`}
+              sizes={data.volumes?.totals}
+              failure={kindError ? { message: kindError, onRetry: refresh } : undefined}
+              toolbar={
+                <KindToolbar
+                  chips={volumeChips}
+                  counts={volumeCounts(volumes)}
+                  pressed={volumeChip}
+                  onChip={(id) => {
+                    setVolumeChip(id as VolumeChip);
+                    setPage(1);
+                  }}
+                  searchLabel="Filter volumes"
+                  search={search}
+                  onSearch={changeSearch}
+                />
+              }
+              empty={shownVolumes.length ? undefined : 'No volumes match the current filter.'}
+              footer={<Pager {...volumePage} label="Volumes" onPage={setPage} />}
+            >
+              <VolumeRows page={volumePage} dockerDown={dockerDown} onDelete={(volume) => setCleanup({ kind: 'volume', name: volume.name })} />
+            </StorageTable>
+          )}
+          {kind === 'build-cache' && (
+            <StorageTable
+              label="Build cache"
+              columns={CACHE_COLUMNS}
+              status={`${shownCache.length} records · sorted by size`}
+              sizes={data.cache?.totals}
+              failure={kindError ? { message: kindError, onRetry: refresh } : undefined}
+              empty={shownCache.length ? undefined : 'No build cache records.'}
+              footer={<Pager {...cachePage} label="Build cache" onPage={setPage} />}
+            >
+              {data.cache && <CacheRows page={cachePage} totals={data.cache.totals} />}
+            </StorageTable>
           )}
           <RecentActions actions={data.actions} error={data.errors.actions} />
         </>
