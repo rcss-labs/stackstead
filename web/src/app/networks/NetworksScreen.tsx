@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from '$lib/api/client';
 import type { Network } from '$lib/api/types';
 import { networkSummary, sortNetworks, summaryParts } from '$lib/networks/networks';
@@ -22,16 +22,31 @@ export function NetworksScreen() {
   const [removing, setRemoving] = useState<string>();
   // State updates are asynchronous, so a second synchronous click would still see no removal in flight.
   const removingRef = useRef(false);
+  const screenRef = useRef<HTMLElement>(null);
+  // Once the refreshed list no longer has the removed network, focus moves to `nextId`'s heading (or the page heading).
+  const [focusAfterRemoval, setFocusAfterRemoval] = useState<{ removedId: string; nextId?: string }>();
+
+  // The removed card unmounts with its Remove button, which would drop focus to <body>.
+  useLayoutEffect(() => {
+    if (!focusAfterRemoval || networks.some((n) => n.id === focusAfterRemoval.removedId)) return;
+    const next = [...(screenRef.current?.querySelectorAll<HTMLElement>('[data-network-id]') ?? [])].find(
+      (card) => card.dataset.networkId === focusAfterRemoval.nextId,
+    );
+    (next?.querySelector<HTMLElement>('h2') ?? document.getElementById('networks-heading'))?.focus();
+    setFocusAfterRemoval(undefined);
+  }, [focusAfterRemoval, networks]);
 
   async function remove() {
     if (!pending || removingRef.current) return;
     const network = pending;
+    const nextId = networks[networks.findIndex((n) => n.id === network.id) + 1]?.id;
     removingRef.current = true;
     setPending(undefined);
     setRemoving(network.id);
     try {
       await api.deleteNetwork(network.id);
       toasts.push({ kind: 'success', message: `Network \`${network.name}\` removed` });
+      setFocusAfterRemoval({ removedId: network.id, nextId });
     } catch (err) {
       toasts.push({ kind: 'danger', message: err instanceof Error ? err.message : String(err) });
     } finally {
@@ -43,10 +58,10 @@ export function NetworksScreen() {
 
   return (
     <>
-      <section className={styles.page} aria-labelledby="networks-heading">
+      <section ref={screenRef} className={styles.page} aria-labelledby="networks-heading">
         <header className={styles.head}>
           <div className={styles.headText}>
-            <h1 id="networks-heading">Networks</h1>
+            <h1 id="networks-heading" tabIndex={-1}>Networks</h1>
             {rows && (
               <p className={styles.lead}>
                 <span>{parts[0]}</span>

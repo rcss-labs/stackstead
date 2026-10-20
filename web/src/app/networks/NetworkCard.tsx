@@ -46,9 +46,9 @@ export function NetworkCard({ network, removing, busy, onRemove }: NetworkCardPr
   const label = `Show containers on ${network.name}`;
 
   return (
-    <article className={styles.card} aria-labelledby={nameId}>
+    <article className={styles.card} aria-labelledby={nameId} data-network-id={network.id}>
       <div className={styles.top}>
-        <h2 id={nameId} className={styles.name}>
+        <h2 id={nameId} className={styles.name} tabIndex={-1}>
           {network.name}
         </h2>
         <Tag tone={isLanDriver(network.driver) ? 'info' : 'muted'}>{network.driver}</Tag>

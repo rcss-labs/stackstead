@@ -172,3 +172,25 @@ it('fetches the list once under StrictMode', async () => {
 it('the route table titles /networks as Networks', () => {
   expect(findRoute('/networks')?.title).toBe('Networks');
 });
+
+it.each([
+  ['moves focus to the next card heading', ['a', 'b'], 'a', 'b'],
+  ['moves focus to the Networks heading when no card follows', ['a', 'b'], 'b', 'Networks'],
+])('after a confirmed removal it %s', async (_name, all, removed, expected) => {
+  let remaining = all;
+  const { user } = mount(() => ({ body: remaining.map((n) => row(n)) }));
+  await screen.findByText(`${all.length} networks`);
+  fake.restore();
+  fake = installFakeFetch({
+    [`DELETE /api/networks/${removed}`]: () => {
+      remaining = remaining.filter((n) => n !== removed);
+      return { status: 204 };
+    },
+    'GET /api/networks': () => ({ body: remaining.map((n) => row(n)) }),
+  });
+  const card = cards().find((c) => within(c).queryByRole('heading', { level: 2, name: removed }))!;
+  await user.click(within(card).getByRole('button', { name: 'Remove' }));
+  await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Remove' }));
+  await waitFor(() => expect(cards()).toHaveLength(all.length - 1));
+  expect(document.activeElement).toBe(screen.getByRole('heading', { name: expected }));
+});
