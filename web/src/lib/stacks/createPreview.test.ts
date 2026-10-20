@@ -1,48 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import { emptyForm } from '../compose/form';
-import { isCreateDirty, previewYaml } from './createPreview';
+import { isCreateDirty, previewStack } from './createPreview';
 
-describe('previewYaml', () => {
-  it('renders one image service', () => {
-    expect(previewYaml([{ name: 'web', form: { ...emptyForm(), image: 'nginx:1.27' } }])).toBe('services:\n  web:\n    image: nginx:1.27');
-  });
-
-  it('renders cards in order with ports, volumes and build', () => {
-    const yaml = previewYaml([
-      { name: 'db', form: { ...emptyForm(), image: 'postgres:16', volumes: ['pgdata:/var/lib/postgresql/data'] } },
-      {
-        name: 'app',
-        form: { ...emptyForm(), source: 'build', buildContext: '/srv/app', dockerfile: 'build.Dockerfile', ports: ['8080:80'] },
-      },
-    ]);
-    expect(yaml).toBe(
-      [
-        'services:',
-        '  db:',
-        '    image: postgres:16',
-        '    volumes:',
-        '      - pgdata:/var/lib/postgresql/data',
-        '  app:',
-        '    build:',
-        '      context: /srv/app',
-        '      dockerfile: build.Dockerfile',
-        '    ports:',
-        '      - "8080:80"',
-      ].join('\n'),
+describe('previewStack', () => {
+  it('renders the cards as the compose document with the card and stack extras', () => {
+    const text = previewStack(
+      [{ name: 'web', form: { ...emptyForm(), image: 'nginx:1.27' }, extra: { labels: { a: 'b' } } }],
+      { volumes: { data: null } },
     );
+    expect(text).toContain('services:\n  web:\n    image: nginx:1.27');
+    expect(text).toContain('labels:');
+    expect(text).toContain('volumes:\n  data:');
   });
 
-  it('falls back to service-<n> for an unnamed card and {} for an empty one', () => {
-    expect(previewYaml([{ name: '', form: emptyForm() }])).toBe('services:\n  service-1: {}');
-  });
-
-  it('ignores blank rows', () => {
-    expect(previewYaml([{ name: 'web', form: { ...emptyForm(), image: 'x', ports: ['', ' '] } }])).not.toContain('ports:');
+  it('falls back to service-<n> for an unnamed card and never throws for a Dockerfile card', () => {
+    expect(previewStack([{ name: '', form: emptyForm(), extra: {} }], {})).toContain('service-1: {}');
+    const text = previewStack([{ name: '', form: { ...emptyForm(), source: 'dockerfile', dockerfileText: 'FROM x' }, extra: {} }], {});
+    expect(text).toContain('./service-1');
   });
 });
 
 describe('isCreateDirty', () => {
-  const clean = () => ({ stackName: '', cards: [{ name: '', autoName: true, form: emptyForm() }] });
+  const clean = () => ({ stackName: '', cards: [{ name: '', autoName: true, form: emptyForm(), extra: {} as Record<string, unknown> }], stackExtra: {} as Record<string, unknown>, yamlEdited: false });
 
   it('is clean for the initial state', () => {
     expect(isCreateDirty(clean())).toBe(false);
@@ -54,7 +33,7 @@ describe('isCreateDirty', () => {
 
   it('is dirty with a second card', () => {
     const input = clean();
-    input.cards.push({ name: '', autoName: true, form: emptyForm() });
+    input.cards.push({ name: '', autoName: true, form: emptyForm(), extra: {} });
     expect(isCreateDirty(input)).toBe(true);
   });
 
@@ -74,5 +53,17 @@ describe('isCreateDirty', () => {
     const input = clean();
     input.cards[0] = { ...input.cards[0], autoName: true, name: 'web' };
     expect(isCreateDirty(input)).toBe(false);
+  });
+
+  it('is dirty with stack extras, a card extra or edited YAML text', () => {
+    expect(isCreateDirty({ ...clean(), stackExtra: { volumes: {} } })).toBe(true);
+    const withCardExtra = clean();
+    withCardExtra.cards[0].extra = { labels: {} };
+    expect(isCreateDirty(withCardExtra)).toBe(true);
+    expect(isCreateDirty({ ...clean(), yamlEdited: true })).toBe(true);
+  });
+
+  it('is dirty with no cards at all', () => {
+    expect(isCreateDirty({ ...clean(), cards: [] })).toBe(true);
   });
 });

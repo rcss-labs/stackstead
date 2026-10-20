@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -126,8 +127,10 @@ type Service struct {
 	// the unique index on stacks.project is the backstop.
 	// afterClaim, when set by tests, runs between claiming a project and saving the file.
 	afterClaim func()
-	locks      sync.Map // stack name -> *sync.Mutex, serializes saves of one stack
-	projectMu  sync.Mutex
+	// beforeComposeSave, when set by tests, runs just before the compose file is saved.
+	beforeComposeSave func()
+	locks             sync.Map // stack name -> *sync.Mutex, serializes saves of one stack
+	projectMu         sync.Mutex
 }
 
 func NewService(d Deps) *Service {
@@ -489,6 +492,45 @@ func (s *Service) Act(ctx context.Context, stack, action string) (Operation, err
 		return Operation{}, err
 	}
 	return s.ops.Start(stack, action, func(ctx context.Context, out func(string)) error {
+		return s.compose.Run(ctx, e.ComposePath, args, out)
+	})
+}
+
+// ActService rebuilds and restarts one service with `up -d --build --no-deps`,
+// leaving the stack's other services alone. Unlike the stack-wide up it omits
+// --remove-orphans, which acts on the whole project. The "--" keeps a
+// service name that looks like a flag from becoming one. Only "up" is supported.
+func (s *Service) ActService(ctx context.Context, stack, service, action string) (Operation, error) {
+	if action != "up" {
+		return Operation{}, &ValidationError{Fields: []FieldError{{Field: "action", Message: fmt.Sprintf("unknown service action %q", action)}}}
+	}
+	e, unlock, err := s.lockedEntry(ctx, stack)
+	if err != nil {
+		return Operation{}, err
+	}
+	defer unlock()
+	_, _, f, err := readFile(e)
+	if err != nil {
+		return Operation{}, err
+	}
+	names, err := f.Services()
+	if err != nil {
+		return Operation{}, err
+	}
+	if !slices.Contains(names, service) {
+		return Operation{}, composefile.ErrServiceNotFound
+	}
+	if err := refuseOverrides(e.ComposePath); err != nil {
+		return Operation{}, err
+	}
+	if err := s.requireLifecycle(ctx); err != nil {
+		return Operation{}, err
+	}
+	if e, err = s.refreshProject(ctx, e); err != nil {
+		return Operation{}, err
+	}
+	args := []string{"up", "-d", "--build", "--no-deps", "--", service}
+	return s.ops.StartService(stack, action, service, func(ctx context.Context, out func(string)) error {
 		return s.compose.Run(ctx, e.ComposePath, args, out)
 	})
 }

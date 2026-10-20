@@ -1,7 +1,7 @@
 import { get } from '$lib/store';
 import { describe, expect, it, vi, type Mock } from 'vitest';
 import { ApiError } from '../api/client';
-import type { ServiceConfig, StackDetail } from '../api/types';
+import type { DockerfileView, ServiceConfig, StackDetail } from '../api/types';
 import { fromForm, toForm } from '../compose/form';
 import { createServiceEdit, type ServiceEditDeps } from './serviceEdit';
 
@@ -290,5 +290,164 @@ describe('createServiceEdit', () => {
     setImage(edit, 'nginx:2');
     await edit.preview();
     expect(get(edit.notice)?.kind).toBe('rawEditor');
+  });
+});
+
+describe('createServiceEdit with a Dockerfile', () => {
+  const buildConfig: ServiceConfig = { image: 'stackstead/web:latest', build: { context: './app', dockerfile: 'Dockerfile.dev' }, limits: {} };
+  const view = (over: Partial<DockerfileView> = {}): DockerfileView => ({ content: 'FROM alpine:3.20\n', hash: 'd1', exists: true, editable: true, path: 'Dockerfile.dev', ...over });
+  const withView = (over: Partial<DockerfileView> = {}, deps: Partial<ServiceEditDeps> = {}, cfg: ServiceConfig = buildConfig) =>
+    setup({ loadDockerfile: vi.fn(async () => view(over)), ...deps }, [], cfg);
+
+  it('loads an editable Dockerfile as the source', async () => {
+    const { edit } = withView();
+    await vi.waitFor(() => expect(get(edit.form).source).toBe('dockerfile'));
+    const f = get(edit.form);
+    expect(f.dockerfileText).toBe('FROM alpine:3.20\n');
+    expect(f.dockerfileAt).toEqual({ context: './app', dockerfile: 'Dockerfile.dev' });
+    expect(get(edit.dirty)).toBe(false);
+  });
+
+  it('keeps the build form editable when the Dockerfile is not editable, and can switch to a managed Dockerfile', async () => {
+    const loadDockerfile = vi.fn(async () => view({ editable: false, content: '', reason: 'outside' }));
+    const { edit, deps } = setup({ loadDockerfile }, [], buildConfig);
+    await vi.waitFor(() => expect(get(edit.dockerfileView)?.editable).toBe(false));
+    const f = get(edit.form);
+    expect(f.source).toBe('build');
+    expect(f.readOnly.has('build')).toBe(false);
+    // Editing the existing build fields works as today.
+    edit.form.update((x) => ({ ...x, buildContext: './other' }));
+    await edit.preview();
+    expect(deps.preview.mock.calls[0][0].build).toEqual({ context: './other', dockerfile: 'Dockerfile.dev' });
+    edit.cancelPreview();
+    // Switching to Write a Dockerfile uses the managed layout.
+    edit.form.update((x) => ({ ...x, source: 'dockerfile', dockerfileText: 'FROM alpine:3.21\n' }));
+    await edit.preview();
+    expect(deps.preview.mock.calls[1][0].build).toEqual({ context: './app' });
+    expect(await edit.save()).toBe(true);
+    expect(deps.update.mock.calls[0][2]).toEqual({ content: 'FROM alpine:3.21\n', hash: '' });
+  });
+
+  it('seeds an editable but empty Dockerfile as Existing build so other fields can be saved', async () => {
+    const loadDockerfile = vi.fn(async () => view({ content: '' }));
+    const { edit, deps } = setup({ loadDockerfile }, [], buildConfig);
+    await vi.waitFor(() => expect(loadDockerfile).toHaveBeenCalled());
+    await vi.waitFor(() => expect(get(edit.dockerfileView)).toBeDefined());
+    expect(get(edit.form).source).toBe('build');
+    edit.form.update((f) => ({ ...f, ports: ['81:81'] }));
+    await edit.preview();
+    expect(deps.preview).toHaveBeenCalled();
+    expect(await edit.save()).toBe(true);
+    expect(deps.update.mock.calls[0][2]).toBeUndefined();
+  });
+
+  it('does not load a Dockerfile for an image service', () => {
+    const loadDockerfile = vi.fn(async () => view());
+    setup({ loadDockerfile });
+    expect(loadDockerfile).not.toHaveBeenCalled();
+  });
+
+  it('saving a Dockerfile change sends content and the loaded hash', async () => {
+    const { edit, deps } = withView();
+    await vi.waitFor(() => expect(get(edit.form).source).toBe('dockerfile'));
+    edit.form.update((f) => ({ ...f, dockerfileText: 'FROM alpine:3.21\n' }));
+    await edit.preview();
+    expect(deps.preview.mock.calls[0]).toHaveLength(2);
+    expect(await edit.save()).toBe(true);
+    expect(deps.update).toHaveBeenCalledWith(expect.objectContaining({ build: { context: './app', dockerfile: 'Dockerfile.dev' } }), 'h1', { content: 'FROM alpine:3.21\n', hash: 'd1' });
+  });
+
+  it('does not send the Dockerfile when only another group changed', async () => {
+    const { edit, deps } = withView();
+    await vi.waitFor(() => expect(get(edit.form).source).toBe('dockerfile'));
+    edit.form.update((f) => ({ ...f, ports: ['81:81'] }));
+    await edit.preview();
+    await edit.save();
+    expect(deps.update.mock.calls[0][2]).toBeUndefined();
+  });
+
+  it('switching an image service to a written Dockerfile sends hash ""', async () => {
+    const { edit, deps } = setup();
+    edit.form.update((f) => ({ ...f, source: 'dockerfile', dockerfileText: 'FROM alpine:3.20\n', image: 'stackstead/web-app:latest' }));
+    await edit.preview();
+    expect(await edit.save()).toBe(true);
+    expect(deps.update).toHaveBeenCalledWith(expect.objectContaining({ build: { context: './app' } }), 'h1', { content: 'FROM alpine:3.20\n', hash: '' });
+  });
+
+  it('a Dockerfile conflict enters the conflict phase and Reload fetches the view again', async () => {
+    const loadDockerfile = vi.fn(async () => view());
+    const update = vi.fn(async () => {
+      throw new ApiError(409, 'Dockerfile changed on disk since it was loaded', []);
+    });
+    const { edit } = setup({ loadDockerfile, update }, [], buildConfig);
+    await vi.waitFor(() => expect(get(edit.form).source).toBe('dockerfile'));
+    edit.form.update((f) => ({ ...f, dockerfileText: 'FROM busybox:1\n' }));
+    await edit.preview();
+    expect(await edit.save()).toBe(false);
+    expect(get(edit.phase)).toBe('conflict');
+    expect(get(edit.conflictMessage)).toBe('Dockerfile changed on disk since it was loaded');
+    loadDockerfile.mockResolvedValueOnce(view({ content: 'FROM alpine:3.22\n', hash: 'd2' }));
+    await edit.reload(detail('h1', buildConfig));
+    expect(loadDockerfile).toHaveBeenCalledTimes(2);
+    expect(get(edit.form).dockerfileText).toBe('FROM busybox:1\n');
+    expect(get(edit.phase)).toBe('editing');
+  });
+
+  it('maps a server dockerfile field error to the editor', async () => {
+    const update = vi.fn(async () => {
+      throw new ApiError(400, 'invalid', [{ field: 'dockerfile', message: 'Dockerfile is not valid' }]);
+    });
+    const { edit } = withView({}, { update });
+    await vi.waitFor(() => expect(get(edit.form).source).toBe('dockerfile'));
+    edit.form.update((f) => ({ ...f, dockerfileText: 'x' }));
+    await edit.preview();
+    await edit.save();
+    expect(get(edit.errors).dockerfileText).toBe('Dockerfile is not valid');
+  });
+
+  it('Reload keeps the Dockerfile source and the user text when the re-fetch fails', async () => {
+    const loadDockerfile = vi.fn(async () => view());
+    const { edit } = setup({ loadDockerfile }, [], buildConfig);
+    await vi.waitFor(() => expect(get(edit.form).source).toBe('dockerfile'));
+    edit.form.update((f) => ({ ...f, dockerfileText: 'FROM busybox:1\n' }));
+    loadDockerfile.mockRejectedValueOnce(new Error('down'));
+    await edit.reload(detail('h1', buildConfig));
+    expect(get(edit.form).source).toBe('dockerfile');
+    expect(get(edit.form).dockerfileText).toBe('FROM busybox:1\n');
+    expect(get(edit.dockerfileView)?.hash).toBe('d1');
+  });
+
+  it('Discard keeps the Dockerfile source when the re-fetch fails', async () => {
+    const loadDockerfile = vi.fn(async () => view());
+    const { edit } = setup({ loadDockerfile }, [], buildConfig);
+    await vi.waitFor(() => expect(get(edit.form).source).toBe('dockerfile'));
+    loadDockerfile.mockRejectedValueOnce(new Error('down'));
+    await edit.discard(detail('h1', buildConfig));
+    expect(get(edit.form).source).toBe('dockerfile');
+    expect(get(edit.form).dockerfileText).toBe('FROM alpine:3.20\n');
+  });
+
+  it('ignores a late first load once the user has started a save', async () => {
+    let release!: (v: DockerfileView) => void;
+    const loadDockerfile = vi.fn(() => new Promise<DockerfileView>((r) => (release = r)));
+    const { edit } = setup({ loadDockerfile }, [], buildConfig);
+    edit.form.update((f) => ({ ...f, ports: ['81:81'] }));
+    await edit.preview();
+    expect(get(edit.phase)).toBe('previewing');
+    release(view());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(get(edit.form).source).toBe('build');
+  });
+
+  it('flags a Dockerfile conflict so the banner can say the text will replace it', async () => {
+    const update = vi.fn(async () => {
+      throw new ApiError(409, 'Dockerfile changed on disk since it was loaded', []);
+    });
+    const { edit } = withView({}, { update });
+    await vi.waitFor(() => expect(get(edit.form).source).toBe('dockerfile'));
+    edit.form.update((f) => ({ ...f, dockerfileText: 'x' }));
+    await edit.preview();
+    await edit.save();
+    expect(get(edit.dockerfileConflict)).toBe(true);
   });
 });

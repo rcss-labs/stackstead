@@ -155,6 +155,8 @@ export type OpState = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_
 export interface Operation {
   id: string;
   stack: string;
+  /** Set when the operation targets one service (e.g. a scoped up). */
+  service?: string;
   action: string;
   state: OpState;
   startedAt: string;
@@ -387,27 +389,50 @@ export interface SetupRequest extends LoginRequest {
   setupToken?: string;
 }
 
+/** A service's Dockerfile text; `hash` is omitted on create and add. */
+export interface DockerfileContent {
+  content: string;
+  hash?: string;
+}
+
+/** GET /api/stacks/{name}/services/{service}/dockerfile. */
+export interface DockerfileView {
+  content: string;
+  hash: string;
+  exists: boolean;
+  editable: boolean;
+  path: string;
+  reason?: string;
+}
+
 export interface CreateStackService {
   service: string;
   config: ServiceConfig;
+  extra?: Record<string, unknown>;
+  dockerfile?: DockerfileContent;
 }
 
 export interface CreateStackRequest {
   name: string;
   services: CreateStackService[];
+  extra?: Record<string, unknown>;
 }
 
 export interface ImportRequest {
   path: string;
 }
 
-export interface AddServiceRequest extends CreateStackService {
+export interface AddServiceRequest {
+  service: string;
+  config: ServiceConfig;
   hash: string;
+  dockerfile?: DockerfileContent;
 }
 
 export interface UpdateServiceRequest {
   config: ServiceConfig;
   hash: string;
+  dockerfile?: DockerfileContent;
 }
 
 /** POST /api/stacks/{name}/services/{service}/preview (same body as the save). */

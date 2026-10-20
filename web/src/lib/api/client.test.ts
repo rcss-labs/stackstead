@@ -229,6 +229,51 @@ describe('api wrappers', () => {
     });
   });
 
+  it('addService sends dockerfile only when given', async () => {
+    fake = installFakeFetch({
+      'POST /api/stacks/web/services': { status: 201, body: serviceDetail },
+    });
+    const config = { image: 'alpine:3.21', limits: {} };
+    await api.addService('web', 'api', config, 'h1');
+    await api.addService('web', 'api', config, 'h1', { content: 'FROM x' });
+    expect(fake.calls[0].body).toEqual({ service: 'api', config, hash: 'h1' });
+    expect(Object.keys(fake.calls[0].body as object)).not.toContain('dockerfile');
+    expect(fake.calls[1].body).toEqual({ service: 'api', config, hash: 'h1', dockerfile: { content: 'FROM x' } });
+  });
+
+  it('updateService sends dockerfile with hash', async () => {
+    fake = installFakeFetch({ 'PUT /api/stacks/web/services/api': { body: { hash: 'h2' } } });
+    const config = { limits: {} };
+    await api.updateService('web', 'api', config, 'h1');
+    await api.updateService('web', 'api', config, 'h1', { content: 'FROM y', hash: 'd1' });
+    expect(fake.calls[0].body).toEqual({ config, hash: 'h1' });
+    expect(fake.calls[1].body).toEqual({ config, hash: 'h1', dockerfile: { content: 'FROM y', hash: 'd1' } });
+  });
+
+  it('dockerfile() GETs the service dockerfile URL', async () => {
+    const view = { content: 'FROM x', hash: 'd1', exists: true, editable: true, path: 'services/web/Dockerfile' };
+    fake = installFakeFetch({ 'GET /api/stacks/a%20b/services/web/dockerfile': { body: view } });
+    expect(await api.dockerfile('a b', 'web')).toEqual(view);
+    expect(fake.calls[0].path).toBe('/api/stacks/a%20b/services/web/dockerfile');
+  });
+
+  it('saveDockerfile PUTs {content, hash}', async () => {
+    fake = installFakeFetch({ 'PUT /api/stacks/web/services/api/dockerfile': { body: { hash: 'd2' } } });
+    expect(await api.saveDockerfile('web', 'api', 'FROM z', 'd1')).toEqual({ hash: 'd2' });
+    expect(fake.calls[0]).toMatchObject({
+      method: 'PUT', path: '/api/stacks/web/services/api/dockerfile', body: { content: 'FROM z', hash: 'd1' },
+    });
+  });
+
+  it('upService POSTs {} to the scoped up action', async () => {
+    const op = { id: 'op1', stack: 'web', action: 'up', service: 'api', state: 'running', startedAt: '2026-10-20T00:00:00Z' };
+    fake = installFakeFetch({ 'POST /api/stacks/web/services/api/actions/up': { status: 202, body: op } });
+    expect(await api.upService('web', 'api')).toEqual(op);
+    expect(fake.calls[0]).toMatchObject({
+      method: 'POST', path: '/api/stacks/web/services/api/actions/up', body: {},
+    });
+  });
+
   it('previews an added service with its name, config and hash', async () => {
     const preview = { content: 'services: {}\n', hash: 'h1' };
     fake = installFakeFetch({ 'POST /api/stacks/my%20stack/services/preview': { body: preview } });
@@ -415,15 +460,18 @@ describe('createApi', () => {
       'GET /api/servers/b1/api/stacks': { body: [] },
       'GET /api/servers/b1/api/stacks/a%20b': { body: { name: 'a b' } },
       'POST /api/servers/b1/api/stacks/a%20b/actions/up': { body: { id: 'op' } },
+      'POST /api/servers/b1/api/stacks/a%20b/services/web/actions/up': { body: { id: 'op2' } },
     });
     const scoped = createApi('/api/servers/b1');
     await scoped.stacks();
     await scoped.stack('a b');
     await scoped.act('a b', 'up');
+    await scoped.upService('a b', 'web');
     expect(fake.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
       'GET /api/servers/b1/api/stacks',
       'GET /api/servers/b1/api/stacks/a%20b',
       'POST /api/servers/b1/api/stacks/a%20b/actions/up',
+      'POST /api/servers/b1/api/stacks/a%20b/services/web/actions/up',
     ]);
   });
 

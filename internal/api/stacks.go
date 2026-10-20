@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -23,10 +24,10 @@ type StacksAPI interface {
 	Get(ctx context.Context, name string) (stacks.Detail, error)
 	Raw(ctx context.Context, name string) (content []byte, hash string, err error)
 	SaveRaw(ctx context.Context, stack string, content []byte, hash string) (stacks.EditResult, error)
-	AddService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) (stacks.EditResult, error)
+	AddService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string, df *stacks.DockerfileWrite) (stacks.EditResult, error)
 	PreviewAddService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) ([]byte, error)
 	RemoveService(ctx context.Context, stack, service, hash string) (stacks.EditResult, error)
-	UpdateService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) (stacks.EditResult, error)
+	UpdateService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string, df *stacks.DockerfileWrite) (stacks.EditResult, error)
 	PreviewService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) (candidate []byte, err error)
 	Act(ctx context.Context, stack, action string) (stacks.Operation, error)
 	Remove(ctx context.Context, stack string, withVolumes bool) (stacks.Operation, error)
@@ -81,6 +82,7 @@ func (s *server) registerStackRoutes(mux *http.ServeMux) {
 	route("GET /api/operations/{id}/stream", s.handleStreamOperation)
 	route("POST /api/operations/{id}/cancel", s.handleCancelOperation)
 	route("GET /api/fs", s.handleFS)
+	s.registerDockerfileRoutes(mux)
 	route("GET /api/status", s.handleStatus)
 }
 
@@ -107,7 +109,7 @@ func (s *server) handleListStacks(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleCreateStack(w http.ResponseWriter, r *http.Request) {
 	var req createStackRequest
-	if !decodeJSON(w, r, &req) {
+	if !decodeJSONLimit(w, r, &req, createBodyBytes) {
 		return
 	}
 	if req.HasMixedForms() {
@@ -116,11 +118,52 @@ func (s *server) handleCreateStack(w http.ResponseWriter, r *http.Request) {
 	}
 	domain := stacks.CreateRequest{Name: req.Name, IndexedFields: req.UsesServices()}
 	if req.UsesServices() {
+		var fields []stacks.FieldError
+		topExtra, err := composefile.ParseExtra(req.Extra)
+		if err == nil {
+			err = stacks.CheckTopExtra(topExtra)
+		}
+		if err != nil {
+			fields = append(fields, extraFieldError("extra", err))
+		}
+		domain.Extra = topExtra
 		domain.Services = make([]composefile.NamedService, 0, len(req.Services))
-		for _, entry := range req.Services {
-			domain.Services = append(domain.Services, composefile.NamedService{Name: entry.Service, Config: serviceConfigToDomain(entry.Config)})
+		for i, entry := range req.Services {
+			service, dockerfile, err := createServiceToDomain(i, entry)
+			if err != nil {
+				var ve *stacks.ValidationError
+				if errors.As(err, &ve) {
+					fields = append(fields, ve.Fields...)
+					continue
+				}
+				s.writeStackError(w, r, err)
+				return
+			}
+			domain.Services = append(domain.Services, service)
+			if dockerfile != nil {
+				if domain.Dockerfiles == nil {
+					domain.Dockerfiles = map[int][]byte{}
+				}
+				domain.Dockerfiles[i] = dockerfile
+			}
+		}
+		if len(fields) > 0 {
+			s.writeStackError(w, r, &stacks.ValidationError{Fields: fields})
+			return
 		}
 	} else {
+		// The single-service form has no place for extras; silently dropping
+		// one would lose the user's compose keys.
+		// null, absent and {} all mean "no extra".
+		legacyExtra, err := composefile.ParseExtra(req.Extra)
+		if err != nil {
+			s.writeStackError(w, r, &stacks.ValidationError{Fields: []stacks.FieldError{extraFieldError("extra", err)}})
+			return
+		}
+		if len(legacyExtra.Keys()) > 0 {
+			s.writeStackError(w, r, &stacks.ValidationError{Fields: []stacks.FieldError{{Field: "extra", Message: "extra needs the services form"}}})
+			return
+		}
 		var cfg serviceConfig
 		if req.Config != nil {
 			cfg = *req.Config
@@ -184,10 +227,15 @@ func (s *server) handlePutCompose(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleUpdateService(w http.ResponseWriter, r *http.Request) {
 	var req updateServiceRequest
-	if !decodeJSON(w, r, &req) {
+	if !decodeJSONLimit(w, r, &req, dockerfileBodyBytes) {
 		return
 	}
-	res, err := s.opts.Stacks.UpdateService(r.Context(), r.PathValue("name"), r.PathValue("service"), serviceConfigToDomain(req.Config), req.Hash)
+	var df *stacks.DockerfileWrite
+	if req.Dockerfile != nil {
+		// An update names the version it loaded; "" means no file yet.
+		df = &stacks.DockerfileWrite{Content: []byte(req.Dockerfile.Content), Hash: req.Dockerfile.Hash, CheckHash: true}
+	}
+	res, err := s.opts.Stacks.UpdateService(r.Context(), r.PathValue("name"), r.PathValue("service"), serviceConfigToDomain(req.Config), req.Hash, df)
 	if err != nil {
 		s.writeStackError(w, r, err)
 		return
@@ -323,10 +371,15 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleAddService(w http.ResponseWriter, r *http.Request) {
 	var req addServiceRequest
-	if !decodeJSON(w, r, &req) {
+	if !decodeJSONLimit(w, r, &req, dockerfileBodyBytes) {
 		return
 	}
-	res, err := s.opts.Stacks.AddService(r.Context(), r.PathValue("name"), req.Service, serviceConfigToDomain(req.Config), req.Hash)
+	var df *stacks.DockerfileWrite
+	if req.Dockerfile != nil {
+		// Adding replaces whatever a removed service left at the managed path.
+		df = &stacks.DockerfileWrite{Content: []byte(req.Dockerfile.Content)}
+	}
+	res, err := s.opts.Stacks.AddService(r.Context(), r.PathValue("name"), req.Service, serviceConfigToDomain(req.Config), req.Hash, df)
 	if err != nil {
 		s.writeStackError(w, r, err)
 		return

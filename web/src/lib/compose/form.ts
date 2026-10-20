@@ -1,10 +1,14 @@
 import type { Field, FieldError, ServiceConfig } from '../api/types';
 
 export interface ServiceForm {
-  source: 'image' | 'build';
+  source: 'image' | 'build' | 'dockerfile';
   image: string;
   buildContext: string;
   dockerfile: string;
+  /** Contents of the Dockerfile written in the form (source 'dockerfile'). */
+  dockerfileText: string;
+  /** Where an existing Dockerfile lives; null means the managed layout <stack>/<service>/Dockerfile. */
+  dockerfileAt: { context: string; dockerfile: string } | null;
   ports: string[];
   volumes: string[];
   env: { name: string; value: string }[];
@@ -27,6 +31,14 @@ export interface ServiceForm {
 
 export type FormErrors = { [path: string]: string };
 
+export const DOCKERFILE_TEMPLATE = 'FROM alpine:3.20\n# Add build steps below, for example:\n# RUN apk add --no-cache curl\n';
+export const MAX_DOCKERFILE_BYTES = 1 << 20;
+
+/** Default tag for an image built from a written Dockerfile. */
+export function defaultImageTag(stack: string, service: string): string {
+  return stack === service ? `stackstead/${stack}:latest` : `stackstead/${stack}-${service}:latest`;
+}
+
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 // Same wording as the server so a client-side and a server-side name error read alike.
 const NAME_MSG =
@@ -44,6 +56,8 @@ export function emptyForm(): ServiceForm {
     image: '',
     buildContext: '',
     dockerfile: '',
+    dockerfileText: '',
+    dockerfileAt: null,
     ports: [],
     volumes: [],
     env: [],
@@ -107,7 +121,7 @@ function textToHealthcheckTest(text: string): string[] {
  * snapshots. It supplies read-only groups and the unchanged healthcheck command, so a form with
  * read-only groups and a null original throws rather than clearing them on save.
  */
-export function fromForm(f: ServiceForm, original: ServiceConfig | null): ServiceConfig {
+export function fromForm(f: ServiceForm, original: ServiceConfig | null, service?: string): ServiceConfig {
   const orig = original ?? undefined;
   if (f.readOnly.size > 0 && !orig) {
     throw new Error('fromForm: the original config is required when the form has read-only fields (pass it explicitly)');
@@ -121,6 +135,15 @@ export function fromForm(f: ServiceForm, original: ServiceConfig | null): Servic
   if (ro('image') || ro('build')) {
     set('image', orig?.image);
     set('build', orig?.build);
+  } else if (f.source === 'dockerfile') {
+    if (f.dockerfileAt) {
+      const at = f.dockerfileAt;
+      cfg.build = at.dockerfile ? { context: at.context, dockerfile: at.dockerfile } : { context: at.context };
+    } else {
+      if (!service) throw new Error('fromForm: the service name is required for a managed Dockerfile');
+      cfg.build = { context: './' + service };
+    }
+    if (f.image.trim()) cfg.image = f.image.trim();
   } else if (f.source === 'build') {
     const context = f.buildContext.trim();
     // A build with only a dockerfile (no context) is kept as found; validation decides whether that is allowed.
@@ -281,7 +304,11 @@ export function validateForm(f: ServiceForm, opts: { name?: string; requireName?
   }
 
   if (!ro('image') && !ro('build')) {
-    if (f.source === 'image') {
+    if (f.source === 'dockerfile') {
+      if (f.dockerfileText.trim() === '') errors.dockerfileText = 'Dockerfile is required';
+      else if (new TextEncoder().encode(f.dockerfileText).length > MAX_DOCKERFILE_BYTES) errors.dockerfileText = 'Dockerfile is larger than 1 MiB';
+      else if (f.dockerfileText.includes('\0')) errors.dockerfileText = 'Dockerfile must not contain NUL bytes';
+    } else if (f.source === 'image') {
       if (!f.image.trim()) errors.image = 'image is required';
     } else if (!f.buildContext.trim() && !(orig?.build && orig.build.context === '' && (orig.build.dockerfile ?? '') === f.dockerfile.trim())) {
       errors['build.context'] = 'build context is required';
@@ -404,6 +431,7 @@ function mapPath(f: ServiceForm, path: string): string | null {
   }
   if (path === 'service') return 'name';
   if (path === 'name' || path === 'image' || path === 'restart') return path;
+  if (path === 'dockerfile') return 'dockerfileText';
   if (path === 'build.context' || path === 'build.dockerfile') return path;
   if (path === 'network_mode') return 'networkMode';
   if (path === 'limits.cpus' || path === 'limits.memory') return path;
@@ -446,6 +474,8 @@ export function fieldOf(path: string): Field | 'name' {
     case 'restart':
     case 'healthcheck':
       return head;
+    case 'dockerfileText':
+      return 'build';
     case 'env':
     case 'environment':
       return 'environment';

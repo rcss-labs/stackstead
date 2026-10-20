@@ -5,9 +5,10 @@ export interface DiffViewProps {
   original: string;
   modified: string;
   ariaLabel: string;
+  language?: 'yaml' | 'dockerfile';
 }
 
-export function DiffView({ original, modified, ariaLabel }: DiffViewProps) {
+export function DiffView({ original, modified, ariaLabel, language = 'yaml' }: DiffViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);
 
@@ -20,7 +21,7 @@ export function DiffView({ original, modified, ariaLabel }: DiffViewProps) {
     import('$lib/stacks/cm')
       .then(({ createDiffView }) => {
         if (cancelled) return;
-        view = createDiffView({ parent, original, modified, ariaLabel: `${ariaLabel} (unified diff)` });
+        view = createDiffView({ parent, original, modified, ariaLabel: `${ariaLabel} (unified diff)`, language });
         setReady(true);
       })
       .catch(() => {});
@@ -29,7 +30,7 @@ export function DiffView({ original, modified, ariaLabel }: DiffViewProps) {
       view?.destroy();
       setReady(false);
     };
-  }, [original, modified, ariaLabel]);
+  }, [original, modified, ariaLabel, language]);
 
   return (
     <div className={styles.diff} role="group" aria-label={ariaLabel} data-testid="diff-view">

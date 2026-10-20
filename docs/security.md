@@ -8,6 +8,13 @@ Whoever can use Stackstead can control Docker on that machine, and Docker
 access is equivalent to root. Treat the Stackstead login like a root password.
 
 - Stackstead listens on `127.0.0.1` only by default.
+- Stackstead writes a service's Dockerfile only inside that stack's own
+  folder, after resolving symlinks at write time, and never through a
+  symlinked file. Dockerfiles outside the folder are view-only, and reading
+  them is limited to the allowed directories (regular files up to 1 MiB). A
+  Dockerfile runs commands at build time, just as a compose file does, so the
+  trust model is unchanged: the same root-equivalent access Stackstead already
+  has.
 - There is one admin account. Passwords are hashed with argon2id, sessions use
   an HTTP-only, SameSite=Strict cookie, and login is rate-limited per IP.
 - The web UI is served with a strict Content-Security-Policy, `nosniff` on

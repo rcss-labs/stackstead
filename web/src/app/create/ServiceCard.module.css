@@ -19,6 +19,7 @@
 .toggle:disabled { cursor: not-allowed; opacity: 0.6; }
 .title { font-weight: 600; overflow-wrap: anywhere; }
 .summary { color: var(--muted); font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+.more { color: var(--muted); font-size: 12px; }
 .errorMarker { color: var(--danger); font-size: 12px; }
 .fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .body:not([hidden]) { animation: fadeUp 0.18s ease-out; }

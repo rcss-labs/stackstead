@@ -224,7 +224,7 @@ func TestCreateBuildUpEditDown(t *testing.T) {
 	}
 	cfg := detail.Services[0].Config
 	cfg.Limits.Memory = "64M"
-	if _, err := e.svc.UpdateService(context.Background(), name, detail.Services[0].Name, cfg, detail.Hash); err != nil {
+	if _, err := e.svc.UpdateService(context.Background(), name, detail.Services[0].Name, cfg, detail.Hash, nil); err != nil {
 		t.Fatalf("UpdateService: %v", err)
 	}
 	e.act(name, "up")

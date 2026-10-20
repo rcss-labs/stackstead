@@ -55,7 +55,7 @@ describe('service add', () => {
     gate.resolve({ content: 'new', hash: 'h1' });
     await p;
     expect(await add.save()).toEqual(detail());
-    expect(deps.add).toHaveBeenCalledWith('cache', expect.objectContaining({ image: 'redis:7' }), 'h1');
+    expect(deps.add).toHaveBeenCalledWith('cache', expect.objectContaining({ image: 'redis:7' }), 'h1', undefined);
     expect(get(add.checksPartial)).toBe(true);
   });
   it('maps service errors and handles conflict reload without losing edits', async () => {
@@ -102,5 +102,24 @@ describe('service add', () => {
     b.add.dispose();
     saveGate.resolve({ detail: detail(), checksPartial: false });
     expect(await saving).toBeUndefined();
+  });
+  it('sends the Dockerfile content for a written Dockerfile', async () => {
+    const { add, deps } = setup();
+    add.form.update(f => ({ ...f, source: 'dockerfile', dockerfileText: 'FROM alpine:3.20\n' }));
+    await add.preview();
+    await add.save();
+    expect(deps.add).toHaveBeenCalledWith('cache', expect.objectContaining({ build: { context: './cache' } }), 'h1', { content: 'FROM alpine:3.20\n' });
+  });
+  it('never sends it to preview', async () => {
+    const { add, deps } = setup();
+    add.form.update(f => ({ ...f, source: 'dockerfile', dockerfileText: 'FROM alpine:3.20\n' }));
+    await add.preview();
+    expect(vi.mocked(deps.preview).mock.calls[0]).toHaveLength(3);
+  });
+  it('does not send a Dockerfile for an image service', async () => {
+    const { add, deps } = setup();
+    await add.preview();
+    await add.save();
+    expect(vi.mocked(deps.add).mock.calls[0][3]).toBeUndefined();
   });
 });

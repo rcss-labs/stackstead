@@ -2,9 +2,11 @@ import { useId, useImperativeHandle, useLayoutEffect, useRef, useState } from 'r
 import type { ClipboardEvent, ReactNode, Ref } from 'react';
 import type { Field as FieldGroup } from '$lib/api/types';
 import type { FormErrors, ServiceForm as ServiceFormValue } from '$lib/compose/form';
+import { DOCKERFILE_TEMPLATE } from '$lib/compose/form';
 import { Button } from '../components/Button';
 import { Field } from '../components/Field';
 import { ListEditor } from '../components/ListEditor';
+import { YamlEditor } from './YamlEditor';
 import styles from './ServiceForm.module.css';
 
 export interface ServiceFormHandle {
@@ -43,6 +45,15 @@ export interface ServiceFormProps {
   lead?: ReactNode;
   /** Prefix of every control id; give each form on a page its own. */
   idPrefix?: string;
+  /** Shown above a read-only group; defaults to the raw-YAML-editor hint. */
+  readOnlyHint?: string;
+  /** Shown in the Source group while Existing build is selected and editable (Edit: why the Dockerfile itself cannot be edited). */
+  sourceNote?: string;
+  /**
+   * Called with the newly picked source before it is applied. A returned form replaces the current one as the
+   * base of the change (Edit uses it to prefill the image tag); returning nothing keeps the current form.
+   */
+  onSourceChange?: (source: ServiceFormValue['source']) => ServiceFormValue | void;
   ref?: Ref<ServiceFormHandle>;
 }
 
@@ -54,12 +65,18 @@ const RESTART: [string, string][] = [
   ['unless-stopped', 'unless-stopped'],
   ['on-failure', 'on-failure'],
 ];
+const SOURCES: ['image' | 'build' | 'dockerfile', string][] = [
+  ['image', 'Image'],
+  ['build', 'Existing build'],
+  ['dockerfile', 'Write a Dockerfile'],
+];
 const MODE_PRESETS = ['', 'host', 'none', 'bridge'];
 
 const FIXED_LABELS: Record<string, string> = {
   name: 'Service name',
   'build.context': 'Build context',
   'build.dockerfile': 'Dockerfile',
+  dockerfileText: 'Dockerfile',
   networkMode: 'Network mode',
   'limits.cpus': 'CPUs',
   'limits.memory': 'Memory',
@@ -72,8 +89,8 @@ const FIXED_LABELS: Record<string, string> = {
 };
 
 // Human-readable name of a form path, matching the control's own label.
-function labelOf(path: string, source: ServiceFormValue['source']): string {
-  if (path === 'image') return source === 'build' ? 'Image tag' : 'Image';
+export function fieldLabel(path: string, source: ServiceFormValue['source']): string {
+  if (path === 'image') return source === 'image' ? 'Image' : 'Image tag';
   if (FIXED_LABELS[path]) return FIXED_LABELS[path];
   const row = /^(ports|volumes|env|networks)\[(\d+)\](?:\.(name|value|ipv4Address))?$/.exec(path);
   if (!row) return path;
@@ -111,6 +128,9 @@ export function ServiceForm({
   onRawEditor,
   lead,
   idPrefix = 'svc',
+  readOnlyHint = RO_HINT,
+  sourceNote,
+  onSourceChange,
   ref,
 }: ServiceFormProps) {
   const radioName = useId();
@@ -145,12 +165,14 @@ export function ServiceForm({
   const shown: FormErrors = {};
   for (const [path, message] of Object.entries(errors)) {
     if (form.source === 'image' && path.startsWith('build.') && !sourceReadOnly) continue;
+    if (form.source !== 'dockerfile' && path === 'dockerfileText' && !sourceReadOnly) continue;
+    if (form.source === 'dockerfile' && path.startsWith('build.') && !sourceReadOnly) continue;
     if (path.startsWith('healthcheck.') && !form.healthcheck.enabled && !ro('healthcheck')) continue;
     shown[path] = message;
   }
   const paths = Object.keys(shown);
   const summary =
-    paths.length > 0 ? `${paths.length} ${paths.length === 1 ? 'field has an error' : 'fields have errors'}: ${paths.map((p) => labelOf(p, form.source)).join(', ')}` : '';
+    paths.length > 0 ? `${paths.length} ${paths.length === 1 ? 'field has an error' : 'fields have errors'}: ${paths.map((p) => fieldLabel(p, form.source)).join(', ')}` : '';
 
   // The disclosure is forced open while a hidden group holds an error, so the error stays reachable.
   const advancedHasErrors = paths.some((path) => /^(env|networks)\[|^networkMode$|^limits\.|^healthcheck\./.test(path));
@@ -164,6 +186,11 @@ export function ServiceForm({
   const envErrors = rowErrors(shown, 'env', ['.name', '.value']);
   const networkErrors = rowErrors(shown, 'networks', ['.name', '.ipv4Address']);
   const invalid = (path: string) => (shown[path] ? ('true' as const) : undefined);
+
+  function selectSource(source: ServiceFormValue['source']) {
+    const base = onSourceChange?.(source) ?? latest.current;
+    onChange(source === 'dockerfile' ? { ...base, source, dockerfileText: base.dockerfileText || DOCKERFILE_TEMPLATE } : { ...base, source });
+  }
 
   function selectMode(value: string) {
     if (value === 'custom') {
@@ -195,7 +222,7 @@ export function ServiceForm({
   const readonlyNote = (group: FieldGroup) =>
     ro(group) ? (
       <p className={styles.note} id={id(`ro-${group}`)}>
-        {RO_HINT}
+        {readOnlyHint}
         {onRawEditor && (
           <Button variant="secondary" aria-label={`Open raw YAML editor for ${group}`} onClick={onRawEditor}>
             Open raw YAML editor
@@ -396,6 +423,12 @@ export function ServiceForm({
     </fieldset>
   );
 
+  const imageTagField = (
+    <Field label="Image tag" id={id('image')} mono error={shown['image']} hint="Optional; tag applied to the built image" readonly={sourceReadOnly}>
+      {(aria) => <input type="text" {...aria} value={form.image} onChange={(e) => patch({ image: e.target.value })} {...textProps} />}
+    </Field>
+  );
+
   return (
     <div className={styles.form} ref={root}>
       <p className="visually-hidden" role="status">
@@ -419,11 +452,14 @@ export function ServiceForm({
       <fieldset className={styles.group} aria-describedby={sourceReadOnly ? id(`ro-${ro('build') ? 'build' : 'image'}`) : undefined}>
         <legend className={styles.title}>Source</legend>
         {readonlyNote(ro('build') ? 'build' : 'image')}
+        {sourceNote && form.source === 'build' && !sourceReadOnly && <p className={styles.note}>{sourceNote}</p>}
         <div className={styles.segmented} role="radiogroup" aria-label="Source type">
-          {(['image', 'build'] as const).map((value) => (
+          {SOURCES.map(([value, text]) => (
             <label key={value} className={styles.seg}>
-              <input type="radio" name={radioName} value={value} checked={form.source === value} disabled={sourceReadOnly} onChange={() => patch({ source: value })} />
-              <span className="visually-hidden">From</span> {value === 'image' ? 'Image' : 'Dockerfile'}
+              <input type="radio" name={radioName} value={value} checked={form.source === value} disabled={sourceReadOnly} onChange={() => selectSource(value)} />
+              {value !== 'dockerfile' && <span className="visually-hidden">From</span>}
+              {value !== 'dockerfile' && ' '}
+              {text}
             </label>
           ))}
         </div>
@@ -431,6 +467,19 @@ export function ServiceForm({
           <Field label="Image" id={id('image')} mono error={shown['image']} hint="For example nginx:1.27" readonly={sourceReadOnly}>
             {(aria) => <input type="text" {...aria} value={form.image} onChange={(e) => patch({ image: e.target.value })} {...textProps} />}
           </Field>
+        ) : form.source === 'dockerfile' ? (
+          <>
+            <div className={styles.editor}>
+              <YamlEditor language="dockerfile" ariaLabel={`Dockerfile for ${name || 'this service'}`} invalid={Boolean(shown['dockerfileText'])} describedBy={shown['dockerfileText'] ? id('dockerfileText-error') : undefined} readonly={sourceReadOnly} value={form.dockerfileText} onChange={(dockerfileText) => patch({ dockerfileText })} />
+              {shown['dockerfileText'] && (
+                <p className={styles.fieldError} id={id('dockerfileText-error')} role="alert" tabIndex={-1} data-form-error>
+                  <span aria-hidden="true">✖ </span>
+                  {shown['dockerfileText']}
+                </p>
+              )}
+            </div>
+            {imageTagField}
+          </>
         ) : (
           <>
             <Field label="Build context" id={id('build-context')} mono error={shown['build.context']} readonly={sourceReadOnly}>
@@ -457,9 +506,7 @@ export function ServiceForm({
                 </div>
               )}
             </Field>
-            <Field label="Image tag" id={id('image')} mono error={shown['image']} hint="Optional; tag applied to the built image" readonly={sourceReadOnly}>
-              {(aria) => <input type="text" {...aria} value={form.image} onChange={(e) => patch({ image: e.target.value })} {...textProps} />}
-            </Field>
+            {imageTagField}
           </>
         )}
       </fieldset>

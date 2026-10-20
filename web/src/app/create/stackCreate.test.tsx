@@ -1,4 +1,4 @@
-import { cleanup, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { get } from '$lib/store';
@@ -18,6 +18,13 @@ vi.mock('$lib/stores/live', async (orig) => {
     refreshStatus: vi.fn(),
   };
 });
+
+// jsdom cannot lay out CodeMirror; a failing editor chunk leaves the textarea fallback, which tests can type into.
+vi.mock('$lib/stacks/cm', () => ({
+  createEditor: () => {
+    throw new Error('no editor in jsdom');
+  },
+}));
 
 /** The service cards, without the compose.yaml preview region. */
 const serviceCards = () => screen.getAllByRole('region').filter((r) => r.getAttribute('aria-labelledby') !== 'preview-heading');
@@ -193,7 +200,7 @@ describe('New stack screen', () => {
     const user = await mount();
     await fillImage(user);
     await addImage(user);
-    await user.click(screen.getByLabelText('From Dockerfile'));
+    await user.click(screen.getByLabelText('From Existing build'));
     await user.type(screen.getByLabelText('Build context'), '/srv/app');
     await user.click(screen.getByRole('button', { name: 'Browse for Dockerfile' }));
     const dialog = await screen.findByRole('dialog');
@@ -275,7 +282,7 @@ describe('New stack screen', () => {
   it('400 on build.context lands on the Build context field', async () => {
     const user = await mount({ 'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'services[0].build.context', message: 'path is outside the allowed roots' }] } } });
     await user.type(screen.getByLabelText('Stack name'), 'web');
-    await user.click(screen.getByLabelText('From Dockerfile'));
+    await user.click(screen.getByLabelText('From Existing build'));
     await user.type(screen.getByLabelText('Build context'), '/etc');
     await submit(user);
     expect(await screen.findByText('path is outside the allowed roots')).toBeTruthy();
@@ -293,7 +300,7 @@ describe('New stack screen', () => {
   it('a server image error on a build card stays on the Image tag field through other edits and is dropped by a source switch', async () => {
     const user = await mount({ 'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'services[0].image', message: 'bad tag' }] } } });
     await user.type(screen.getByLabelText('Stack name'), 'web');
-    await user.click(screen.getByLabelText('From Dockerfile'));
+    await user.click(screen.getByLabelText('From Existing build'));
     await user.type(screen.getByLabelText('Build context'), '/srv/app');
     await user.type(screen.getByLabelText('Image tag'), 'x');
     await submit(user);
@@ -302,7 +309,7 @@ describe('New stack screen', () => {
     expect(screen.getByText('bad tag')).toBeTruthy();
     await user.click(screen.getByLabelText('From Image'));
     expect(screen.getByText('bad tag')).toBeTruthy(); // the Image field is the error's own field
-    await user.click(screen.getByLabelText('From Dockerfile'));
+    await user.click(screen.getByLabelText('From Existing build'));
     expect(screen.queryByText('bad tag')).toBeNull();
   });
 
@@ -321,12 +328,12 @@ describe('New stack screen', () => {
   it('a stale build error is dropped when switching back to image', async () => {
     const user = await mount({ 'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'services[0].build.context', message: 'bad context' }] } } });
     await user.type(screen.getByLabelText('Stack name'), 'web');
-    await user.click(screen.getByLabelText('From Dockerfile'));
+    await user.click(screen.getByLabelText('From Existing build'));
     await user.type(screen.getByLabelText('Build context'), '/etc');
     await submit(user);
     await screen.findByText('bad context');
     await user.click(screen.getByLabelText('From Image'));
-    await user.click(screen.getByLabelText('From Dockerfile'));
+    await user.click(screen.getByLabelText('From Existing build'));
     expect(screen.queryByText('bad context')).toBeNull();
   });
 
@@ -335,7 +342,7 @@ describe('New stack screen', () => {
       'GET /api/fs': { body: [{ name: '/', isDir: true, size: 0 }] },
       'GET /api/fs?path=%2F': { body: [{ name: 'Dockerfile', isDir: false, size: 5 }] },
     });
-    await user.click(screen.getByLabelText('From Dockerfile'));
+    await user.click(screen.getByLabelText('From Existing build'));
     await user.type(screen.getByLabelText('Build context'), '/');
     await user.click(screen.getByRole('button', { name: 'Browse for Dockerfile' }));
     await user.click(await screen.findByRole('button', { name: '/' }));
@@ -372,7 +379,7 @@ describe('New stack screen', () => {
   it('a picked Dockerfile inside the context is stored relative to it', async () => {
     const user = await mount();
     await user.type(screen.getByLabelText('Stack name'), 'web');
-    await user.click(screen.getByLabelText('From Dockerfile'));
+    await user.click(screen.getByLabelText('From Existing build'));
     await user.type(screen.getByLabelText('Build context'), '/srv/app');
     await user.click(screen.getByRole('button', { name: 'Browse for Dockerfile' }));
     await user.click(await screen.findByRole('button', { name: '/srv/app' }));
@@ -446,5 +453,73 @@ describe('New stack screen', () => {
     await submit(user);
     await waitFor(() => expect(post()).toBeTruthy());
     expect(JSON.stringify(post()?.body)).toContain('frontend');
+  });
+});
+
+describe('New stack screen: written Dockerfiles', () => {
+  const dockerfileBox = (service: string) => screen.getByRole('textbox', { name: `Dockerfile for ${service}` }) as HTMLTextAreaElement;
+
+  it('Write a Dockerfile sends the managed build and the content', async () => {
+    const user = await mount();
+    await user.type(screen.getByLabelText('Stack name'), 'web');
+    await user.click(screen.getByRole('radio', { name: 'Write a Dockerfile' }));
+    fireEvent.change(dockerfileBox('web'), { target: { value: 'FROM busybox\n' } });
+    await submit(user);
+    await waitFor(() => expect(post()).toBeTruthy());
+    expect(post()?.body).toEqual({
+      name: 'web',
+      services: [
+        {
+          service: 'web',
+          config: { build: { context: './web' }, image: 'stackstead/web:latest', limits: {} },
+          dockerfile: { content: 'FROM busybox\n' },
+        },
+      ],
+    });
+  });
+
+  it('renaming the service moves its Dockerfile', async () => {
+    const user = await mount();
+    await user.type(screen.getByLabelText('Stack name'), 'web');
+    await user.click(screen.getByRole('radio', { name: 'Write a Dockerfile' }));
+    await user.clear(screen.getByLabelText('Service name'));
+    await user.type(screen.getByLabelText('Service name'), 'api');
+    expect(dockerfileBox('api')).toBeTruthy(); // the editor's accessible name follows the rename
+    await submit(user);
+    await waitFor(() => expect(post()).toBeTruthy());
+    expect((post()?.body as { services: { config: { build: unknown } }[] }).services[0].config.build).toEqual({ context: './api' });
+  });
+
+  it('a Dockerfile error from the server shows on the card and is tied to the editor', async () => {
+    const user = await mount({
+      'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'services[0].dockerfile', message: 'Dockerfile is larger than 1 MiB' }] } },
+    });
+    await user.type(screen.getByLabelText('Stack name'), 'web');
+    await user.click(screen.getByRole('radio', { name: 'Write a Dockerfile' }));
+    await submit(user);
+    const message = await screen.findByText('Dockerfile is larger than 1 MiB');
+    const box = dockerfileBox('web');
+    expect(box.getAttribute('aria-invalid')).toBe('true');
+    expect(message.closest('[id]')?.id).toBe(box.getAttribute('aria-describedby'));
+  });
+
+  it('shows what a Dockerfile card builds in its summary', async () => {
+    const user = await mount();
+    await user.type(screen.getByLabelText('Stack name'), 'web');
+    await user.click(screen.getByRole('radio', { name: 'Write a Dockerfile' }));
+    expect(screen.getByRole('button', { name: /^web Dockerfile: stackstead\/web:latest/ })).toBeTruthy();
+  });
+
+  it('a Dockerfile error is dropped when the source moves away from the Dockerfile', async () => {
+    const user = await mount({
+      'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'services[0].dockerfile', message: 'Dockerfile is required' }] } },
+    });
+    await user.type(screen.getByLabelText('Stack name'), 'web');
+    await user.click(screen.getByRole('radio', { name: 'Write a Dockerfile' }));
+    await submit(user);
+    await screen.findByText('Dockerfile is required');
+    await user.click(screen.getByRole('radio', { name: 'From Image' }));
+    await addImage(user);
+    expect(screen.getByRole('button', { name: /^web/ }).textContent).not.toContain('error');
   });
 });

@@ -13,14 +13,17 @@ from connected servers also carry a `"code"`; see [Connected servers](#connected
 | --- | --- |
 | `GET /api/health` | liveness, no authentication: `{"ok": true, "peering": 1}`; `peering` is the connected-servers protocol version, so a server without it predates the feature (used by installers and monitors) |
 | `GET /api/stacks` | list stacks with status |
-| `POST /api/stacks` | create with `{name, services: [{service, config}]}` or legacy `{name, service, config}` |
+| `POST /api/stacks` | create with `{name, services: [{service, config, extra?, dockerfile?}], extra?}` or legacy `{name, service, config}`; see [Managed Dockerfiles](#managed-dockerfiles) |
 | `POST /api/stacks/import` | register an existing compose file without modifying it |
 | `GET /api/stacks/{name}` | detail with services and containers |
 | `GET`/`PUT /api/stacks/{name}/compose` | raw YAML, saved with the hash from the read (409 if stale) |
-| `POST /api/stacks/{name}/services` | add a service with `{service, config, hash}`; returns stack detail (200) |
+| `POST /api/stacks/{name}/services` | add a service with `{service, config, hash, dockerfile?: {content, hash}}`; returns stack detail (200) |
 | `POST /api/stacks/{name}/services/preview` | preview an addition with `{service, config, hash}`; returns `{content, hash}` without writing |
 | `DELETE /api/stacks/{name}/services/{service}?hash=` | remove a service from the file; returns stack detail (200) |
-| `PUT /api/stacks/{name}/services/{service}` | structured service edit |
+| `PUT /api/stacks/{name}/services/{service}` | structured service edit, optionally with `dockerfile?: {content, hash}` |
+| `GET /api/stacks/{name}/services/{service}/dockerfile` | the service's Dockerfile: `{content, hash, exists, editable, path, reason?}`; see [Managed Dockerfiles](#managed-dockerfiles) |
+| `PUT /api/stacks/{name}/services/{service}/dockerfile` | save `{content, hash}` (200 `{hash}`); the hash from the read, `""` for a file that does not exist yet |
+| `POST /api/stacks/{name}/services/{service}/actions/up` | rebuild and recreate only this service, `up -d --build --no-deps`; returns an operation (202) with `service` set |
 | `POST /api/stacks/{name}/services/{service}/preview` | the file a structured edit would produce, `{content, hash}`, without writing it; the save must send that same `hash` |
 | `POST /api/stacks/{name}/actions/{action}` | `up`, `down`, `restart`, `pull`, `build`; returns an operation (202) |
 | `DELETE /api/stacks/{name}?volumes=true` | `compose down` then unregister (202) |
@@ -135,6 +138,72 @@ Notes on the stacks API:
 Removing a stack never deletes files: the compose file and its folder stay on
 disk, and volumes are removed only when `volumes=true`. Stopping Stackstead
 never stops containers.
+
+### Managed Dockerfiles
+
+A service that builds from a Dockerfile written in Stackstead uses the layout
+`build: {context: ./<service>}`, with the file at `<stack>/<service>/Dockerfile`.
+Create and add write that file; update and the Dockerfile route can also
+write any editable Dockerfile.
+
+Body and size limits: create accepts up to 32 MiB of JSON, add, update and
+the Dockerfile `PUT` up to 8 MiB, and other bodies 1 MiB. Each Dockerfile is at
+most 1 MiB, must not be empty (whitespace only counts as empty) and must not
+contain NUL bytes. A violation is a 400 with a field error on the service's
+`dockerfile` (create, add, update) or `content` (`PUT`).
+
+Hashes:
+
+- A read returns `hash` for the content that was read, and `""` when the file
+  does not exist. `PUT` and update send that hash back; a mismatch is 409
+  `Dockerfile changed on disk since it was loaded`. An empty `hash` means the
+  file must not exist yet.
+- Add with `dockerfile` at the managed path `<stack>/<service>/Dockerfile`
+  (the service folder is absent or a real directory) may omit the hash, and
+  overwrites any file a removed service left there. Anywhere else, add needs the
+  hash rule above: `""` means the file must not exist, and an existing file is a 409.
+- Update with `dockerfile` always checks the hash.
+
+`GET …/dockerfile` answers `{content, hash, exists, editable, path, reason}`.
+`path` is relative to the stack folder, with forward slashes, when the file is
+inside it, and the absolute path otherwise. A service that does not build
+(or is unknown) is 404. A Dockerfile is `editable` only when its build context
+(joined with `dockerfile:`, or `Dockerfile`) resolves, with symlinks followed,
+inside the stack folder. Otherwise `editable` is false and `reason` says why.
+Stackstead does not guess at a file it cannot locate:
+
+- `uses variables`, `remote build context`, `inline Dockerfile`, `uses extends`
+  and `uses include`: the compose file does not name one fixed file.
+- `outside the stack folder`: the file is elsewhere. Its content is shown
+  read-only when it is a regular file of up to 1 MiB inside the allowed
+  directories.
+- `outside the allowed directories`: the file is elsewhere and cannot be read.
+- `not a regular file` and `larger than 1 MiB`: the file inside the stack
+  folder is a directory, link or FIFO, or is too large.
+
+Writing a Dockerfile that is not editable is refused: 422 with the reason, or
+403 for a path outside the stack folder. A save that fails validation returns
+400, and an unknown or non-building service returns 404.
+
+Create and add refuse build contexts that use variables
+(`build context must not use variables`), because the value cannot be confined
+before compose reads it. Only create carries `extra`, so only create sees
+`additional_contexts` values, and it refuses those that use variables too.
+Contexts that come from an `extra` are also refused when they are absolute
+symlinks (`build context must not be a symlink; use the real path`); a context
+set by the form is resolved instead, as before. On create, each `extra` must be
+a single JSON object with no duplicate keys and may not set `services` or
+`name`. Where an `extra` and the form both set a key, mappings are merged
+recursively; a scalar against a scalar, or a list against a list, keeps the
+form's value and drops the extra's; a different kind (for example a list where
+the form sets a mapping) is an error.
+
+Rebuilding one service:
+`POST /api/stacks/{name}/services/{service}/actions/up` runs
+`docker compose up -d --build --no-deps -- <service>`, so only that service is
+rebuilt and recreated, and orphans are not removed. The operation keeps
+`action: "up"` and sets `service`. It needs a session and a JSON body, which
+may be `{}`. Any other action name is a 400 on `action`.
 
 ## Connected servers
 

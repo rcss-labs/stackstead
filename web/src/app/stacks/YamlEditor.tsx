@@ -12,6 +12,10 @@ export interface YamlEditorProps {
   value: string;
   readonly?: boolean;
   ariaLabel: string;
+  language?: 'yaml' | 'dockerfile';
+  /** Marks the editor as holding an invalid value; pair it with `describedBy` pointing at the message. */
+  invalid?: boolean;
+  describedBy?: string;
   /** Baseline for the changed-line marks; none are drawn when absent. */
   original?: string;
   onChange?: (value: string) => void;
@@ -19,15 +23,15 @@ export interface YamlEditorProps {
 }
 
 // Expects a controlled parent: `value` echoes what `onChange` reported (the editor itself is uncontrolled).
-export function YamlEditor({ value, readonly = false, ariaLabel, original, onChange, ref }: YamlEditorProps) {
+export function YamlEditor({ value, readonly = false, ariaLabel, language = 'yaml', invalid = false, describedBy, original, onChange, ref }: YamlEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const handleRef = useRef<EditorHandle | undefined>(undefined);
   const [ready, setReady] = useState(false);
 
   // The editor is created once; it reads the freshest props through this ref.
-  const latest = useRef({ value, readonly, ariaLabel, original, onChange });
-  latest.current = { value, readonly, ariaLabel, original, onChange };
+  const latest = useRef({ value, readonly, ariaLabel, language, original, onChange });
+  latest.current = { value, readonly, ariaLabel, language, original, onChange };
 
   useEffect(() => {
     let destroyed = false;
@@ -47,6 +51,7 @@ export function YamlEditor({ value, readonly = false, ariaLabel, original, onCha
           value: text,
           readonly: now.readonly,
           ariaLabel: now.ariaLabel,
+          language: now.language,
           original: now.original,
           onchange: (v) => latest.current.onChange?.(v),
         });
@@ -81,6 +86,15 @@ export function YamlEditor({ value, readonly = false, ariaLabel, original, onCha
     handleRef.current?.setReadonly(readonly);
   }, [readonly, ready]);
 
+  // The accessible name and error are baked into CodeMirror at creation, so later changes are pushed in.
+  useEffect(() => {
+    handleRef.current?.setAriaLabel(ariaLabel);
+  }, [ariaLabel, ready]);
+
+  useEffect(() => {
+    handleRef.current?.setAriaState({ invalid, describedBy });
+  }, [invalid, describedBy, ready]);
+
   useImperativeHandle(
     ref,
     () => ({
@@ -110,6 +124,8 @@ export function YamlEditor({ value, readonly = false, ariaLabel, original, onCha
           ref={textareaRef}
           className={styles.fallback}
           aria-label={ariaLabel}
+          aria-invalid={invalid || undefined}
+          aria-describedby={describedBy}
           readOnly={readonly}
           spellCheck={false}
           rows={20}

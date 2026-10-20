@@ -52,14 +52,18 @@ func fill(v reflect.Value) {
 		v.SetInt(1)
 	case reflect.Uint64:
 		v.SetUint(1)
+	case reflect.Slice:
+		if v.Type() == reflect.TypeOf(json.RawMessage{}) {
+			v.SetBytes([]byte(`{"x":1}`))
+			return
+		}
+		v.Set(reflect.MakeSlice(v.Type(), 1, 1))
+		fill(v.Index(0))
 	case reflect.Float64:
 		v.SetFloat(1)
 	case reflect.Ptr:
 		v.Set(reflect.New(v.Type().Elem()))
 		fill(v.Elem())
-	case reflect.Slice:
-		v.Set(reflect.MakeSlice(v.Type(), 1, 1))
-		fill(v.Index(0))
 	case reflect.Struct:
 		if v.Type() == reflect.TypeOf(time.Time{}) {
 			v.Set(reflect.ValueOf(time.Unix(1, 0).UTC()))
@@ -111,8 +115,8 @@ func TestJSONTagsMatchContract(t *testing.T) {
 		{"NetworkAttachment", populated[apitypes.NetworkAttachment](), "ipv4Address,name"},
 		{"Limits", populated[apitypes.Limits](), "cpus,memory"},
 		{"Healthcheck", populated[apitypes.Healthcheck](), "interval,retries,startPeriod,test,timeout"},
-		{"Operation", populated[apitypes.Operation](), "action,endedAt,error,exitCode,id,stack,startedAt,state"},
-		{"OperationDetail", populated[apitypes.OperationDetail](), "action,endedAt,error,exitCode,id,lines,stack,startedAt,state"},
+		{"Operation", populated[apitypes.Operation](), "action,endedAt,error,exitCode,id,service,stack,startedAt,state"},
+		{"OperationDetail", populated[apitypes.OperationDetail](), "action,endedAt,error,exitCode,id,lines,service,stack,startedAt,state"},
 		{"NetworkCreateRequest", populated[apitypes.NetworkCreateRequest](), "driver,gateway,internal,ipRange,ipvlanMode,name,parent,subnet"},
 		{"NetworkContainer", populated[apitypes.NetworkContainer](), "ipv4,name"},
 		{"Network", populated[apitypes.Network](), "builtin,containers,driver,gateways,id,internal,ipRange,ipvlanMode,name,parent,project,scope,stack,subnets"},
@@ -123,11 +127,13 @@ func TestJSONTagsMatchContract(t *testing.T) {
 		{"RawCompose", populated[apitypes.RawCompose](), "content,hash"},
 		{"HashResponse", populated[apitypes.HashResponse](), "hash"},
 		{"PreviewResponse", populated[apitypes.PreviewResponse](), "content,hash"},
-		{"CreateStackRequest", populated[apitypes.CreateStackRequest](), "config,name,service,services"},
-		{"CreateStackService", populated[apitypes.CreateStackService](), "config,service"},
-		{"AddServiceRequest", populated[apitypes.AddServiceRequest](), "config,hash,service"},
+		{"DockerfileContent", populated[apitypes.DockerfileContent](), "content,hash"},
+		{"DockerfileView", populated[apitypes.DockerfileView](), "content,editable,exists,hash,path,reason"},
+		{"CreateStackRequest", populated[apitypes.CreateStackRequest](), "config,extra,name,service,services"},
+		{"CreateStackService", populated[apitypes.CreateStackService](), "config,dockerfile,extra,service"},
+		{"AddServiceRequest", populated[apitypes.AddServiceRequest](), "config,dockerfile,hash,service"},
 		{"ImportRequest", populated[apitypes.ImportRequest](), "path"},
-		{"UpdateServiceRequest", populated[apitypes.UpdateServiceRequest](), "config,hash"},
+		{"UpdateServiceRequest", populated[apitypes.UpdateServiceRequest](), "config,dockerfile,hash"},
 		{"LogEvent", populated[apitypes.LogEvent](), "container,service,stream,text,time"},
 		{"LogError", populated[apitypes.LogError](), "container,error,service"},
 		{"MetricPoint", populated[apitypes.MetricPoint](), "blkReadBytesPerSec,blkWriteBytesPerSec,cpu,mem,memLimit,netRxBytesPerSec,netTxBytesPerSec,service,time"},
@@ -207,5 +213,30 @@ func TestNoServerImports(t *testing.T) {
 		if strings.HasPrefix(pkg, modulePrefix) && pkg != modulePrefix+"apitypes" {
 			t.Errorf("apitypes depends on %s", pkg)
 		}
+	}
+}
+
+func TestCreateStackRequestAcceptsExtraAndDockerfile(t *testing.T) {
+	body := `{"name":"a","services":[{"service":"web","config":{"limits":{}},"extra":{"labels":{"a":"b"}},"dockerfile":{"content":"FROM x"}}],"extra":{"volumes":{"d":{}}}}`
+	var req apitypes.CreateStackRequest
+	decoder := json.NewDecoder(strings.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !req.UsesServices() {
+		t.Error("UsesServices() = false, want true")
+	}
+	if got := req.Services[0].Dockerfile; got == nil || got.Content != "FROM x" {
+		t.Errorf("dockerfile = %+v, want content FROM x", got)
+	}
+	if got := string(req.Services[0].Extra); got != `{"labels":{"a":"b"}}` {
+		t.Errorf("service extra = %s", got)
+	}
+	if got := string(req.Extra); got != `{"volumes":{"d":{}}}` {
+		t.Errorf("stack extra = %s", got)
+	}
+	if err := json.Unmarshal([]byte(`{"name":"a","services":[],"dockerfiles":{}}`), &req); err == nil {
+		t.Error("unknown key dockerfiles was accepted")
 	}
 }

@@ -246,8 +246,26 @@ func normalize(cfg ServiceConfig) ServiceConfig {
 // the services join are declared external once, sorted by name: Stackstead
 // attaches services to networks that already exist on the host.
 func New(services []NamedService) ([]byte, error) {
+	return NewStack(services, Extra{})
+}
+
+// NewStack renders like New, then deep-merges each service's extra into its
+// service and top into the file. The form's values win where both set a leaf.
+// A network declared in top replaces the automatic external declaration.
+func NewStack(services []NamedService, top Extra) ([]byte, error) {
 	if len(services) == 0 {
 		return nil, fmt.Errorf("%w: no services", ErrInvalidConfig)
+	}
+	if mappingValue(top.node, "services") != nil || mappingValue(top.node, "name") != nil {
+		return nil, fmt.Errorf("%w: extra may not set services or name", ErrInvalidExtra)
+	}
+	declared := map[string]bool{}
+	if top.node != nil {
+		if nets := mappingValue(top.node, "networks"); nets != nil && nets.Kind == yaml.MappingNode {
+			for i := 0; i < len(nets.Content); i += 2 {
+				declared[nets.Content[i].Value] = true
+			}
+		}
 	}
 	serviceMap := &yaml.Node{Kind: yaml.MappingNode}
 	seenServices := map[string]bool{}
@@ -264,9 +282,24 @@ func New(services []NamedService) ([]byte, error) {
 		if err := ValidateConfig(cfg); err != nil {
 			return nil, fmt.Errorf("service %s: %w", service.Name, err)
 		}
-		serviceMap.Content = append(serviceMap.Content, strNode(service.Name), serviceNode(cfg))
+		node := serviceNode(cfg)
+		if extraNets := mappingValue(service.Extra.node, "networks"); extraNets != nil && extraNets.Kind == yaml.MappingNode && len(cfg.Networks) > 0 {
+			// the extra carries per-network options (aliases, ipv4_address), so
+			// the form's networks must be a mapping for them to merge into
+			for i := 0; i+1 < len(node.Content); i += 2 {
+				if node.Content[i].Value == "networks" {
+					node.Content[i+1] = networksNode(cfg.Networks, true)
+				}
+			}
+		}
+		if err := mergeExtra(node, service.Extra.node, "services."+service.Name); err != nil {
+			return nil, err
+		}
+		serviceMap.Content = append(serviceMap.Content, strNode(service.Name), node)
 		for _, network := range cfg.Networks {
-			networkNames[network.Name] = true
+			if !declared[network.Name] {
+				networkNames[network.Name] = true
+			}
 		}
 	}
 	root := mapNode("services", serviceMap)
@@ -281,6 +314,9 @@ func New(services []NamedService) ([]byte, error) {
 			nets.Content = append(nets.Content, strNode(name), mapNode("external", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"}))
 		}
 		root.Content = append(root.Content, strNode("networks"), nets)
+	}
+	if err := mergeExtra(root, top.node, ""); err != nil {
+		return nil, err
 	}
 	return []byte(encode(root, 2) + "\n"), nil
 }

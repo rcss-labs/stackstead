@@ -25,6 +25,14 @@
 .stackName { padding: 14px; max-width: 360px; box-sizing: content-box; }
 .stackName input { max-width: 360px; }
 
+.modeRow { padding: 0 14px 12px; }
+.modeSwitch { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.mode { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; min-height: 32px; font-size: 13px; cursor: pointer; }
+.mode:has(input:checked) { background: var(--accent-soft, var(--hi)); font-weight: 600; }
+.mode:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+.mode input { accent-color: var(--accent); }
+@media (max-width: 759px) { .mode { min-height: 40px; } }
+
 .formError {
   color: var(--danger);
   background: var(--danger-soft);

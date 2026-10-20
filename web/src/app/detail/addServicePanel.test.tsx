@@ -54,6 +54,37 @@ async function fill() {
 }
 
 describe('AddServicePanel', () => {
+  it('adds a service with a written Dockerfile', async () => {
+    const onAdded = vi.fn();
+    render(<AddServicePanel stack={stack} onAdded={onAdded} onCancel={noop} onReload={async () => stack} />);
+    const u = userEvent.setup();
+    await u.type(screen.getByLabelText('Service name'), 'api');
+    await u.click(screen.getByLabelText('Write a Dockerfile'));
+    const editor = screen.getByLabelText('Dockerfile for api');
+    await u.clear(editor);
+    await u.type(editor, 'FROM alpine:3.20');
+    await u.click(screen.getByRole('button', { name: 'Preview changes' }));
+    await screen.findByRole('heading', { name: 'Review the service to add' });
+    const previewBody = fake.calls.find((c) => c.method === 'POST' && c.path.endsWith('/services/preview'))?.body as Record<string, unknown>;
+    expect(previewBody.dockerfile).toBeUndefined();
+    await u.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onAdded).toHaveBeenCalled());
+    const body = fake.calls.find((c) => c.method === 'POST' && c.path.endsWith('/services'))?.body as { dockerfile: { content: string }; config: { build: { context: string } } };
+    expect(body.dockerfile.content).toBe('FROM alpine:3.20');
+    expect(body.config.build.context).toBe('./api');
+  });
+
+  it('puts a server Dockerfile error on the editor', async () => {
+    routes['POST /api/stacks/web/services'] = { status: 400, body: { error: 'invalid', fields: [{ field: 'dockerfile', message: 'Dockerfile has no FROM' }] } };
+    render(<AddServicePanel stack={stack} onAdded={noop} onCancel={noop} onReload={async () => stack} />);
+    const u = userEvent.setup();
+    await u.type(screen.getByLabelText('Service name'), 'api');
+    await u.click(screen.getByLabelText('Write a Dockerfile'));
+    await u.click(screen.getByRole('button', { name: 'Preview changes' }));
+    await u.click(await screen.findByRole('button', { name: 'Save' }));
+    expect(await screen.findByText(/Dockerfile has no FROM/)).toBeTruthy();
+  });
+
   it('renders name/form, shows review and Back, and passes successful detail/partial checks', async () => {
     const onAdded = vi.fn();
     render(<AddServicePanel stack={stack} onAdded={onAdded} onCancel={noop} onReload={async () => stack} />);

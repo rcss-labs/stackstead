@@ -113,6 +113,7 @@ type StackDetail struct {
 type Operation struct {
 	ID        string     `json:"id"`
 	Stack     string     `json:"stack"`
+	Service   string     `json:"service,omitempty"`
 	Action    string     `json:"action"`
 	State     string     `json:"state"`
 	StartedAt time.Time  `json:"startedAt"`
@@ -188,6 +189,24 @@ type RawCompose struct {
 	Hash    string `json:"hash"`
 }
 
+// DockerfileContent is a service's Dockerfile text. Hash is the hash the
+// Dockerfile was read at; it may be omitted when creating or adding a service.
+type DockerfileContent struct {
+	Content string `json:"content"`
+	Hash    string `json:"hash"`
+}
+
+// DockerfileView is a service's Dockerfile as the server reads it. Reason says
+// why the file cannot be edited, when Editable is false.
+type DockerfileView struct {
+	Content  string `json:"content"`
+	Hash     string `json:"hash"`
+	Exists   bool   `json:"exists"`
+	Editable bool   `json:"editable"`
+	Path     string `json:"path"`
+	Reason   string `json:"reason,omitempty"`
+}
+
 type HashResponse struct {
 	Hash string `json:"hash"`
 }
@@ -200,8 +219,10 @@ type PreviewResponse struct {
 }
 
 type CreateStackService struct {
-	Service string        `json:"service"`
-	Config  ServiceConfig `json:"config"`
+	Service    string             `json:"service"`
+	Config     ServiceConfig      `json:"config"`
+	Extra      json.RawMessage    `json:"extra,omitempty"`
+	Dockerfile *DockerfileContent `json:"dockerfile,omitempty"`
 }
 
 type CreateStackRequest struct {
@@ -209,6 +230,7 @@ type CreateStackRequest struct {
 	Service         string               `json:"service,omitempty"`
 	Config          *ServiceConfig       `json:"config,omitempty"`
 	Services        []CreateStackService `json:"services,omitempty"`
+	Extra           json.RawMessage      `json:"extra,omitempty"`
 	servicesPresent bool
 	legacyPresent   bool
 }
@@ -244,9 +266,10 @@ func (r CreateStackRequest) UsesServices() bool  { return r.servicesPresent }
 func (r CreateStackRequest) HasMixedForms() bool { return r.servicesPresent && r.legacyPresent }
 
 type AddServiceRequest struct {
-	Service string        `json:"service"`
-	Config  ServiceConfig `json:"config"`
-	Hash    string        `json:"hash"`
+	Service    string             `json:"service"`
+	Config     ServiceConfig      `json:"config"`
+	Hash       string             `json:"hash"`
+	Dockerfile *DockerfileContent `json:"dockerfile,omitempty"`
 }
 
 type ImportRequest struct {
@@ -254,8 +277,9 @@ type ImportRequest struct {
 }
 
 type UpdateServiceRequest struct {
-	Config ServiceConfig `json:"config"`
-	Hash   string        `json:"hash"`
+	Config     ServiceConfig      `json:"config"`
+	Hash       string             `json:"hash"`
+	Dockerfile *DockerfileContent `json:"dockerfile,omitempty"`
 }
 
 type LogEvent struct {

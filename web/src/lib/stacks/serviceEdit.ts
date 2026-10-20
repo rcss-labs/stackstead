@@ -1,6 +1,6 @@
 import { get, writable, type Readable, type Writable } from '$lib/store';
 import { ApiError } from '../api/client';
-import type { Field, RawCompose, ServiceConfig, StackDetail } from '../api/types';
+import type { DockerfileContent, DockerfileView, Field, RawCompose, ServiceConfig, StackDetail } from '../api/types';
 import { fromForm, mapServerErrors, toForm, validateForm, type FormErrors, type ServiceForm } from '../compose/form';
 
 export type EditPhase = 'editing' | 'busy' | 'previewing' | 'saving' | 'conflict' | 'saved';
@@ -9,7 +9,10 @@ export type EditNotice = { kind: 'rawEditor' | 'error'; message: string };
 
 export interface ServiceEditDeps {
   preview: (config: ServiceConfig, hash: string) => Promise<{ content: string; hash: string }>;
-  update: (config: ServiceConfig, hash: string) => Promise<{ hash: string; checksPartial?: boolean }>;
+  /** `dockerfile` is sent only when the Dockerfile itself changed; its hash is the one loaded ('' = must not exist yet). */
+  update: (config: ServiceConfig, hash: string, dockerfile?: DockerfileContent) => Promise<{ hash: string; checksPartial?: boolean }>;
+  /** Fetch this service's Dockerfile. A failure leaves the editor working on the build entry alone. */
+  loadDockerfile?: () => Promise<DockerfileView>;
   compose: () => Promise<RawCompose>;
   /** Fetch the stack again (used when the compose file moved past the hash the detail carries). */
   reloadDetail: () => Promise<StackDetail>;
@@ -20,7 +23,7 @@ const RAW_EDITOR_RE = /raw yaml/i;
 
 // Form fields per editable group, used to tell which groups the user changed.
 const GROUPS: (keyof ServiceForm)[][] = [
-  ['source', 'image', 'buildContext', 'dockerfile'],
+  ['source', 'image', 'buildContext', 'dockerfile', 'dockerfileAt'],
   ['ports'],
   ['volumes'],
   ['env'],
@@ -29,9 +32,24 @@ const GROUPS: (keyof ServiceForm)[][] = [
   ['cpus', 'memory'],
   ['restart'],
   ['healthcheck'],
+  ['dockerfileText'],
 ];
-const GROUP_LABELS = ['Image', 'Ports', 'Volumes', 'Environment', 'Networks', 'Network mode', 'Limits', 'Restart policy', 'Healthcheck'];
-const GROUP_NAMES: Field[][] = [['image', 'build'], ['ports'], ['volumes'], ['environment'], ['networks'], ['network_mode'], ['limits'], ['restart'], ['healthcheck']];
+const GROUP_LABELS = ['Image', 'Ports', 'Volumes', 'Environment', 'Networks', 'Network mode', 'Limits', 'Restart policy', 'Healthcheck', 'Dockerfile'];
+const GROUP_NAMES: Field[][] = [['image', 'build'], ['ports'], ['volumes'], ['environment'], ['networks'], ['network_mode'], ['limits'], ['restart'], ['healthcheck'], ['build']];
+
+/**
+ * The form for a service, given the Dockerfile view when there is one: an editable existing file becomes the
+ * 'dockerfile' source. A file the form may not edit (or an empty one) leaves today's Existing build form untouched.
+ */
+function seedForm(cfg: ServiceConfig, readOnly: Field[], view: DockerfileView | undefined): ServiceForm {
+  const f = toForm(cfg, readOnly);
+  if (view?.editable && view.exists && view.content !== '' && cfg.build) {
+    f.source = 'dockerfile';
+    f.dockerfileText = view.content;
+    f.dockerfileAt = { context: cfg.build.context, dockerfile: cfg.build.dockerfile ?? '' };
+  }
+  return f;
+}
 
 const cloneForm = (f: ServiceForm): ServiceForm => ({ ...f, readOnly: new Set(f.readOnly) });
 
@@ -76,6 +94,10 @@ export function createServiceEdit(
   checksPartial: Readable<boolean>;
   dirty: Readable<boolean>;
   previewText: Readable<{ original: string; modified: string } | undefined>;
+  /** The service's Dockerfile as last loaded; undefined when there is none or it could not be loaded. */
+  dockerfileView: Readable<DockerfileView | undefined>;
+  /** The last refusal was because the Dockerfile changed on disk. */
+  dockerfileConflict: Readable<boolean>;
   /** The file changed under the editor and the user's changes were applied on top of the new version. */
   rebased: Readable<boolean>;
   /** Groups whose edits a rebase dropped because the new file only allows editing them as raw YAML. */
@@ -85,15 +107,18 @@ export function createServiceEdit(
   preview(): Promise<void>;
   save(): Promise<boolean>;
   cancelPreview(): void;
-  reload(detail: StackDetail): void;
-  discard(detail: StackDetail): void;
+  reload(detail: StackDetail): Promise<void>;
+  discard(detail: StackDetail): Promise<void>;
 } {
   let original = initial.config;
   let hashValue = initial.hash;
   let seeded = toForm(initial.config, initial.readOnly);
   let baseline = fingerprint(seeded);
+  // The Dockerfile's hash, and the build entry it was loaded for: a different build means a different file.
+  let loadedHash = '';
+  let loadedBuild: string | undefined;
   // What the preview was computed from; the save sends exactly this.
-  let previewed: { config: ServiceConfig; hash: string; form: ServiceForm } | undefined;
+  let previewed: { config: ServiceConfig; hash: string; form: ServiceForm; dockerfile?: DockerfileContent } | undefined;
 
   const form = writable<ServiceForm>(toForm(initial.config, initial.readOnly));
   const errors = writable<FormErrors>({});
@@ -107,6 +132,9 @@ export function createServiceEdit(
   const discardedGroups = writable<string[]>([]);
   const formVersion = writable(0);
   const previewText = writable<{ original: string; modified: string } | undefined>(undefined);
+  const dockerfileView = writable<DockerfileView | undefined>(undefined);
+  const dockerfileConflict = writable(false);
+  let rebasedOnce = false;
 
   form.subscribe((f) => {
     const isDirty = fingerprint(f) !== baseline;
@@ -120,14 +148,49 @@ export function createServiceEdit(
     hash.set(h);
   };
 
+  /** Load the Dockerfile when the service builds one; undefined (no promise) when there is nothing to load. */
+  function loadView(cfg: ServiceConfig, readOnly: Field[]): Promise<DockerfileView | undefined> | undefined {
+    if (!deps.loadDockerfile || !(cfg.build || readOnly.includes('build'))) return undefined;
+    return deps.loadDockerfile().catch(() => undefined);
+  }
+
+  /**
+   * The view after a re-fetch. A failed fetch keeps the editable view the user is working from (a moved file
+   * then 409s on the next save) instead of silently dropping their Dockerfile edit.
+   */
+  async function resolveView(pending: Promise<DockerfileView | undefined> | undefined): Promise<DockerfileView | undefined> {
+    if (!pending) return undefined;
+    const fetched = await pending;
+    if (fetched) return fetched;
+    const previous = get(dockerfileView);
+    return previous?.editable && previous.exists ? previous : undefined;
+  }
+
+  function rememberView(view: DockerfileView | undefined, cfg: ServiceConfig) {
+    dockerfileView.set(view);
+    const usable = view?.editable === true && view.exists;
+    loadedHash = usable ? view.hash : '';
+    loadedBuild = usable ? JSON.stringify(cfg.build ?? null) : undefined;
+  }
+
+  /** The Dockerfile to send with a save: only when it changed or became the source, and with the hash it was loaded at. */
+  function dockerfileToSend(config: ServiceConfig, f: ServiceForm): DockerfileContent | undefined {
+    if (f.source !== 'dockerfile') return undefined;
+    if (f.dockerfileText === seeded.dockerfileText && seeded.source === 'dockerfile') return undefined;
+    const sameFile = loadedBuild !== undefined && loadedBuild === JSON.stringify(config.build ?? null);
+    return { content: f.dockerfileText, hash: sameFile ? loadedHash : '' };
+  }
+
   /** Take the stack's new state: new original, hash and read-only set; the user's changed groups go on top. */
-  function rebase(detail: StackDetail): boolean {
+  function rebase(detail: StackDetail, view: DockerfileView | undefined): boolean {
     const svc = detail.services.find((x) => x.name === service);
     if (!svc) {
       notice.set({ kind: 'error', message: `Service "${service}" no longer exists in this stack.` });
       return false;
     }
-    const fresh = toForm(svc.config, svc.readOnly);
+    rebasedOnce = true;
+    rememberView(view, svc.config);
+    const fresh = seedForm(svc.config, svc.readOnly, view);
     const { form: merged, discarded } = rebaseForm(get(form), seeded, fresh);
     original = svc.config;
     setHash(detail.hash);
@@ -145,6 +208,7 @@ export function createServiceEdit(
     previewed = undefined;
     if (e instanceof ApiError) {
       if (e.status === 409) {
+        dockerfileConflict.set(/dockerfile changed on disk/i.test(e.message));
         conflictMessage.set(e.message);
         phase.set('conflict');
         return;
@@ -167,6 +231,21 @@ export function createServiceEdit(
     phase.set('editing');
   }
 
+  // The Dockerfile arrives after the first render; changes made meanwhile are laid on top of it.
+  const firstView = loadView(initial.config, initial.readOnly);
+  if (firstView) {
+    void firstView.then((view) => {
+      if (!view || rebasedOnce || get(phase) !== 'editing') return;
+      rememberView(view, original);
+      const fresh = seedForm(original, initial.readOnly, view);
+      const { form: merged } = rebaseForm(get(form), seeded, fresh);
+      seeded = fresh;
+      baseline = fingerprint(fresh);
+      form.set(merged);
+      formVersion.update((n) => n + 1);
+    });
+  }
+
   return {
     form,
     errors: { subscribe: errors.subscribe },
@@ -177,6 +256,8 @@ export function createServiceEdit(
     checksPartial: { subscribe: checksPartial.subscribe },
     dirty: { subscribe: dirty.subscribe },
     previewText: { subscribe: previewText.subscribe },
+    dockerfileView: { subscribe: dockerfileView.subscribe },
+    dockerfileConflict: { subscribe: dockerfileConflict.subscribe },
     rebased: { subscribe: rebased.subscribe },
     discardedGroups: { subscribe: discardedGroups.subscribe },
     formVersion: { subscribe: formVersion.subscribe },
@@ -193,7 +274,10 @@ export function createServiceEdit(
         let current = await deps.compose();
         if (current.hash !== hashValue) {
           // The file moved on since this page loaded; lay the user's changes on top of its new state.
-          if (!rebase(await deps.reloadDetail())) {
+          const fresh = await deps.reloadDetail();
+          const target = fresh.services.find((x) => x.name === service);
+          const pending = target && loadView(target.config, target.readOnly);
+          if (!rebase(fresh, pending ? await resolveView(pending) : undefined)) {
             phase.set('editing');
             return;
           }
@@ -211,10 +295,11 @@ export function createServiceEdit(
           }
         }
         const snapshot = cloneForm(get(form));
-        const config = fromForm(snapshot, original);
+        const config = fromForm(snapshot, original, service);
         const sentHash = hashValue;
+        const dockerfile = dockerfileToSend(config, snapshot);
         const res = await deps.preview(config, sentHash);
-        previewed = { config, hash: sentHash, form: snapshot };
+        previewed = { config, hash: sentHash, form: snapshot, dockerfile };
         previewText.set({ original: current.content, modified: res.content });
         phase.set('previewing');
       } catch (e) {
@@ -236,8 +321,14 @@ export function createServiceEdit(
       notice.set(undefined);
       phase.set('saving');
       try {
-        const res = await deps.update(sent.config, sent.hash);
+        const res = await deps.update(sent.config, sent.hash, sent.dockerfile);
         original = sent.config;
+        // The write returns only the compose hash: read the Dockerfile again so the next save has its new hash.
+        if (sent.dockerfile) {
+          const after = loadView(sent.config, []);
+          const view = after ? await after : undefined;
+          if (view) rememberView(view, sent.config);
+        }
         setHash(res.hash);
         // The baseline is what was actually saved; edits typed during the request stay dirty.
         seeded = sent.form;
@@ -256,24 +347,31 @@ export function createServiceEdit(
       }
     },
 
-    reload(detail) {
-      if (!rebase(detail)) return;
+    async reload(detail) {
+      const target = detail.services.find((x) => x.name === service);
+      const pending = target && loadView(target.config, target.readOnly);
+      if (!rebase(detail, pending ? await resolveView(pending) : undefined)) return;
       conflictMessage.set(undefined);
+      dockerfileConflict.set(false);
       notice.set(undefined);
       previewText.set(undefined);
       previewed = undefined;
       phase.set('editing');
     },
 
-    discard(detail) {
+    async discard(detail) {
       const svc = detail.services.find((x) => x.name === service);
       if (!svc) {
         notice.set({ kind: 'error', message: `Service "${service}" no longer exists in this stack.` });
         return;
       }
+      const pending = loadView(svc.config, svc.readOnly);
+      const view = pending ? await resolveView(pending) : undefined;
+      rebasedOnce = true;
+      rememberView(view, svc.config);
       original = svc.config;
       setHash(detail.hash);
-      seeded = toForm(svc.config, svc.readOnly);
+      seeded = seedForm(svc.config, svc.readOnly, view);
       baseline = fingerprint(seeded);
       form.set(cloneForm(seeded));
       formVersion.update((n) => n + 1);
@@ -281,6 +379,7 @@ export function createServiceEdit(
       discardedGroups.set([]);
       errors.set({});
       conflictMessage.set(undefined);
+      dockerfileConflict.set(false);
       notice.set(undefined);
       previewText.set(undefined);
       previewed = undefined;
