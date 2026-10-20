@@ -23,6 +23,7 @@ const (
 	CodeVersion          = "peer_version"
 	CodeWrongInstance    = "peer_wrong_instance"
 	CodeUnknown          = "peer_unknown"
+	CodeOld              = "peer_old"
 	codeInboundNotPaired = "peer_not_paired"
 )
 

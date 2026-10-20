@@ -115,6 +115,7 @@ func (s *server) registerPeerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/peer/hello", s.requirePeer(true, s.handlePeerHello))
 	mux.HandleFunc("POST /api/peer/update", s.requirePeer(false, s.handlePeerUpdate))
 	mux.HandleFunc("POST /api/peer/unpair", s.requirePeer(false, s.handlePeerUnpair))
+	s.registerPeerManagementRoutes(mux)
 }
 
 // requirePeer authenticates the X-Stackstead-Peer credential; cookies never apply.

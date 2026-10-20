@@ -157,6 +157,32 @@ func (s *Store) insertPeer(ctx context.Context, p Peer, inHash string, replaceIn
 		return err
 	}
 	defer tx.Rollback()
+	if err := s.insertPeerTx(ctx, tx, p, inHash, replaceInactive); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ActivatePending swaps the temporary row of a pairing that has just
+// succeeded for the real peer, in one transaction. Like
+// InsertOrReplaceInactivePeer it refuses an already active row for the
+// peer's instance ID, and then leaves the temporary row untouched.
+func (s *Store) ActivatePending(ctx context.Context, tempID string, p Peer, inHash string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM peers WHERE instance_id = ?`, tempID); err != nil {
+		return err
+	}
+	if err := s.insertPeerTx(ctx, tx, p, inHash, true); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) insertPeerTx(ctx context.Context, tx *sql.Tx, p Peer, inHash string, replaceInactive bool) error {
 	var exists int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM peers WHERE instance_id = ?`, p.InstanceID).Scan(&exists); err != nil {
 		return err
@@ -190,7 +216,7 @@ func (s *Store) insertPeer(ctx context.Context, p Peer, inHash string, replaceIn
 		inHash, p.Version, p.StackCount, created.Unix(), nullableUnix(p.LastSeenAt), p.LastError, string(p.State)); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 // uniqueSlug picks the slug for name among peers other than excludeID: the

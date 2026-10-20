@@ -413,6 +413,67 @@ type PeerUpdate struct {
 	URL  string `json:"url"`
 }
 
+// ServerSelf is how this server presents itself in Settings. SuggestedURL
+// comes from the request the browser made, for the person to confirm.
+type ServerSelf struct {
+	InstanceID    string `json:"instanceId"`
+	Name          string `json:"name"`
+	Slug          string `json:"slug"`
+	AdvertisedURL string `json:"advertisedUrl"`
+	SuggestedURL  string `json:"suggestedUrl"`
+	Version       string `json:"version"`
+}
+
+type ServerSelfUpdate struct {
+	Name          string `json:"name"`
+	AdvertisedURL string `json:"advertisedUrl"`
+}
+
+// ConnectionToken is shown once, at creation; nothing returns it again.
+type ConnectionToken struct {
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+// AddPeerRequest pairs this server with another. Trust says how to verify the
+// other server; SelfTrust how the other server should verify this one.
+// Plaintext must be equal in both.
+type AddPeerRequest struct {
+	URL           string    `json:"url"`
+	Token         string    `json:"token"`
+	Trust         PeerTrust `json:"trust"`
+	SelfTrust     PeerTrust `json:"selfTrust"`
+	AdvertisedURL string    `json:"advertisedUrl"`
+}
+
+type PeerProbeRequest struct {
+	URL string `json:"url"`
+}
+
+type PeerProbe struct {
+	Peering           int    `json:"peering"`
+	FingerprintSHA256 string `json:"fingerprintSha256"`
+	SystemTrusted     bool   `json:"systemTrusted"`
+	PlaintextAllowed  bool   `json:"plaintextAllowed"`
+}
+
+// PeerView is a connected server as Settings and the sidebar show it. Status
+// is one of reachable, unreachable, wrong_instance, incompatible, removed or
+// pending.
+type PeerView struct {
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	Slug       string     `json:"slug"`
+	URL        string     `json:"url"`
+	Version    string     `json:"version"`
+	Status     string     `json:"status"`
+	StackCount int        `json:"stackCount"`
+	LastSeenAt *time.Time `json:"lastSeenAt"`
+	LastError  string     `json:"lastError"`
+	Compatible bool       `json:"compatible"`
+	Plaintext  bool       `json:"plaintext"`
+}
+
 // Actions are the lifecycle actions an operation can run.
 var Actions = []string{"up", "down", "restart", "pull", "build"}
 
