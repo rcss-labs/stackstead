@@ -147,7 +147,7 @@ export function StorageScreen() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
 
-  // Same behaviour as the Svelte tabs: a new kind is a history entry, reselecting the current one does nothing.
+  // Same behaviour as the previous UI's tabs: a new kind is a history entry, reselecting the current one does nothing.
   const selectKind = (id: StorageKind) => {
     if (id === kind) return;
     setSearch('');

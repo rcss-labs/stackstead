@@ -1,8 +1,8 @@
-// Port of web/src/App.test.ts for the React app frame (routing, session guards, focus, titles,
+// Tests for the React app frame (routing, session guards, focus, titles,
 // banners, unsaved-changes guard). Screens are real since Plan 22; screen behaviour is tested beside each screen.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from '$lib/store';
 import { rearmUnauthorized } from '$lib/api/client';
 import { expireSession, session } from '$lib/api/session';
@@ -16,6 +16,7 @@ import { installFakeFetch, installFakeStream, type FakeFetch, type FakeResponse,
 import { App } from './App';
 import { row as containerRow } from './containers/containersTestKit';
 import { ROUTES } from './routes';
+import { resetPalettePrefetchForTests } from './shell/PaletteHost';
 
 let fake: FakeFetch;
 let stream: FakeStream;
@@ -73,8 +74,10 @@ beforeEach(() => {
   stream = installFakeStream({ '/api/events': [] });
 });
 afterEach(async () => {
+  resetPalettePrefetchForTests();
   // Unmount before resetting the stores so no guard reacts to the reset.
   cleanup();
+  vi.unstubAllGlobals();
   setUnsavedChanges(false);
   stopLive();
   expireSession();
@@ -232,7 +235,7 @@ describe('App routing and session', () => {
     // The overview must not start a second host poller: App owns it.
     expect(fake.calls.filter((c) => c.path === '/api/host')).toHaveLength(1);
     expect(mainNav()).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Log out' }).getAttribute('title')).toBe('admin · Log out');
+    expect(screen.getByRole('button', { name: 'Log out admin' }).getAttribute('title')).toBe('admin · Log out');
   });
 
   it('renders the Containers page at /containers with its title', async () => {
@@ -328,7 +331,7 @@ describe('App routing and session', () => {
     refreshRunningOps();
     await waitFor(() => expect(checks()).toBeGreaterThan(0));
     const beforeLogout = checks();
-    await user().click(screen.getByRole('button', { name: 'Log out' }));
+    await user().click(screen.getByRole('button', { name: 'Log out admin' }));
     expect(await screen.findByLabelText('Username')).toBeTruthy();
     // Stopping the running-ops store empties its list; a tracker still alive would check the absent id.
     expect(checks()).toBe(beforeLogout);
@@ -357,6 +360,17 @@ describe('App routing and session', () => {
     at('/');
     render(<App />);
     expect(await screen.findByText(/2 running/)).toBeTruthy();
+  });
+
+  it('on /settings the two logout controls have distinct accessible names', async () => {
+    at('/settings');
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Settings' });
+    const account = within(screen.getByRole('region', { name: 'Account' }));
+    expect(account.getByRole('button', { name: 'Log out' })).toBeTruthy();
+    expect(account.queryByRole('button', { name: 'Log out admin' })).toBeNull();
+    expect(within(mainNav()).getByRole('button', { name: 'Log out admin' })).toBeTruthy();
+    expect(within(mainNav()).queryByRole('button', { name: 'Log out' })).toBeNull();
   });
 
   it('logout returns to Login; a failed logout warns', async () => {
@@ -391,6 +405,35 @@ describe('App routing and session', () => {
     await user().click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Discard changes' }));
     await waitFor(() => expect(loc().path).toBe('/settings'));
     expect(await screen.findByRole('heading', { level: 1, name: 'Settings' })).toBeTruthy();
+  });
+});
+
+describe('App across the 760px breakpoint', () => {
+  it('keeps a half-filled New stack form and its unsaved-changes guard when the viewport flips to mobile and back', async () => {
+    let onChange: ((e: { matches: boolean }) => void) | undefined;
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener(_type: string, fn: (e: { matches: boolean }) => void) {
+        onChange = fn;
+      },
+      removeEventListener() {
+        onChange = undefined;
+      },
+    }));
+    at('/stacks/new');
+    render(<App />);
+    const name = (await screen.findByRole('textbox', { name: /^Stack name/ })) as HTMLInputElement;
+    await user().type(name, 'blog');
+
+    act(() => onChange?.({ matches: true }));
+    expect((screen.getByRole('textbox', { name: /^Stack name/ }) as HTMLInputElement).value).toBe('blog');
+    act(() => onChange?.({ matches: false }));
+    expect((screen.getByRole('textbox', { name: /^Stack name/ }) as HTMLInputElement).value).toBe('blog');
+
+    await user().click(within(mainNav()).getByRole('link', { name: 'Settings' }));
+    expect(await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeTruthy();
+    expect(loc().path).toBe('/stacks/new');
   });
 });
 
@@ -467,7 +510,7 @@ describe('App session edge cases', () => {
     render(<App />);
     await screen.findByRole('heading', { level: 1 });
     act(() => setUnsavedChanges(true));
-    await user().click(screen.getByRole('button', { name: 'Log out' }));
+    await user().click(screen.getByRole('button', { name: 'Log out admin' }));
     const dlg = await screen.findByRole('alertdialog');
     expect(get(session).state).toBe('authenticated');
     await user().click(within(dlg).getByRole('button', { name: 'Cancel' }));

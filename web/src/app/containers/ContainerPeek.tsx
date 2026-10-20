@@ -23,7 +23,7 @@ export interface ContainerPeekProps {
 /** The last few log lines of one container, streamed while mounted. A recreated container arrives under a new id, which remounts the enclosing keyed fragment and so opens a new stream. */
 export function ContainerPeek({ row, id, mobile, reason, onRequest }: ContainerPeekProps) {
   const { lines, status, ended, errors } = useLogStream({ kind: 'container', id: row.id }, { tail: PEEK_LINES, follow: true });
-  const state = consoleStatus({ status, ended, paused: false, sourceKind: 'container' });
+  const state = consoleStatus({ status, ended, paused: false, sourceKind: 'container', containerState: row.state });
   const shown = lines.slice(-PEEK_LINES);
   const error = errors[0];
 

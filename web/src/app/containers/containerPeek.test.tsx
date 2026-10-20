@@ -245,6 +245,15 @@ describe('Container peek', () => {
     release();
   });
 
+  it('the status says the stream is waiting while the container is not running', async () => {
+    const idle = row('idle', { state: 'exited', exitCode: 0 });
+    const { user } = mount({ body: [idle] }, [idle]);
+    await screen.findByRole('link', { name: 'idle' });
+    await user.click(rowOf('idle'));
+    const status = within(await screen.findByRole('region', { name: 'Logs of idle' })).getByRole('status');
+    await waitFor(() => expect(status.textContent).toBe('waiting - container exited'));
+  });
+
   it('a 204 from the peek refetches and the row disappears', async () => {
     const free = row('free');
     const other = row('other');

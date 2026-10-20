@@ -1,18 +1,10 @@
 // Test harness: a recording fake `fetch` and a controllable SSE stream. No
 // network, no msw. Import the installers from tests; the file itself only
 // registers a cleanup so components mounted by a test never leak.
-import { cleanup as cleanupSvelte } from '@testing-library/svelte';
-import { afterEach, expect } from 'vitest';
+import { cleanup } from '@testing-library/react';
+import { afterEach } from 'vitest';
 
-afterEach(() => cleanupSvelte());
-
-// Importing @testing-library/react reconfigures the shared @testing-library/dom
-// (async and event wrappers), which shifts the timing the Svelte tests were
-// written against. Load it only for React (.tsx) test files.
-if (expect.getState().testPath?.endsWith('.tsx')) {
-  const { cleanup: cleanupReact } = await import('@testing-library/react');
-  afterEach(() => cleanupReact());
-}
+afterEach(() => cleanup());
 
 export interface RecordedCall {
   method: string;

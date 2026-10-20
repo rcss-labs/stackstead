@@ -19,10 +19,10 @@ not built, and logs a warning.
 
 | Command | Needs | What it does |
 | --- | --- | --- |
-| `make ui` | Node >= 22 | build the web UI into `web/dist` and enforce the bundle budgets (entry JS <= 120 kB gzipped, total JS <= 400 kB gzipped, fonts <= 200 kB) |
+| `make ui` | Node >= 22 | build the React UI into `web/dist` and enforce the bundle budgets (entry JS <= 120 kB gzipped, total JS <= 400 kB gzipped, fonts <= 200 kB; `bundle.test.ts` pins the entry tighter, at 106 kB) |
 | `make build` | Node >= 22, Go | UI, then the static binary in `bin/` |
 | `make test` | Go only | Go tests with the race detector; no Node |
-| `make check` | Node, Go | `go vet`, gofmt, UI type-check and unit tests, Go tests |
+| `make check` | Node, Go | `go vet`, gofmt, UI type-check (`tsc --noEmit`) and unit tests, Go tests |
 | `make build-go` | Go only | the host binary without building the UI |
 | `make e2e` | Go (UI for the web part) | smoke tests against the real binary (see below) |
 
@@ -60,33 +60,72 @@ STACKSTEAD_DATA_DIR=$PWD/.dev/data STACKSTEAD_STACKS_DIR=$PWD/.dev/stacks go run
 cd web && npm run dev
 ```
 
-`npm run dev:app` serves the React UI (the future replacement) at `app.html`
-beside the Svelte one, with the same proxy. `npm run build:app` builds it and
-runs the same bundle budget check into `web/dist-app/`, which is git-ignored
-and not embedded in the binary until the cutover.
+`npm run dev` serves the React UI at `/` with the `/api` proxy. `npm run check`
+is `tsc --noEmit` over `web/src`. Tests are `*.test.ts` (pure modules) and
+`*.test.tsx` (components, beside the component) and run under `make ui-test`,
+which builds first so `web/src/bundle.test.ts` measures the shipped `web/dist`.
 
-React tests live beside their components as `web/src/app/**/*.test.tsx` and run
-with the rest under `make ui-test`; `npm run check:app` type-checks the React
-tree. The React entry budget is enforced by `npm run build:app`: only the shell,
-the stores and the Overview screen are eager, every other screen and the
-command palette are route-level `React.lazy` chunks, and `src/bundle.test.ts`
-pins that shape (run it after a build) so a stray static import fails early.
+### Layout
+
+- `web/src/app/`: the React app. One folder per screen (`overview`, `stacks`,
+  `detail`, `create`, `containers`, `storage`, `networks`, `settings`, `auth`),
+  the shell (`shell/`: sidebar, top bar, toasts), shared components
+  (`components/`: buttons, dialogs, fields, tabs, badges and the like), hooks
+  (`hooks/`), route definitions (`routes.tsx`) and the design tokens and
+  global styles (`styles/`).
+- `web/src/lib/`: framework-agnostic modules: the API client, SSE and log
+  streams, the controllers and pure helpers for each area (stacks, containers,
+  storage, networks, compose, metrics) and the stores. Nothing in `lib/`
+  imports React; the screens read it through small hooks. `lib/store.ts` is a
+  dependency-free implementation of the writable / readable / derived / get
+  contract (imported as `$lib/store`, the `$lib` alias is set in
+  `vite.config.ts` and `tsconfig.json`), and a single `useStore` hook binds a
+  store to a component.
+- Styling is CSS Modules (`*.module.css` beside the component) over the CSS
+  custom properties (tokens) in `app/styles/`. There is no CSS-in-JS and no
+  utility framework.
+- Tests are Vitest with React Testing Library and user-event. Pure modules are
+  tested without a DOM, components through their rendered output and roles.
+- Below 760px the shell swaps its chrome (`MobileTopBar` and `TabBar` instead of
+  `Sidebar` and `TopBar`) through the `useIsMobile()` media-query hook, keeping
+  the routed screen mounted; screens adapt with CSS media queries. There is no
+  user-agent sniffing.
+
+### Bundle shape
+
+Only the shell, the stores and the Overview screen are eager; every other
+screen is a route-level `React.lazy` chunk, and CodeMirror and uPlot load on
+first use. The command palette is a lazy chunk too, but `PaletteHost` loads it
+with an explicit `load()` promise (prefetched when the browser is idle, or on
+first open) and, until it arrives, shows a small fallback dialog from the eager
+chunk that keeps early keystrokes and hands them to the palette. `make ui` fails when a budget is
+exceeded (`web/scripts/check-bundle.mjs`), and `web/src/bundle.test.ts` pins the
+shape against `web/dist`: the entry stays at most 106 kB gzipped, and for each
+lazy screen (and shared piece such as `ServiceForm`, `FileBrowser`,
+`CleanupDialog`) a marker string from its UI must be present in its own lazy
+chunk and absent from every eager file, so a stray static import fails early.
+When you add a screen, add a marker for it there.
+
+Rolldown stops merging entry-reachable shared chunks into the entry once two
+lazy routes share modules (about +2 kB gz of glue). `vite.config.ts` therefore
+has an eager `codeSplitting` group (`shell`) that names every module reachable
+statically from the entry, which keeps all eager code in one chunk and the entry
+under the 106 kB ceiling.
+
+### Screens
 
 The React overview is the only eager screen. Its data comes from the shared
 `stacks`, `host` and `runningOps` stores plus the dashboard controller
 (alerts, metrics summary, storage), and its events from the live `events` store;
-the only filter state is the query; no store is mirrored in React state. After
-the side column landed the entry measured 102.6 kB gz (ceiling 115, gate 110),
-so the side column stays in the entry and nothing inside the screen is lazy.
+the only filter state is the query; no store is mirrored in React state. The side column
+stays in the entry and nothing inside the screen is lazy.
 
 The React stack detail is a lazy chunk keyed on the stack name. Its data comes
 from the `lib/stacks/detail.ts` controller (detail, operations, health, compose),
 the health timeline from `/health`, and the live CPU and memory totals from one
 shared `metrics/live` stream acquired by viewport width or the Metrics tab. The
 Operations pane lists the stack's operations and streams the selected one
-through `lib/stacks/operation.ts`. With the detail shell landed the entry
-measured 104.9 kB gz (baseline 104.7 after the react/react-router split, ceiling
-106).
+through `lib/stacks/operation.ts`.
 
 In-flight operations are tracked by `lib/stores/operationTracker.ts`: every entry
 point that starts one calls `trackOperation`, and the tracker resolves the
@@ -102,6 +141,12 @@ appearing after load unmounts the console and closes it. The console height
 persists under `stackstead.logsHeight`. `?tab=logs` (and the service pane's
 `Logs` button) expands the console on the chosen service.
 
+A follow-mode log stream re-attaches after a restart or recreation and ends only
+when the stack (or service) has no container left. The state cache publishes a
+`change` for every lifecycle event, including a restart that leaves the
+container listing identical, so restart counts refresh (see
+[`api.md`](api.md), Observability).
+
 The stack detail's Metrics tab (four per-service charts) and the compose editor
 load uPlot and CodeMirror on first use; both stay lazy chunks (`uPlot.esm`,
 `cm`) pinned out of the entry by the shape test in `web/src/bundle.test.ts`. The
@@ -114,9 +159,9 @@ through `guarded()`, so leaving with unsaved edits asks first.
 
 The service editors of the stack detail live under `web/src/app/stacks/`
 (`ServiceForm`, `FileBrowser`, `NetworkPicker`, `CreateNetworkDialog`; shared with
-New stack and meant to be reused by the container and network screens of Plans
-20 and 22) and `web/src/app/detail/` (`ServiceEditor` behind `Edit`,
-`AddServicePanel` behind `+ Add` on the rail and chips). The state machines in
+New stack and also used by the container and network screens) and
+`web/src/app/detail/` (`ServiceEditor` behind `Edit`, `AddServicePanel` behind
+`+ Add` on the rail and chips). The state machines in
 `lib/stacks/serviceEdit.ts` and `serviceAdd.ts` own the data, validation and
 conflict handling; the React components only render them. Each editor reports a
 `dirty` flag to `StackDetailScreen` (`serviceDirty` while a service is being
@@ -136,11 +181,7 @@ left; the detail's Logs tab reuses `LogConsole` with a container source. Both
 screens ride in the lazy `ContainerList` / `ContainerDetail` chunks, and
 `bundle.test.ts` pins that nothing of theirs is eager (no eager chunk named
 after them, entry at most 106 kB gz, and no container-screen strings in the
-eager chunks). Because Rolldown stops merging entry-reachable shared chunks into
-the entry once two lazy routes share modules (about +2 kB gz of glue),
-`vite.app.config.ts` has an eager `codeSplitting` group that puts every module
-reachable from the entry into one `app` chunk, which keeps the entry under that
-106 kB ceiling.
+eager chunks).
 
 The React New stack and Import screens live under `web/src/app/create/`. The New
 stack form state is `useCreateForm` (today's card identities, validation and
@@ -186,17 +227,17 @@ guard. Settings is the five cards on the existing `live`, `session` and
 the one-time metrics token held only in component state (never in a `value`
 attribute). The password inputs are uncontrolled (read through refs): a
 controlled input mirrors what is typed into the DOM `value` attribute, where
-page scripts, extensions and DOM snapshots can read it, which Svelte's
-`bind:value` never did; the Login, Setup and password-change tests assert the
+page scripts, extensions and DOM snapshots can read it, which the previous UI
+never did; the Login, Setup and password-change tests assert the
 typed password never appears in the markup. Login and Setup share `AuthCard`,
 stay outside the shell (mounted by `App` from the session state), title
 themselves, pass `?next=` through `safeNext`, and the session guard never
 carries `/setup` as `next`. Settings `Log out` keeps today's direct `logout()`
-(it lands on `/login?next=%2Fsettings`, as before; unify with the rail in Plan
-23). The four screens ride in the lazy `NetworkList` / `Settings` / `Login` /
-`Setup` chunks, and `bundle.test.ts` pins that nothing of theirs, nor
+(it lands on `/login?next=%2Fsettings`, as the previous UI did). The four
+screens ride in the lazy `NetworkList` / `Settings` / `Login` / `Setup`
+chunks, and `bundle.test.ts` pins that nothing of theirs, nor
 `AuthCard`, `PasswordForm`, `UpdateCard` or `CreateNetworkDialog`, is eager.
-With this plan every screen of the spec is React; Plan 23 switches the entry.
+Every screen is React; the previous UI was removed in the cutover.
 
 ## Tests
 

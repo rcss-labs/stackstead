@@ -1,6 +1,6 @@
 import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { get } from '$lib/store';
 import { operationsRefresh } from '$lib/stores/stacks';
 import { toasts } from '$lib/stores/toasts';
@@ -28,6 +28,12 @@ async function mount(extra: Record<string, unknown> = {}) {
   await screen.findByLabelText('Stack name'); // the screen is a lazy chunk
   return userEvent.setup();
 }
+
+// Load the lazy route chunk up front: on a cold cache, transforming it can outlast the first
+// test's default findBy timeout.
+beforeAll(async () => {
+  await import('../routes/StackCreate');
+}, 30_000);
 
 afterEach(() => {
   cleanup();

@@ -234,7 +234,12 @@ running container.
   RFC3339 time, a Unix timestamp or a duration. Containers with a TTY do not
   separate stderr from stdout. **Logs are never stored by Stackstead**; they
   are read from Docker on demand, so they are as old as Docker's own log
-  driver keeps them.
+  driver keeps them. With `follow`, the stream outlives restarts and
+  recreation: a container's lines continue after it starts again (resumed from
+  its cursor, so nothing repeats), a replacement container with a new id is
+  attached from `tail`, and `end` is sent only when the stack, or the service
+  named in `service`, has no container left. Without `follow`, `end` follows
+  the last line as before.
 - **Log resume.** Each `log` event carries `id: <container id, 12 hex>:<unix
   nanoseconds>:<ordinal>`, where `ordinal` counts the lines with that exact
   timestamp delivered so far on the stream. A client reconnects with the
@@ -243,8 +248,9 @@ running container.
   skipping lines (the UI does this automatically). Containers without a cursor
   (new replicas, malformed entries) start from the normal `tail`. Residual
   limits come from Docker: lines already evicted by log rotation cannot be
-  replayed, a recreated container has a new id and starts from `tail`, and
-  log drivers with coarse clocks only make the ordinal do more work. Resume
+  replayed, a host clock that steps backwards can hide lines on resume, a
+  recreated container has a new id and starts from `tail`, and log drivers
+  with coarse clocks only make the ordinal do more work. Resume
   reads the container's log from the start (`tail=all` plus `since`) and skips
   to the cursor, so its cost grows with the log: configure log rotation
   (for example `max-size`) on stacks you tail for long.
@@ -280,7 +286,8 @@ running container.
   startup. Refetch on the stack's `change` event. An unknown stack is 404.
 - **Events.** `GET /api/events` sends `status` (`events`, `metricsDegraded`)
   when it connects or changes, and `change` (`project`, `seq`) when a
-  project's containers changed; refetch the affected stack on `change`. It
+  project's containers changed, including a restart that leaves the listing
+  identical; refetch the affected stack on `change`. It
   also sends `event`, one Docker container event: `action`, `container`
   (name), `project` and `service` (empty strings for a container that is not
   part of a compose project), `image` and `time`, plus
@@ -418,7 +425,8 @@ configuration.
 
 `GET /api/containers/{id}/logs` takes `tail`, `follow` and `since` (there
 is no `stream` or `service` filter) and sends the same `log`, `error` and `end`
-events, ids and `Last-Event-ID` resume as the stack logs.
+events, ids and `Last-Event-ID` resume as the stack logs; with `follow` it
+re-attaches after a restart and ends when the container is removed.
 
 `POST /api/containers/{id}/start`, `stop` or `restart` takes a JSON body
 (`{}`), waits for Docker (at most 30 seconds; `stop` and `restart` give the

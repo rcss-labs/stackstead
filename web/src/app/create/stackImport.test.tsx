@@ -20,7 +20,7 @@ vi.mock('$lib/stores/live', async (orig) => {
 
 const SUMMARY = { name: 'blog', path: '/srv/blog/compose.yaml', project: 'blog', origin: 'external', status: 'stopped', serviceCount: 1, running: 0 };
 
-/** The Svelte fixture set: import POST, an allowed root /srv with a compose file and a non-yaml file. */
+/** The previous UI's fixture set: import POST, an allowed root /srv with a compose file and a non-yaml file. */
 function routes(extra: Record<string, unknown> = {}) {
   return baseRoutes({
     'POST /api/stacks/import': { status: 201, body: SUMMARY },

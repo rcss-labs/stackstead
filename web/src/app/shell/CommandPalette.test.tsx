@@ -110,7 +110,11 @@ afterEach(() => {
   afterEachStops.splice(0).forEach((stop) => stop());
 });
 
-const palette = () => screen.findByRole('dialog', { name: 'Command palette' });
+// Resolves once the real palette (not the loading stand-in) is showing.
+const palette = async () => {
+  await screen.findByRole('combobox');
+  return screen.findByRole('dialog', { name: 'Command palette' });
+};
 const search = () => screen.getByRole('combobox');
 const where = () => screen.getByTestId('where').textContent;
 
@@ -163,6 +167,22 @@ describe('CommandPalette', () => {
     await user.hover(options[3]);
     expect(search().getAttribute('aria-activedescendant')).toBe(options[3].id);
     expect(options[3].getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('initialQuery seeds the input and filters the results', async () => {
+    await renderPalette();
+    const { default: Palette } = await import('./CommandPalette');
+    cleanup();
+    render(
+      <MemoryRouter>
+        <Palette open runningOps={[]} onClose={() => {}} initialQuery="we" />
+      </MemoryRouter>,
+    );
+    const input = (await screen.findByRole('combobox', { name: 'Search or run a command' })) as HTMLInputElement;
+    expect(input.value).toBe('we');
+    const list = screen.getByRole('listbox', { name: 'Results' });
+    expect(within(list).getByText('web')).toBeTruthy();
+    expect(within(list).queryByText('db')).toBeNull();
   });
 
   it('typing filters results and shows No matches', async () => {

@@ -20,6 +20,9 @@ func TestDistFallsBackToPlaceholder(t *testing.T) {
 	if !strings.Contains(string(data), want) {
 		t.Errorf("Built()=%v but index.html lacks %q:\n%s", web.Built(), want, data)
 	}
+	if web.Built() && (!strings.Contains(string(data), "/assets/") || strings.Contains(string(data), "/src/")) {
+		t.Errorf("a built index.html must reference /assets/ and never /src/:\n%s", data)
+	}
 	if !web.Built() && !strings.Contains(string(data), "make ui") {
 		t.Error("placeholder should name `make ui`")
 	}

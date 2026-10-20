@@ -34,7 +34,7 @@ export interface SessionGuardOptions {
   loggingOut: RefObject<boolean>;
 }
 
-/** The App.svelte session guards: redirects for each session state, and a stream 401 ends the session. */
+/** The session guards: redirects for each session state, and a stream 401 ends the session. */
 export function useSessionGuard({ booted, loggingOut }: SessionGuardOptions): void {
   const navigate = useNavigate();
   const { pathname, search } = useLocation();

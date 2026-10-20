@@ -210,6 +210,49 @@ describe('Container keys', () => {
     expect(screen.queryByRole('region', { name: /^Logs of/ })).toBeNull();
   });
 
+  it('Escape from inside the log region closes the peek and returns focus to its row', async () => {
+    const user = mount(abc());
+    await screen.findByRole('link', { name: 'a' });
+    act(() => rowOf('a').focus());
+    await user.keyboard('{Enter}');
+    const log = (await screen.findByRole('region', { name: 'Logs of a' })).querySelector('[role="log"]') as HTMLElement;
+    act(() => log.focus());
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('log')).toBeNull();
+    expect(document.activeElement).toBe(rowOf('a'));
+  });
+
+  it('Escape returns focus to the row whose peek was open, even after focus moved to another row', async () => {
+    const user = mount(abc());
+    await screen.findByRole('link', { name: 'a' });
+    act(() => rowOf('a').focus());
+    await user.keyboard('{Enter}');
+    await screen.findByRole('region', { name: 'Logs of a' });
+    act(() => rowOf('c').focus());
+    expect(focusedName()).toBe('c');
+    const log = screen.getByRole('log');
+    act(() => log.focus());
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('log')).toBeNull();
+    expect(document.activeElement).toBe(rowOf('a'));
+  });
+
+  it('Escape with a dialog open over the peek closes only the dialog and does not send focus to the peeked row', async () => {
+    const user = mount(abc());
+    await screen.findByRole('link', { name: 'a' });
+    act(() => rowOf('a').focus());
+    await user.keyboard('{Enter}');
+    await screen.findByRole('region', { name: 'Logs of a' });
+    act(() => rowOf('c').focus());
+    await user.keyboard('r');
+    await screen.findByRole('alertdialog');
+    act(() => (document.activeElement as HTMLElement).blur());
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(screen.getByRole('region', { name: 'Logs of a' })).toBeTruthy();
+    expect(document.activeElement).not.toBe(rowOf('a'));
+  });
+
   it('arrow keys move the row focus only from inside the table; j and k work anywhere', async () => {
     const user = mount(abc());
     await screen.findByRole('link', { name: 'a' });

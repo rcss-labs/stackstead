@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -140,10 +140,15 @@ describe('Sidebar', () => {
     expect(screen.getByRole('button', { name: 'Switch to light theme' })).toBeTruthy();
   });
 
+  it('the avatar is named after the user so it never collides with the Settings Log out button', () => {
+    renderIn(<Sidebar {...sidebarProps} username="ana" onLogout={vi.fn()} current="/" />);
+    expect(screen.getByRole('button', { name: 'Log out ana' }).getAttribute('title')).toBe('ana · Log out');
+  });
+
   it('avatar shows initials and logs out through onLogout', async () => {
     const onLogout = vi.fn();
     renderIn(<Sidebar {...sidebarProps} username="ana" onLogout={onLogout} current="/" />);
-    const avatar = screen.getByRole('button', { name: 'Log out' });
+    const avatar = screen.getByRole('button', { name: 'Log out ana' });
     expect(avatar.textContent?.trim()).toBe('AN');
     expect(avatar.getAttribute('title')).toBe('ana · Log out');
     await userEvent.setup().click(avatar);
@@ -385,12 +390,51 @@ describe('Mobile', () => {
       </Shell>,
     );
     expect(screen.getAllByRole('navigation', { name: 'Main' })).toHaveLength(1);
-    expect(screen.queryByRole('button', { name: 'Log out' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Log out/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Search or run a command' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'New stack' }).getAttribute('href')).toBe('/stacks/new');
     expect(screen.getAllByRole('main')).toHaveLength(1);
     const tabs = within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('link');
     expect(tabs.map((a) => a.getAttribute('aria-label'))).toEqual(['Stacks', 'Containers', 'Storage', 'Networks', 'Settings']);
+  });
+
+  it('crossing 760px keeps the page mounted with its state', async () => {
+    const user = userEvent.setup();
+    let listener: ((e: { matches: boolean }) => void) | undefined;
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener(_type: string, fn: (e: { matches: boolean }) => void) {
+        listener = fn;
+      },
+      removeEventListener() {
+        listener = undefined;
+      },
+    }));
+    renderIn(
+      <Shell {...shellProps} username="ana">
+        <main>
+          <input aria-label="Draft" />
+        </main>
+      </Shell>,
+    );
+    await user.type(screen.getByRole('textbox', { name: 'Draft' }), 'hello');
+    const before = screen.getByRole('textbox', { name: 'Draft' }) as HTMLInputElement;
+
+    act(() => listener?.({ matches: true }));
+    const onMobile = screen.getByRole('textbox', { name: 'Draft' }) as HTMLInputElement;
+    expect(onMobile).toBe(before);
+    expect(onMobile.value).toBe('hello');
+    expect(within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('link')).toHaveLength(5);
+    expect(screen.queryByRole('button', { name: /^Log out/ })).toBeNull();
+    expect(screen.getAllByRole('main')).toHaveLength(1);
+
+    act(() => listener?.({ matches: false }));
+    const backOnDesktop = screen.getByRole('textbox', { name: 'Draft' }) as HTMLInputElement;
+    expect(backOnDesktop).toBe(before);
+    expect(backOnDesktop.value).toBe('hello');
+    expect(screen.getByRole('button', { name: /^Log out/ })).toBeTruthy();
+    expect(screen.getAllByRole('main')).toHaveLength(1);
   });
 
   it('on desktop the sidebar shows with one Main landmark and no tab bar', () => {
@@ -401,7 +445,7 @@ describe('Mobile', () => {
       </Shell>,
     );
     expect(screen.getAllByRole('navigation', { name: 'Main' })).toHaveLength(1);
-    expect(screen.getByRole('button', { name: 'Log out' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Log out ana' })).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'Settings' })?.closest('nav')).toBe(screen.getByRole('navigation', { name: 'Main' }));
   });
 

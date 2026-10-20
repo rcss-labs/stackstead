@@ -9,6 +9,7 @@ import { stopLive } from '$lib/stores/live';
 import { toasts } from '$lib/stores/toasts';
 import { installFakeFetch, installFakeStream, type FakeFetch, type FakeResponse, type FakeStream } from '../vitest-setup';
 import { App } from './App';
+import { resetPalettePrefetchForTests } from './shell/PaletteHost';
 
 vi.mock('./routes/NetworkList', () => {
   throw new Error('Failed to fetch dynamically imported module');
@@ -39,6 +40,7 @@ beforeEach(() => {
   stream = installFakeStream({ '/api/events': [] });
 });
 afterEach(async () => {
+  resetPalettePrefetchForTests();
   cleanup();
   stopLive();
   expireSession();

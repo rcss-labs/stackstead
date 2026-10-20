@@ -31,7 +31,7 @@ export const sizedOverview: StorageOverview = {
   buildCache: { ...totals, size: 5 * GiB, reclaimable: GiB / 2, sizesAt: '2026-01-01T00:00:00Z', refreshing: false },
 };
 
-/** Mutable module state, as in the Svelte Storage.test.ts: tests reassign these and `routes()` reads them lazily. */
+/** Mutable module state, as in the previous UI's Storage tests: tests reassign these and `routes()` reads them lazily. */
 export const state: { imageRows: StorageImage[]; refresh: { status?: number; body: unknown } } = { imageRows: [], refresh: { body: {} } };
 
 export function resetState() {

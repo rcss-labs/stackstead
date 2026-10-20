@@ -2,7 +2,7 @@ import { act, cleanup, render, screen, waitFor, within } from '@testing-library/
 import userEvent from '@testing-library/user-event';
 import { Suspense } from 'react';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from '$lib/store';
 import type { Operation, StackDetail as Detail } from '$lib/api/types';
 import { changes, startLive, stopLive } from '$lib/stores/live';
@@ -55,6 +55,12 @@ let statusRes: { docker: string; compose: string; events: string; metricsDegrade
 let goTo: (href: string) => void;
 let rmState: Operation['state'];
 let stopTracking: (() => void) | undefined;
+
+// Load the lazy route chunk up front: on a cold cache, transforming it can outlast the first
+// test's default findBy timeout.
+beforeAll(async () => {
+  await import('../routes/StackDetail');
+}, 30_000);
 
 beforeEach(() => {
   toasts.reset();
