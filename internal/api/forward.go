@@ -87,7 +87,39 @@ func (d *deadlineWriter) Write(b []byte) (int, error) {
 // Unwrap lets http.ResponseController reach Flush on the real writer.
 func (d *deadlineWriter) Unwrap() http.ResponseWriter { return d.ResponseWriter }
 
+// forwardTail returns the escaped part of the request path after
+// /api/servers/{id}/api/ and its decoded form. Anything that could climb out
+// of the peer's /api/ prefix once a path-normalizing proxy sits in front of it
+// is refused: empty, "." and ".." segments, encoded slashes and backslashes.
+func forwardTail(r *http.Request) (escaped, decoded string, ok bool) {
+	p := strings.TrimPrefix(r.URL.EscapedPath(), "/api/servers/")
+	_, escaped, found := strings.Cut(p, "/api/")
+	if !found || escaped == "" {
+		return "", "", false
+	}
+	for _, seg := range strings.Split(escaped, "/") {
+		d, err := url.PathUnescape(seg)
+		if err != nil || d == "" || d == "." || d == ".." || strings.ContainsAny(d, `/\`) {
+			return "", "", false
+		}
+	}
+	decoded, err := url.PathUnescape(escaped)
+	return escaped, decoded, err == nil
+}
+
+// hostileResponseHeaders are upstream headers that must not act on the
+// browser's view of this origin.
+var hostileResponseHeaders = []string{
+	"Set-Cookie", "Clear-Site-Data", "Strict-Transport-Security",
+	peers.PeerHeader, peerUserHeader,
+}
+
 func (s *server) handleForward(w http.ResponseWriter, r *http.Request) {
+	tailEscaped, tailDecoded, ok := forwardTail(r)
+	if !ok {
+		writeCodedError(w, http.StatusBadRequest, "invalid path", "peer_bad_path")
+		return
+	}
 	peer, err := s.opts.Peers.Usable(r.PathValue("id"))
 	if err != nil {
 		s.writePeersError(w, r, err)
@@ -120,7 +152,7 @@ func (s *server) handleForward(w http.ResponseWriter, r *http.Request) {
 
 	username := userFrom(r.Context()).Username
 	credential := peer.OutCredential.Reveal()
-	rest := r.PathValue("rest")
+	// Request body limits are enforced by the peer's own handlers.
 	proxy := &httputil.ReverseProxy{
 		Transport:     client.Transport,
 		FlushInterval: -1,
@@ -128,8 +160,8 @@ func (s *server) handleForward(w http.ResponseWriter, r *http.Request) {
 			out := pr.Out
 			out.URL.Scheme = base.Scheme
 			out.URL.Host = base.Host
-			out.URL.Path = strings.TrimRight(base.Path, "/") + "/api/" + rest
-			out.URL.RawPath = ""
+			out.URL.Path = strings.TrimRight(base.Path, "/") + "/api/" + tailDecoded
+			out.URL.RawPath = strings.TrimRight(base.EscapedPath(), "/") + "/api/" + tailEscaped
 			out.URL.RawQuery = pr.In.URL.RawQuery
 			out.Host = ""
 			h := out.Header
@@ -142,7 +174,15 @@ func (s *server) handleForward(w http.ResponseWriter, r *http.Request) {
 			h.Set(peerUserHeader, username)
 		},
 		ModifyResponse: func(resp *http.Response) error {
-			resp.Header.Del("Set-Cookie")
+			for _, name := range hostileResponseHeaders {
+				resp.Header.Del(name)
+			}
+			for name := range resp.Header {
+				if strings.HasPrefix(http.CanonicalHeaderKey(name), "Access-Control-") {
+					resp.Header.Del(name)
+				}
+			}
+			resp.Header.Set("Content-Security-Policy", "sandbox; default-src 'none'")
 			switch {
 			case resp.StatusCode == http.StatusUnauthorized:
 				// Never a 401 to the browser: the web app would sign the user out.
@@ -156,7 +196,12 @@ func (s *server) handleForward(w http.ResponseWriter, r *http.Request) {
 		},
 		ErrorHandler: func(w http.ResponseWriter, req *http.Request, err error) {
 			if errors.Is(err, context.Canceled) && req.Context().Err() != nil {
-				return // the browser left or the server is closing
+				select {
+				case <-s.opts.Closing:
+					writeError(w, http.StatusServiceUnavailable, "server is shutting down")
+				default: // the browser left; nobody to answer
+				}
+				return
 			}
 			var pe *peers.PeerError
 			if !errors.As(err, &pe) {

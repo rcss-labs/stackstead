@@ -454,3 +454,93 @@ func TestForwardUnknownServer(t *testing.T) {
 		t.Fatalf("unknown = %d %s", resp.StatusCode, body)
 	}
 }
+
+func TestForwardRejectsUnsafePaths(t *testing.T) {
+	var mu sync.Mutex
+	var hits []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits = append(hits, r.URL.EscapedPath())
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{}`)
+	}))
+	defer upstream.Close()
+	rig := newForwardRig(t, upstream, peers.TLSOptions{Plaintext: true})
+
+	for _, tail := range []string{"/%2E%2E/%2E%2E/admin", "/foo%2F..%2F..%2Fadmin", "/%2Fadmin", "/a%5Cb", "/a/%2e/b", "/", ""} {
+		resp, body := rig.do("GET", tail, "")
+		if resp.StatusCode != 400 || decodeFields(t, body).Code != "peer_bad_path" {
+			t.Errorf("tail %q = %d %s, want 400 peer_bad_path", tail, resp.StatusCode, body)
+		}
+	}
+	mu.Lock()
+	if len(hits) != 0 {
+		t.Errorf("unsafe paths reached the upstream: %v", hits)
+	}
+	hits = nil
+	mu.Unlock()
+
+	if resp, _ := rig.do("GET", "/stacks/a%20b%C3%A9", ""); resp.StatusCode != 200 {
+		t.Fatalf("encoded name = %d", resp.StatusCode)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(hits) != 1 || hits[0] != "/api/stacks/a%20b%C3%A9" {
+		t.Errorf("upstream path = %v", hits)
+	}
+}
+
+func TestForwardKeepsPeerBasePath(t *testing.T) {
+	got := make(chan string, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{}`)
+	}))
+	defer upstream.Close()
+	rig := newForwardRig(t, upstream, peers.TLSOptions{Plaintext: true})
+	err := rig.store.UpdatePeer(context.Background(), rig.peerID, func(p *peers.Peer) error {
+		p.URL = upstream.URL + "/stackstead/"
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rig.do("GET", "/stacks", "")
+	select {
+	case p := <-got:
+		if p != "/stackstead/api/stacks" {
+			t.Errorf("path = %q", p)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("upstream not called")
+	}
+}
+
+func TestForwardStripsHostileResponseHeaders(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Type", "application/json")
+		h.Set("Clear-Site-Data", `"cookies"`)
+		h.Set("Strict-Transport-Security", "max-age=31536000")
+		h.Set("Access-Control-Allow-Origin", "*")
+		h.Set("X-Stackstead-Peer", "x")
+		h.Set("X-Stackstead-Checks", "partial")
+		fmt.Fprint(w, `{}`)
+	}))
+	defer upstream.Close()
+	rig := newForwardRig(t, upstream, peers.TLSOptions{Plaintext: true})
+	resp, _ := rig.do("GET", "/stacks", "")
+	for _, name := range []string{"Clear-Site-Data", "Strict-Transport-Security", "Access-Control-Allow-Origin", "X-Stackstead-Peer"} {
+		if v := resp.Header.Get(name); v != "" {
+			t.Errorf("%s reached the browser: %q", name, v)
+		}
+	}
+	if resp.Header.Get("X-Stackstead-Checks") != "partial" {
+		t.Error("X-Stackstead-Checks was dropped")
+	}
+	if resp.Header.Get("Content-Security-Policy") != "sandbox; default-src 'none'" {
+		t.Errorf("CSP = %q", resp.Header.Get("Content-Security-Policy"))
+	}
+}
