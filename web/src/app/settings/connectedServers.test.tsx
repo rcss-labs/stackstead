@@ -124,7 +124,7 @@ describe('ConnectedServersCard', () => {
     await mount({
       'POST /api/peers/probe': { body: { ...PROBE, systemTrusted: true } },
       'POST /api/peers': {
-        status: 401,
+        status: 400,
         body: { error: 'Token rejected', fields: [{ field: 'token', message: 'Token rejected or expired' }] },
       },
     });
@@ -175,8 +175,51 @@ describe('ConnectedServersCard', () => {
   });
 
   it('version mismatch shows a warning on the row', async () => {
-    await mount({}, [{ ...PEER, version: '0.3.9' }]);
+    await mount({}, [{ ...PEER, version: '0.3.9', compatible: false }]);
     expect(await screen.findByText('Mini-02 runs v0.3, this server v0.4. Update to match')).toBeTruthy();
+  });
+
+  it('uses the backend compatibility verdict for the version warning', async () => {
+    await mount({}, [
+      { ...PEER, id: 'a', name: 'Alpha', version: '0.4.1', compatible: false },
+      { ...PEER, id: 'b', name: 'Beta', version: 'dev', compatible: false },
+      { ...PEER, id: 'c', name: 'Gamma', version: '0.3.0', compatible: true },
+    ]);
+    expect(await screen.findByText('Alpha runs v0.4, this server v0.4. Update to match')).toBeTruthy();
+    expect(screen.getByText('Beta runs dev, this server v0.4. Update to match')).toBeTruthy();
+    expect(screen.queryByText(/Gamma runs/)).toBeNull();
+  });
+
+  it('shows errors for hidden fields in the general banner', async () => {
+    const user = userEvent.setup();
+    await mount({
+      'POST /api/peers/probe': { body: { ...PROBE, systemTrusted: true } },
+      'POST /api/peers': {
+        status: 400,
+        body: { error: 'bad', fields: [{ field: 'trust.pinSha256', message: 'Pin mismatch' }, { field: 'token', message: 'Bad token' }] },
+      },
+    });
+    await probeAddress(user);
+    await user.click(await screen.findByRole('button', { name: 'Add server' }));
+    expect(await screen.findByText('Bad token')).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toContain('Pin mismatch');
+  });
+
+  it('blocks Add when no advertised address is known', async () => {
+    const user = userEvent.setup();
+    fake = installFakeFetch({
+      'GET /api/peers/self': { body: { ...SELF, suggestedUrl: '' } },
+      'GET /api/peers': { body: [] },
+      'POST /api/peers/probe': { body: { ...PROBE, systemTrusted: true } },
+    });
+    stopPeers = startPeers({ list: () => api.peers() });
+    render(<ConnectedServersCard />);
+    await screen.findByDisplayValue('Mini-01');
+    await probeAddress(user);
+    const add = await screen.findByRole('button', { name: 'Add server' });
+    await user.click(add);
+    expect(fake.calls.some((c) => c.method === 'POST' && c.path === '/api/peers')).toBe(false);
+    expect(screen.getByText(/This server/, { selector: 'span, [role=tooltip], p' })).toBeTruthy();
   });
 
   it('renaming this server sends PUT /api/peers/self', async () => {

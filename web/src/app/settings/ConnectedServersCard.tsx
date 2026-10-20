@@ -26,6 +26,11 @@ function majorMinor(version: string): string {
   return m ? `${m[1]}.${m[2]}` : version;
 }
 
+/** "v0.4" when the version parses as X.Y; otherwise the raw string (e.g. "dev"), never "vdev". */
+function displayVersion(version: string): string {
+  return /^v?\d+\.\d+/.test(version) ? `v${majorMinor(version)}` : version;
+}
+
 function hostOf(url: string): string {
   try {
     return new URL(url).hostname;
@@ -220,8 +225,15 @@ function AddServer({ self }: { self: ServerSelf }) {
   }
 
   const special = peerErrorCopy(error, host);
-  const handled = ['url', 'token', 'trust.pinSha256', 'trust.plaintext', 'advertisedUrl'];
-  const general = error && !special && !(error instanceof ApiError && error.fields.some((f) => handled.includes(f.field))) ? messageOf(error) : undefined;
+  // Fields whose input is on screen show their own error; anything else goes in the banner.
+  const shown = ['url', 'token', ...(probe && !probe.systemTrusted ? ['trust.pinSha256'] : []), ...(probe?.plaintextAllowed ? ['trust.plaintext'] : []), ...(probe ? ['advertisedUrl'] : [])];
+  const leftover = error instanceof ApiError ? error.fields.filter((f) => !shown.includes(f.field)) : [];
+  const general =
+    error && !special
+      ? error instanceof ApiError && error.fields.length > 0
+        ? leftover.map((f) => f.message).join(' ') || undefined
+        : messageOf(error)
+      : undefined;
   const advertisedError = fieldError(error, 'advertisedUrl');
 
   return (
@@ -290,7 +302,7 @@ function AddServer({ self }: { self: ServerSelf }) {
               variant="primary"
               type="submit"
               loading={busy === 'add'}
-              disabledReason={!trusted ? 'Trust the certificate or paste its CA first.' : !token ? 'Enter the connection token first.' : undefined}
+              disabledReason={!advertisedUrl ? 'Set this server\'s advertised address under "This server" first.' : !trusted ? 'Trust the certificate or paste its CA first.' : !token ? 'Enter the connection token first.' : undefined}
             >
               Add server
             </Button>
@@ -303,7 +315,7 @@ function AddServer({ self }: { self: ServerSelf }) {
 
 function PeerRow({ peer, selfVersion, onRemove }: { peer: PeerView; selfVersion: string; onRemove: () => void }) {
   const removed = peer.status === 'removed';
-  const mismatch = !removed && peer.version !== '' && selfVersion !== '' && majorMinor(peer.version) !== majorMinor(selfVersion);
+  const mismatch = !removed && !peer.compatible;
   return (
     <li className={styles.peer}>
       <div className={styles.peerMain}>
@@ -314,7 +326,7 @@ function PeerRow({ peer, selfVersion, onRemove }: { peer: PeerView; selfVersion:
           {peer.lastSeenAt && ` · seen ${relativeTime(peer.lastSeenAt, new Date())}`}
         </span>
         {removed && <span>{`${peer.name} removed this connection`}</span>}
-        {mismatch && <span>{`${peer.name} runs v${majorMinor(peer.version)}, this server v${majorMinor(selfVersion)}. Update to match`}</span>}
+        {mismatch && <span>{`${peer.name} runs ${displayVersion(peer.version)}, this server ${displayVersion(selfVersion)}. Update to match`}</span>}
         {peer.lastError && !removed && <span className={styles.meta}>{peer.lastError}</span>}
       </div>
       <Pill tone={peer.status === 'reachable' ? 'success' : removed || peer.status === 'pending' ? 'muted' : 'danger'}>{peer.status}</Pill>
