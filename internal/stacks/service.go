@@ -496,7 +496,8 @@ func (s *Service) Act(ctx context.Context, stack, action string) (Operation, err
 
 // ActService rebuilds and restarts one service with `up -d --build --no-deps`,
 // leaving the stack's other services alone. Unlike the stack-wide up it omits
-// --remove-orphans, which acts on the whole project. Only "up" is supported.
+// --remove-orphans, which acts on the whole project. The "--" keeps a
+// service name that looks like a flag from becoming one. Only "up" is supported.
 func (s *Service) ActService(ctx context.Context, stack, service, action string) (Operation, error) {
 	if action != "up" {
 		return Operation{}, &ValidationError{Fields: []FieldError{{Field: "action", Message: fmt.Sprintf("unknown service action %q", action)}}}
@@ -526,7 +527,7 @@ func (s *Service) ActService(ctx context.Context, stack, service, action string)
 	if e, err = s.refreshProject(ctx, e); err != nil {
 		return Operation{}, err
 	}
-	args := []string{"up", "-d", "--build", "--no-deps", service}
+	args := []string{"up", "-d", "--build", "--no-deps", "--", service}
 	return s.ops.StartService(stack, action, service, func(ctx context.Context, out func(string)) error {
 		return s.compose.Run(ctx, e.ComposePath, args, out)
 	})

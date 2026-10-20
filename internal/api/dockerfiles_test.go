@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rcss-labs/stackstead/internal/api"
+	"github.com/rcss-labs/stackstead/internal/composefile"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 )
 
@@ -134,8 +135,8 @@ func TestPutDockerfileErrors(t *testing.T) {
 func TestPutDockerfileRejectsOversizeBody(t *testing.T) {
 	env, cookie, _ := newDockerfileEnv(t)
 	body := `{"content":"` + strings.Repeat("a", 9<<20) + `","hash":"h"}`
-	if rec := env.do(t, "PUT", dfPath, body, withCookie(cookie)); rec.Code != 400 {
-		t.Errorf("status = %d", rec.Code)
+	if rec := env.do(t, "PUT", dfPath, body, withCookie(cookie)); rec.Code != 400 || !strings.Contains(rec.Body.String(), "too large") {
+		t.Errorf("status = %d, body %s", rec.Code, rec.Body)
 	}
 }
 
@@ -170,8 +171,21 @@ func TestDockerfileRoutesAbsentWithoutSupport(t *testing.T) {
 	for _, rt := range []struct{ method, path string }{
 		{"GET", dfPath}, {"PUT", dfPath}, {"POST", "/api/stacks/web/services/app/actions/up"},
 	} {
-		if rec := env.do(t, rt.method, rt.path, "{}", withCookie(cookie)); rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+		if rec := env.do(t, rt.method, rt.path, "{}", withCookie(cookie)); rec.Code != http.StatusNotFound {
 			t.Errorf("%s %s = %d, want 404", rt.method, rt.path, rec.Code)
 		}
+	}
+}
+
+func TestServiceUpRouteErrors(t *testing.T) {
+	env, cookie, fake := newDockerfileEnv(t)
+	fake.err = composefile.ErrServiceNotFound
+	if rec := env.do(t, "POST", "/api/stacks/web/services/ghost/actions/up", "{}", withCookie(cookie)); rec.Code != 404 {
+		t.Errorf("unknown service status = %d", rec.Code)
+	}
+	fake.err = &stacks.ValidationError{Fields: []stacks.FieldError{{Field: "action", Message: "unknown service action"}}}
+	rec := env.do(t, "POST", "/api/stacks/web/services/app/actions/down", "{}", withCookie(cookie))
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), `"field":"action"`) {
+		t.Errorf("down status = %d, body %s", rec.Code, rec.Body)
 	}
 }

@@ -591,8 +591,26 @@ func TestActServiceRunsScopedUp(t *testing.T) {
 	if fin := wait(t, h.ops, op.ID); fin.State != stacks.OpSucceeded || fin.Service != "web" {
 		t.Fatalf("final = %+v", fin)
 	}
-	if got := strings.Join(h.compose.lastRun().Args, " "); got != "up -d --build --no-deps web" {
+	if got := strings.Join(h.compose.lastRun().Args, " "); got != "up -d --build --no-deps -- web" {
 		t.Errorf("args = %q", got)
+	}
+}
+
+func TestActServiceNameCannotBecomeFlag(t *testing.T) {
+	h := newHarness(t)
+	hash := setupWeb(t, h)
+	ctx := context.Background()
+	if _, err := h.svc.SaveRaw(ctx, "web", []byte("services:\n  -x:\n    image: nginx:1\n"), hash); err != nil {
+		t.Fatal(err)
+	}
+	op, err := h.svc.ActService(ctx, "web", "-x", "up")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wait(t, h.ops, op.ID)
+	args := h.compose.lastRun().Args
+	if n := len(args); n < 2 || args[n-2] != "--" || args[n-1] != "-x" {
+		t.Errorf("args = %v, want to end with -- -x", args)
 	}
 }
 
