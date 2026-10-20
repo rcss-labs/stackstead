@@ -91,7 +91,12 @@ describe('console derivations', () => {
     expect(logClock('nope')).toBe('nope');
     expect(logUtc('nope')).toBe('nope');
     expect(logUtc('2026-01-01T00:00:00Z')).toBe('2026-01-01T00:00:00.000Z');
-    expect(logClock('2026-01-01T00:00:00Z')).toBe(new Date('2026-01-01T00:00:00Z').toLocaleTimeString());
+  });
+
+  it('formats the clock as zero-padded 24-hour local time whatever the locale', () => {
+    expect(logClock(new Date(2026, 9, 14, 21, 57, 35).toISOString())).toBe('21:57:35');
+    expect(logClock(new Date(2026, 9, 14, 5, 41, 51).toISOString())).toBe('05:41:51');
+    expect(logClock(new Date(2026, 9, 14, 0, 0, 0).toISOString())).toBe('00:00:00');
   });
 
   it('status labels and tones', () => {

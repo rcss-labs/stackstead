@@ -4,8 +4,8 @@ import { lineTone } from './logs';
 
 export type LogLevel = 'all' | 'warn' | 'error';
 
-export const LOG_LEVELS: { value: LogLevel; label: string }[] = [
-  { value: 'all', label: 'All' },
+export const LOG_LEVELS: { value: LogLevel; label: string; ariaLabel?: string }[] = [
+  { value: 'all', label: 'All', ariaLabel: 'All levels' },
   { value: 'warn', label: 'Warn+' },
   { value: 'error', label: 'Errors' },
 ];
@@ -76,7 +76,9 @@ export function writeLogsHeight(storage: Pick<Storage, 'setItem'> | undefined, h
 
 export function logClock(iso: string): string {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleTimeString();
+  if (Number.isNaN(d.getTime())) return iso;
+  // Fixed 24-hour HH:MM:SS: the locale's 12-hour form ("9:57:35 PM") would wrap in the time column.
+  return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':');
 }
 
 export function logUtc(iso: string): string {
