@@ -11,6 +11,9 @@ type BuildRef struct {
 	Context    string // as written; "" means the compose default "."
 	Dockerfile string // "" means "Dockerfile"
 	Inline     bool   // dockerfile_inline is set
+	// AdditionalContexts maps build.additional_contexts names to their values
+	// as written (paths, URLs or docker-image:// references).
+	AdditionalContexts map[string]string
 }
 
 // decodedService returns the service with aliases and merge keys resolved.
@@ -23,20 +26,46 @@ func (f *File) decodedService(name string) (map[string]any, error) {
 	if err := node.Decode(&full); err != nil {
 		return nil, fmt.Errorf("%w: service %s: %v", ErrNotMapping, name, err)
 	}
-	return full, nil
+	return normalizeKeys(full).(map[string]any), nil
 }
 
-// scalarString renders a decoded YAML scalar; ok is false for maps and lists.
-func scalarString(v any) (s string, ok bool) {
+// normalizeKeys converts the map[any]any that yaml.v3 produces for mappings
+// with non-string keys (e.g. a numeric network name) into map[string]any, so
+// no entry is silently dropped.
+func normalizeKeys(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, item := range x {
+			x[k] = normalizeKeys(item)
+		}
+		return x
+	case map[any]any:
+		out := make(map[string]any, len(x))
+		for k, item := range x {
+			out[fmt.Sprint(k)] = normalizeKeys(item)
+		}
+		return out
+	case []any:
+		for i, item := range x {
+			x[i] = normalizeKeys(item)
+		}
+		return x
+	}
+	return v
+}
+
+// scalarString renders a decoded YAML scalar; maps and lists are an
+// ErrNotMapping-wrapped error, never a formatted Go value.
+func scalarString(v any) (string, error) {
 	switch x := v.(type) {
 	case nil:
-		return "", true
+		return "", nil
 	case string:
-		return x, true
+		return x, nil
 	case map[string]any, []any:
-		return "", false
+		return "", fmt.Errorf("%w: expected a scalar value", ErrNotMapping)
 	default:
-		return fmt.Sprint(x), true
+		return fmt.Sprint(x), nil
 	}
 }
 
@@ -57,11 +86,14 @@ func (f *File) BuildOf(service string) (ref BuildRef, ok bool, err error) {
 			key string
 			dst *string
 		}{{"context", &ref.Context}, {"dockerfile", &ref.Dockerfile}} {
-			s, scalar := scalarString(b[k.key])
-			if !scalar {
-				return BuildRef{}, false, fmt.Errorf("%w: service %s: build.%s must be a scalar", ErrNotMapping, service, k.key)
+			s, err := scalarString(b[k.key])
+			if err != nil {
+				return BuildRef{}, false, fmt.Errorf("service %s: build.%s: %w", service, k.key, err)
 			}
 			*k.dst = s
+		}
+		if ref.AdditionalContexts, err = additionalContexts(b["additional_contexts"]); err != nil {
+			return BuildRef{}, false, fmt.Errorf("service %s: build.additional_contexts: %w", service, err)
 		}
 		if v, set := b["dockerfile_inline"]; set && v != nil {
 			ref.Inline = true
@@ -73,6 +105,41 @@ func (f *File) BuildOf(service string) (ref BuildRef, ok bool, err error) {
 		s, _ := scalarString(b)
 		return BuildRef{Context: s}, true, nil
 	}
+}
+
+// additionalContexts reads build.additional_contexts in mapping form
+// (name: path) or list form ("name=path").
+func additionalContexts(raw any) (map[string]string, error) {
+	var out map[string]string
+	switch c := raw.(type) {
+	case nil:
+		return nil, nil
+	case map[string]any:
+		out = make(map[string]string, len(c))
+		for name, v := range c {
+			s, err := scalarString(v)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", name, err)
+			}
+			out[name] = s
+		}
+	case []any:
+		out = make(map[string]string, len(c))
+		for _, item := range c {
+			s, err := scalarString(item)
+			if err != nil {
+				return nil, err
+			}
+			name, value, found := strings.Cut(s, "=")
+			if !found {
+				return nil, fmt.Errorf("%w: %q is not name=path", ErrNotMapping, s)
+			}
+			out[name] = value
+		}
+	default:
+		return nil, fmt.Errorf("%w: must be a mapping or list", ErrNotMapping)
+	}
+	return out, nil
 }
 
 // UsesExtends reports whether the service has an extends key.
@@ -124,9 +191,12 @@ func (f *File) EffectiveService(name string) (ServiceConfig, error) {
 }
 
 func effectivePorts(raw any) ([]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
 	list, ok := raw.([]any)
 	if !ok {
-		return nil, nil
+		return nil, fmt.Errorf("%w: ports must be a list", ErrNotMapping)
 	}
 	ports := make([]string, 0, len(list))
 	for _, entry := range list {
@@ -138,9 +208,9 @@ func effectivePorts(raw any) ([]string, error) {
 			}
 			ports = append(ports, spec)
 		default:
-			s, scalar := scalarString(e)
-			if !scalar {
-				return nil, fmt.Errorf("%w: port entry must be a string or mapping", ErrNotMapping)
+			s, err := scalarString(e)
+			if err != nil {
+				return nil, err
 			}
 			ports = append(ports, s)
 		}
@@ -153,13 +223,16 @@ func effectivePorts(raw any) ([]string, error) {
 func longPortSpec(e map[string]any) (string, error) {
 	var parts [4]string // target, published, host_ip, protocol
 	for i, key := range []string{"target", "published", "host_ip", "protocol"} {
-		s, scalar := scalarString(e[key])
-		if !scalar {
-			return "", fmt.Errorf("%w: port %s must be a scalar", ErrNotMapping, key)
+		s, err := scalarString(e[key])
+		if err != nil {
+			return "", fmt.Errorf("port %s: %w", key, err)
 		}
 		parts[i] = s
 	}
-	target, published, hostIP, protocol := parts[0], parts[1], parts[2], parts[3]
+	target, published, hostIP, protocol := parts[0], parts[1], parts[2], strings.ToLower(parts[3])
+	if target == "" {
+		return "", fmt.Errorf("%w: long port entry has no target", ErrNotMapping)
+	}
 	if published == "" {
 		return target, nil
 	}
@@ -185,26 +258,28 @@ func (f *File) effectiveNetworks(service string, raw any) ([]NetworkAttachment, 
 	case []any:
 		var out []NetworkAttachment
 		for _, item := range n {
-			s, scalar := scalarString(item)
-			if !scalar {
-				return nil, fmt.Errorf("%w: network name must be a scalar", ErrNotMapping)
+			s, err := scalarString(item)
+			if err != nil {
+				return nil, err
 			}
 			out = append(out, NetworkAttachment{Name: s})
 		}
 		return out, nil
 	case map[string]any:
 		names = f.networkOrder(service, n)
-	default:
+	case nil:
 		return nil, nil
+	default:
+		return nil, fmt.Errorf("%w: networks must be a list or mapping", ErrNotMapping)
 	}
 	out := make([]NetworkAttachment, 0, len(names))
 	attachments := raw.(map[string]any)
 	for _, name := range names {
 		att := NetworkAttachment{Name: name}
 		if cfg, ok := attachments[name].(map[string]any); ok {
-			s, scalar := scalarString(cfg["ipv4_address"])
-			if !scalar {
-				return nil, fmt.Errorf("%w: ipv4_address must be a scalar", ErrNotMapping)
+			s, err := scalarString(cfg["ipv4_address"])
+			if err != nil {
+				return nil, fmt.Errorf("ipv4_address: %w", err)
 			}
 			att.IPv4Address = s
 		}

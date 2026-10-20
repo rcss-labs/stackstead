@@ -40,7 +40,7 @@ func TestBuildOf(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if ok != tt.wantOK || got != tt.want {
+			if ok != tt.wantOK || !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("got %+v ok=%v, want %+v ok=%v", got, ok, tt.want, tt.wantOK)
 			}
 		})
@@ -124,5 +124,103 @@ func TestUsesExtendsAndInclude(t *testing.T) {
 	}
 	if mustParse(t, "services:\n  web:\n    image: x\n").UsesInclude() {
 		t.Error("UsesInclude = true without include")
+	}
+}
+
+func TestEffectiveServiceNonStringKeys(t *testing.T) {
+	src := "services:\n  web:\n    networks:\n      123: {ipv4_address: 10.0.0.5, aliases: [a]}\n"
+	cfg, err := mustParse(t, src).EffectiveService("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []NetworkAttachment{{"123", "10.0.0.5"}}
+	if !reflect.DeepEqual(cfg.Networks, want) {
+		t.Errorf("Networks = %+v, want %+v", cfg.Networks, want)
+	}
+	src = "services:\n  web:\n    networks:\n      lan: {ipv4_address: 10.0.0.5, 1: x}\n"
+	cfg, err = mustParse(t, src).EffectiveService("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []NetworkAttachment{{"lan", "10.0.0.5"}}; !reflect.DeepEqual(cfg.Networks, want) {
+		t.Errorf("Networks = %+v, want %+v", cfg.Networks, want)
+	}
+}
+
+func TestEffectiveServiceNonScalarValuesError(t *testing.T) {
+	for name, body := range map[string]string{
+		"port with mapping key": "ports:\n      - {target: {1: 2}, published: 80}\n",
+		"port published list":   "ports:\n      - {target: 80, published: [1]}\n",
+		"port no target":        "ports:\n      - {published: 80}\n",
+		"ports not a list":      "ports: \"80:80\"\n",
+		"networks scalar":       "networks: lan\n",
+		"ipv4 list":             "networks:\n      lan: {ipv4_address: [a]}\n",
+		"build context map":     "build: {context: {1: 2}}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := mustParse(t, "services:\n  web:\n    "+body)
+			_, err := f.EffectiveService("web")
+			if name == "build context map" {
+				_, _, err = f.BuildOf("web")
+			}
+			if !errors.Is(err, ErrNotMapping) {
+				t.Errorf("err = %v, want ErrNotMapping", err)
+			}
+		})
+	}
+}
+
+func TestEffectiveServiceMergedPortsAndNetworks(t *testing.T) {
+	src := `x-base: &base
+  ports: [{target: 80, published: 8080, protocol: UDP}]
+  networks:
+    zeta: {ipv4_address: 10.0.0.9}
+    alpha: null
+services:
+  web:
+    <<: *base
+`
+	cfg, err := mustParse(t, src).EffectiveService("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"8080:80/udp"}; !reflect.DeepEqual(cfg.Ports, want) {
+		t.Errorf("Ports = %q, want %q", cfg.Ports, want)
+	}
+	want := []NetworkAttachment{{"alpha", ""}, {"zeta", "10.0.0.9"}}
+	if !reflect.DeepEqual(cfg.Networks, want) {
+		t.Errorf("Networks = %+v, want %+v", cfg.Networks, want)
+	}
+}
+
+func TestEffectiveServiceListNetworks(t *testing.T) {
+	cfg, err := mustParse(t, "services:\n  web:\n    networks: &n [a, b]\n").EffectiveService("web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []NetworkAttachment{{"a", ""}, {"b", ""}}; !reflect.DeepEqual(cfg.Networks, want) {
+		t.Errorf("Networks = %+v, want %+v", cfg.Networks, want)
+	}
+}
+
+func TestBuildOfAdditionalContexts(t *testing.T) {
+	want := map[string]string{"a": "../a", "b": "docker-image://x"}
+	for name, body := range map[string]string{
+		"mapping": "build: {context: ., additional_contexts: {a: ../a, b: docker-image://x}}",
+		"list":    "build: {context: ., additional_contexts: [\"a=../a\", \"b=docker-image://x\"]}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			ref, _, err := mustParse(t, "services:\n  web:\n    "+body+"\n").BuildOf("web")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(ref.AdditionalContexts, want) {
+				t.Errorf("AdditionalContexts = %v, want %v", ref.AdditionalContexts, want)
+			}
+		})
+	}
+	_, _, err := mustParse(t, "services:\n  web:\n    build: {additional_contexts: {a: [x]}}\n").BuildOf("web")
+	if !errors.Is(err, ErrNotMapping) {
+		t.Errorf("non-scalar additional context: err = %v", err)
 	}
 }
