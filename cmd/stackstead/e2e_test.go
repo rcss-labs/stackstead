@@ -67,6 +67,8 @@ type e2eServer struct {
 	base   string
 	bin    string
 	stderr *syncBuffer
+	// stacksDir is the server's stacks directory on the host.
+	stacksDir string
 	// stop interrupts the process and waits for it to exit; safe to call twice.
 	stop func()
 }
@@ -155,7 +157,7 @@ func startServer(t *testing.T, socket string) *e2eServer {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return &e2eServer{base: base, bin: bin, stderr: stderr, stop: stop}
+	return &e2eServer{base: base, bin: bin, stderr: stderr, stacksDir: dir + "/stacks", stop: stop}
 }
 
 type client struct {
@@ -354,6 +356,7 @@ func TestE2ESmoke(t *testing.T) {
 	if socket != "" {
 		t.Run("storage cleanup", func(t *testing.T) { storageCleanup(t, c, srv.bin) })
 		t.Run("docker stack", func(t *testing.T) { dockerStack(t, c) })
+		t.Run("dockerfile stack", func(t *testing.T) { dockerfileStack(t, c, srv) })
 	} else {
 		t.Log("docker unavailable: skipped the stack lifecycle part")
 	}
@@ -667,6 +670,128 @@ func dockerStack(t *testing.T, c *client) {
 	if left := projectContainers(name); len(left) > 0 {
 		t.Errorf("containers of %s remain after remove: %v", name, left)
 	}
+}
+
+// dockerfileStack creates a stack whose service is built from a Dockerfile
+// written through the API, edits that Dockerfile and rebuilds only that service.
+func dockerfileStack(t *testing.T, c *client, srv *e2eServer) {
+	var rnd [3]byte
+	_, _ = rand.Read(rnd[:])
+	name := fmt.Sprintf("e2e-df-%x", rnd)
+	t.Cleanup(func() {
+		c.do("DELETE", "/api/stacks/"+name+"?volumes=true", nil)
+		time.Sleep(3 * time.Second)
+		for _, id := range projectContainers(name) {
+			_, _ = dockerOutput("rm", "-f", id)
+		}
+		_, _ = dockerOutput("network", "rm", name+"_default")
+		_, _ = dockerOutput("rmi", "-f", "stackstead/"+name+":latest")
+	})
+	wait := func(opBody []byte, what string) {
+		t.Helper()
+		var op struct{ ID, State string }
+		_ = json.Unmarshal(opBody, &op)
+		deadline := time.Now().Add(240 * time.Second)
+		for time.Now().Before(deadline) {
+			var cur struct{ State string }
+			_ = json.Unmarshal(c.expect(200, "GET", "/api/operations/"+op.ID, nil), &cur)
+			if cur.State != "running" {
+				if cur.State != "succeeded" {
+					t.Fatalf("%s finished as %q", what, cur.State)
+				}
+				return
+			}
+			time.Sleep(time.Second)
+		}
+		t.Fatalf("%s did not finish", what)
+	}
+	// inspect returns one field of the project's container for a service.
+	inspect := func(service, format string) string {
+		t.Helper()
+		out, err := dockerOutput("ps", "-aq", "--filter", "label=com.docker.compose.project="+name,
+			"--filter", "label=com.docker.compose.service="+service)
+		ids := strings.Fields(string(out))
+		if err != nil || len(ids) != 1 {
+			t.Fatalf("%s containers = %v (err %v), want exactly one", service, ids, err)
+		}
+		got, err := dockerOutput("inspect", "--format", format, ids[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(got))
+	}
+
+	original := "FROM busybox:1.36\nCMD [\"sleep\", \"3600\"]\n"
+	c.expect(201, "POST", "/api/stacks", map[string]any{
+		"name": name, "services": []any{
+			map[string]any{
+				"service":    "app",
+				"config":     map[string]any{"build": map[string]any{"context": "./app"}, "limits": map[string]any{}},
+				"dockerfile": map[string]any{"content": original},
+				"extra":      map[string]any{"labels": map[string]string{"e2e": "1"}},
+			},
+			map[string]any{"service": "other", "config": map[string]any{"image": "nginx:alpine"}},
+		},
+	})
+	onDisk, err := os.ReadFile(filepath.Join(srv.stacksDir, name, "app", "Dockerfile"))
+	if err != nil || string(onDisk) != original {
+		t.Fatalf("Dockerfile on disk = %q (err %v), want the created content", onDisk, err)
+	}
+	dfPath := "/api/stacks/" + name + "/services/app/dockerfile"
+	var view apitypes.DockerfileView
+	if err := json.Unmarshal(c.expect(200, "GET", dfPath, nil), &view); err != nil {
+		t.Fatal(err)
+	}
+	if !view.Editable || view.Path != "app/Dockerfile" || view.Content != original || view.Hash == "" {
+		t.Fatalf("dockerfile view = %+v", view)
+	}
+
+	got, body := c.do("POST", "/api/stacks/"+name+"/actions/up", map[string]any{})
+	if got != 202 {
+		t.Fatalf("up = %d: %.200s", got, body)
+	}
+	wait(body, "up")
+	if state := inspect("app", "{{.State.Status}}"); state != "running" {
+		t.Fatalf("app state = %q, want running", state)
+	}
+	if label := inspect("app", `{{index .Config.Labels "e2e"}}`); label != "1" {
+		t.Fatalf("app label e2e = %q, want 1", label)
+	}
+	otherID := inspect("other", "{{.Id}}")
+	otherStarted := inspect("other", "{{.State.StartedAt}}")
+
+	edited := strings.Replace(original, "3600", "3601", 1)
+	var saved apitypes.DockerfileContent
+	if err := json.Unmarshal(c.expect(200, "PUT", dfPath, map[string]string{"content": edited, "hash": view.Hash}), &saved); err != nil {
+		t.Fatal(err)
+	}
+	c.expect(409, "PUT", dfPath, map[string]string{"content": original, "hash": view.Hash})
+	if err := json.Unmarshal(c.expect(200, "GET", dfPath, nil), &view); err != nil {
+		t.Fatal(err)
+	}
+	if view.Content != edited || view.Hash == "" {
+		t.Fatalf("dockerfile after save = %+v", view)
+	}
+	if saved.Hash != "" && saved.Hash != view.Hash {
+		t.Fatalf("PUT hash %q differs from GET hash %q", saved.Hash, view.Hash)
+	}
+
+	got, body = c.do("POST", "/api/stacks/"+name+"/services/app/actions/up", map[string]any{})
+	if got != 202 || !strings.Contains(string(body), `"service":"app"`) {
+		t.Fatalf("scoped up = %d: %.200s", got, body)
+	}
+	wait(body, "scoped up")
+	if cmd := inspect("app", "{{json .Config.Cmd}}"); !strings.Contains(cmd, "3601") {
+		t.Fatalf("app Cmd after rebuild = %s, want 3601", cmd)
+	}
+	if id, started := inspect("other", "{{.Id}}"), inspect("other", "{{.State.StartedAt}}"); id != otherID || started != otherStarted {
+		t.Fatalf("scoped rebuild touched other: id %s->%s started %s->%s", otherID, id, otherStarted, started)
+	}
+	if log := srv.stderr.String(); strings.Contains(log, srv.stacksDir) {
+		t.Errorf("server log leaks the host stacks path:\n%s", redact(log))
+	}
+
+	wait(c.expect(202, "DELETE", "/api/stacks/"+name+"?volumes=true", nil), "remove")
 }
 
 // readLogIDs reads the logs SSE for a moment and reports whether a log event
