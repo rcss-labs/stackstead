@@ -19,6 +19,7 @@ func SetProbeTimeout(c Compose, d time.Duration) { c.(*versionCache).probeTimeou
 
 // Exposed so the confinement rules can be tested without a registry.
 var (
-	DockerfileTarget = dockerfileTarget
-	WriteDockerfile  = writeDockerfile
+	DockerfileTarget      = dockerfileTarget
+	WriteDockerfile       = writeDockerfile
+	WriteDockerfileInRoot = writeDockerfileInRoot
 )

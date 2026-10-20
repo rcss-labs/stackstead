@@ -3,6 +3,8 @@ package stacks
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -95,6 +97,8 @@ func dockerfileTarget(stackDir string, f *composefile.File, service string) (pat
 	if err != nil {
 		return "", false, err
 	}
+	// Include is checked before "no build" on purpose: an included file may
+	// change what this service builds, so "no build" would be a guess.
 	switch {
 	case f.UsesInclude():
 		return "", false, &NotEditableError{Reason: "uses include"}
@@ -162,88 +166,203 @@ func resolveExisting(p string) (string, error) {
 	}
 }
 
-// readRegular reads the file at path without following a final symlink.
-// regular is false when the path is something other than a regular file.
-func readRegular(path string, limit int64) (data []byte, mode fs.FileMode, exists, regular bool, err error) {
-	// O_NONBLOCK keeps a FIFO from blocking the open; it is a no-op for files.
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		return nil, 0, false, true, nil
-	case errors.Is(err, syscall.ELOOP):
-		return nil, 0, true, false, nil
-	case err != nil:
-		return nil, 0, false, false, err
-	}
-	defer f.Close()
+// fileState says what a path held when it was read.
+type fileState int
+
+const (
+	fileMissing fileState = iota
+	fileOK
+	fileNotRegular // directory, FIFO, link, or a file where a folder should be
+	fileTooLarge   // more than MaxDockerfileBytes
+)
+
+const (
+	reasonNotRegular = "not a regular file"
+	reasonTooLarge   = "larger than 1 MiB"
+)
+
+// readLimited reads an open file, enforcing MaxDockerfileBytes while reading
+// so an oversized file is never held in memory.
+func readLimited(f *os.File) ([]byte, fs.FileMode, fileState, error) {
 	info, err := f.Stat()
 	if err != nil {
-		return nil, 0, false, false, err
+		return nil, 0, fileMissing, err
 	}
-	if !info.Mode().IsRegular() || (limit > 0 && info.Size() > limit) {
-		return nil, 0, true, false, nil
+	if !info.Mode().IsRegular() {
+		return nil, 0, fileNotRegular, nil
 	}
-	data, err = io.ReadAll(f)
-	return data, info.Mode().Perm(), true, true, err
+	data, err := io.ReadAll(io.LimitReader(f, MaxDockerfileBytes+1))
+	if err != nil {
+		return nil, 0, fileMissing, err
+	}
+	if len(data) > MaxDockerfileBytes {
+		return nil, 0, fileTooLarge, nil
+	}
+	return data, info.Mode().Perm(), fileOK, nil
+}
+
+// classifyOpenError maps an open failure to a state; ok is false when the
+// error is not one of the expected path conditions.
+func classifyOpenError(err error) (state fileState, ok bool) {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return fileMissing, true
+	case errors.Is(err, syscall.ELOOP), errors.Is(err, syscall.ENOTDIR):
+		return fileNotRegular, true
+	}
+	return fileMissing, false
+}
+
+// openFlags never follows a final symlink and never blocks on a FIFO.
+const openFlags = os.O_RDONLY | syscall.O_NOFOLLOW | syscall.O_NONBLOCK
+
+// readRegular reads the file at path without following a final symlink.
+func readRegular(path string) ([]byte, fs.FileMode, fileState, error) {
+	f, err := os.OpenFile(path, openFlags, 0)
+	if err != nil {
+		if state, ok := classifyOpenError(err); ok {
+			return nil, 0, state, nil
+		}
+		return nil, 0, fileMissing, err
+	}
+	defer f.Close()
+	return readLimited(f)
+}
+
+// isEscape reports whether err is an os.Root refusal to leave its folder.
+func isEscape(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "path escapes")
 }
 
 // writeDockerfile writes content to path, which must lie inside stackDir once
-// symlinks are resolved. It creates missing folders (0755), refuses a final
-// symlink, and checks expectedHash unless it is nil ("" means the file must
-// not exist). The new file is 0644; an existing file keeps its mode. rollback
-// undoes the write and removes the folders this call created.
+// symlinks are resolved. See writeDockerfileInRoot for the write itself.
 func writeDockerfile(stackDir, path string, content []byte, expectedHash *string) (hash string, rollback func(), err error) {
 	noop := func() {}
-	parent := filepath.Dir(path)
-	resolvedParent, err := resolveExisting(parent)
-	if err != nil || !withinDir(stackDir, resolvedParent) {
+	realStack, err := filepath.EvalSymlinks(stackDir)
+	if err != nil {
 		return "", noop, ErrOutsideStack
 	}
-
-	var created []string
-	undoDirs := func() {
-		for i := len(created) - 1; i >= 0; i-- {
-			os.Remove(created[i])
-		}
-	}
-	// Create missing folders one level at a time so each is recorded.
-	var missing []string
-	for dir := parent; ; dir = filepath.Dir(dir) {
-		if _, err := os.Lstat(dir); err == nil || dir == filepath.Dir(dir) {
-			break
-		}
-		missing = append(missing, dir)
-	}
-	for i := len(missing) - 1; i >= 0; i-- {
-		if err := os.Mkdir(missing[i], 0o755); err != nil {
-			undoDirs()
-			return "", noop, err
-		}
-		created = append(created, missing[i])
-		if err := os.Chmod(missing[i], 0o755); err != nil {
-			undoDirs()
-			return "", noop, err
-		}
-	}
-	// Re-resolve now that the folders exist: this is the folder we write into.
-	resolvedParent, err = filepath.EvalSymlinks(parent)
-	if err != nil || !withinDir(stackDir, resolvedParent) {
-		undoDirs()
+	resolvedParent, err := resolveExisting(filepath.Dir(path))
+	if err != nil || !withinDir(realStack, resolvedParent) {
 		return "", noop, ErrOutsideStack
 	}
-	target := filepath.Join(resolvedParent, filepath.Base(path))
-
-	old, mode, exists, regular, err := readRegular(target, 0)
-	switch {
-	case err != nil:
-		undoDirs()
+	rel, err := filepath.Rel(realStack, filepath.Join(resolvedParent, filepath.Base(path)))
+	if err != nil {
+		return "", noop, ErrOutsideStack
+	}
+	// Every later step goes through the opened folder, so a link swapped in
+	// after the checks above cannot lead the write out of it.
+	root, err := os.OpenRoot(realStack)
+	if err != nil {
 		return "", noop, err
-	case !regular:
+	}
+	defer root.Close()
+	hash, undo, err := writeIn(root, rel, content, expectedHash)
+	if err != nil {
+		return "", noop, err
+	}
+	// The caller may roll back long after this function returned, so the
+	// rollback opens the folder itself instead of holding a descriptor.
+	return hash, func() {
+		if r, err := os.OpenRoot(realStack); err == nil {
+			defer r.Close()
+			undo(r)
+		}
+	}, nil
+}
+
+// writeDockerfileInRoot writes the Dockerfile at rel (relative to the root's
+// folder): missing folders are created (0755), a final symlink is refused,
+// expectedHash is checked unless nil ("" means the file must not exist), and
+// the content goes to a temp file renamed into place. The new file is 0644; an
+// existing file keeps its mode. rollback undoes the write and removes the
+// folders this call created.
+func writeDockerfileInRoot(root *os.Root, rel string, content []byte, expectedHash *string) (hash string, rollback func(), err error) {
+	hash, undo, err := writeIn(root, rel, content, expectedHash)
+	if err != nil {
+		return "", func() {}, err
+	}
+	return hash, func() { undo(root) }, nil
+}
+
+// writeIn does the write; undo takes the root to act through.
+func writeIn(root *os.Root, rel string, content []byte, expectedHash *string) (hash string, undo func(*os.Root), err error) {
+	noop := func(*os.Root) {}
+	var created []string
+	removeDirs := func(root *os.Root) {
+		for i := len(created) - 1; i >= 0; i-- {
+			_ = root.Remove(created[i])
+		}
+	}
+	undoDirs := func() { removeDirs(root) }
+	fail := func(err error) (string, func(*os.Root), error) {
 		undoDirs()
-		if info, lerr := os.Lstat(target); lerr == nil && info.Mode()&os.ModeSymlink != 0 {
+		switch {
+		case isEscape(err):
+			return "", noop, ErrOutsideStack
+		case errors.Is(err, syscall.ENOTDIR):
+			return "", noop, &NotEditableError{Reason: reasonNotRegular}
+		}
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) { // keep absolute-looking detail out of the message
+			err = pathErr.Err
+		}
+		return "", noop, fmt.Errorf("write Dockerfile: %w", err)
+	}
+
+	// Create missing folders one level at a time so each is recorded.
+	parts := strings.Split(filepath.ToSlash(filepath.Dir(rel)), "/")
+	dir := ""
+	for _, part := range parts {
+		if part == "." || part == "" {
+			continue
+		}
+		dir = filepath.Join(dir, part)
+		_, err := root.Lstat(dir)
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return fail(err)
+		}
+		if err := root.Mkdir(dir, 0o755); err != nil {
+			return fail(err)
+		}
+		created = append(created, dir)
+		if err := root.Chmod(dir, 0o755); err != nil {
+			return fail(err)
+		}
+	}
+
+	var old []byte
+	mode := fs.FileMode(0o644)
+	exists := false
+	info, err := root.Lstat(rel)
+	switch {
+	case err == nil:
+		if info.Mode()&fs.ModeSymlink != 0 {
+			undoDirs()
 			return "", noop, ErrOutsideStack // never write through a link
 		}
-		return "", noop, &NotEditableError{Reason: "not a regular file"}
+		f, err := root.OpenFile(rel, openFlags, 0)
+		if err != nil {
+			return fail(err)
+		}
+		data, perm, state, err := readLimited(f)
+		f.Close()
+		switch {
+		case err != nil:
+			return fail(err)
+		case state == fileNotRegular:
+			undoDirs()
+			return "", noop, &NotEditableError{Reason: reasonNotRegular}
+		case state == fileTooLarge:
+			undoDirs()
+			return "", noop, &NotEditableError{Reason: reasonTooLarge}
+		}
+		old, mode, exists = data, perm, true
+	case !errors.Is(err, fs.ErrNotExist):
+		return fail(err)
 	}
 	if expectedHash != nil {
 		if exists != (*expectedHash != "") || (exists && composefile.Hash(old) != *expectedHash) {
@@ -251,22 +370,52 @@ func writeDockerfile(stackDir, path string, content []byte, expectedHash *string
 			return "", noop, ErrDockerfileConflict
 		}
 	}
-	if !exists {
-		mode = 0o644
+	if err := writeAtomicIn(root, rel, content, mode); err != nil {
+		return fail(err)
 	}
-	if err := composefile.WriteAtomic(target, content, mode); err != nil {
-		undoDirs()
-		return "", noop, fmt.Errorf("write Dockerfile: %w", err)
-	}
-	rollback = func() {
+	undo = func(root *os.Root) {
 		if exists {
-			_ = composefile.WriteAtomic(target, old, mode)
+			_ = writeAtomicIn(root, rel, old, mode)
 			return
 		}
-		os.Remove(target)
-		undoDirs()
+		_ = root.Remove(rel)
+		removeDirs(root)
 	}
-	return composefile.Hash(content), rollback, nil
+	return composefile.Hash(content), undo, nil
+}
+
+// writeAtomicIn writes rel through a temp file in the same folder and renames
+// it into place, all inside root.
+func writeAtomicIn(root *os.Root, rel string, data []byte, mode fs.FileMode) error {
+	var suffix [8]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return err
+	}
+	tmp := filepath.Join(filepath.Dir(rel), "."+filepath.Base(rel)+"."+hex.EncodeToString(suffix[:])+".tmp")
+	f, err := root.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+	if err != nil {
+		return err
+	}
+	if _, err = f.Write(data); err == nil {
+		if err = f.Chmod(mode); err == nil {
+			err = f.Sync()
+		}
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = root.Rename(tmp, rel)
+	}
+	if err != nil {
+		_ = root.Remove(tmp)
+		return err
+	}
+	if d, derr := root.Open(filepath.Dir(rel)); derr == nil {
+		_ = d.Sync()
+		d.Close()
+	}
+	return nil
 }
 
 // Dockerfile reads the Dockerfile of a service's build.
@@ -295,23 +444,32 @@ func (s *Service) Dockerfile(ctx context.Context, stack, service string) (Docker
 }
 
 func (s *Service) insideView(stackDir, path string) (DockerfileView, error) {
-	rel, err := filepath.Rel(stackDir, path)
+	realStack, err := filepath.EvalSymlinks(stackDir)
 	if err != nil {
 		return DockerfileView{}, err
 	}
-	view := DockerfileView{Path: filepath.ToSlash(rel), Editable: true}
 	resolvedParent, err := resolveExisting(filepath.Dir(path))
 	if err != nil {
 		return DockerfileView{}, err
 	}
+	// Show the path relative to the resolved stack folder, whichever way the
+	// compose file spelled it.
+	resolved := filepath.Join(resolvedParent, filepath.Base(path))
+	rel, err := filepath.Rel(realStack, resolved)
+	if err != nil {
+		return DockerfileView{}, err
+	}
+	view := DockerfileView{Path: filepath.ToSlash(rel), Editable: true}
 	// Read the file named by path, not what a final link points to.
-	data, _, exists, regular, err := readRegular(filepath.Join(resolvedParent, filepath.Base(path)), 0)
+	data, _, state, err := readRegular(resolved)
 	switch {
 	case err != nil:
 		return DockerfileView{}, err
-	case !regular:
-		return DockerfileView{Path: view.Path, Reason: reasonOutsideStack}, nil
-	case exists:
+	case state == fileNotRegular:
+		return DockerfileView{Path: view.Path, Reason: reasonNotRegular}, nil
+	case state == fileTooLarge:
+		return DockerfileView{Path: view.Path, Reason: reasonTooLarge}, nil
+	case state == fileOK:
 		view.Content, view.Exists, view.Hash = data, true, composefile.Hash(data)
 	}
 	return view, nil
@@ -323,21 +481,17 @@ func (s *Service) outsideView(path string) (DockerfileView, error) {
 	view := DockerfileView{Path: path, Reason: reasonOutsideStack}
 	resolved, err := fsguard.Resolve(s.roots, path)
 	switch {
-	case errors.Is(err, fsguard.ErrOutsideRoots):
-		view.Reason = reasonOutsideRoots
-		return view, nil
 	case errors.Is(err, fs.ErrNotExist):
 		return view, nil
 	case err != nil:
 		view.Reason = reasonOutsideRoots
 		return view, nil
 	}
-	data, _, exists, regular, err := readRegular(resolved, MaxDockerfileBytes)
-	if err != nil {
+	data, _, state, err := readRegular(resolved)
+	switch {
+	case err != nil, state == fileNotRegular, state == fileTooLarge:
 		view.Reason = reasonOutsideRoots
-		return view, nil
-	}
-	if exists && regular {
+	case state == fileOK:
 		view.Content, view.Exists, view.Hash = data, true, composefile.Hash(data)
 	}
 	return view, nil
