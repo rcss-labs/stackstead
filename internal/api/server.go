@@ -83,6 +83,9 @@ type Options struct {
 type server struct {
 	opts Options
 
+	// forwards holds the per-peer transports used by handleForward.
+	forwards forwardTransports
+
 	// tokenCache is the /metrics token hash, loaded lazily (see tokenHash).
 	tokenMu     sync.Mutex
 	tokenCache  string
@@ -148,6 +151,7 @@ func New(opts Options) http.Handler {
 	if opts.Peers != nil {
 		s.registerPeerRoutes(mux)
 		s.registerFleetRoutes(mux)
+		s.registerForwardRoutes(mux)
 	}
 	if opts.Stacks != nil && opts.Observe != nil {
 		s.registerContainerRoutes(mux)
