@@ -3,6 +3,7 @@ import type { DockerEvent } from '$lib/api/types';
 import type { SSEStatus } from '$lib/sse/client';
 import styles from './SideColumn.module.css';
 
+import { useServer } from '../servers/ServerContext';
 export type EventTone = 'success' | 'warning' | 'danger' | 'muted';
 
 function tone(action: string): EventTone {
@@ -31,6 +32,7 @@ export interface ActivityFeedProps {
 }
 
 export function ActivityFeed({ events, connection }: ActivityFeedProps) {
+  const { href } = useServer();
   const live = connection === 'open';
   return (
     <section className={styles.card}>
@@ -57,7 +59,7 @@ export function ActivityFeed({ events, connection }: ActivityFeedProps) {
                     {action}
                   </span>{' '}
                   {e.container ? (
-                    <Link className={styles.subject} to={`/containers/${encodeURIComponent(e.container)}`} title={subject}>
+                    <Link className={styles.subject} to={href(`/containers/${encodeURIComponent(e.container)}`)} title={subject}>
                       {subject}
                     </Link>
                   ) : (

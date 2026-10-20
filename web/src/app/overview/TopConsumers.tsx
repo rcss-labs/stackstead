@@ -5,6 +5,7 @@ import { formatBytes, formatPercent } from '$lib/format';
 import { Segmented } from '../components/Segmented';
 import styles from './SideColumn.module.css';
 
+import { useServer } from '../servers/ServerContext';
 type Metric = 'cpu' | 'mem';
 
 const OPTIONS = [
@@ -20,6 +21,7 @@ export interface TopConsumersProps {
 }
 
 export function TopConsumers({ top, stackNames }: TopConsumersProps) {
+  const { href } = useServer();
   const [metric, setMetric] = useState<Metric>('cpu');
   const rows = (top?.[metric] ?? []).slice(0, 5);
   const max = Math.max(0, ...rows.map((r) => r.value));
@@ -41,7 +43,7 @@ export function TopConsumers({ top, stackNames }: TopConsumersProps) {
           {rows.map((r) => (
             <li key={`${r.project}|${r.container}`}>
               <div className={styles.line}>
-                <Link className={styles.name} to={`/containers/${encodeURIComponent(r.container)}`} title={label(r)}>
+                <Link className={styles.name} to={href(`/containers/${encodeURIComponent(r.container)}`)} title={label(r)}>
                   {label(r)}
                 </Link>
                 <span className={styles.value}>{metric === 'cpu' ? formatPercent(r.value) : formatBytes(r.value)}</span>

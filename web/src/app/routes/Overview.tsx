@@ -8,7 +8,6 @@ import { EmptyState } from '../components/EmptyState';
 import { Spinner } from '../components/Spinner';
 import { useDashboard } from '../hooks/useDashboard';
 import { useStore } from '../hooks/useStore';
-import { useServer } from '../servers/ServerContext';
 import { IssueCards } from '../overview/IssueCards';
 import SideColumn from '../overview/SideColumn';
 import { StacksList } from '../overview/StacksList';
@@ -16,9 +15,10 @@ import { StatusPanel } from '../overview/StatusPanel';
 import { useStackAction } from '../overview/useStackAction';
 import styles from './Overview.module.css';
 
+import { useServer } from '../servers/ServerContext';
 /** Health first: the status panel, then the stack list. Eager: the only screen in the entry chunk. */
 export default function Overview() {
-  const { stacks, host, hostHistory, events, live, runningOps, refreshStacks } = useServer();
+  const { stacks, host, hostHistory, events, live, runningOps, refreshStacks, href } = useServer();
   const { items, loading, error } = useStore(stacks);
   const hostSnapshot = useStore(host);
   const history = useStore(hostHistory);
@@ -90,10 +90,10 @@ export default function Overview() {
               <div className={styles.empty}>
                 <EmptyState title="Create your first stack" description="Create a stack or import an existing compose file.">
                   <p className={styles.links}>
-                    <Link to="/stacks/new" className={styles.link} data-primary="true">
+                    <Link to={href('/stacks/new')} className={styles.link} data-primary="true">
                       New stack
                     </Link>
-                    <Link to="/stacks/import" className={styles.link}>
+                    <Link to={href('/stacks/import')} className={styles.link}>
                       Import
                     </Link>
                   </p>

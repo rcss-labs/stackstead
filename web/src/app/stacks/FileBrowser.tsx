@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, ApiError } from '$lib/api/client';
+import { ApiError } from '$lib/api/client';
 import type { FSEntry } from '$lib/api/types';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
 import { Spinner } from '../components/Spinner';
 import styles from './FileBrowser.module.css';
 
+import { useServer } from '../servers/ServerContext';
 export interface FileBrowserProps {
   open: boolean;
   mode: 'dir' | 'file';
@@ -31,6 +32,7 @@ function describe(err: unknown): string {
 }
 
 export function FileBrowser({ open, mode, title, onPick, onClose, filter }: FileBrowserProps) {
+  const { api } = useServer();
   const preferred = filter ?? isDockerfile;
   // path '' is the list of allowed roots; root is the allowed root containing path.
   const [path, setPath] = useState('');
@@ -63,7 +65,7 @@ export function FileBrowser({ open, mode, title, onPick, onClose, filter }: File
     setAnnouncement(`${next || 'Allowed directories'}: ${message || `${list.length} entries`}`);
     setLoading(false);
     setLoaded((n) => n + 1);
-  }, []);
+  }, [api]);
 
   useEffect(() => {
     if (open) void load('', '');

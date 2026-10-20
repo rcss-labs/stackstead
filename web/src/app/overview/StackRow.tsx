@@ -14,6 +14,7 @@ import { Tag } from '../components/Tag';
 import { PortLinks } from './PortLinks';
 import styles from './StackRow.module.css';
 
+import { useServer } from '../servers/ServerContext';
 export interface StackRowProps {
   stack: StackSummary;
   /** Services with a container problem, from the alerts. */
@@ -37,7 +38,8 @@ function ledFor(s: StackSummary): { tone: LedProps['tone']; pulse: boolean } {
 
 export function StackRow({ stack: s, failing, usage, running, reason, acting, onAct }: StackRowProps) {
   const navigate = useNavigate();
-  const href = `/stacks/${encodeURIComponent(s.name)}`;
+  const { href: toServerHref } = useServer();
+  const href = toServerHref(`/stacks/${encodeURIComponent(s.name)}`);
   const health = healthCell(s.health);
   const primary = rowPrimaryAction(s);
   const led = ledFor(s);

@@ -7,6 +7,7 @@ import { PanelLabel } from '../components/PanelLabel';
 import { Sparkline } from '../components/Sparkline';
 import styles from './ServiceOverview.module.css';
 
+import { useServer } from '../servers/ServerContext';
 export interface ServiceOverviewProps {
   service: ServiceDetail;
   latestCpu: number | undefined;
@@ -33,6 +34,7 @@ function Chips({ values, tone }: { values: string[]; tone?: 'info' }) {
 }
 
 export function ServiceOverview({ service, latestCpu, cpuHour }: ServiceOverviewProps) {
+  const { href } = useServer();
   const { config } = service;
   const image = config.image ?? (config.build ? `build: ${config.build.context}` : '');
   const limits = [config.limits.cpus ? `${config.limits.cpus} cpus` : '', config.limits.memory ?? ''].filter(Boolean).join(' · ');
@@ -73,7 +75,7 @@ export function ServiceOverview({ service, latestCpu, cpuHour }: ServiceOverview
                   <li key={container.id}>
                     <Led tone={tone} size={7} />
                     <div>
-                      <Link className={styles.containerName} to={`/containers/${encodeURIComponent(container.name)}`}>
+                      <Link className={styles.containerName} to={href(`/containers/${encodeURIComponent(container.name)}`)}>
                         {container.name}
                       </Link>
                     </div>
