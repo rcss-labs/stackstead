@@ -1,7 +1,8 @@
 import { useParams } from 'react-router';
+import { StorageVolumeScreen } from '../storage/StorageVolumeScreen';
 
-/** Placeholder until Plan 21; App owns the main landmark. */
+/** Keyed on the name so a jump from one volume to another resets every piece of page state. */
 export default function StorageVolume() {
   const { name = '' } = useParams();
-  return <h1>Volume {name}</h1>;
+  return <StorageVolumeScreen key={name} name={name} />;
 }

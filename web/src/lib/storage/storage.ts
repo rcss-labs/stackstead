@@ -62,3 +62,6 @@ export function pageView<T>(rows: T[], page: number, size = PAGE_SIZE): PageView
   const shown = rows.slice(start, start + size);
   return { rows: shown, page: current, pages, from: shown.length ? start + 1 : 0, to: start + shown.length, total: rows.length };
 }
+
+/** The API sends Go's zero time (`0001-…`) or an empty value for a time it does not know. */
+export const knownTime = (iso: string | null) => Boolean(iso) && !iso!.startsWith('0001-');

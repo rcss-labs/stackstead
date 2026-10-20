@@ -176,4 +176,39 @@ describe('react app build shape', () => {
       for (const file of eagerFiles) expect(read(file), `${file} must not contain ${name} code`).not.toContain(marker);
     }
   });
+
+  it.skipIf(!existsSync(manifestPath))('keeps the storage screens and the cleanup dialog out of the eager entry', () => {
+    const sizes = measure(dist);
+    const lazyFiles = sizes.lazy.map((l: { file: string }) => l.file);
+    const eagerFiles = readdirSync(join(dist, 'assets'))
+      .filter((f) => f.endsWith('.js'))
+      .map((f) => `assets/${f}`)
+      .filter((f) => !lazyFiles.includes(f));
+    expect(eagerFiles.map(chunkName).some((name) => /Storage|CleanupDialog|UsageCard|usage/i.test(name))).toBe(false);
+    expect(sizes.entry).toBeLessThanOrEqual(106 * 1024);
+
+    // As above: eager code is one merged chunk, so unique strings are what reveal folded-in code. CleanupDialog,
+    // usage.ts and OperationPanel may sit in shared lazy chunks, so only their absence from the eager files is asserted.
+    const read = (file: string) => readFileSync(join(dist, file), 'utf8');
+    const screens = [
+      { chunk: 'Storage', marker: 'Could not recalculate' },
+      { chunk: 'StorageImage', marker: 'Back to images' },
+      { chunk: 'StorageVolume', marker: 'Back to volumes' },
+    ];
+    for (const { chunk, marker } of screens) {
+      const lazyChunk = lazyFiles.find((f: string) => chunkName(f) === chunk);
+      expect(lazyChunk, `${chunk} is a lazy chunk`).toBeDefined();
+      expect(read(lazyChunk as string), `${chunk} carries its screen`).toContain(marker);
+      for (const file of eagerFiles) expect(read(file), `${file} must not contain ${chunk} code`).not.toContain(marker);
+    }
+    const shared = [
+      { name: 'CleanupDialog', marker: 'Checking current state…' },
+      { name: 'usage', marker: 'used by Docker' },
+      { name: 'OperationPanel', marker: 'Operation no longer available' },
+    ];
+    for (const { name, marker } of shared) {
+      expect(lazyFiles.some((f: string) => read(f).includes(marker)), `${name} ships in a lazy chunk`).toBe(true);
+      for (const file of eagerFiles) expect(read(file), `${file} must not contain ${name} code`).not.toContain(marker);
+    }
+  });
 });

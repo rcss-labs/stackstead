@@ -1,4 +1,5 @@
-/** Placeholder until Plan 21; App owns the main landmark. */
+import { StorageScreen } from '../storage/StorageScreen';
+
 export default function Storage() {
-  return <h1>Storage</h1>;
+  return <StorageScreen />;
 }
