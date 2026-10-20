@@ -8,6 +8,7 @@ const detail = (names: string[], parseError?: string): Pick<StackDetail, 'servic
 });
 const q = (s: string) => new URLSearchParams(s);
 const two = detail(['app', 'db']);
+const built = { ...two, services: two.services.map((s) => ({ ...s, config: { build: { context: '.' }, limits: {} } })) };
 
 describe('resolveDetailLocation', () => {
   it('defaults to the first service overview', () => {
@@ -29,6 +30,17 @@ describe('resolveDetailLocation', () => {
     expect(metrics.item).toEqual({ kind: 'service', name: 'db' });
     expect(metrics.serviceTab).toBe('metrics');
     expect(resolveDetailLocation(q('tab=config'), two).serviceTab).toBe('config');
+  });
+
+  it('detailLocation round-trips tab=dockerfile', () => {
+    const loc = resolveDetailLocation(q('service=db&tab=dockerfile'), built);
+    expect(loc.item).toEqual({ kind: 'service', name: 'db' });
+    expect(loc.serviceTab).toBe('dockerfile');
+    expect(itemHref('web', loc.item, loc.serviceTab)).toBe('/stacks/web?service=db&tab=dockerfile');
+  });
+
+  it('?tab=dockerfile on a service without a build falls back to overview', () => {
+    expect(resolveDetailLocation(q('service=db&tab=dockerfile'), two).serviceTab).toBe('overview');
   });
 
   it('?tab=compose and ?tab=operations&op=x select stack items', () => {

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { ServiceDetail } from '$lib/api/types';
-import type { ServiceTab } from '$lib/stacks/detailLocation';
+import { hasBuild as serviceHasBuild, type ServiceTab } from '$lib/stacks/detailLocation';
 import { serviceState } from '$lib/stacks/summary';
 import { Button } from '../components/Button';
 import { Led } from '../components/Led';
@@ -30,8 +30,12 @@ const TABS: { id: ServiceTab; label: string }[] = [
   { id: 'config', label: 'Config' },
 ];
 
+const DOCKERFILE_TAB = { id: 'dockerfile' as const, label: 'Dockerfile' };
+
 export function ServicePane({ service, tab, onTab, onLogs, latestCpu, cpuHour, onEdit, onCloseEditor, editor, children }: ServicePaneProps) {
   const state = serviceState(service);
+  const hasBuild = serviceHasBuild(service);
+  const tabs = hasBuild ? [...TABS, DOCKERFILE_TAB] : TABS;
   return (
     <div className={styles.pane}>
       <header className={styles.header}>
@@ -62,7 +66,7 @@ export function ServicePane({ service, tab, onTab, onLogs, latestCpu, cpuHour, o
         editor
       ) : (
         <div className={styles.tabs}>
-          <Tabs tabs={TABS} selected={tab} onSelect={(id) => onTab(id as ServiceTab)} ariaLabel="Service sections" activation="manual">
+          <Tabs tabs={tabs} selected={tab} onSelect={(id) => onTab(id as ServiceTab)} ariaLabel="Service sections" activation="manual">
             {(selected) =>
               selected === 'overview' ? (
                 <ServiceOverview service={service} latestCpu={latestCpu} cpuHour={cpuHour} />
