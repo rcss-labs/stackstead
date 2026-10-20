@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { get } from '$lib/store';
 import { toasts } from '$lib/stores/toasts';
-import type { FleetServer, FleetStack, FleetStacks, StackSummary } from '$lib/api/types';
+import type { FleetServer, FleetStack, FleetStacks, HostSnapshot, MetricsSummary, StackSummary } from '$lib/api/types';
 import { installFakeFetch, installFakeStream, type FakeFetch, type FakeStream } from '../../vitest-setup';
 import AllStacks from './AllStacks';
 
@@ -36,6 +36,25 @@ function fleet(over: Partial<FleetStacks> = {}): FleetStacks {
     ...over,
   } as FleetStacks;
 }
+
+const usage = (cpuNow: number | null, memNow: number | null) => ({ cpu: [], mem: [], cpuNow, memNow, netRxBytesPerSec: null, netTxBytesPerSec: null });
+const metrics = (stacks: MetricsSummary['stacks']): MetricsSummary => ({ window: '15m', step: 15, from: '', to: '', stacks, top: { cpu: [], mem: [] } });
+const GB = 1024 ** 3;
+const hostOf = (cpu: HostSnapshot['cpu'], memUsed: number, memTotal: number, diskFree: number, diskTotal: number): HostSnapshot => ({
+  hostname: 'h',
+  os: 'linux',
+  source: 'proc',
+  sampledAt: '2026-10-20T10:00:00Z',
+  containers: null,
+  cpu,
+  memory: { used: memUsed, total: memTotal, swapUsed: 0, swapTotal: 0 },
+  disk: { path: '/', free: diskFree, total: diskTotal },
+  network: null,
+  diskIO: null,
+  volumes: null,
+  uptime: null,
+  restarts24h: null,
+});
 
 let fake: FakeFetch;
 let stream: FakeStream;
@@ -188,5 +207,59 @@ describe('All stacks', () => {
     mount(fleet());
     await screen.findByRole('link', { name: 'web' });
     expect(stream.requests).toHaveLength(0);
+  });
+
+  it('shows each stack\'s own server\'s CPU and memory, even when two servers share a project name', async () => {
+    mount(fleet({ stacks: [fleetStack('a0', 'shared'), fleetStack('b1', 'shared')] }), {
+      'GET /api/metrics/summary': { body: metrics({ shared: usage(12.5, 100 * 1024 ** 2) }) },
+      'GET /api/servers/b1/api/metrics/summary': { body: metrics({ shared: usage(34, 2 * GB) }) },
+    });
+    const rows = (await screen.findAllByRole('link', { name: 'shared' })).map((l) => l.closest('[role="row"]') as HTMLElement);
+    const localRow = rows.find((r) => within(r).queryByText('here'))!;
+    const peerRow = rows.find((r) => within(r).queryByText('mini-02'))!;
+    await waitFor(() => expect(within(localRow).getByText('12.5%')).toBeTruthy());
+    expect(within(localRow).getByText('100.0 MiB')).toBeTruthy();
+    expect(within(peerRow).getByText('34.0%')).toBeTruthy();
+    expect(within(peerRow).getByText('2.0 GiB')).toBeTruthy();
+  });
+
+  it('shows a dash for a server whose summary fails, and keeps the others', async () => {
+    mount(fleet(), {
+      'GET /api/metrics/summary': { body: metrics({ web: usage(7, GB) }) },
+      'GET /api/servers/b1/api/metrics/summary': { status: 502, body: { error: 'peer down' } },
+    });
+    const web = (await screen.findByRole('link', { name: 'web' })).closest('[role="row"]') as HTMLElement;
+    await waitFor(() => expect(within(web).getByText('7.0%')).toBeTruthy());
+    const pihole = screen.getByRole('link', { name: 'pihole' }).closest('[role="row"]') as HTMLElement;
+    expect(within(pihole).queryByText(/%$/)).toBeNull();
+  });
+
+  it('combines the host stats of every server that answers and names the ones left out', async () => {
+    mount(fleet({ servers: [local, mini, down], stacks: [fleetStack('a0', 'web'), fleetStack('b1', 'pihole')] }), {
+      'GET /api/host': { body: hostOf({ percent: 10, cores: 2 }, 2 * GB, 8 * GB, 60 * GB, 100 * GB) },
+      'GET /api/servers/b1/api/host': { body: hostOf({ percent: 40, cores: 6 }, 4 * GB, 16 * GB, 100 * GB, 300 * GB) },
+    });
+    const cpu = await waitFor(() => {
+      const cell = document.querySelector('[data-stat="cpu"]');
+      expect(cell).toBeTruthy();
+      return cell as HTMLElement;
+    });
+    expect(within(cpu).getByText('32.5%')).toBeTruthy();
+    expect(within(cpu).getByText('8 cores')).toBeTruthy();
+    const mem = document.querySelector('[data-stat="memory"]') as HTMLElement;
+    expect(within(mem).getByText('6.0 GiB')).toBeTruthy();
+    expect(within(mem).getByText('24.0 GiB')).toBeTruthy();
+    expect(screen.getByText('nas not included: unreachable')).toBeTruthy();
+    expect(screen.getByText(/2 servers/)).toBeTruthy();
+  });
+
+  it('leaves a server whose host request fails out of the combined stats with a note', async () => {
+    mount(fleet(), {
+      'GET /api/host': { body: hostOf({ percent: 10, cores: 2 }, 2 * GB, 8 * GB, 60 * GB, 100 * GB) },
+      'GET /api/servers/b1/api/host': { status: 502, body: { error: 'peer down' } },
+    });
+    expect(await screen.findByText('mini-02 not included: unavailable')).toBeTruthy();
+    const cpu = document.querySelector('[data-stat="cpu"]') as HTMLElement;
+    expect(within(cpu).getByText('10.0%')).toBeTruthy();
   });
 });
