@@ -24,6 +24,7 @@ const (
 	defaultMinBackoff = 500 * time.Millisecond
 	defaultMaxBackoff = 30 * time.Second
 	subscriberBuffer  = 64
+	maxRecentEvents   = 50
 
 	composeProjectLabel = "com.docker.compose.project"
 )
@@ -63,6 +64,7 @@ type Cache struct {
 	nextSub    int
 	subs       map[int]chan Change
 	eventSubs  map[int]chan engine.Event
+	recent     []engine.Event // the last maxRecentEvents forwarded events, oldest first
 }
 
 // ForwardedActions are the container event actions SubscribeEvents delivers.
@@ -376,6 +378,10 @@ func (c *Cache) Subscribe() (changes <-chan Change, cancel func()) {
 func (c *Cache) publishEvent(ev engine.Event) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if len(c.recent) == maxRecentEvents {
+		c.recent = append(c.recent[:0], c.recent[1:]...)
+	}
+	c.recent = append(c.recent, ev)
 	for id, sub := range c.eventSubs {
 		select {
 		case sub <- ev:
@@ -404,4 +410,16 @@ func (c *Cache) SubscribeEvents() (events <-chan engine.Event, cancel func()) {
 			close(ch)
 		}
 	}
+}
+
+// RecentEvents returns the last 50 forwarded container events, newest first,
+// so a client that just opened can show activity from before it connected.
+func (c *Cache) RecentEvents() []engine.Event {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make([]engine.Event, len(c.recent))
+	for i, ev := range c.recent {
+		out[len(c.recent)-1-i] = ev
+	}
+	return out
 }

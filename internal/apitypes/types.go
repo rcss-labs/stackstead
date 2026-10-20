@@ -474,6 +474,40 @@ type PeerView struct {
 	Plaintext  bool       `json:"plaintext"`
 }
 
+// FleetServer is one server in GET /api/fleet/stacks. Status is reachable for
+// this server and a PeerView status (or unreachable) for the others; Error says
+// why a peer's stacks are missing. Version is that server's own version.
+type FleetServer struct {
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	Slug       string     `json:"slug"`
+	Local      bool       `json:"local"`
+	Status     string     `json:"status"`
+	Error      string     `json:"error"`
+	LastSeenAt *time.Time `json:"lastSeenAt"`
+	Version    string     `json:"version"`
+}
+
+// FleetStack is a stack of the server whose instance ID is Server.
+type FleetStack struct {
+	Server string `json:"server"`
+	StackSummary
+}
+
+// FleetEvent is a Docker container event of the server whose instance ID is Server.
+type FleetEvent struct {
+	Server string `json:"server"`
+	EventMessage
+}
+
+// FleetStacks is the GET /api/fleet/stacks body: this server first, then the
+// connected ones in the order they were added; events are newest first.
+type FleetStacks struct {
+	Servers []FleetServer `json:"servers"`
+	Stacks  []FleetStack  `json:"stacks"`
+	Events  []FleetEvent  `json:"events"`
+}
+
 // Actions are the lifecycle actions an operation can run.
 var Actions = []string{"up", "down", "restart", "pull", "build"}
 
