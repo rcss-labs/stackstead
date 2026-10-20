@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -391,6 +391,45 @@ describe('Mobile', () => {
     expect(screen.getAllByRole('main')).toHaveLength(1);
     const tabs = within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('link');
     expect(tabs.map((a) => a.getAttribute('aria-label'))).toEqual(['Stacks', 'Containers', 'Storage', 'Networks', 'Settings']);
+  });
+
+  it('crossing 760px keeps the page mounted with its state', async () => {
+    const user = userEvent.setup();
+    let listener: ((e: { matches: boolean }) => void) | undefined;
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener(_type: string, fn: (e: { matches: boolean }) => void) {
+        listener = fn;
+      },
+      removeEventListener() {
+        listener = undefined;
+      },
+    }));
+    renderIn(
+      <Shell {...shellProps} username="ana">
+        <main>
+          <input aria-label="Draft" />
+        </main>
+      </Shell>,
+    );
+    await user.type(screen.getByRole('textbox', { name: 'Draft' }), 'hello');
+    const before = screen.getByRole('textbox', { name: 'Draft' }) as HTMLInputElement;
+
+    act(() => listener?.({ matches: true }));
+    const onMobile = screen.getByRole('textbox', { name: 'Draft' }) as HTMLInputElement;
+    expect(onMobile).toBe(before);
+    expect(onMobile.value).toBe('hello');
+    expect(within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('link')).toHaveLength(5);
+    expect(screen.queryByRole('button', { name: /^Log out/ })).toBeNull();
+    expect(screen.getAllByRole('main')).toHaveLength(1);
+
+    act(() => listener?.({ matches: false }));
+    const backOnDesktop = screen.getByRole('textbox', { name: 'Draft' }) as HTMLInputElement;
+    expect(backOnDesktop).toBe(before);
+    expect(backOnDesktop.value).toBe('hello');
+    expect(screen.getByRole('button', { name: /^Log out/ })).toBeTruthy();
+    expect(screen.getAllByRole('main')).toHaveLength(1);
   });
 
   it('on desktop the sidebar shows with one Main landmark and no tab bar', () => {
