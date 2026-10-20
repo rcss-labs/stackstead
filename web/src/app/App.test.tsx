@@ -2,7 +2,6 @@
 // banners, unsaved-changes guard). Screens are placeholders until Plans 17–22, so these App tests
 // are deferred to the screen plans that make them meaningful:
 // - the Login and Setup form details beyond the minimal login used here (Plan 22)
-// - the /api/networks fetch asserted by the Networks route test, once the Networks screen is ported (Plan 22)
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -46,6 +45,7 @@ beforeEach(() => {
     'GET /api/stacks': () => stacksRes,
     'GET /api/host': () => ({ body: {} }),
     'GET /api/containers': () => ({ body: [containerRow('web')] }),
+    'GET /api/networks': () => ({ body: [] }),
     'GET /api/containers/web000000000': () => ({ status: 404, body: { error: 'not loaded in this test' } }),
     'GET /api/operations?state=running': () => ({ body: running }),
     'GET /api/stacks/web': {
@@ -234,6 +234,7 @@ describe('App routing and session', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Networks' })).toBeTruthy();
     await waitFor(() => expect(document.title).toBe('Networks · Stackstead'));
     expect(within(mainNav()).getByRole('link', { name: 'Networks' }).getAttribute('aria-current')).toBe('page');
+    await waitFor(() => expect(fake.calls.some((c) => c.path === '/api/networks')).toBe(true));
   });
 
   it('shows "Container not found" (not "no longer exists") after navigating from a found container to an unknown one', async () => {

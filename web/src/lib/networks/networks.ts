@@ -28,6 +28,31 @@ export function sortNetworks(rows: Network[]): Network[] {
   return [...rows].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+export interface NetworkSummary {
+  total: number;
+  stacks: number;
+  lan: number;
+  builtin: number;
+}
+
+export function networkSummary(rows: Network[]): NetworkSummary {
+  return {
+    total: rows.length,
+    stacks: rows.filter((n) => n.stack).length,
+    lan: rows.filter((n) => n.driver === 'macvlan' || n.driver === 'ipvlan').length,
+    builtin: rows.filter((n) => n.builtin).length,
+  };
+}
+
+/** The lead sentence's parts: the total always, the others only when present. */
+export function summaryParts(summary: NetworkSummary): string[] {
+  const parts = [`${summary.total} network${summary.total === 1 ? '' : 's'}`];
+  if (summary.stacks > 0) parts.push(`${summary.stacks} owned by stacks`);
+  if (summary.lan > 0) parts.push(`${summary.lan} LAN network${summary.lan === 1 ? '' : 's'}`);
+  if (summary.builtin > 0) parts.push(`${summary.builtin} built-in`);
+  return parts;
+}
+
 export function needsParent(driver: NetworkDriver): boolean {
   return driver === 'macvlan' || driver === 'ipvlan';
 }
