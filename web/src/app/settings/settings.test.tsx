@@ -370,6 +370,19 @@ describe('Settings layout', () => {
 });
 
 describe('Settings section nav', () => {
+  const originalScrollIntoView = Element.prototype.scrollIntoView;
+  afterEach(() => {
+    Element.prototype.scrollIntoView = originalScrollIntoView;
+  });
+
+  it.each(['metaKey', 'ctrlKey', 'shiftKey'] as const)('leaves a %s click to the browser so it can open a new tab', async (modifier) => {
+    fake = installSettingsFetch(tokenStatus(false));
+    mountSettings();
+    const link = within(await screen.findByRole('navigation', { name: 'Settings sections' })).getByRole('link', { name: 'Account' });
+    const notPrevented = fireEvent.click(link, { [modifier]: true });
+    expect(notPrevented).toBe(true);
+  });
+
   it.each([
     ['System', 'System status', 'settings-system'],
     ['Updates', 'Software update', 'settings-updates'],

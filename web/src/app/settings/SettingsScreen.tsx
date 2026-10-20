@@ -38,6 +38,8 @@ const DENSITY_OPTIONS = [
  * page's own scroll-behavior (instant under reduced motion).
  */
 function goToSection(event: MouseEvent<HTMLAnchorElement>, sectionId: string) {
+  // Modified and non-primary clicks open the section in a new tab or window; leave those to the browser.
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   const target = document.getElementById(sectionId);
   if (!target) return;
   event.preventDefault();
