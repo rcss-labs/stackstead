@@ -37,7 +37,7 @@ describe('combineHosts', () => {
       { name: 'a', host: host({ cpu: { percent: null, cores: 4 } }) },
       { name: 'b', host: host({ cpu: { percent: 50, cores: 4 } }) },
     ]);
-    expect(combined?.cpu).toEqual({ percent: 50, cores: 8 });
+    expect(combined?.cpu).toEqual({ percent: 50, cores: 4 }); // only the cores behind the percent
   });
 
   it('keeps the percent null when no server reports one, and a section null when none has it', () => {
@@ -61,5 +61,18 @@ describe('combineHosts', () => {
 
   it('has no combined snapshot when nothing answered', () => {
     expect(combineHosts([{ name: 'a', reason: 'unreachable' }]).host).toBeUndefined();
+  });
+
+  it('names the containers-only servers when sources are mixed, and not when they all match', () => {
+    const mixed = combineHosts([
+      { name: 'a', host: host() },
+      { name: 'b', host: host({ source: 'docker' }) },
+    ]);
+    expect(mixed.notes).toEqual(['b reports containers only (Docker), not the whole host']);
+    const allDocker = combineHosts([
+      { name: 'a', host: host({ source: 'docker' }) },
+      { name: 'b', host: host({ source: 'docker' }) },
+    ]);
+    expect(allDocker.notes).toEqual([]);
   });
 });

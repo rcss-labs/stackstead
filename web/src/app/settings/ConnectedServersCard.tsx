@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 're
 import { api, ApiError } from '$lib/api/client';
 import type { ConnectionToken, PeerProbe, PeerTrust, PeerView, ServerSelf } from '$lib/api/types';
 import { relativeTime } from '$lib/format';
-import { peers, refreshPeers } from '$lib/servers/peers';
+import { peers, refreshPeers, setSelfName } from '$lib/servers/peers';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -47,7 +47,9 @@ function ThisServer({ self, onSaved }: { self: ServerSelf; onSaved: (next: Serve
     setBusy(true);
     setError(undefined);
     try {
-      onSaved(await api.updateServerSelf({ name, advertisedUrl: advertised }));
+      const saved = await api.updateServerSelf({ name, advertisedUrl: advertised });
+      setSelfName(saved.name);
+      onSaved(saved);
     } catch (err) {
       setError(err);
     } finally {

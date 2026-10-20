@@ -2,6 +2,8 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { api } from '$lib/api/client';
+import { startHost } from '$lib/stores/host';
 import { get } from '$lib/store';
 import { toasts } from '$lib/stores/toasts';
 import type { FleetServer, FleetStack, FleetStacks, HostSnapshot, MetricsSummary, StackSummary } from '$lib/api/types';
@@ -57,6 +59,7 @@ const hostOf = (cpu: HostSnapshot['cpu'], memUsed: number, memTotal: number, dis
 });
 
 let fake: FakeFetch;
+let stopHost: (() => void) | undefined;
 let stream: FakeStream;
 let view: ReturnType<typeof render>;
 
@@ -84,6 +87,8 @@ function mount(data: FleetStacks, extra: Record<string, { status?: number; body?
 }
 
 afterEach(() => {
+  stopHost?.();
+  stopHost = undefined;
   cleanup();
   toasts.reset();
   fake.restore();
@@ -239,6 +244,7 @@ describe('All stacks', () => {
       'GET /api/host': { body: hostOf({ percent: 10, cores: 2 }, 2 * GB, 8 * GB, 60 * GB, 100 * GB) },
       'GET /api/servers/b1/api/host': { body: hostOf({ percent: 40, cores: 6 }, 4 * GB, 16 * GB, 100 * GB, 300 * GB) },
     });
+    stopHost = startHost({ host: api.host });
     const cpu = await waitFor(() => {
       const cell = document.querySelector('[data-stat="cpu"]');
       expect(cell).toBeTruthy();
@@ -249,8 +255,8 @@ describe('All stacks', () => {
     const mem = document.querySelector('[data-stat="memory"]') as HTMLElement;
     expect(within(mem).getByText('6.0 GiB')).toBeTruthy();
     expect(within(mem).getByText('24.0 GiB')).toBeTruthy();
-    expect(screen.getByText('nas not included: unreachable')).toBeTruthy();
-    expect(screen.getByText(/2 servers/)).toBeTruthy();
+    expect(screen.getByText(/nas not included: unreachable/)).toBeTruthy();
+    expect(screen.getByText(/Host stats combined from 2 servers/)).toBeTruthy();
   });
 
   it('leaves a server whose host request fails out of the combined stats with a note', async () => {
@@ -258,7 +264,8 @@ describe('All stacks', () => {
       'GET /api/host': { body: hostOf({ percent: 10, cores: 2 }, 2 * GB, 8 * GB, 60 * GB, 100 * GB) },
       'GET /api/servers/b1/api/host': { status: 502, body: { error: 'peer down' } },
     });
-    expect(await screen.findByText('mini-02 not included: unavailable')).toBeTruthy();
+    stopHost = startHost({ host: api.host });
+    expect(await screen.findByText(/mini-02 not included: unavailable \(peer down\)/)).toBeTruthy();
     const cpu = document.querySelector('[data-stat="cpu"]') as HTMLElement;
     expect(within(cpu).getByText('10.0%')).toBeTruthy();
   });

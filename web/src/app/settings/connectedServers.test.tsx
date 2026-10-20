@@ -2,7 +2,8 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import { api } from '$lib/api/client';
-import { startPeers } from '$lib/servers/peers';
+import { get } from '$lib/store';
+import { selfName, startPeers } from '$lib/servers/peers';
 import type { PeerView, ServerSelf } from '$lib/api/types';
 import { installFakeFetch, type FakeFetch, type Routes } from '../../vitest-setup';
 import { ConnectedServersCard } from './ConnectedServersCard';
@@ -270,5 +271,7 @@ describe('ConnectedServersCard', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(fake!.calls.some((c) => c.method === 'PUT' && c.path === '/api/peers/self')).toBe(true));
     expect(fake!.calls.find((c) => c.method === 'PUT')!.body).toEqual({ name: 'Mini-One', advertisedUrl: '' });
+    // The sidebar and mobile switcher read this store, so a rename shows without a reload.
+    await waitFor(() => expect(get(selfName)).toBe('Mini-One'));
   });
 });

@@ -22,6 +22,11 @@ const selfNameState = writable<string | undefined>(undefined);
 /** This server's own name; undefined until it loads (or if it cannot). */
 export const selfName: Readable<string | undefined> = { subscribe: selfNameState.subscribe };
 
+/** Pushes a name the user just saved, so the sidebar follows without a reload. */
+export function setSelfName(name: string): void {
+  if (name) selfNameState.set(name);
+}
+
 let list: (() => Promise<PeerView[]>) | null = null;
 let loadSelf: (() => Promise<ServerSelf>) | null = null;
 let selfRequested = false;

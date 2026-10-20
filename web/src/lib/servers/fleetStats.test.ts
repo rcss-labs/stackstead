@@ -52,31 +52,54 @@ describe('fleet stats', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(get(stats.state).a0.host).toBe(host);
     fail = true;
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(10_000);
     expect(get(stats.state).a0.host).toBeUndefined();
     expect(get(stats.state).a0.hostError).toBe('timeout');
     stats.stop();
   });
 
-  it('polls every 5 s only while visible and not after stop', async () => {
+  it('polls summaries every 30 s and hosts every 10 s, only while visible and not after stop', async () => {
     const loadSummary = vi.fn(async () => summary('x'));
+    const loadHost = vi.fn(async () => host);
     const { doc, set } = fakeDoc();
-    const stats = createFleetStats({ loadSummary, loadHost: async () => host, doc });
+    const stats = createFleetStats({ loadSummary, loadHost, doc });
     stats.setServers(['a0']);
     stats.start();
     await vi.advanceTimersByTimeAsync(0);
-    expect(loadSummary).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(loadSummary).toHaveBeenCalledTimes(2);
+    expect([loadSummary.mock.calls.length, loadHost.mock.calls.length]).toEqual([1, 1]);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect([loadSummary.mock.calls.length, loadHost.mock.calls.length]).toEqual([2, 4]);
     set('hidden');
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(loadSummary).toHaveBeenCalledTimes(2);
+    expect([loadSummary.mock.calls.length, loadHost.mock.calls.length]).toEqual([2, 4]);
     set('visible');
     await vi.advanceTimersByTimeAsync(0);
-    expect(loadSummary).toHaveBeenCalledTimes(3);
+    expect([loadSummary.mock.calls.length, loadHost.mock.calls.length]).toEqual([3, 5]);
     stats.stop();
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(loadSummary).toHaveBeenCalledTimes(3);
+    expect([loadSummary.mock.calls.length, loadHost.mock.calls.length]).toEqual([3, 5]);
+  });
+
+  it('skips a server whose previous request of that kind is still running', async () => {
+    const loadSummary = vi.fn(() => new Promise<MetricsSummary>(() => undefined));
+    const loadHost = vi.fn(() => new Promise<HostSnapshot>(() => undefined));
+    const stats = createFleetStats({ loadSummary, loadHost, doc: fakeDoc().doc });
+    stats.setServers(['a0']);
+    stats.start();
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(loadSummary).toHaveBeenCalledTimes(1);
+    expect(loadHost).toHaveBeenCalledTimes(1);
+    stats.stop();
+  });
+
+  it('does not fetch the host of a server the caller already has it for', async () => {
+    const loadHost = vi.fn(async () => host);
+    const stats = createFleetStats({ loadSummary: async () => summary('x'), loadHost, hostOf: (id) => id !== 'a0', doc: fakeDoc().doc });
+    stats.setServers(['a0', 'b1']);
+    stats.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(loadHost.mock.calls).toEqual([['b1']]);
+    stats.stop();
   });
 
   it('loads a newly reachable server at once and forgets one that went away', async () => {

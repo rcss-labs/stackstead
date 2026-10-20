@@ -81,9 +81,11 @@ export default function AllStacks() {
   const localIdRef = useRef<string | undefined>(undefined);
   const fleetStats = useMemo(() => {
     const clientFor = (id: string) => (id === localIdRef.current ? api : peerApi(id));
-    return createFleetStats({ loadSummary: (id) => clientFor(id).metricsSummary(), loadHost: (id) => clientFor(id).host() });
+    // This server's host comes from the shell's own host store, so /api/host is not fetched twice.
+    return createFleetStats({ loadSummary: (id) => clientFor(id).metricsSummary(), loadHost: (id) => clientFor(id).host(), hostOf: (id) => id !== localIdRef.current });
   }, []);
   const stats = useStore(fleetStats.state);
+  const localHost = useStore(scope.host);
   const liveState = useStore(scope.live);
   const localOps = useStore(scope.runningOps);
   const [selected, setSelected] = useState<string | null>(null);
@@ -127,11 +129,13 @@ export default function AllStacks() {
   // A server that has not answered yet is neither counted nor listed; one that failed or is unreachable is named.
   const hostInputs: HostInput[] = servers.flatMap((server): HostInput[] => {
     if (server.status !== 'reachable') return [{ name: server.name, reason: server.status === 'incompatible' ? 'incompatible version' : 'unreachable' }];
+    if (server.local) return localHost ? [{ name: server.name, host: localHost }] : [];
     const entry = stats[server.id];
-    if (!entry) return [];
-    return [{ name: server.name, host: entry.host, reason: 'unavailable' }];
+    if (!entry || (!entry.host && !entry.hostError)) return [];
+    return [{ name: server.name, host: entry.host, reason: entry.hostError ? `unavailable (${entry.hostError})` : 'unavailable' }];
   });
-  const { host: combinedHost, notes: hostNotes } = combineHosts(hostInputs);
+  const { host: combinedHost, notes } = combineHosts(hostInputs);
+  const hostNotes = combinedHost ? [`Host stats combined from ${combinedHost.hostname}`, ...notes] : notes;
 
   const slugOf = useCallback(
     (id: string) => {

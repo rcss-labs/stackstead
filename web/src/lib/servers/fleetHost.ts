@@ -19,11 +19,16 @@ export interface CombinedHost {
 const sum = (values: number[]) => values.reduce((total, v) => total + v, 0);
 
 /**
- * CPU percent is the core-weighted average of the servers that report one, cores are summed;
+ * CPU percent is the core-weighted average of the servers that report one, cores are those servers' summed (all of them if none reports);
  * memory and disk (used = total - free) are summed. Sections only some servers have cover just those servers.
  */
 export function combineHosts(inputs: HostInput[]): CombinedHost {
   const notes = inputs.filter((i) => !i.host).map((i) => `${i.name} not included: ${i.reason ?? 'unavailable'}`);
+  const present = inputs.filter((i): i is HostInput & { host: HostSnapshot } => !!i.host);
+  // Docker-sourced figures cover containers only; beside whole-host figures they would be misread as the host.
+  if (present.some((i) => i.host.source === 'docker') && present.some((i) => i.host.source !== 'docker')) {
+    for (const i of present) if (i.host.source === 'docker') notes.push(`${i.name} reports containers only (Docker), not the whole host`);
+  }
   const hosts = inputs.flatMap((i) => (i.host ? [i.host] : []));
   if (hosts.length === 0) return { host: undefined, notes };
 
@@ -45,7 +50,8 @@ export function combineHosts(inputs: HostInput[]): CombinedHost {
         ? null
         : {
             percent: measuredCores > 0 ? sum(measured.map((c) => c.percent * c.cores)) / measuredCores : null,
-            cores: sum(cpus.map((c) => c.cores)),
+            // Only the cores behind the percentage, so the two describe the same machines.
+            cores: measuredCores > 0 ? measuredCores : sum(cpus.map((c) => c.cores)),
           },
     memory:
       memories.length === 0
