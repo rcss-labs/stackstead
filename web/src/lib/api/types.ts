@@ -767,4 +767,8 @@ export type PeerErrorCode =
   | 'peer_proxy'
   | 'peer_version'
   | 'peer_wrong_instance'
-  | 'peer_unknown';
+  | 'peer_unknown'
+  | 'peer_old'
+  | 'peer_bad_path'
+  | 'peer_forbidden'
+  | 'peer_not_paired';

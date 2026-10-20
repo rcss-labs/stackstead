@@ -20,17 +20,6 @@ const messageOf = (err: unknown) => (err instanceof ApiError ? err.message : 'Re
 const fieldError = (err: unknown, name: string) =>
   err instanceof ApiError ? err.fields.find((f) => f.field === name)?.message : undefined;
 
-/** "0.4.2" or "v0.4.2-rc1" -> "0.4"; anything unparseable is returned as is. */
-function majorMinor(version: string): string {
-  const m = /^v?(\d+)\.(\d+)/.exec(version);
-  return m ? `${m[1]}.${m[2]}` : version;
-}
-
-/** "v0.4" when the version parses as X.Y; otherwise the raw string (e.g. "dev"), never "vdev". */
-function displayVersion(version: string): string {
-  return /^v?\d+\.\d+/.test(version) ? `v${majorMinor(version)}` : version;
-}
-
 function hostOf(url: string): string {
   try {
     return new URL(url).hostname;
@@ -174,6 +163,7 @@ function AddServer({ self }: { self: ServerSelf }) {
   const [pinned, setPinned] = useState(false);
   const [caPem, setCaPem] = useState('');
   const [plaintext, setPlaintext] = useState(false);
+  const [selfCaPem, setSelfCaPem] = useState('');
   const [busy, setBusy] = useState<'probe' | 'add' | null>(null);
   const [error, setError] = useState<unknown>();
   const host = hostOf(url);
@@ -184,6 +174,7 @@ function AddServer({ self }: { self: ServerSelf }) {
     setPinned(false);
     setCaPem('');
     setPlaintext(false);
+    setSelfCaPem('');
   }
 
   async function check() {
@@ -199,8 +190,10 @@ function AddServer({ self }: { self: ServerSelf }) {
     }
   }
 
-  const needsTrust = probe !== null && !probe.systemTrusted && !plaintext;
+  // Certificate trust is an https matter; an http address only needs the plaintext acceptance.
+  const needsTrust = probe !== null && !probe.plaintextAllowed && !probe.systemTrusted;
   const trusted = !needsTrust || pinned || caPem.trim() !== '';
+  const plaintextAccepted = !probe?.plaintextAllowed || plaintext;
 
   async function add(event: FormEvent) {
     event.preventDefault();
@@ -212,7 +205,8 @@ function AddServer({ self }: { self: ServerSelf }) {
     setError(undefined);
     try {
       // The remote must reach us over the same transport, so our side mirrors the plaintext choice.
-      await api.addPeer({ url, token, trust, selfTrust: { ...NO_TRUST, plaintext }, advertisedUrl });
+      // With no CA given for this server, the backend pins the certificate it finds at its own address.
+      await api.addPeer({ url, token, trust, selfTrust: { ...NO_TRUST, caPem: plaintext ? '' : selfCaPem.trim(), plaintext }, advertisedUrl });
       setUrl('');
       setToken('');
       resetProbe();
@@ -226,7 +220,7 @@ function AddServer({ self }: { self: ServerSelf }) {
 
   const special = peerErrorCopy(error, host);
   // Fields whose input is on screen show their own error; anything else goes in the banner.
-  const shown = ['url', 'token', ...(probe && !probe.systemTrusted ? ['trust.pinSha256'] : []), ...(probe?.plaintextAllowed ? ['trust.plaintext'] : []), ...(probe ? ['advertisedUrl'] : [])];
+  const shown = ['url', 'token', ...(needsTrust ? ['trust.pinSha256'] : []), ...(probe?.plaintextAllowed ? ['trust.plaintext'] : []), ...(probe ? ['advertisedUrl'] : [])];
   const leftover = error instanceof ApiError ? error.fields.filter((f) => !shown.includes(f.field)) : [];
   const general =
     error && !special
@@ -270,7 +264,7 @@ function AddServer({ self }: { self: ServerSelf }) {
       </div>
       {probe && (
         <>
-          {!probe.systemTrusted && (
+          {needsTrust && (
             <>
               <p>
                 This server&apos;s certificate is not signed by a trusted authority. Fingerprint (SHA-256):
@@ -296,13 +290,20 @@ function AddServer({ self }: { self: ServerSelf }) {
             </Field>
           )}
           <p>{`${host} will reach this server at ${advertisedUrl}`}</p>
+          {!plaintext && (
+            <Field label="This server's CA certificate (PEM)" id="cs-add-self-ca" hint="Only if this server's certificate is signed by a private CA; otherwise its certificate is pinned automatically.">
+              {({ readOnly: _, ...c }) => (
+                <textarea {...c} className={styles.pem} value={selfCaPem} onChange={(e) => setSelfCaPem(e.target.value)} />
+              )}
+            </Field>
+          )}
           {advertisedError && <Banner kind="danger" title="Advertised address rejected">{advertisedError}</Banner>}
           <div>
             <Button
               variant="primary"
               type="submit"
               loading={busy === 'add'}
-              disabledReason={!advertisedUrl ? 'Set this server\'s advertised address under "This server" first.' : !trusted ? 'Trust the certificate or paste its CA first.' : !token ? 'Enter the connection token first.' : undefined}
+              disabledReason={!advertisedUrl ? 'Set this server\'s advertised address under "This server" first.' : !plaintextAccepted ? 'Accept sending the credential unencrypted first.' : !trusted ? 'Trust the certificate or paste its CA first.' : !token ? 'Enter the connection token first.' : undefined}
             >
               Add server
             </Button>
@@ -313,9 +314,8 @@ function AddServer({ self }: { self: ServerSelf }) {
   );
 }
 
-function PeerRow({ peer, selfVersion, onRemove }: { peer: PeerView; selfVersion: string; onRemove: () => void }) {
+function PeerRow({ peer, onRemove }: { peer: PeerView; onRemove: () => void }) {
   const removed = peer.status === 'removed';
-  const mismatch = !removed && !peer.compatible;
   return (
     <li className={styles.peer}>
       <div className={styles.peerMain}>
@@ -326,7 +326,6 @@ function PeerRow({ peer, selfVersion, onRemove }: { peer: PeerView; selfVersion:
           {peer.lastSeenAt && ` · seen ${relativeTime(peer.lastSeenAt, new Date())}`}
         </span>
         {removed && <span>{`${peer.name} removed this connection`}</span>}
-        {mismatch && <span>{`${peer.name} runs ${displayVersion(peer.version)}, this server ${displayVersion(selfVersion)}. Update to match`}</span>}
         {peer.lastError && !removed && <span className={styles.meta}>{peer.lastError}</span>}
       </div>
       <Pill tone={peer.status === 'reachable' ? 'success' : removed || peer.status === 'pending' ? 'muted' : 'danger'}>{peer.status}</Pill>
@@ -418,7 +417,6 @@ export function ConnectedServersCard() {
                     <PeerRow
                       key={peer.id}
                       peer={peer}
-                      selfVersion={self.version}
                       onRemove={() => (peer.status === 'removed' ? void remove(peer) : setRemoving(peer))}
                     />
                   ))}
