@@ -237,10 +237,10 @@ describe('build shape', () => {
       .map((f) => `assets/${f}`)
       .filter((f) => !lazyFiles.includes(f));
     // One string from the yaml parser and one from stackYaml.ts. The eager code is one merged chunk, so they reveal folded-in code.
-    // Presence in a lazy chunk is not asserted here: it holds once the lazy New stack screen imports stackYaml.ts (a later task),
-    // and until then the bundler drops the unused module entirely.
     const markers = ['Implicit map keys need to be followed by map values', 'A stack needs a services: section'];
+    // The lazy New stack screen imports stackYaml.ts, so both strings must ship in some lazy chunk and in no eager one.
     for (const marker of markers) {
+      expect(lazyFiles.some((f: string) => readFileSync(join(dist, f), 'utf8').includes(marker)), `a lazy chunk carries ${marker}`).toBe(true);
       for (const file of eagerFiles) expect(readFileSync(join(dist, file), 'utf8'), `${file} must not contain ${marker}`).not.toContain(marker);
     }
   });

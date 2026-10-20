@@ -378,7 +378,7 @@ function hasNonFinite(v: unknown): boolean {
 
 /**
  * YAML 1.2 core reads a plain 0755 as decimal 755, but the Go server (yaml.v3) reads legacy octal as 493. The create request
- * carries JSON values the server re-renders, so plain scalars are read the way Go reads them. Hex (0x1F) and 1_000 already agree.
+ * carries JSON values the server re-renders, so plain scalars are read the way Go reads them. Hex (0x1F) already agrees. 1_000 does not: Go reads it as 1000 while this library keeps the text "1_000"; that is left as is.
  * Visiting the whole document also covers anchored values, merge keys and top-level x-* blocks. Quoted scalars are untouched.
  */
 function readLegacyOctal(doc: Document.Parsed): void {

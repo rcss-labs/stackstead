@@ -1,4 +1,4 @@
-import { cleanup, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { get } from '$lib/store';
@@ -18,6 +18,13 @@ vi.mock('$lib/stores/live', async (orig) => {
     refreshStatus: vi.fn(),
   };
 });
+
+// jsdom cannot lay out CodeMirror; a failing editor chunk leaves the textarea fallback, which tests can type into.
+vi.mock('$lib/stacks/cm', () => ({
+  createEditor: () => {
+    throw new Error('no editor in jsdom');
+  },
+}));
 
 /** The service cards, without the compose.yaml preview region. */
 const serviceCards = () => screen.getAllByRole('region').filter((r) => r.getAttribute('aria-labelledby') !== 'preview-heading');
@@ -446,5 +453,73 @@ describe('New stack screen', () => {
     await submit(user);
     await waitFor(() => expect(post()).toBeTruthy());
     expect(JSON.stringify(post()?.body)).toContain('frontend');
+  });
+});
+
+describe('New stack screen: written Dockerfiles', () => {
+  const dockerfileBox = (service: string) => screen.getByRole('textbox', { name: `Dockerfile for ${service}` }) as HTMLTextAreaElement;
+
+  it('Write a Dockerfile sends the managed build and the content', async () => {
+    const user = await mount();
+    await user.type(screen.getByLabelText('Stack name'), 'web');
+    await user.click(screen.getByRole('radio', { name: 'Write a Dockerfile' }));
+    fireEvent.change(dockerfileBox('web'), { target: { value: 'FROM busybox\n' } });
+    await submit(user);
+    await waitFor(() => expect(post()).toBeTruthy());
+    expect(post()?.body).toEqual({
+      name: 'web',
+      services: [
+        {
+          service: 'web',
+          config: { build: { context: './web' }, image: 'stackstead/web:latest', limits: {} },
+          dockerfile: { content: 'FROM busybox\n' },
+        },
+      ],
+    });
+  });
+
+  it('renaming the service moves its Dockerfile', async () => {
+    const user = await mount();
+    await user.type(screen.getByLabelText('Stack name'), 'web');
+    await user.click(screen.getByRole('radio', { name: 'Write a Dockerfile' }));
+    await user.clear(screen.getByLabelText('Service name'));
+    await user.type(screen.getByLabelText('Service name'), 'api');
+    expect(dockerfileBox('api')).toBeTruthy(); // the editor's accessible name follows the rename
+    await submit(user);
+    await waitFor(() => expect(post()).toBeTruthy());
+    expect((post()?.body as { services: { config: { build: unknown } }[] }).services[0].config.build).toEqual({ context: './api' });
+  });
+
+  it('a Dockerfile error from the server shows on the card and is tied to the editor', async () => {
+    const user = await mount({
+      'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'services[0].dockerfile', message: 'Dockerfile is larger than 1 MiB' }] } },
+    });
+    await user.type(screen.getByLabelText('Stack name'), 'web');
+    await user.click(screen.getByRole('radio', { name: 'Write a Dockerfile' }));
+    await submit(user);
+    const message = await screen.findByText('Dockerfile is larger than 1 MiB');
+    const box = dockerfileBox('web');
+    expect(box.getAttribute('aria-invalid')).toBe('true');
+    expect(message.closest('[id]')?.id).toBe(box.getAttribute('aria-describedby'));
+  });
+
+  it('shows what a Dockerfile card builds in its summary', async () => {
+    const user = await mount();
+    await user.type(screen.getByLabelText('Stack name'), 'web');
+    await user.click(screen.getByRole('radio', { name: 'Write a Dockerfile' }));
+    expect(screen.getByRole('button', { name: /^web Dockerfile: stackstead\/web:latest/ })).toBeTruthy();
+  });
+
+  it('a Dockerfile error is dropped when the source moves away from the Dockerfile', async () => {
+    const user = await mount({
+      'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'services[0].dockerfile', message: 'Dockerfile is required' }] } },
+    });
+    await user.type(screen.getByLabelText('Stack name'), 'web');
+    await user.click(screen.getByRole('radio', { name: 'Write a Dockerfile' }));
+    await submit(user);
+    await screen.findByText('Dockerfile is required');
+    await user.click(screen.getByRole('radio', { name: 'From Image' }));
+    await addImage(user);
+    expect(screen.getByRole('button', { name: /^web/ }).textContent).not.toContain('error');
   });
 });

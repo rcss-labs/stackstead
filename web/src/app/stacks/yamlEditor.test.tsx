@@ -9,6 +9,8 @@ interface Recorded {
   setValue: ReturnType<typeof vi.fn>;
   setReadonly: ReturnType<typeof vi.fn>;
   focus: ReturnType<typeof vi.fn>;
+  setAriaLabel: ReturnType<typeof vi.fn>;
+  setAriaState: ReturnType<typeof vi.fn>;
   current: string;
 }
 const created: Recorded[] = [];
@@ -16,10 +18,10 @@ const created: Recorded[] = [];
 // jsdom cannot lay out CodeMirror, so the editor factory is stubbed; the real one is exercised in the changed-lines and diff tests.
 vi.mock('$lib/stacks/cm', () => ({
   createEditor: (opts: EditorOptions) => {
-    const rec: Recorded = { opts, destroy: vi.fn(), setValue: vi.fn(), setReadonly: vi.fn(), focus: vi.fn(), current: opts.value };
+    const rec: Recorded = { opts, destroy: vi.fn(), setValue: vi.fn(), setReadonly: vi.fn(), focus: vi.fn(), setAriaLabel: vi.fn(), setAriaState: vi.fn(), current: opts.value };
     rec.setValue.mockImplementation((v: string) => (rec.current = v));
     created.push(rec);
-    return { getValue: () => rec.current, setValue: rec.setValue, setReadonly: rec.setReadonly, setOriginal: vi.fn(), goToLine: vi.fn(), focus: rec.focus, destroy: rec.destroy };
+    return { getValue: () => rec.current, setValue: rec.setValue, setReadonly: rec.setReadonly, setOriginal: vi.fn(), goToLine: vi.fn(), focus: rec.focus, setAriaLabel: rec.setAriaLabel, setAriaState: rec.setAriaState, destroy: rec.destroy };
   },
 }));
 
@@ -114,5 +116,23 @@ describe('YamlEditor late chunk', () => {
     rerender(<YamlEditor value="a" ariaLabel="x" readonly />);
     await waitFor(() => expect(created[0].setReadonly).toHaveBeenCalledWith(true));
     expect(created).toHaveLength(1);
+  });
+});
+
+describe('YamlEditor accessible name and error', () => {
+  it('a changed ariaLabel reaches CodeMirror without recreating it', async () => {
+    const { rerender } = render(<YamlEditor value="a" ariaLabel="Dockerfile for web" />);
+    await waitFor(() => expect(created).toHaveLength(1));
+    rerender(<YamlEditor value="a" ariaLabel="Dockerfile for api" />);
+    await waitFor(() => expect(created[0].setAriaLabel).toHaveBeenLastCalledWith('Dockerfile for api'));
+    expect(created).toHaveLength(1);
+  });
+
+  it('passes invalid and describedBy to CodeMirror and to the textarea fallback', async () => {
+    render(<YamlEditor value="a" ariaLabel="x" invalid describedBy="err" />);
+    const ta = screen.getByRole('textbox');
+    expect(ta.getAttribute('aria-invalid')).toBe('true');
+    expect(ta.getAttribute('aria-describedby')).toBe('err');
+    await waitFor(() => expect(created[0]?.setAriaState).toHaveBeenLastCalledWith({ invalid: true, describedBy: 'err' }));
   });
 });

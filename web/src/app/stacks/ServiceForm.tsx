@@ -466,9 +466,9 @@ export function ServiceForm({
         ) : form.source === 'dockerfile' ? (
           <>
             <div className={styles.editor}>
-              <YamlEditor language="dockerfile" ariaLabel={`Dockerfile for ${name || 'this service'}`} readonly={sourceReadOnly} value={form.dockerfileText} onChange={(dockerfileText) => patch({ dockerfileText })} />
+              <YamlEditor language="dockerfile" ariaLabel={`Dockerfile for ${name || 'this service'}`} invalid={Boolean(shown['dockerfileText'])} describedBy={shown['dockerfileText'] ? id('dockerfileText-error') : undefined} readonly={sourceReadOnly} value={form.dockerfileText} onChange={(dockerfileText) => patch({ dockerfileText })} />
               {shown['dockerfileText'] && (
-                <p className={styles.fieldError} role="alert" tabIndex={-1} data-form-error>
+                <p className={styles.fieldError} id={id('dockerfileText-error')} role="alert" tabIndex={-1} data-form-error>
                   <span aria-hidden="true">✖ </span>
                   {shown['dockerfileText']}
                 </p>
