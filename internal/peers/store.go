@@ -141,6 +141,17 @@ func (s *Store) CountPeers(ctx context.Context) (int, error) {
 // InsertPeer adds a peer, assigning a slug unique among peers: the name's
 // slug, then -2, -3, ... A peer with the same instance ID yields ErrAlreadyPaired.
 func (s *Store) InsertPeer(ctx context.Context, p Peer, inHash string) error {
+	return s.insertPeer(ctx, p, inHash, false)
+}
+
+// InsertOrReplaceInactivePeer is InsertPeer, except that an existing removed
+// or pending row for the same instance ID is replaced (in one transaction)
+// instead of refused; an active row still yields ErrAlreadyPaired.
+func (s *Store) InsertOrReplaceInactivePeer(ctx context.Context, p Peer, inHash string) error {
+	return s.insertPeer(ctx, p, inHash, true)
+}
+
+func (s *Store) insertPeer(ctx context.Context, p Peer, inHash string, replaceInactive bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -151,7 +162,18 @@ func (s *Store) InsertPeer(ctx context.Context, p Peer, inHash string) error {
 		return err
 	}
 	if exists > 0 {
-		return ErrAlreadyPaired
+		if !replaceInactive {
+			return ErrAlreadyPaired
+		}
+		res, err := tx.ExecContext(ctx, `DELETE FROM peers WHERE instance_id = ? AND state != ?`, p.InstanceID, string(StateActive))
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			return ErrAlreadyPaired
+		}
 	}
 	slug, err := uniqueSlug(ctx, tx, p.Name, "")
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/rcss-labs/stackstead/internal/apitypes"
 )
@@ -148,9 +149,9 @@ func (s *Service) pair(ctx context.Context, req apitypes.PeerPairRequest) (apity
 	if req.InstanceID == own.InstanceID {
 		return apitypes.PeerPairResponse{}, ErrSelfPair
 	}
-	if _, err := s.cfg.Store.Peer(ctx, req.InstanceID); err == nil {
+	if existing, err := s.cfg.Store.Peer(ctx, req.InstanceID); err == nil && existing.State == StateActive {
 		return apitypes.PeerPairResponse{}, ErrAlreadyPaired
-	} else if !errors.Is(err, ErrPeerNotFound) {
+	} else if err != nil && !errors.Is(err, ErrPeerNotFound) {
 		return apitypes.PeerPairResponse{}, err
 	}
 	trust := TLSOptions{CAPEM: req.Trust.CAPEM, PinSHA256: req.Trust.PinSHA256, Plaintext: req.Trust.Plaintext}
@@ -169,7 +170,7 @@ func (s *Service) pair(ctx context.Context, req apitypes.PeerPairRequest) (apity
 	}
 	now := s.cfg.Now()
 	name := cleanName(hello.Name, req.Name)
-	err = s.cfg.Store.InsertPeer(ctx, Peer{
+	err = s.cfg.Store.InsertOrReplaceInactivePeer(ctx, Peer{
 		InstanceID: req.InstanceID, Name: name, URL: baseURL, Version: hello.Version, TLS: trust,
 		OutCredential: Secret(req.Credential), StackCount: hello.StackCount, State: StateActive,
 		CreatedAt: now, LastSeenAt: &now,
@@ -230,15 +231,29 @@ func asPeerError(server string, err error) error {
 	if errors.As(err, &pe) {
 		if pe.Code == CodeUnreachable {
 			pe.Msg = "could not reach " + server
+			if reason := errors.Unwrap(pe); reason != nil {
+				pe.Msg += ": " + reason.Error()
+			}
 		}
 		return pe
 	}
 	return &PeerError{Code: CodeProxy, Server: server, Msg: server + " answered with an error: " + err.Error()}
 }
 
+// stripUnprintable drops control and Unicode format characters (such as the
+// right-to-left override) so a peer cannot disguise its name in logs and UI.
+func stripUnprintable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 func cleanName(preferred, fallback string) string {
 	for _, candidate := range []string{preferred, fallback} {
-		name := strings.TrimSpace(candidate)
+		name := strings.TrimSpace(stripUnprintable(candidate))
 		if name == "" {
 			continue
 		}
@@ -252,7 +267,7 @@ func cleanName(preferred, fallback string) string {
 
 // ApplyUpdate renames the calling peer and/or changes its address.
 func (s *Service) ApplyUpdate(ctx context.Context, from Peer, u apitypes.PeerUpdate) error {
-	name := strings.TrimSpace(u.Name)
+	name := strings.TrimSpace(stripUnprintable(u.Name))
 	if name == "" {
 		return fmt.Errorf("%w: name is required", ErrInvalidRequest)
 	}

@@ -254,6 +254,9 @@ func TestPairFailures(t *testing.T) {
 			if c.wantCode != "" && body.Code != c.wantCode {
 				t.Errorf("code = %q, want %q", body.Code, c.wantCode)
 			}
+			if c.wantCode == "peer_unreachable" && !strings.Contains(body.Error, c.wantSub+": ") {
+				t.Errorf("error %q lacks a reason after the address", body.Error)
+			}
 			if !strings.Contains(body.Error, c.wantSub) {
 				t.Errorf("error %q lacks %q", body.Error, c.wantSub)
 			}
@@ -267,6 +270,34 @@ func TestPairFailures(t *testing.T) {
 				if err := env.store.ConsumeToken(ctx, token, func() error { return nil }); err != nil {
 					t.Errorf("token no longer usable: %v", err)
 				}
+			}
+		})
+	}
+}
+
+func TestPairReplacesInactiveRecord(t *testing.T) {
+	for _, state := range []peers.PeerState{peers.StateRemoved, peers.StatePending} {
+		t.Run(string(state), func(t *testing.T) {
+			env := newPeerEnv(t)
+			ctx := context.Background()
+			env.addPeer(t, "inst-a", "old-name", "ssp_stale", state)
+			a := fakeServerA(t, "ssp_from-a", "inst-a", false)
+			token, _, _ := env.store.CreateToken(ctx)
+			rec := env.do(t, "POST", "/api/peer/pair", pairBody(t, "inst-a", a.URL, "ssp_from-a", apitypes.PeerTrust{Plaintext: true}), withHeader(peerHeader, token))
+			if rec.Code != 200 {
+				t.Fatalf("pair = %d %s", rec.Code, rec.Body)
+			}
+			var resp apitypes.PeerPairResponse
+			_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+			list, _ := env.store.Peers(ctx)
+			if len(list) != 1 || list[0].State != peers.StateActive || list[0].OutCredential.Reveal() != "ssp_from-a" {
+				t.Fatalf("peers = %+v", list)
+			}
+			if _, err := env.store.PeerByInboundHash(ctx, peers.HashSecret(resp.Credential)); err != nil {
+				t.Errorf("fresh credential not stored: %v", err)
+			}
+			if _, err := env.store.PeerByInboundHash(ctx, peers.HashSecret("ssp_stale")); err == nil {
+				t.Errorf("stale credential still valid")
 			}
 		})
 	}

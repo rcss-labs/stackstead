@@ -78,3 +78,27 @@ func TestApplyUpdateRecomputesSlugUniquely(t *testing.T) {
 		t.Errorf("slug = %q, want alpha-2", again.Slug)
 	}
 }
+
+func TestPeerNamesLoseControlAndFormatCharacters(t *testing.T) {
+	if got := cleanName("mini\n\u202e-01\x00", ""); got != "mini-01" {
+		t.Errorf("cleanName = %q", got)
+	}
+	if got := cleanName("\n\u202e", "fallback"); got != "fallback" {
+		t.Errorf("cleanName fallback = %q", got)
+	}
+	ctx := context.Background()
+	svc, st := newTestService(t)
+	if err := st.InsertPeer(ctx, Peer{InstanceID: "a", Name: "Alpha", State: StateActive}, HashSecret("a")); err != nil {
+		t.Fatal(err)
+	}
+	from, _ := st.Peer(ctx, "a")
+	if err := svc.ApplyUpdate(ctx, from, apitypes.PeerUpdate{Name: "Be\nta\u202e"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.Peer(ctx, "a"); got.Name != "Beta" {
+		t.Errorf("name = %q", got.Name)
+	}
+	if err := svc.ApplyUpdate(ctx, from, apitypes.PeerUpdate{Name: "\n\u202e"}); !errors.Is(err, ErrInvalidRequest) {
+		t.Errorf("blank-after-strip = %v", err)
+	}
+}
