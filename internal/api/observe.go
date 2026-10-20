@@ -145,6 +145,7 @@ type logItem struct {
 	container engine.Container
 	line      engine.LogLine
 	err       error
+	end       bool // follow mode: nothing is left to follow
 }
 
 // parseTime accepts RFC3339 or Unix seconds.
@@ -287,10 +288,13 @@ func (s *server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	service := r.URL.Query().Get("service")
+	belongs := func(c engine.Container) bool {
+		// An empty project would otherwise match every non-compose container.
+		return detail.Project != "" && c.Project() == detail.Project && (service == "" || c.ComposeService() == service)
+	}
 	var cs []engine.Container
 	for _, c := range all {
-		// An empty project would otherwise match every non-compose container.
-		if detail.Project != "" && c.Project() == detail.Project && (service == "" || c.ComposeService() == service) {
+		if belongs(c) {
 			cs = append(cs, c)
 		}
 	}
@@ -299,14 +303,17 @@ func (s *server) handleLogs(w http.ResponseWriter, r *http.Request) {
 		cs = cs[:maxLogContainers]
 	}
 
-	s.streamContainerLogs(w, r, cs, opts)
+	s.streamContainerLogs(w, r, cs, opts, detail.Project, belongs)
 }
 
 // streamContainerLogs is the SSE core shared by the stack and single-container
 // log routes: it starts the stream, merges the containers' lines (resuming
 // from Last-Event-ID cursors) and ends with "end". See handleLogs for the
-// event contract.
-func (s *server) streamContainerLogs(w http.ResponseWriter, r *http.Request, cs []engine.Container, opts engine.LogOptions) {
+// event contract. cs are the containers to read now; project and match say
+// which containers belong to the request (used only when following, to
+// re-attach after restarts and recreation).
+func (s *server) streamContainerLogs(w http.ResponseWriter, r *http.Request, cs []engine.Container, opts engine.LogOptions,
+	project string, match func(engine.Container) bool) {
 	sw, err := startSSE(w, s.sseWriteTimeout())
 	if err != nil {
 		return
@@ -316,58 +323,30 @@ func (s *server) streamContainerLogs(w http.ResponseWriter, r *http.Request, cs 
 
 	cursors := parseLogCursors(r.Header.Get("Last-Event-ID"))
 	merged := make(chan logItem)
-	var wg sync.WaitGroup
-	for _, c := range cs {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			copts := opts
-			cur := logCursor{Container: cursorContainer(c.ID)}
-			skip := 0
-			if resume, ok := cursors[cur.Container]; ok {
-				copts.Tail, copts.Since = -1, time.Unix(0, resume.TS)
-				cur.TS, cur.Ordinal, skip = resume.TS, resume.Ordinal, resume.Ordinal
-			}
-			lines, errs := s.opts.Observe.Logs(ctx, c, copts)
-			for l := range lines {
-				item := logItem{container: c, line: l}
-				if !l.Time.IsZero() { // a line without a timestamp cannot be a cursor
-					ts := l.Time.UnixNano()
-					if skip > 0 && ts == cur.TS {
-						skip--
-						continue
-					}
-					skip = 0
-					if ts == cur.TS {
-						cur.Ordinal++
-					} else {
-						cur.TS, cur.Ordinal = ts, 1
-					}
-					item.id = cur.String()
+	if opts.Follow {
+		f := &logFollower{s: s, ctx: ctx, opts: opts, header: cursors, project: project, match: match,
+			merged: merged, done: make(chan pumpDone), pumps: map[string]*logPump{}}
+		go f.run(cs)
+	} else {
+		var wg sync.WaitGroup
+		for _, c := range cs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				cur, skip := resumePoint(cursors, c)
+				copts := opts
+				if skip > 0 {
+					copts.Tail, copts.Since = -1, time.Unix(0, cur.TS)
 				}
-				select {
-				case merged <- item:
-				case <-ctx.Done():
-					return
-				}
-			}
-			select {
-			case err := <-errs: // nil once the channel is closed without an error
-				if err != nil {
-					select {
-					case merged <- logItem{container: c, err: err}:
-					case <-ctx.Done():
-					}
-				}
-			case <-ctx.Done():
-			}
-		}()
+				s.pumpContainer(ctx, c, copts, cur, skip, merged, nil)
+			}()
+		}
+		go func() { wg.Wait(); close(merged) }()
 	}
-	go func() { wg.Wait(); close(merged) }()
 
 	runSSE(s, r.WithContext(ctx), sw, merged, func(it logItem, ok bool) (bool, error) {
 		switch {
-		case !ok:
+		case !ok || it.end:
 			_ = sw.Event("end", "", struct{}{})
 			return true, nil
 		case it.err != nil:
@@ -383,6 +362,272 @@ func (s *server) streamContainerLogs(w http.ResponseWriter, r *http.Request, cs 
 				Stream: it.line.Stream, Time: it.line.Time, Text: it.line.Text})
 		}
 	})
+}
+
+// resumePoint returns the cursor a container's stream starts from and how many
+// lines at the cursor's exact timestamp to drop: the Last-Event-ID cursor when
+// the client has one, otherwise an empty cursor and no skip.
+func resumePoint(cursors map[string]logCursor, c engine.Container) (logCursor, int) {
+	cur := logCursor{Container: cursorContainer(c.ID)}
+	if resume, ok := cursors[cur.Container]; ok {
+		return resume, resume.Ordinal
+	}
+	return cur, 0
+}
+
+// pumpContainer reads one container's Docker log stream into merged until it
+// ends, the context is cancelled, or the stream fails (reported as an error
+// item). It drops the first skip lines stamped exactly cur.TS (already
+// delivered), gives every other timestamped line a cursor id, and calls record
+// (when set) with the cursor of each line it delivers. It returns the number of
+// lines delivered.
+func (s *server) pumpContainer(ctx context.Context, c engine.Container, copts engine.LogOptions, cur logCursor, skip int,
+	merged chan<- logItem, record func(logCursor)) (delivered int) {
+	lines, errs := s.opts.Observe.Logs(ctx, c, copts)
+	for l := range lines {
+		item := logItem{container: c, line: l}
+		if !l.Time.IsZero() { // a line without a timestamp cannot be a cursor
+			ts := l.Time.UnixNano()
+			if skip > 0 && ts == cur.TS {
+				skip--
+				continue
+			}
+			skip = 0
+			if ts == cur.TS {
+				cur.Ordinal++
+			} else {
+				cur.TS, cur.Ordinal = ts, 1
+			}
+			item.id = cur.String()
+		}
+		select {
+		case merged <- item:
+		case <-ctx.Done():
+			return delivered
+		}
+		delivered++
+		if record != nil && item.id != "" {
+			record(cur)
+		}
+	}
+	select {
+	case err := <-errs: // nil once the channel is closed without an error
+		if err != nil {
+			select {
+			case merged <- logItem{container: c, err: err}:
+			case <-ctx.Done():
+			}
+		}
+	case <-ctx.Done():
+	}
+	return delivered
+}
+
+// logPump is one container's follow stream. All fields are guarded by
+// logFollower.mu.
+type logPump struct {
+	c           engine.Container // the listed container, never one built from an event
+	cursor      logCursor        // last line delivered; TS 0 when none yet
+	active      bool
+	quiet       bool // a retry started by a stream end delivered nothing; wait for the next change
+	fromPumpEnd bool // the running stream was started because another stream ended
+	sawChange   bool // a change arrived while the stream was running, so a retry has fresh information
+	cancel      context.CancelFunc
+}
+
+type pumpDone struct {
+	id        string
+	delivered int
+}
+
+// logFollower keeps a follow-mode log stream attached to the containers that
+// belong to the request as they restart and are recreated. A single goroutine
+// (run) owns the decisions; the pumps only read Docker and report back.
+type logFollower struct {
+	s       *server
+	ctx     context.Context
+	opts    engine.LogOptions
+	header  map[string]logCursor // Last-Event-ID cursors, by short container id
+	project string               // changes for other projects are ignored; "" reacts to all
+	match   func(engine.Container) bool
+	merged  chan logItem
+	done    chan pumpDone
+
+	mu    sync.Mutex
+	pumps map[string]*logPump // by full container id
+}
+
+// resubscribeDelay spaces out resubscriptions so a subscription that keeps
+// closing cannot spin the loop.
+const resubscribeDelay = 50 * time.Millisecond
+
+func (f *logFollower) run(initial []engine.Container) {
+	changes, cancelSub := f.s.opts.Observe.SubscribeChanges()
+	defer func() { cancelSub() }()
+	for _, c := range initial {
+		f.start(c, false)
+	}
+	if len(initial) == 0 {
+		f.sendEnd()
+		return
+	}
+	for {
+		select {
+		case <-f.ctx.Done():
+			return
+		case d := <-f.done:
+			f.pumpEnded(d)
+			if f.reconcile(true) {
+				return
+			}
+		case ch, ok := <-changes:
+			if !ok { // the cache dropped this subscriber: resubscribe and catch up
+				select {
+				case <-f.ctx.Done():
+					return
+				case <-time.After(resubscribeDelay):
+				}
+				cancelSub()
+				changes, cancelSub = f.s.opts.Observe.SubscribeChanges()
+			} else if f.project != "" && ch.Project != "" && ch.Project != f.project {
+				continue
+			}
+			f.noteChange()
+			if f.reconcile(false) {
+				return
+			}
+		}
+	}
+}
+
+func (f *logFollower) sendEnd() {
+	select {
+	case f.merged <- logItem{end: true}:
+	case <-f.ctx.Done():
+	}
+}
+
+// start attaches a stream to c: from its cursor when one is known (Last-Event-ID
+// for the first attach, the last delivered line afterwards), otherwise with the
+// request's own options.
+func (f *logFollower) start(c engine.Container, fromPumpEnd bool) {
+	f.mu.Lock()
+	p := f.pumps[c.ID]
+	if p == nil {
+		p = &logPump{}
+		f.pumps[c.ID] = p
+	}
+	if p.cursor.TS == 0 {
+		if resume, ok := f.header[cursorContainer(c.ID)]; ok {
+			p.cursor = resume
+		}
+	}
+	pumpCtx, cancel := context.WithCancel(f.ctx)
+	p.c, p.active, p.fromPumpEnd, p.sawChange, p.cancel = c, true, fromPumpEnd, false, cancel
+	cur := p.cursor
+	f.mu.Unlock()
+
+	copts, skip := f.opts, 0
+	if cur.TS != 0 {
+		copts.Tail, copts.Since, skip = -1, time.Unix(0, cur.TS), cur.Ordinal
+	}
+	cur.Container = cursorContainer(c.ID)
+	record := func(cur logCursor) {
+		f.mu.Lock()
+		p.cursor = cur
+		f.mu.Unlock()
+	}
+	go func() {
+		defer cancel()
+		n := f.s.pumpContainer(pumpCtx, c, copts, cur, skip, f.merged, record)
+		select {
+		case f.done <- pumpDone{id: c.ID, delivered: n}:
+		case <-f.ctx.Done():
+		}
+	}()
+}
+
+func (f *logFollower) pumpEnded(d pumpDone) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if p := f.pumps[d.id]; p != nil {
+		p.active = false
+		p.quiet = p.fromPumpEnd && d.delivered == 0 && !p.sawChange
+	}
+}
+
+// noteChange records that the cache published a change: every stream that gave
+// up waiting may retry, and a running one will not be treated as stale when it
+// ends, because the change may already describe the container it is about to
+// become.
+func (f *logFollower) noteChange() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, p := range f.pumps {
+		p.quiet = false
+		p.sawChange = p.active
+	}
+}
+
+// reconcile attaches streams to listed running containers that have none,
+// closes the streams of containers that are gone, and reports whether it sent
+// "end" (nothing left to follow). fromPumpEnd skips containers whose last
+// retry came to nothing, which bounds a stale listing to one retry.
+func (f *logFollower) reconcile(fromPumpEnd bool) (ended bool) {
+	all, err := f.s.opts.Observe.Containers(f.ctx)
+	if err != nil {
+		return false // wait for the next change
+	}
+	var listed []engine.Container
+	for _, c := range all {
+		if f.match(c) {
+			listed = append(listed, c)
+		}
+	}
+	sort.Slice(listed, func(i, j int) bool { return listed[i].Name < listed[j].Name })
+	if len(listed) > maxLogContainers {
+		listed = listed[:maxLogContainers]
+	}
+	present := make(map[string]bool, len(listed))
+	for _, c := range listed {
+		present[c.ID] = true
+	}
+
+	f.mu.Lock()
+	for id, p := range f.pumps {
+		switch {
+		case present[id]:
+		case p.active:
+			p.cancel() // the container is gone; its pump then reports back
+		default:
+			delete(f.pumps, id)
+		}
+	}
+	var attach []engine.Container
+	for _, c := range listed {
+		p := f.pumps[c.ID]
+		if c.State == "running" && (p == nil || !p.active) && !(fromPumpEnd && p != nil && p.quiet) {
+			attach = append(attach, c)
+		}
+	}
+	f.mu.Unlock()
+	for _, c := range attach {
+		f.start(c, fromPumpEnd)
+	}
+
+	f.mu.Lock()
+	active := 0
+	for _, p := range f.pumps {
+		if p.active {
+			active++
+		}
+	}
+	f.mu.Unlock()
+	if active == 0 && len(listed) == 0 {
+		f.sendEnd()
+		return true
+	}
+	return false
 }
 
 // ---- metrics history ----

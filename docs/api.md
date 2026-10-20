@@ -234,7 +234,12 @@ running container.
   RFC3339 time, a Unix timestamp or a duration. Containers with a TTY do not
   separate stderr from stdout. **Logs are never stored by Stackstead**; they
   are read from Docker on demand, so they are as old as Docker's own log
-  driver keeps them.
+  driver keeps them. With `follow`, the stream outlives restarts and
+  recreation: a container's lines continue after it starts again (resumed from
+  its cursor, so nothing repeats), a replacement container with a new id is
+  attached from `tail`, and `end` is sent only when the stack, or the service
+  named in `service`, has no container left. Without `follow`, `end` follows
+  the last line as before.
 - **Log resume.** Each `log` event carries `id: <container id, 12 hex>:<unix
   nanoseconds>:<ordinal>`, where `ordinal` counts the lines with that exact
   timestamp delivered so far on the stream. A client reconnects with the
@@ -419,7 +424,8 @@ configuration.
 
 `GET /api/containers/{id}/logs` takes `tail`, `follow` and `since` (there
 is no `stream` or `service` filter) and sends the same `log`, `error` and `end`
-events, ids and `Last-Event-ID` resume as the stack logs.
+events, ids and `Last-Event-ID` resume as the stack logs; with `follow` it
+re-attaches after a restart and ends when the container is removed.
 
 `POST /api/containers/{id}/start`, `stop` or `restart` takes a JSON body
 (`{}`), waits for Docker (at most 30 seconds; `stop` and `restart` give the

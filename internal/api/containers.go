@@ -437,7 +437,9 @@ func (s *server) actionRow(ctx context.Context, insp engine.ContainerInspect) ap
 // handleContainerLogs streams one container's logs with the same events,
 // cursors and resume rules as the stack route (see handleLogs). The container
 // is found in the state cache by id prefix; an id matching none or several is
-// a 404.
+// a 404. With follow, the stream re-attaches after a restart (the id is
+// unchanged) and ends when the container is removed; a recreated container has
+// a new id and is a different stream.
 func (s *server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !containerIDPattern.MatchString(id) {
@@ -469,5 +471,6 @@ func (s *server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "container not found")
 		return
 	}
-	s.streamContainerLogs(w, r, matches, opts)
+	id = matches[0].ID
+	s.streamContainerLogs(w, r, matches, opts, matches[0].Project(), func(c engine.Container) bool { return c.ID == id })
 }
