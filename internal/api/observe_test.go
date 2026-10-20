@@ -2018,3 +2018,67 @@ func TestContainerLogsFollowProjectlessFailingStreamIsNotRetriedByThePoll(t *tes
 		t.Errorf("Logs calls = %d, want %d (one attempt for the restart)", n, calls+1)
 	}
 }
+
+// ---- follow mode: final review F1 ----
+
+// A quick `docker restart` of a container outside any compose project: the
+// re-attach that follows the stream's end can land while the container is
+// stopped, so it gets an empty, error-free stream, and the listing (running
+// before and after) shows nothing. The poll must still re-attach once the
+// container is back, and every line must arrive exactly once.
+func TestContainerLogsFollowProjectlessResumesAfterQuickRestarts(t *testing.T) {
+	const id = "dddddddddddd"
+	fake := newFakeObserve()
+	fake.containers = []engine.Container{{ID: id, Name: "solo-1", State: "running"}}
+	history := []engine.LogLine{{Stream: "stdout", Time: t0, Text: "boot 0"}}
+	fake.logs[id] = fakeLogSpec{lines: history}
+	env, cookie := newObserveEnv(t, fake) // the 20 ms heartbeat is also the poll interval
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, ch := openSSE(t, env, cookie, ctx, "/api/containers/"+id+"/logs?follow=1")
+	readLines(t, ch, 1)
+
+	for restart := 1; restart <= 5; restart++ {
+		// Stopped: a stream attached now closes at once with nothing new.
+		fake.setLogs(id, fakeLogSpec{lines: history, endsAtOnce: true})
+		calls := fake.logCallsFor(id)
+		fake.endLogs(id)
+		eventually(t, "the re-attach while stopped", func() bool { return fake.logCallsFor(id) > calls })
+
+		// Running again, with one new line.
+		line := engine.LogLine{Stream: "stdout", Time: t0.Add(time.Duration(restart) * time.Second), Text: fmt.Sprintf("boot %d", restart)}
+		history = append(append([]engine.LogLine(nil), history...), line)
+		fake.setLogs(id, fakeLogSpec{lines: history})
+		// nextEvent's own timeout restarts on every ping, so bound the wait here.
+		evs := collectEvents(t, ch, time.Second)
+		if got := logTexts(t, evs...); len(got) != 1 || got[0] != line.Text {
+			t.Fatalf("restart %d: logs within 1 s = %v, want exactly [%s]", restart, got, line.Text)
+		}
+	}
+}
+
+// The poll retries an empty, error-free end only a few times: a container the
+// listing calls running whose stream keeps closing at once is not attached on
+// every tick for ever.
+func TestContainerLogsFollowProjectlessEmptyStreamRetriesAreCapped(t *testing.T) {
+	const id = "dddddddddddd"
+	fake := newFakeObserve()
+	fake.containers = []engine.Container{{ID: id, Name: "solo-1", State: "running"}}
+	fake.logs[id] = fakeLogSpec{endsAtOnce: true}
+	env, cookie := newObserveEnv(t, fake) // the 20 ms heartbeat is also the poll interval
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, ch := openSSE(t, env, cookie, ctx, "/api/containers/"+id+"/logs?follow=1")
+
+	if evs := collectEvents(t, ch, 400*time.Millisecond); len(evs) != 0 {
+		t.Fatalf("events = %d, want none", len(evs))
+	}
+	calls := fake.logCallsFor(id)
+	if calls < 3 || calls > 7 { // the first attach, its retry, then at most 5 poll retries
+		t.Fatalf("Logs calls = %d, want 3..7", calls)
+	}
+	expectQuiet(t, ch, 200*time.Millisecond)
+	if n := fake.logCallsFor(id); n != calls {
+		t.Fatalf("Logs calls %d -> %d, want the poll to stop retrying", calls, n)
+	}
+}
