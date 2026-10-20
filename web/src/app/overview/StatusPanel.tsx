@@ -18,10 +18,13 @@ export interface StatusPanelProps {
   lastEventIso?: string;
   /** Import / New stack; off while the empty state carries its own links. */
   showActions: boolean;
+  /** Tower links and keys for a list that spans servers. */
+  hrefOf?: (stack: StackSummary) => string;
+  keyOf?: (stack: StackSummary) => string;
 }
 
 /** The health-first header card: one sentence, the stack towers and the host strip. */
-export function StatusPanel({ items, host, history, lastEventIso, showActions }: StatusPanelProps) {
+export function StatusPanel({ items, host, history, lastEventIso, showActions, hrefOf, keyOf }: StatusPanelProps) {
   const { href } = useServer();
   const label = panelLabel(items);
   const fragments = items.length > 0 ? statusFragments(items, host) : [];
@@ -63,7 +66,7 @@ export function StatusPanel({ items, host, history, lastEventIso, showActions }:
           </div>
         )}
       </div>
-      <StackTowers items={items} />
+      <StackTowers items={items} hrefOf={hrefOf} keyOf={keyOf} />
       <HostStats host={host} history={history} />
     </div>
   );

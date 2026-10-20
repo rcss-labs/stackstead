@@ -5,7 +5,15 @@ import styles from './StackTowers.module.css';
 
 import { useServer } from '../servers/ServerContext';
 /** One column of blocks per stack, one block per service, bottom-up. */
-export function StackTowers({ items }: { items: StackSummary[] }) {
+export interface StackTowersProps {
+  items: StackSummary[];
+  /** Where a tower leads; defaults to the stack on the viewed server. */
+  hrefOf?: (stack: StackSummary) => string;
+  /** React key; defaults to the stack name, which is only unique within one server. */
+  keyOf?: (stack: StackSummary) => string;
+}
+
+export function StackTowers({ items, hrefOf, keyOf }: StackTowersProps) {
   const navigate = useNavigate();
   const { href } = useServer();
   if (items.length === 0) return null;
@@ -15,7 +23,7 @@ export function StackTowers({ items }: { items: StackSummary[] }) {
     <div className={styles.scroller}>
       <div className={styles.row}>
         {sorted.map((s) => (
-          <button key={s.name} type="button" className={styles.tower} title={towerTitle(s)} onClick={() => navigate(href(`/stacks/${encodeURIComponent(s.name)}`))}>
+          <button key={keyOf ? keyOf(s) : s.name} type="button" className={styles.tower} title={towerTitle(s)} onClick={() => navigate(hrefOf ? hrefOf(s) : href(`/stacks/${encodeURIComponent(s.name)}`))}>
             <span className={styles.blocks} aria-hidden="true">
               {towerBlocks(s).map((block, i) => (
                 <span key={i} className={styles.block} data-block={block} />

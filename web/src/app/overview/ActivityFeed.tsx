@@ -1,6 +1,7 @@
 import { Link } from 'react-router';
 import type { DockerEvent } from '$lib/api/types';
 import type { SSEStatus } from '$lib/sse/client';
+import { serverPath } from '$lib/servers/fleet';
 import styles from './SideColumn.module.css';
 
 import { useServer } from '../servers/ServerContext';
@@ -29,9 +30,11 @@ export interface ActivityFeedProps {
   /** Newest first; the events store already caps the list at 50. */
   events: DockerEvent[];
   connection: SSEStatus;
+  /** Tags each event with its server and links it there; for the combined All stacks feed. */
+  serverOf?: (event: DockerEvent) => { name: string; slug: string | null };
 }
 
-export function ActivityFeed({ events, connection }: ActivityFeedProps) {
+export function ActivityFeed({ events, connection, serverOf }: ActivityFeedProps) {
   const { href } = useServer();
   const live = connection === 'open';
   return (
@@ -51,6 +54,8 @@ export function ActivityFeed({ events, connection }: ActivityFeedProps) {
           {events.map((e, i) => {
             const action = actionOf(e);
             const subject = subjectOf(e);
+            const server = serverOf?.(e);
+            const containerPath = `/containers/${encodeURIComponent(e.container)}`;
             return (
               <li key={`${e.time}|${e.container}|${e.action}|${i}`} className={styles.event}>
                 <span className={styles.tone} data-tone={tone(action)} aria-hidden="true" />
@@ -59,7 +64,7 @@ export function ActivityFeed({ events, connection }: ActivityFeedProps) {
                     {action}
                   </span>{' '}
                   {e.container ? (
-                    <Link className={styles.subject} to={href(`/containers/${encodeURIComponent(e.container)}`)} title={subject}>
+                    <Link className={styles.subject} to={server ? serverPath(server.slug, containerPath) : href(containerPath)} title={subject}>
                       {subject}
                     </Link>
                   ) : (
@@ -67,6 +72,7 @@ export function ActivityFeed({ events, connection }: ActivityFeedProps) {
                       {subject}
                     </span>
                   )}
+                  {server && <span className={styles.server}>{server.name}</span>}
                 </span>
                 <span className={styles.time}>{clock(e.time)}</span>
               </li>
