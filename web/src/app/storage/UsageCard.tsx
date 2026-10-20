@@ -12,6 +12,8 @@ export interface UsageCardProps {
   dockerDown: boolean;
   /** `Clean up dangling images (<n> · <range>)`, computed by the screen from the loaded image list. */
   danglingLabel: string;
+  /** Set when the image list failed to load, so the dangling cleanup cannot be sized or trusted. */
+  danglingUnavailable?: string;
   onSelect: (kind: StorageKind) => void;
   onCleanup: (request: StoragePlanRequest) => void;
 }
@@ -25,7 +27,7 @@ const CLEANUP_LABELS: Record<StorageKind, string | undefined> = {
 
 const kindStyle = (color: string) => ({ '--kind': color }) as CSSProperties;
 
-export function UsageCard({ overview, selected, dockerDown, danglingLabel, onSelect, onCleanup }: UsageCardProps) {
+export function UsageCard({ overview, selected, dockerDown, danglingLabel, danglingUnavailable, onSelect, onCleanup }: UsageCardProps) {
   const segments = usageSegments(overview);
   return (
     <div className={styles.card}>
@@ -66,7 +68,7 @@ export function UsageCard({ overview, selected, dockerDown, danglingLabel, onSel
                 </span>
               </button>
               {request && cleanupLabel && (
-                <Button variant="danger" size="sm" disabledReason={dockerDown ? 'Docker is unavailable' : undefined} onClick={() => onCleanup(request)}>
+                <Button variant="danger" size="sm" disabledReason={dockerDown ? 'Docker is unavailable' : info.id === 'images' ? danglingUnavailable : undefined} onClick={() => onCleanup(request)}>
                   {cleanupLabel}
                 </Button>
               )}

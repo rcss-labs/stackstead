@@ -295,6 +295,11 @@ describe('Storage screen', () => {
     await screen.findByText('Could not load storage');
     expect(screen.getByText('no docker')).toBeTruthy();
     expect(screen.getByRole('group', { name: 'Storage kinds' })).toBeTruthy();
+    // Without the list there is no candidate count to show, so the bulk cleanup says why it is unavailable.
+    const bulk = screen.getByRole('button', { name: /Clean up dangling images/ });
+    expect(bulk.getAttribute('aria-disabled')).toBe('true');
+    expect(bulk.title).toBe('The image list could not be loaded');
+    expect(bulk.textContent).not.toMatch(/\(0 ·/);
     await user.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(calls('/api/storage/images')).toHaveLength(2));
   });

@@ -168,7 +168,9 @@ export function StorageScreen() {
   const cachePage = pageView(shownCache, page);
   const kindError = data?.errors[kind === 'layers' ? 'overview' : kind] ?? '';
   const candidates = images.filter((image) => image.dangling && !image.containers.length);
-  const danglingLabel = `Clean up dangling images (${candidates.length} · ${imageReclaimRange(candidates)})`;
+  const imagesFailed = Boolean(data?.errors.images);
+  // A failed list has no candidates, so "(0 · …)" would be a false count.
+  const danglingLabel = imagesFailed ? 'Clean up dangling images' : `Clean up dangling images (${candidates.length} · ${imageReclaimRange(candidates)})`;
   const unknown = data?.overview?.declarationsUnknown ?? [];
   // One region for the whole screen: it stays mounted across kind changes so the new selection is announced as a text change.
   let statusText = '';
@@ -211,7 +213,7 @@ export function StorageScreen() {
           )}
           {data.overview ? (
             <>
-              <UsageCard overview={data.overview} selected={kind} dockerDown={dockerDown} danglingLabel={danglingLabel} onSelect={selectKind} onCleanup={setCleanup} />
+              <UsageCard overview={data.overview} selected={kind} dockerDown={dockerDown} danglingLabel={danglingLabel} danglingUnavailable={imagesFailed ? 'The image list could not be loaded' : undefined} onSelect={selectKind} onCleanup={setCleanup} />
               {kind === 'layers' && <LayersTable overview={data.overview} />}
             </>
           ) : (
