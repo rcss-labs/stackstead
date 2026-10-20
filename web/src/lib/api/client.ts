@@ -4,6 +4,8 @@ import type {
   StorageImageDetail, StorageVolumeDetail, StoragePlan, StoragePlanRequest,
   AddServiceRequest,
   ChangePasswordRequest,
+  DockerfileContent,
+  DockerfileView,
   ContainerDetail,
   ContainerRow,
   CreateStackRequest,
@@ -212,22 +214,33 @@ export function createApi(base: string) {
     compose: (name: string) => get<RawCompose>(`/api/stacks/${seg(name)}/compose`),
     saveCompose: (name: string, content: string, hash: string) =>
       call<HashResponse>('PUT', `/api/stacks/${seg(name)}/compose`, { content, hash } satisfies RawCompose),
-    updateService: (name: string, service: string, config: ServiceConfig, hash: string) =>
+    updateService: (name: string, service: string, config: ServiceConfig, hash: string, dockerfile?: DockerfileContent) =>
       call<HashResponse>('PUT', `/api/stacks/${seg(name)}/services/${seg(service)}`, {
         config,
         hash,
+        ...(dockerfile ? { dockerfile } : {}),
       } satisfies UpdateServiceRequest),
     previewService: (name: string, service: string, config: ServiceConfig, hash: string) =>
       post<PreviewResponse>(`/api/stacks/${seg(name)}/services/${seg(service)}/preview`, {
         config,
         hash,
       } satisfies UpdateServiceRequest),
-    addService: (name: string, service: string, config: ServiceConfig, hash: string) =>
+    addService: (name: string, service: string, config: ServiceConfig, hash: string, dockerfile?: DockerfileContent) =>
       call<StackDetail>('POST', `/api/stacks/${seg(name)}/services`, {
         service,
         config,
         hash,
+        ...(dockerfile ? { dockerfile } : {}),
       } satisfies AddServiceRequest),
+    dockerfile: (name: string, service: string) =>
+      get<DockerfileView>(`/api/stacks/${seg(name)}/services/${seg(service)}/dockerfile`),
+    saveDockerfile: (name: string, service: string, content: string, hash: string) =>
+      call<HashResponse>('PUT', `/api/stacks/${seg(name)}/services/${seg(service)}/dockerfile`, {
+        content,
+        hash,
+      }).then((r) => r.data),
+    upService: (name: string, service: string) =>
+      post<Operation>(`/api/stacks/${seg(name)}/services/${seg(service)}/actions/up`),
     previewAddService: (name: string, service: string, config: ServiceConfig, hash: string) =>
       post<PreviewResponse>(`/api/stacks/${seg(name)}/services/preview`, {
         service,
