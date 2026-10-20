@@ -179,6 +179,8 @@ type FieldError struct {
 type ErrorBody struct {
 	Error  string       `json:"error"`
 	Fields []FieldError `json:"fields,omitempty"`
+	// Code is a machine-readable error code, set by peer errors.
+	Code string `json:"code,omitempty"`
 }
 
 type RawCompose struct {
@@ -364,8 +366,51 @@ type MetricsToken struct {
 	Token string `json:"token"`
 }
 
+// Health is the public liveness answer. Peering is the connected-servers
+// protocol version this binary speaks, nothing more.
 type Health struct {
-	OK bool `json:"ok"`
+	OK      bool `json:"ok"`
+	Peering int  `json:"peering"`
+}
+
+// PeerTrust says how the receiving server verifies the connecting server's
+// certificate when it calls back during pairing.
+type PeerTrust struct {
+	CAPEM     string `json:"caPem"`
+	PinSHA256 string `json:"pinSha256"`
+	Plaintext bool   `json:"plaintext"`
+}
+
+type PeerPairRequest struct {
+	Protocol   int       `json:"protocol"`
+	InstanceID string    `json:"instanceId"`
+	Name       string    `json:"name"`
+	URL        string    `json:"url"`
+	Version    string    `json:"version"`
+	Credential string    `json:"credential"`
+	Trust      PeerTrust `json:"trust"`
+}
+
+type PeerPairResponse struct {
+	Protocol   int    `json:"protocol"`
+	InstanceID string `json:"instanceId"`
+	Name       string `json:"name"`
+	Version    string `json:"version"`
+	Credential string `json:"credential"`
+}
+
+type PeerHello struct {
+	Protocol   int    `json:"protocol"`
+	InstanceID string `json:"instanceId"`
+	Name       string `json:"name"`
+	Version    string `json:"version"`
+	URL        string `json:"url"`
+	StackCount int    `json:"stackCount"`
+}
+
+type PeerUpdate struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
 }
 
 // Actions are the lifecycle actions an operation can run.

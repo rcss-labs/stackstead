@@ -153,22 +153,9 @@ func (s *Store) InsertPeer(ctx context.Context, p Peer, inHash string) error {
 	if exists > 0 {
 		return ErrAlreadyPaired
 	}
-	base := Slugify(p.Name)
-	slug := base
-	for n := 2; ; n++ {
-		var taken int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM peers WHERE slug = ?`, slug).Scan(&taken); err != nil {
-			return err
-		}
-		if taken == 0 {
-			break
-		}
-		suffix := fmt.Sprintf("-%d", n)
-		trimmed := base
-		if len(trimmed)+len(suffix) > maxSlugLength {
-			trimmed = strings.TrimRight(trimmed[:maxSlugLength-len(suffix)], "-")
-		}
-		slug = trimmed + suffix
+	slug, err := uniqueSlug(ctx, tx, p.Name, "")
+	if err != nil {
+		return err
 	}
 	created := p.CreatedAt
 	if created.IsZero() {
@@ -179,6 +166,48 @@ func (s *Store) InsertPeer(ctx context.Context, p Peer, inHash string) error {
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.InstanceID, p.Name, slug, p.URL, p.TLS.CAPEM, p.TLS.PinSHA256, p.TLS.Plaintext, string(p.OutCredential),
 		inHash, p.Version, p.StackCount, created.Unix(), nullableUnix(p.LastSeenAt), p.LastError, string(p.State)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// uniqueSlug picks the slug for name among peers other than excludeID: the
+// name's slug, then -2, -3, ...
+func uniqueSlug(ctx context.Context, tx *sql.Tx, name, excludeID string) (string, error) {
+	base := Slugify(name)
+	slug := base
+	for n := 2; ; n++ {
+		var taken int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM peers WHERE slug = ? AND instance_id != ?`, slug, excludeID).Scan(&taken); err != nil {
+			return "", err
+		}
+		if taken == 0 {
+			return slug, nil
+		}
+		suffix := fmt.Sprintf("-%d", n)
+		trimmed := base
+		if len(trimmed)+len(suffix) > maxSlugLength {
+			trimmed = strings.TrimRight(trimmed[:maxSlugLength-len(suffix)], "-")
+		}
+		slug = trimmed + suffix
+	}
+}
+
+// RenamePeer sets a peer's name and URL (an empty url keeps the current one)
+// and recomputes its slug, keeping it unique among peers.
+func (s *Store) RenamePeer(ctx context.Context, id, name, url string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	slug, err := uniqueSlug(ctx, tx, name, id)
+	if err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE peers SET name = ?, slug = ?, url = CASE WHEN ? = '' THEN url ELSE ? END WHERE instance_id = ?`,
+		name, slug, url, url, id)
+	if err := affectedOrNotFound(res, err); err != nil {
 		return err
 	}
 	return tx.Commit()

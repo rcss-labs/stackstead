@@ -12,6 +12,7 @@ import (
 	"github.com/rcss-labs/stackstead/internal/actionlog"
 	"github.com/rcss-labs/stackstead/internal/apitypes"
 	"github.com/rcss-labs/stackstead/internal/auth"
+	"github.com/rcss-labs/stackstead/internal/peers"
 	"github.com/rcss-labs/stackstead/internal/storage"
 )
 
@@ -74,6 +75,9 @@ type Options struct {
 	NetworkEngine NetworkEngineAPI
 	// Updates backs /api/settings/update; the routes exist only when it is set.
 	Updates UpdateAPI
+	// Peers enables the connected-servers protocol routes and peer-credential
+	// authentication; nil keeps both off.
+	Peers *peers.Service
 }
 
 type server struct {
@@ -141,6 +145,9 @@ func New(opts Options) http.Handler {
 	if opts.Updates != nil {
 		s.registerUpdateRoutes(mux)
 	}
+	if opts.Peers != nil {
+		s.registerPeerRoutes(mux)
+	}
 	if opts.Stacks != nil && opts.Observe != nil {
 		s.registerContainerRoutes(mux)
 		if opts.ContainerEngine != nil {
@@ -154,7 +161,7 @@ func New(opts Options) http.Handler {
 		writeError(w, http.StatusNotFound, "not found")
 	}))
 	mux.Handle("/", spaHandler(opts.Static))
-	return nosniff(mux)
+	return nosniff(s.denyPeerRoutes(mux))
 }
 
 // nosniff stops browsers from second-guessing Content-Type on any response.
