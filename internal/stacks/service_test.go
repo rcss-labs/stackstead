@@ -396,7 +396,7 @@ func checkTempFiles(t *testing.T, h *harness) {
 func TestUpdateServiceStaleHashIsErrConflict(t *testing.T) {
 	h := newHarness(t)
 	setupWeb(t, h)
-	_, err := h.svc.UpdateService(context.Background(), "web", "web", webCfg("8080:80"), "stale")
+	_, err := h.svc.UpdateService(context.Background(), "web", "web", webCfg("8080:80"), "stale", nil)
 	if !errors.Is(err, composefile.ErrConflict) {
 		t.Errorf("err = %v", err)
 	}
@@ -407,7 +407,7 @@ func TestUpdateServiceConfigFailureLeavesFileUnchanged(t *testing.T) {
 	hash := setupWeb(t, h)
 	before, _ := os.ReadFile(h.path("web"))
 	h.compose.configErr = &composecli.ExitError{Code: 1, Output: "nope"}
-	_, err := h.svc.UpdateService(context.Background(), "web", "web", composefile.ServiceConfig{Image: "nginx:2", Ports: []string{"8080:80"}}, hash)
+	_, err := h.svc.UpdateService(context.Background(), "web", "web", composefile.ServiceConfig{Image: "nginx:2", Ports: []string{"8080:80"}}, hash, nil)
 	var ee *composecli.ExitError
 	if !errors.As(err, &ee) {
 		t.Fatalf("err = %v", err)
@@ -425,7 +425,7 @@ func TestUpdateServiceSuccessReturnsNewHashAndKeepsBackup(t *testing.T) {
 	before, _ := os.ReadFile(h.path("web"))
 	h.compose.configFiles, h.compose.configContents = nil, nil
 
-	res, err := h.svc.UpdateService(context.Background(), "web", "web", composefile.ServiceConfig{Image: "nginx:2", Ports: []string{"8080:80"}}, hash)
+	res, err := h.svc.UpdateService(context.Background(), "web", "web", composefile.ServiceConfig{Image: "nginx:2", Ports: []string{"8080:80"}}, hash, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,14 +453,14 @@ func TestUpdateServicePortCheckIgnoresOwnContainersButNotOthers(t *testing.T) {
 	cfg := webCfg("8080:80", "9090:90")
 
 	h.eng.containers = []engine.Container{publishing("web", 9090)}
-	res, err := h.svc.UpdateService(context.Background(), "web", "web", cfg, hash)
+	res, err := h.svc.UpdateService(context.Background(), "web", "web", cfg, hash, nil)
 	newHash := res.Hash
 	if err != nil {
 		t.Fatalf("own container blocked the edit: %v", err)
 	}
 
 	h.eng.containers = []engine.Container{publishing("other", 7070)}
-	_, err = h.svc.UpdateService(context.Background(), "web", "web", webCfg("8080:80", "9090:90", "7070:70"), newHash)
+	_, err = h.svc.UpdateService(context.Background(), "web", "web", webCfg("8080:80", "9090:90", "7070:70"), newHash, nil)
 	if fs := fieldsOf(t, err); len(fs) != 1 || fs[0].Field != "ports[2]" {
 		t.Errorf("fields = %+v", fs)
 	}
@@ -470,7 +470,7 @@ func TestUpdateServiceDoesNotRecheckUnchangedPorts(t *testing.T) {
 	h := newHarness(t)
 	hash := setupWeb(t, h)
 	h.eng.containers = []engine.Container{publishing("other", 8080)} // someone grabbed it since
-	if _, err := h.svc.UpdateService(context.Background(), "web", "web", composefile.ServiceConfig{Image: "nginx:2", Ports: []string{"8080:80"}}, hash); err != nil {
+	if _, err := h.svc.UpdateService(context.Background(), "web", "web", composefile.ServiceConfig{Image: "nginx:2", Ports: []string{"8080:80"}}, hash, nil); err != nil {
 		t.Fatalf("unchanged port was re-validated: %v", err)
 	}
 }
@@ -479,7 +479,7 @@ func TestUpdateServiceRefreshesProject(t *testing.T) {
 	h := newHarness(t)
 	hash := setupWeb(t, h)
 	h.compose.projectFn = func(string) string { return "renamed" }
-	if _, err := h.svc.UpdateService(context.Background(), "web", "web", composefile.ServiceConfig{Image: "nginx:2", Ports: []string{"8080:80"}}, hash); err != nil {
+	if _, err := h.svc.UpdateService(context.Background(), "web", "web", composefile.ServiceConfig{Image: "nginx:2", Ports: []string{"8080:80"}}, hash, nil); err != nil {
 		t.Fatal(err)
 	}
 	if e, _ := h.reg.Get(context.Background(), "web"); e.Project != "renamed" {
@@ -1050,7 +1050,7 @@ func TestMissingComposePluginIsErrComposeUnavailable(t *testing.T) {
 	_, calls["remove"] = h.svc.Remove(ctx, "web", false)
 	_, calls["create"] = h.svc.Create(ctx, stacks.CreateRequest{Name: "new", Services: []composefile.NamedService{{Name: "", Config: webCfg()}}, IndexedFields: false})
 	_, calls["import"] = h.svc.Import(ctx, ext)
-	_, calls["update"] = h.svc.UpdateService(ctx, "web", "web", composefile.ServiceConfig{Image: "x"}, hash)
+	_, calls["update"] = h.svc.UpdateService(ctx, "web", "web", composefile.ServiceConfig{Image: "x"}, hash, nil)
 	_, calls["saveraw"] = h.svc.SaveRaw(ctx, "web", []byte("services:\n  web:\n    image: a\n"), hash)
 	for name, err := range calls {
 		if !errors.Is(err, composecli.ErrComposeUnavailable) {
@@ -1066,7 +1066,7 @@ func TestEditsReportPartialChecksWhenEngineDown(t *testing.T) {
 	h := newHarness(t)
 	hash := setupWeb(t, h)
 	h.eng.err = engine.ErrUnavailable
-	res, err := h.svc.UpdateService(context.Background(), "web", "web", webCfg("8080:80", "9090:90"), hash)
+	res, err := h.svc.UpdateService(context.Background(), "web", "web", webCfg("8080:80", "9090:90"), hash, nil)
 	if err != nil || !res.ChecksPartial {
 		t.Fatalf("update: %+v %v", res, err)
 	}
@@ -1098,7 +1098,7 @@ func TestMissingFileGivesErrStackUnavailableForRawAndEdits(t *testing.T) {
 	if _, _, err := h.svc.Raw(ctx, "web"); !errors.Is(err, stacks.ErrStackUnavailable) {
 		t.Errorf("Raw: %v", err)
 	}
-	if _, err := h.svc.UpdateService(ctx, "web", "web", webCfg(), hash); !errors.Is(err, stacks.ErrStackUnavailable) {
+	if _, err := h.svc.UpdateService(ctx, "web", "web", webCfg(), hash, nil); !errors.Is(err, stacks.ErrStackUnavailable) {
 		t.Errorf("UpdateService: %v", err)
 	}
 	if _, err := h.svc.SaveRaw(ctx, "web", []byte("services: {}\n"), hash); !errors.Is(err, stacks.ErrStackUnavailable) {
@@ -1116,7 +1116,7 @@ func TestConcurrentUpdatesWithSameHashExactlyOneWins(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			_, errs[i] = h.svc.UpdateService(context.Background(), "web", "web",
-				composefile.ServiceConfig{Image: "nginx:" + string(rune('2'+i)), Ports: []string{"8080:80"}}, hash)
+				composefile.ServiceConfig{Image: "nginx:" + string(rune('2'+i)), Ports: []string{"8080:80"}}, hash, nil)
 		}()
 	}
 	wg.Wait()
@@ -1334,7 +1334,7 @@ func TestOverrideAppearingLaterRefusesLifecycleAndEdits(t *testing.T) {
 	check("remove", err)
 	_, err = h.svc.SaveRaw(ctx, "web", []byte("services:\n  web:\n    image: a\n"), hash)
 	check("saveraw", err)
-	_, err = h.svc.UpdateService(ctx, "web", "web", composefile.ServiceConfig{Image: "nginx:2"}, hash)
+	_, err = h.svc.UpdateService(ctx, "web", "web", composefile.ServiceConfig{Image: "nginx:2"}, hash, nil)
 	check("update", err)
 	if len(h.compose.runs) != 0 {
 		t.Errorf("compose ran: %v", h.compose.runs)
@@ -1388,7 +1388,7 @@ func TestStaticIPOnProjectLocalNetworkIsAcceptedBeforeFirstUp(t *testing.T) {
 			t.Fatal(err)
 		}
 		cfg := composefile.ServiceConfig{Image: "nginx", Networks: []composefile.NetworkAttachment{{Name: "lan", IPv4Address: "10.9.0.5"}}}
-		if _, err := h.svc.UpdateService(ctx, "web", "web", cfg, res.Hash); err != nil {
+		if _, err := h.svc.UpdateService(ctx, "web", "web", cfg, res.Hash, nil); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -1750,7 +1750,7 @@ func TestPreviewReturnsCandidateWithoutWriting(t *testing.T) {
 	}
 
 	// The preview is exactly what the save writes.
-	if _, err := h.svc.UpdateService(context.Background(), "web", "web", cfg, hash); err != nil {
+	if _, err := h.svc.UpdateService(context.Background(), "web", "web", cfg, hash, nil); err != nil {
 		t.Fatal(err)
 	}
 	saved, _ := os.ReadFile(h.path("web"))
@@ -1764,7 +1764,7 @@ func TestPreviewRefusesOverrideLikeSave(t *testing.T) {
 	hash := setupWeb(t, h)
 	name := writeOverride(t, h.path("web"))
 	cfg := composefile.ServiceConfig{Image: "nginx:2"}
-	_, saveErr := h.svc.UpdateService(context.Background(), "web", "web", cfg, hash)
+	_, saveErr := h.svc.UpdateService(context.Background(), "web", "web", cfg, hash, nil)
 	_, previewErr := h.svc.PreviewService(context.Background(), "web", "web", cfg, hash)
 	if !errors.Is(previewErr, stacks.ErrStackUnavailable) || !strings.Contains(previewErr.Error(), name) {
 		t.Fatalf("preview err = %v, want ErrStackUnavailable naming %s", previewErr, name)
@@ -1959,7 +1959,7 @@ func TestAddServiceWritesAndReturnsNewHash(t *testing.T) {
 	h := newHarness(t)
 	hash := setupWeb(t, h)
 	before, _ := os.ReadFile(h.path("web"))
-	res, err := h.svc.AddService(context.Background(), "web", "cache", webCfg(), hash)
+	res, err := h.svc.AddService(context.Background(), "web", "cache", webCfg(), hash, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1993,7 +1993,7 @@ func TestAddAndRemoveStaleHashIsConflictAndWritesNothing(t *testing.T) {
 				var err error
 				switch action {
 				case "add":
-					_, err = h.svc.AddService(context.Background(), "web", "new", webCfg(), "stale")
+					_, err = h.svc.AddService(context.Background(), "web", "new", webCfg(), "stale", nil)
 				case "preview":
 					_, err = h.svc.PreviewAddService(context.Background(), "web", "new", webCfg(), "stale")
 				case "remove":
@@ -2022,7 +2022,7 @@ func TestAddAndRemoveStaleHashIsConflictAndWritesNothing(t *testing.T) {
 func TestAddServiceExistingNameIsErrServiceExists(t *testing.T) {
 	h := newHarness(t)
 	hash := setupWeb(t, h)
-	_, err := h.svc.AddService(context.Background(), "web", "web", webCfg(), hash)
+	_, err := h.svc.AddService(context.Background(), "web", "web", webCfg(), hash, nil)
 	if !errors.Is(err, composefile.ErrServiceExists) {
 		t.Fatal(err)
 	}
@@ -2032,7 +2032,7 @@ func TestAddServicePortClashWithExistingServiceAndContainer(t *testing.T) {
 	h := newHarness(t)
 	hash := setupWeb(t, h)
 	h.eng.containers = []engine.Container{publishing("other", 7070)}
-	_, err := h.svc.AddService(context.Background(), "web", "cache", webCfg("8080:80", "7070:70"), hash)
+	_, err := h.svc.AddService(context.Background(), "web", "cache", webCfg("8080:80", "7070:70"), hash, nil)
 	fs := fieldsOf(t, err)
 	if len(fs) != 2 || fs[0].Field != "ports[0]" || !strings.Contains(fs[0].Message, "service web") || fs[1].Field != "ports[1]" || !strings.Contains(fs[1].Message, "container other-web-1") {
 		t.Fatalf("fields %+v", fs)
@@ -2043,12 +2043,12 @@ func TestAddServiceStaticIPCheckedAndImageDefaulted(t *testing.T) {
 	h := newHarness(t)
 	hash := setupWeb(t, h)
 	cfg := composefile.ServiceConfig{Build: &composefile.Build{}, Networks: []composefile.NetworkAttachment{{Name: "lan", IPv4Address: "192.168.1.30"}}}
-	_, err := h.svc.AddService(context.Background(), "web", "cache", cfg, hash)
+	_, err := h.svc.AddService(context.Background(), "web", "cache", cfg, hash, nil)
 	if fs := fieldsOf(t, err); len(fs) != 1 || fs[0].Field != "networks.lan.ipv4_address" {
 		t.Fatalf("fields %+v", fs)
 	}
 	cfg.Networks = nil
-	if _, err := h.svc.AddService(context.Background(), "web", "cache", cfg, hash); err != nil {
+	if _, err := h.svc.AddService(context.Background(), "web", "cache", cfg, hash, nil); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(h.path("web"))
@@ -2069,7 +2069,7 @@ func TestAddAndRemoveConfigFailureLeavesFileUnchanged(t *testing.T) {
 			if remove {
 				_, err = h.svc.RemoveService(context.Background(), "web", "cache", hash)
 			} else {
-				_, err = h.svc.AddService(context.Background(), "web", "new", webCfg(), hash)
+				_, err = h.svc.AddService(context.Background(), "web", "new", webCfg(), hash, nil)
 			}
 			var exit *composecli.ExitError
 			if !errors.As(err, &exit) {
@@ -2088,7 +2088,7 @@ func TestAddAndRemoveConfigFailureLeavesFileUnchanged(t *testing.T) {
 			if remove {
 				_, err = h.svc.RemoveService(context.Background(), "web", "cache", hash)
 			} else {
-				_, err = h.svc.AddService(context.Background(), "web", "new", webCfg(), hash)
+				_, err = h.svc.AddService(context.Background(), "web", "new", webCfg(), hash, nil)
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -2125,7 +2125,7 @@ func TestPreviewAddAndAddUseSameHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := h.svc.AddService(context.Background(), "web", "cache", cfg, hash)
+	res, err := h.svc.AddService(context.Background(), "web", "cache", cfg, hash, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2133,7 +2133,7 @@ func TestPreviewAddAndAddUseSameHash(t *testing.T) {
 	if string(data) != string(preview) || got != res.Hash {
 		t.Fatal("preview/save mismatch")
 	}
-	if _, err := h.svc.AddService(context.Background(), "web", "worker", webCfg(), hash); !errors.Is(err, composefile.ErrConflict) {
+	if _, err := h.svc.AddService(context.Background(), "web", "worker", webCfg(), hash, nil); !errors.Is(err, composefile.ErrConflict) {
 		t.Fatal(err)
 	}
 }
@@ -2201,7 +2201,7 @@ func TestConcurrentAddAndRemoveWithSameHashExactlyOneWins(t *testing.T) {
 	errs := make(chan error, 2)
 	go func() {
 		<-start
-		_, err := h.svc.AddService(context.Background(), "web", "new", webCfg(), hash)
+		_, err := h.svc.AddService(context.Background(), "web", "new", webCfg(), hash, nil)
 		errs <- err
 	}()
 	go func() {
@@ -2244,7 +2244,7 @@ func TestAddAndRemoveRefuseOverrideFilesAndMissingFiles(t *testing.T) {
 				var err error
 				switch action {
 				case "add":
-					_, err = h.svc.AddService(context.Background(), "web", "new", webCfg(), hash)
+					_, err = h.svc.AddService(context.Background(), "web", "new", webCfg(), hash, nil)
 				case "preview":
 					_, err = h.svc.PreviewAddService(context.Background(), "web", "new", webCfg(), hash)
 				case "remove":
@@ -2266,7 +2266,7 @@ func TestAddServiceStrictNamesAndRemoveExistingComposeName(t *testing.T) {
 	h := newHarness(t)
 	hash := setupWeb(t, h)
 	for _, name := range []string{"", "Upper", "has.dot"} {
-		_, err := h.svc.AddService(context.Background(), "web", name, webCfg(), hash)
+		_, err := h.svc.AddService(context.Background(), "web", name, webCfg(), hash, nil)
 		if fs := fieldsOf(t, err); len(fs) != 1 || fs[0].Field != "service" {
 			t.Fatalf("name %q fields %+v", name, fs)
 		}
