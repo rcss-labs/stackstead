@@ -279,4 +279,69 @@ describe('New stack YAML mode', () => {
     expect((screen.getByRole('radio', { name: 'Write a Dockerfile' }) as HTMLInputElement).checked).toBe(true);
     expect((screen.getByRole('textbox', { name: 'Dockerfile for web' }) as HTMLTextAreaElement).value).toBe('FROM busybox\n');
   });
+
+  it('Create in YAML mode uses a top-level name when the stack name field is empty', async () => {
+    const user = await mount();
+    await pickMode(user, 'YAML');
+    setYaml('name: shop\nservices:\n  web:\n    image: nginx:1.27\n');
+    await submit(user);
+    await waitFor(() => expect(post()).toBeTruthy());
+    expect((post()?.body as { name: string }).name).toBe('shop');
+  });
+
+  it('the stack name field follows a top-level name while typing in YAML', async () => {
+    const user = await mount();
+    await pickMode(user, 'YAML');
+    setYaml('name: shop\nservices:\n  web:\n    image: nginx:1.27\n');
+    await waitFor(() => expect((screen.getByLabelText('Stack name') as HTMLInputElement).value).toBe('shop'));
+  });
+
+  it('a Dockerfile server error in YAML mode is listed with service and field', async () => {
+    const user = await mount({
+      'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'services[0].dockerfile', message: 'Dockerfile is larger than 1 MiB' }] } },
+    });
+    await user.type(screen.getByLabelText('Stack name'), 'web');
+    await user.click(screen.getByRole('radio', { name: 'Write a Dockerfile' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Dockerfile for web' }), { target: { value: 'FROM busybox\n' } });
+    await pickMode(user, 'YAML');
+    await submit(user);
+    expect((await screen.findByTestId('yaml-field-errors')).textContent).toContain('web: Dockerfile: Dockerfile is larger than 1 MiB');
+  });
+
+  it('the server error list clears on the first edit after a submit', async () => {
+    const user = await mount({
+      'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'services[0].ports[0]', message: 'port in use' }] } },
+    });
+    await user.type(screen.getByLabelText('Stack name'), 'web');
+    await pickMode(user, 'YAML');
+    setYaml('services:\n  web:\n    image: nginx:1.27\n    ports:\n      - "80:80"\n');
+    await submit(user);
+    await screen.findByTestId('yaml-field-errors');
+    setYaml('services:\n  web:\n    image: nginx:1.27\n    ports:\n      - "81:80"\n');
+    expect(screen.queryByTestId('yaml-field-errors')).toBeNull();
+  });
+
+  it('regenerates instead of restoring when the stack name was changed in Form mode against the text name', async () => {
+    const user = await mount();
+    await pickMode(user, 'YAML');
+    setYaml('name: shop\nservices:\n  web:\n    image: nginx:1.27\n');
+    await pickMode(user, 'Form');
+    await user.clear(screen.getByLabelText('Stack name'));
+    await user.type(screen.getByLabelText('Stack name'), 'other');
+    await pickMode(user, 'YAML');
+    expect(yamlBox().value).not.toContain('name: shop');
+  });
+
+  it('an emptied Dockerfile is remembered as empty, not resurrected', async () => {
+    const user = await mount();
+    await user.type(screen.getByLabelText('Stack name'), 'web');
+    await user.click(screen.getByRole('radio', { name: 'Write a Dockerfile' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Dockerfile for web' }), { target: { value: 'FROM busybox\n' } });
+    await pickMode(user, 'YAML');
+    await pickMode(user, 'Form');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Dockerfile for web' }), { target: { value: '' } });
+    await pickMode(user, 'YAML');
+    await pickMode(user, 'Form');
+    expect((screen.getByRole('textbox', { name: 'Dockerfile for web' }) as HTMLTextAreaElement).value).toBe('');
+  });
 });

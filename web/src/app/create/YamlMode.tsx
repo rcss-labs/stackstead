@@ -21,8 +21,8 @@ export function YamlMode({ text, onChange, error, fieldErrors, disabled }: YamlM
     <div className={styles.yaml}>
       {fieldErrors.length > 0 && (
         <ul id="yaml-field-errors" data-testid="yaml-field-errors" className={styles.fieldErrors} role="alert" tabIndex={-1}>
-          {fieldErrors.map((message) => (
-            <li key={message}>{message}</li>
+          {fieldErrors.map((message, index) => (
+            <li key={`${index}-${message}`}>{message}</li>
           ))}
         </ul>
       )}

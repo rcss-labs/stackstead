@@ -263,6 +263,11 @@ export function useCreateForm(): CreateForm {
     const result = yamlToStack(text, dockerfilesRef.current, MAX_SERVICES);
     setYamlError(result.ok ? null : { message: result.message, ...(result.line !== undefined ? { line: result.line } : {}) });
     setYamlEmpty(result.ok && result.cards.length === 0);
+    // A top-level name: feeds the stack name field while that is empty, so paste-and-create needs no retyping.
+    if (result.ok && result.name !== undefined && stackNameRef.current === '') {
+      stackNameRef.current = result.name;
+      setStackNameState(result.name);
+    }
     return result;
   }
 
@@ -270,6 +275,9 @@ export function useCreateForm(): CreateForm {
     yamlTextRef.current = text;
     setYamlTextState(text);
     setYamlEdited(text !== storedYamlRef.current);
+    setYamlFieldErrors([]);
+    // The old verdict about an empty document is stale once the text changes; Create re-parses on submit anyway.
+    setYamlEmpty(false);
     clearTimeout(checkTimer.current);
     checkTimer.current = setTimeout(() => checkYaml(yamlTextRef.current), YAML_CHECK_DELAY_MS);
   }
@@ -296,7 +304,11 @@ export function useCreateForm(): CreateForm {
   function switchToYaml() {
     const current = cardsRef.current;
     const untouched = !isCreateDirty({ stackName: stackNameRef.current, cards: current, stackExtra: stackExtraRef.current, yamlEdited: false });
-    const restore = storedYamlRef.current !== null && !formEditedRef.current ? storedYamlRef.current : null;
+    // The stored text is only restored while its own name: still agrees with the stack name field.
+    const stored = storedYamlRef.current;
+    const storedName = stored !== null ? yamlToStack(stored, dockerfilesRef.current, MAX_SERVICES) : null;
+    const nameAgrees = !storedName || !storedName.ok || storedName.name === undefined || storedName.name === stackNameRef.current;
+    const restore = stored !== null && !formEditedRef.current && nameAgrees ? stored : null;
     if (restore === null && !untouched) {
       // An empty or repeated service name would produce a document that cannot be read back, so the name error is
       // shown on its card first. An untouched screen has nothing to convert and skips the check.
@@ -317,7 +329,7 @@ export function useCreateForm(): CreateForm {
         return;
       }
     }
-    for (const card of current) if (card.form.source === 'dockerfile' && card.form.dockerfileText !== '') dockerfilesRef.current[card.name] = card.form.dockerfileText;
+    for (const card of current) if (card.form.source === 'dockerfile') dockerfilesRef.current[card.name] = card.form.dockerfileText;
     showYaml(restore ?? (untouched ? EMPTY_DOCUMENT : stackToYaml(current.map(({ name, form, extra }) => ({ name, form, extra })), stackExtraRef.current)));
   }
 
@@ -381,7 +393,7 @@ export function useCreateForm(): CreateForm {
     setUnavailable('');
     setFormError('');
     setYamlFieldErrors([]);
-    const name = stackNameRef.current;
+    let name = stackNameRef.current;
     const inYaml = modeRef.current === 'yaml';
     let sending: Submitted[];
     let sendingExtra: Extra;
@@ -390,6 +402,7 @@ export function useCreateForm(): CreateForm {
       clearTimeout(checkTimer.current);
       const result = checkYaml(yamlTextRef.current);
       if (!result.ok || result.cards.length === 0) return;
+      name = stackNameRef.current; // checkYaml may have taken it from a top-level name:
       sending = result.cards.map((card, index) => ({ id: -1 - index, name: card.name, form: card.form, extra: card.extra }));
       sendingExtra = result.extra;
       const nameError = validateForm(sending[0].form, { name, requireName: true, original: null }).name ?? '';
