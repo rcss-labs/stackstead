@@ -61,16 +61,16 @@ func Save(path string, data []byte, expectedHash string) error {
 			return err
 		}
 		mode = info.Mode().Perm()
-		if err := writeAtomic(path+".bak", current, mode); err != nil {
+		if err := WriteAtomic(path+".bak", current, mode); err != nil {
 			return fmt.Errorf("write backup: %w", err)
 		}
 	}
-	return writeAtomic(path, data, mode)
+	return WriteAtomic(path, data, mode)
 }
 
-// writeAtomic writes to a temporary file in the same directory, syncs it and
+// WriteAtomic writes to a temporary file in the same directory, syncs it and
 // renames it over path, so readers see either the old or the new content.
-func writeAtomic(path string, data []byte, mode fs.FileMode) (err error) {
+func WriteAtomic(path string, data []byte, mode fs.FileMode) (err error) {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp")
 	if err != nil {

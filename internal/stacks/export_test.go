@@ -16,3 +16,9 @@ func (s *Service) SetAfterClaim(fn func()) { s.afterClaim = fn }
 
 // SetProbeTimeout shortens the version probe's own timeout for tests.
 func SetProbeTimeout(c Compose, d time.Duration) { c.(*versionCache).probeTimeout = d }
+
+// Exposed so the confinement rules can be tested without a registry.
+var (
+	DockerfileTarget = dockerfileTarget
+	WriteDockerfile  = writeDockerfile
+)

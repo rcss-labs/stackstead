@@ -189,6 +189,10 @@ func TestStacksErrorMapping(t *testing.T) {
 		{"not mapping", composefile.ErrNotMapping, 422, ""},
 		{"multi doc", composefile.ErrMultipleDocuments, 422, ""},
 		{"edit refused", fmt.Errorf("w: %w", composefile.ErrEditRefused), 422, "this change needs the raw YAML editor"},
+		{"dockerfile outside stack", fmt.Errorf("w: %w", stacks.ErrOutsideStack), 403, "this Dockerfile is outside the stack's folder and can't be edited here"},
+		{"dockerfile no build", stacks.ErrNoBuild, 404, "service does not build an image"},
+		{"dockerfile conflict", stacks.ErrDockerfileConflict, 409, "Dockerfile changed on disk since it was loaded"},
+		{"dockerfile not editable", &stacks.NotEditableError{Reason: "uses variables"}, 422, "Dockerfile can't be edited here: uses variables"},
 		{"unknown", errors.New("boom secret"), 500, "internal error"},
 	}
 	fake := newFakeStacks()
