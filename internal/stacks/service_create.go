@@ -154,6 +154,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 		}
 	}
 	var localNetworks map[string]bool
+	needsImage := false
 	if parsed != nil {
 		localNetworks = parsed.LocalNetworks()
 		for position := range configs {
@@ -174,6 +175,22 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 				fields[index] = append(fields[index], FieldError{Field: prefix + field.Field, Message: field.Message})
 			}
 			configs[position].Config = effective
+			if effective.Build != nil && effective.Image == "" {
+				// the extra introduced the build, so the form's image default did not apply
+				services[position].Config.Image = defaultImageName(req.Name, configs[position].Name)
+				configs[position].Config.Image = services[position].Config.Image
+				needsImage = true
+			}
+		}
+		if needsImage && len(topFields) == 0 {
+			rendered, err := composefile.NewStack(services, req.Extra)
+			if err == nil {
+				parsed, err = composefile.Parse(rendered)
+			}
+			if err != nil {
+				return Summary{}, err
+			}
+			data = rendered
 		}
 	}
 	partial, err := s.checkChanges(ctx, changeSet{services: configs, indexed: req.IndexedFields, indices: indices, localNetworks: localNetworks})
@@ -243,6 +260,10 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 	wroteFile = true
 	for _, df := range dockerfiles {
 		target, inside, err := dockerfileTarget(dir, parsed, df.service)
+		var notEditable *NotEditableError
+		if errors.As(err, &notEditable) {
+			return Summary{}, dockerfileFieldError(req.IndexedFields, df.index, notEditable.Reason)
+		}
 		if err != nil || !inside {
 			return Summary{}, dockerfileOutsideError(req.IndexedFields, df.index)
 		}
@@ -324,11 +345,7 @@ func (s *Service) prepareConfig(stack, service, stackDir string, cfg composefile
 	b := *cfg.Build
 	cfg.Build = &b
 	if cfg.Image == "" {
-		name := stack
-		if service != stack {
-			name += "-" + service
-		}
-		cfg.Image = "stackstead/" + name + ":latest"
+		cfg.Image = defaultImageName(stack, service)
 	}
 	if b.Context == "" {
 		b.Context = "."
@@ -343,11 +360,26 @@ func (s *Service) prepareConfig(stack, service, stackDir string, cfg composefile
 	return cfg, nil
 }
 
+// defaultImageName is the tag a built service gets when none is given.
+func defaultImageName(stack, service string) string {
+	name := stack
+	if service != stack {
+		name += "-" + service
+	}
+	return "stackstead/" + name + ":latest"
+}
+
+const buildContextVariableMessage = "build context must not use variables"
+
 // confineBuild checks that a build context lies inside the stack folder or an
 // allowed directory. An absolute context comes back with symlinks resolved.
 func (s *Service) confineBuild(stackDir string, b composefile.Build) (composefile.Build, error) {
 	if b.Context == "" {
 		b.Context = "."
+	}
+	if hasVariable(b.Context) {
+		// compose interpolates after this check, so the value cannot be confined
+		return b, &ValidationError{Fields: []FieldError{{Field: "build.context", Message: buildContextVariableMessage}}}
 	}
 	target := b.Context
 	if !filepath.IsAbs(target) {
@@ -446,11 +478,15 @@ type createDockerfile struct {
 const dockerfileOutsideMessage = "a Dockerfile can only be written inside the stack's folder"
 
 func dockerfileOutsideError(indexed bool, index int) error {
+	return dockerfileFieldError(indexed, index, dockerfileOutsideMessage)
+}
+
+func dockerfileFieldError(indexed bool, index int, message string) error {
 	field := "dockerfile"
 	if indexed {
 		field = fmt.Sprintf("services[%d].dockerfile", index)
 	}
-	return &ValidationError{Fields: []FieldError{{Field: field, Message: dockerfileOutsideMessage}}}
+	return &ValidationError{Fields: []FieldError{{Field: field, Message: message}}}
 }
 
 // CheckTopExtra rejects a stack-level extra that sets keys the server owns.
@@ -474,10 +510,21 @@ func (s *Service) effectiveWithExtra(parsed *composefile.File, stackDir string, 
 	}
 	var fields []FieldError
 	confine := func(b composefile.Build) bool {
-		_, err := s.confineBuild(stackDir, b)
+		confined, err := s.confineBuild(stackDir, b)
 		var ve *ValidationError
 		if errors.As(err, &ve) {
-			fields = append(fields, ve.Fields...)
+			for _, field := range ve.Fields {
+				if field.Message == buildContextVariableMessage {
+					field.Field = "extra" // the value came from the extra, not the form
+				}
+				fields = append(fields, field)
+			}
+			return false
+		}
+		// The extra is written as typed, so a link that is repointed later
+		// would escape the check; require the real path.
+		if filepath.IsAbs(b.Context) && confined.Context != filepath.Clean(b.Context) {
+			fields = append(fields, FieldError{Field: "build.context", Message: "build context must not be a symlink; use the real path"})
 			return false
 		}
 		return true

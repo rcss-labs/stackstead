@@ -246,3 +246,79 @@ func TestCreateWithoutExtrasWritesSameBytes(t *testing.T) {
 		t.Fatalf("bytes differ:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+func TestCreateRejectsVariableBuildContexts(t *testing.T) {
+	const msg = "build context must not use variables"
+	for _, tc := range []struct {
+		name  string
+		svc   composefile.NamedService
+		field string
+	}{
+		{"form", composefile.NamedService{Name: "web", Config: composefile.ServiceConfig{Build: &composefile.Build{Context: "${X:-/etc}"}}}, "services[0].build.context"},
+		{"extra", composefile.NamedService{Name: "web", Extra: mustExtra(t, `{"build":{"context":"${X:-/etc}"}}`)}, "services[0].extra"},
+		{"additional", composefile.NamedService{Name: "web", Extra: mustExtra(t, `{"build":{"context":".","additional_contexts":{"x":"${X:-/etc}"}}}`)}, "services[0].extra"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			_, err := h.svc.Create(context.Background(), multiRequest(tc.svc))
+			fs := fieldsOf(t, err)
+			if len(fs) != 1 || fs[0].Field != tc.field || fs[0].Message != msg {
+				t.Fatalf("fields = %+v", fs)
+			}
+		})
+	}
+}
+
+func TestCreateRejectsSymlinkedExtraBuildContext(t *testing.T) {
+	h := newHarness(t)
+	root := filepath.Dir(h.dir)
+	real := filepath.Join(root, "real")
+	link := filepath.Join(root, "link")
+	if err := os.Mkdir(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	for name, raw := range map[string]string{
+		"context":    `{"build":{"context":"` + link + `"}}`,
+		"additional": `{"build":{"context":".","additional_contexts":{"x":"` + link + `"}}}`,
+	} {
+		_, err := h.svc.Create(context.Background(), multiRequest(composefile.NamedService{Name: "web", Extra: mustExtra(t, raw)}))
+		fs := fieldsOf(t, err)
+		if len(fs) != 1 || fs[0].Field != "services[0].build.context" || fs[0].Message != "build context must not be a symlink; use the real path" {
+			t.Fatalf("%s: fields = %+v", name, fs)
+		}
+	}
+	// the real path is fine
+	req := multiRequest(composefile.NamedService{Name: "web", Extra: mustExtra(t, `{"build":{"context":"`+real+`"}}`)})
+	if _, err := h.svc.Create(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateDockerfileForInlineBuildNamesTheReason(t *testing.T) {
+	h := newHarness(t)
+	req := multiRequest(composefile.NamedService{Name: "web",
+		Extra: mustExtra(t, `{"build":{"context":"./web","dockerfile_inline":"FROM x"}}`)})
+	req.Dockerfiles = map[int][]byte{0: []byte("FROM x\n")}
+	_, err := h.svc.Create(context.Background(), req)
+	fs := fieldsOf(t, err)
+	if len(fs) != 1 || fs[0].Field != "services[0].dockerfile" || fs[0].Message != "inline Dockerfile" {
+		t.Fatalf("fields = %+v", fs)
+	}
+}
+
+func TestCreateExtraBuildGetsDefaultImage(t *testing.T) {
+	h := newHarness(t)
+	req := multiRequest(
+		composefile.NamedService{Name: "web", Extra: mustExtra(t, `{"build":{"context":"./web"}}`)},
+		composefile.NamedService{Name: "tagged", Extra: mustExtra(t, `{"build":{"context":"./t"},"image":"mine:1"}`)})
+	if _, err := h.svc.Create(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	compose, _ := os.ReadFile(h.path("lab"))
+	if !strings.Contains(string(compose), "image: stackstead/lab-web:latest") || !strings.Contains(string(compose), "image: mine:1") || strings.Contains(string(compose), "lab-tagged") {
+		t.Fatalf("compose:\n%s", compose)
+	}
+}

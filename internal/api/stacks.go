@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -154,7 +153,13 @@ func (s *server) handleCreateStack(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// The single-service form has no place for extras; silently dropping
 		// one would lose the user's compose keys.
-		if extra := bytes.TrimSpace(req.Extra); len(extra) > 0 && string(extra) != "null" {
+		// null, absent and {} all mean "no extra".
+		legacyExtra, err := composefile.ParseExtra(req.Extra)
+		if err != nil {
+			s.writeStackError(w, r, &stacks.ValidationError{Fields: []stacks.FieldError{extraFieldError("extra", err)}})
+			return
+		}
+		if len(legacyExtra.Keys()) > 0 {
 			s.writeStackError(w, r, &stacks.ValidationError{Fields: []stacks.FieldError{{Field: "extra", Message: "extra needs the services form"}}})
 			return
 		}

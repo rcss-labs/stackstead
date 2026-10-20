@@ -113,3 +113,12 @@ func TestCreateStackBodyLimit(t *testing.T) {
 		t.Fatalf("33 MiB: status = %d", rec.Code)
 	}
 }
+
+func TestCreateStackLegacyFormAcceptsEmptyExtraObject(t *testing.T) {
+	fake := newFakeStacks()
+	env, cookie := newStacksEnv(t, fake)
+	rec := env.do(t, "POST", "/api/stacks", `{"name":"lab","service":"web","config":{"image":"nginx:1"},"extra":{}}`, withCookie(cookie))
+	if rec.Code != 201 {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+}
