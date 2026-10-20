@@ -29,7 +29,7 @@ function findHandoffReferences(files: Record<string, string>): string[] {
 
 function findSvelteStoreImports(files: Record<string, string>): string[] {
   return Object.entries(files)
-    .filter(([, text]) => /(?:\bfrom\s*|\bimport\s*\(\s*)['"]svelte\/store['"]/.test(text))
+    .filter(([, text]) => /(?:\bfrom\s*|\bimport\s*\(\s*)['"]svelte(?:\/[^'"]*)?['"]/.test(text))
     .map(([name]) => name);
 }
 
@@ -62,15 +62,18 @@ describe('guards: detectors', () => {
       }),
     ).toEqual(['a.tsx']);
   });
-  it('flags svelte/store imports but not $lib/store', () => {
+  it('flags svelte imports (any subpath) but not $lib/store', () => {
     expect(
       findSvelteStoreImports({
         'a.ts': "import { writable } from 'svelte/store';",
         'b.ts': "import { writable } from '$lib/store';",
         'c.tsx': 'import { get } from "svelte/store";',
         'd.ts': "const { writable } = await import('svelte/store');",
+        'e.ts': "import { mount } from 'svelte';",
+        'f.ts': "import x from 'svelte/internal';",
+        'g.ts': "import x from 'svelte-check';",
       }),
-    ).toEqual(['a.ts', 'c.tsx', 'd.ts']);
+    ).toEqual(['a.ts', 'c.tsx', 'd.ts', 'e.ts', 'f.ts']);
   });
   it('flags anything that is not an exact version', () => {
     const bad = findRangedVersions({
@@ -98,7 +101,7 @@ describe('guards: repository', () => {
     expect(findHandoffReferences(files)).toEqual([]);
   });
 
-  it('imports no svelte/store anywhere in src/', () => {
+  it('imports nothing from svelte anywhere in src/', () => {
     const files = Object.fromEntries(sourceFiles(srcDir).map((p) => [p, readFileSync(p, 'utf8')]));
     expect(findSvelteStoreImports(files)).toEqual([]);
   });

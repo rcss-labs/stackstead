@@ -53,7 +53,7 @@ const ratio = (a: RGB, b: RGB) => (Math.max(L(a), L(b)) + 0.05) / (Math.min(L(a)
 describe('design tokens', () => {
   it('old token names are gone', () => {
     const old = /--(surface-raised|accent-contrast|font-sans|font-mono)\b/;
-    const hits = walk(appDir)
+    const hits = walk(join(process.cwd(), 'src'))
       .filter((f) => /\.(tsx?|css)$/.test(f) && !f.endsWith('tokens.test.ts'))
       .filter((f) => old.test(readFileSync(f, 'utf8')));
     expect(hits).toEqual([]);

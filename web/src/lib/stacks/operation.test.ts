@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { get } from '$lib/store';
 import { installFakeFetch, installFakeStream, type FakeFetch, type FakeStream } from '../../vitest-setup';
-import { createOperationStream } from './operation';
+import { createOperationStream, outputTone } from './operation';
 
 const PATH = '/api/operations/op1/stream';
 const line = (id: string | undefined, text: string) =>
@@ -154,5 +154,19 @@ describe('createOperationStream', () => {
     expect(get(s.unavailable)).toBe(true);
     expect(get(s.op)).toBeUndefined();
     s.close();
+  });
+});
+
+describe('outputTone', () => {
+  it.each([
+    ['✔ Container web Started', 'success'],
+    ['✘ Container web Error', 'danger'],
+    ['Error response from daemon', 'danger'],
+    ['error: boom', 'danger'],
+    ['pull failed', 'danger'],
+    ['plain output', undefined],
+    ['', undefined],
+  ])('%s -> %s', (text, tone) => {
+    expect(outputTone(text)).toBe(tone);
   });
 });

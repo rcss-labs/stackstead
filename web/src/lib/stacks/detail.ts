@@ -1,6 +1,7 @@
 // The stack detail page's data and state machines, so a React screen can be a thin renderer. All I/O
-// goes through `deps` (the React hook passes the api methods and the shared stores); every response is sequence-guarded so a late answer never replaces a newer one, and stop() leaves
-// no timer, subscription or request behind. start() after stop() resumes, so one controller survives a
+// goes through `deps` (the React hook passes the api methods and the shared stores); every response
+// is sequence-guarded so a late answer never replaces a newer one, and stop() leaves no timer,
+// subscription or request behind. start() after stop() resumes, so one controller survives a
 // remounted effect.
 import { get, writable, type Readable, type Unsubscriber } from '$lib/store';
 import { ApiError } from '../api/client';
