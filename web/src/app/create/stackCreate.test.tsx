@@ -19,6 +19,9 @@ vi.mock('$lib/stores/live', async (orig) => {
   };
 });
 
+/** The service cards, without the compose.yaml preview region. */
+const serviceCards = () => screen.getAllByRole('region').filter((r) => r.getAttribute('aria-labelledby') !== 'preview-heading');
+
 async function mount(extra: Record<string, unknown> = {}) {
   routes(extra);
   mountAt('/stacks/new');
@@ -159,11 +162,11 @@ describe('New stack screen', () => {
     const user = await mount();
     const add = screen.getByRole('button', { name: '+ Add another service' });
     for (let i = 1; i < 20; i++) await user.click(add);
-    expect(screen.getAllByRole('region')).toHaveLength(20);
+    expect(serviceCards()).toHaveLength(20);
     expect(add.getAttribute('aria-disabled')).toBe('true');
     expect(add.getAttribute('title')).toMatch(/20/);
     await user.click(add);
-    expect(screen.getAllByRole('region')).toHaveLength(20);
+    expect(serviceCards()).toHaveLength(20);
   });
 
   it('freezes structure during submission and routes delayed errors to submitted identities', async () => {
@@ -174,7 +177,7 @@ describe('New stack screen', () => {
     await submit(user);
     await user.click(screen.getByRole('button', { name: '+ Add another service' }));
     await user.click(screen.getByRole('button', { name: 'Remove service web' }));
-    expect(screen.getAllByRole('region')).toHaveLength(2);
+    expect(serviceCards()).toHaveLength(2);
     respond({ status: 400, body: { error: 'invalid', fields: [{ field: 'services[1].service', message: 'bad submitted name' }] } });
     await screen.findByText('bad submitted name');
     expect((screen.getByLabelText('Service name') as HTMLInputElement).value).toBe('db');

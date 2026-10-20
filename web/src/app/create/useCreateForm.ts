@@ -1,9 +1,10 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent, RefObject } from 'react';
 import { useNavigate } from 'react-router';
 import { api, ApiError } from '$lib/api/client';
 import { emptyForm, fromForm, groupServiceErrors, mapServerErrors, validateForm } from '$lib/compose/form';
 import type { FormErrors, ServiceForm } from '$lib/compose/form';
+import { isCreateDirty } from '$lib/stacks/createPreview';
 import { trackOperation } from '$lib/stores/operationTracker';
 import { setUnsavedChanges } from '$lib/stores/guard';
 import { refreshRunningOps, refreshStacks } from '$lib/stores/stacks';
@@ -119,6 +120,10 @@ export function useCreateForm(): CreateForm {
     else if (first) serviceFormRef.current?.focusFirstError();
     else if (formError) document.getElementById('create-error')?.focus();
   }, [focusRequest]);
+
+  // The shared guard asks before the user navigates away from a form they have typed into.
+  useEffect(() => setUnsavedChanges(isCreateDirty({ stackName, cards })), [stackName, cards]);
+  useEffect(() => () => setUnsavedChanges(false), []);
 
   function setStackName(name: string) {
     stackNameRef.current = name;

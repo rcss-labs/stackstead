@@ -2,16 +2,22 @@ import { Link } from 'react-router';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { Field } from '../components/Field';
+import { useIsMobile } from '../hooks/useIsMobile';
+import { previewYaml } from '$lib/stacks/createPreview';
 import { BROWSE_TITLES } from '../stacks/ServiceForm';
 import { FileBrowser } from '../stacks/FileBrowser';
 import { MAX_SERVICES, useCreateForm } from './useCreateForm';
 import { ServiceCard } from './ServiceCard';
+import { ComposePreview } from './ComposePreview';
+import { usePortCheck } from './usePortCheck';
 import styles from './StackCreateScreen.module.css';
 
 export function StackCreateScreen() {
   const form = useCreateForm();
   const { cards, browser, pending } = form;
   const frozen = pending || browser !== null;
+  const mobile = useIsMobile();
+  const portNoteFor = usePortCheck(cards);
 
   return (
     <section className={styles.page}>
@@ -63,6 +69,7 @@ export function StackCreateScreen() {
               onNameChange={(name) => form.setCardName(card.id, name)}
               onFormChange={(next) => form.setCardForm(card.id, next)}
               onBrowse={(mode, set, purpose) => form.browse(card.id, mode, set, purpose)}
+              portNote={portNoteFor(card.id)}
               formRef={form.serviceFormRef}
             />
           ))}
@@ -80,14 +87,15 @@ export function StackCreateScreen() {
         </form>
       </div>
 
-      <aside className={styles.side}>
+      <aside className={styles.side} data-mobile={mobile || undefined}>
+        <ComposePreview text={previewYaml(cards)} />
         <label className={styles.check}>
           <input type="checkbox" checked={form.startNow} onChange={(e) => form.setStartNow(e.target.checked)} />
           <span>
             Start now (<code>up --build</code>)
           </span>
         </label>
-        <div className={styles.actions}>
+        <div className={styles.actions} data-mobile={mobile || undefined}>
           <Link to="/" className={styles.cancel}>
             Cancel
           </Link>

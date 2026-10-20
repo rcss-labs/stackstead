@@ -46,7 +46,10 @@
   border: 1px solid var(--hi);
   border-radius: 12px;
   padding: 14px;
+  position: sticky;
+  top: 72px;
 }
+.side[data-mobile] { position: static; }
 .check { display: flex; gap: 8px; align-items: center; font-size: 12.5px; }
 .check code { font-family: var(--mono); font-size: 12px; }
 .actions { display: flex; gap: 8px; }
@@ -68,4 +71,5 @@
   .header h1 { font-size: 20px; }
   .actions > * { min-height: 40px; }
   .cancel, .create { flex: 1; }
+  .side { position: static; }
 }
