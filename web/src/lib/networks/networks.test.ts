@@ -1,8 +1,8 @@
 import { get, writable } from '$lib/store';
-import { expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { HostInterface, Network } from '../api/types';
 import type { LiveChange } from '../stores/live';
-import { autofill, createNetworkList, needsParent, networkOwner, removeDisabledReason, sortNetworks } from './networks';
+import { autofill, createNetworkList, needsParent, networkOwner, networkSummary, removeDisabledReason, sortNetworks, summaryParts } from './networks';
 
 function network(over: Partial<Network> = {}): Network {
   return { id: 'n', name: 'lan', driver: 'bridge', scope: 'local', subnets: [], gateways: [], ipRange: '', parent: '', ipvlanMode: '', internal: false, builtin: false, project: '', stack: '', containers: [], ...over };
@@ -62,4 +62,19 @@ it('creates a network list keyed by id even if names change', async () => {
   c.patch(network({ name: 'renamed' }));
   expect(get(c.rows)?.[0].name).toBe('renamed');
   c.stop();
+});
+
+describe('networkSummary', () => {
+  it('counts stacks, LAN drivers and built-ins', () => {
+    const rows = [network({ name: 'z' }), network({ name: 'd', project: 'legacy' }), network({ name: 'c', stack: 'my stack' }), network({ name: 'bridge', builtin: true, driver: 'macvlan' })];
+    const summary = networkSummary(rows);
+    expect(summary).toEqual({ total: 4, stacks: 1, lan: 1, builtin: 1 });
+    expect(summaryParts(summary)).toEqual(['4 networks', '1 owned by stacks', '1 LAN network', '1 built-in']);
+  });
+
+  it('uses singular forms and omits empty parts', () => {
+    expect(summaryParts(networkSummary([network()]))).toEqual(['1 network']);
+    expect(summaryParts(networkSummary([network({ driver: 'ipvlan' }), network({ driver: 'ipvlan' })]))).toEqual(['2 networks', '2 LAN networks']);
+    expect(summaryParts(networkSummary([]))).toEqual(['0 networks']);
+  });
 });

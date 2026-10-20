@@ -1,8 +1,5 @@
 // Port of web/src/App.test.ts for the React app frame (routing, session guards, focus, titles,
-// banners, unsaved-changes guard). Screens are placeholders until Plans 17–22, so these App tests
-// are deferred to the screen plans that make them meaningful:
-// - the Login and Setup form details beyond the minimal login used here (Plan 22)
-// - the /api/networks fetch asserted by the Networks route test, once the Networks screen is ported (Plan 22)
+// banners, unsaved-changes guard). Screens are real since Plan 22; screen behaviour is tested beside each screen.
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -46,6 +43,7 @@ beforeEach(() => {
     'GET /api/stacks': () => stacksRes,
     'GET /api/host': () => ({ body: {} }),
     'GET /api/containers': () => ({ body: [containerRow('web')] }),
+    'GET /api/networks': () => ({ body: [] }),
     'GET /api/containers/web000000000': () => ({ status: 404, body: { error: 'not loaded in this test' } }),
     'GET /api/operations?state=running': () => ({ body: running }),
     'GET /api/stacks/web': {
@@ -195,6 +193,9 @@ describe('App routing and session', () => {
     expect(window.location.search).toBe('?next=%2Fstacks%2Fweb%3Ftab%3Dlogs');
     expect(loc().next).toBe('/stacks/web?tab=logs');
     expect(stream.requests).toHaveLength(0);
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeTruthy();
+    expect((screen.getByLabelText('Password') as HTMLInputElement).type).toBe('password');
+    expect(document.title).toBe('Sign in · Stackstead');
   });
 
   it('first run goes to Setup', async () => {
@@ -204,6 +205,21 @@ describe('App routing and session', () => {
     render(<App />);
     await waitFor(() => expect(loc().path).toBe('/setup'));
     expect(await screen.findByRole('heading', { name: /set up/i })).toBeTruthy();
+    expect(await screen.findByLabelText('Confirm password')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create account' })).toBeTruthy();
+    expect(document.title).toBe('Set up · Stackstead');
+  });
+
+  it('someone else finishing setup sends the Setup page to /login without next', async () => {
+    me = { status: 401, body: { error: 'unauthorized' } };
+    setupStatus = true;
+    at('/');
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: /set up/i })).toBeTruthy();
+    act(() => expireSession());
+    expect(await screen.findByLabelText('Username')).toBeTruthy();
+    await waitFor(() => expect(loc().path).toBe('/login'));
+    expect(loc().next).toBeNull();
   });
 
   it('authenticated users get the stack list, one events connection and a status fetch', async () => {
@@ -234,6 +250,7 @@ describe('App routing and session', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Networks' })).toBeTruthy();
     await waitFor(() => expect(document.title).toBe('Networks · Stackstead'));
     expect(within(mainNav()).getByRole('link', { name: 'Networks' }).getAttribute('aria-current')).toBe('page');
+    await waitFor(() => expect(fake.calls.some((c) => c.path === '/api/networks')).toBe(true));
   });
 
   it('shows "Container not found" (not "no longer exists") after navigating from a found container to an unknown one', async () => {
@@ -352,7 +369,8 @@ describe('App routing and session', () => {
       'GET /api/setup/status': { body: { needsSetup: false } },
       'POST /api/logout': { status: 500, body: { error: 'boom' } },
     });
-    await user().click(screen.getByRole('button', { name: 'Log out' }));
+    // Settings now also has an Account "Log out"; this test covers the shell's (titled with the user name).
+    await user().click(screen.getByTitle('admin · Log out'));
     expect(await screen.findByLabelText('Username')).toBeTruthy();
     expect(get(toasts).some((t) => t.kind === 'warning' && t.message === 'Logout may not have completed on the server')).toBe(true);
     expect(loc().path).toBe('/login');

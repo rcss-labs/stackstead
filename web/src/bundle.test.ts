@@ -211,4 +211,44 @@ describe('react app build shape', () => {
       for (const file of eagerFiles) expect(read(file), `${file} must not contain ${name} code`).not.toContain(marker);
     }
   });
+
+  it.skipIf(!existsSync(manifestPath))('keeps the networks, settings and auth screens out of the eager entry', () => {
+    const sizes = measure(dist);
+    const lazyFiles = sizes.lazy.map((l: { file: string }) => l.file);
+    const eagerFiles = readdirSync(join(dist, 'assets'))
+      .filter((f) => f.endsWith('.js'))
+      .map((f) => `assets/${f}`)
+      .filter((f) => !lazyFiles.includes(f));
+    expect(eagerFiles.map(chunkName).some((name) => /NetworkList|NetworkCard|Settings|PasswordForm|UpdateCard|MetricsToken|Login|Setup|AuthCard|CreateNetworkDialog/i.test(name))).toBe(false);
+    expect(sizes.entry).toBeLessThanOrEqual(106 * 1024);
+
+    // As above: eager code is one merged chunk, so unique strings are what reveal folded-in code. Login and Setup are
+    // mounted by App from the session state but through lazy() routes, so they are lazy too. AuthCard, PasswordForm,
+    // UpdateCard, networkSummary and CreateNetworkDialog may sit in shared lazy chunks, so only their absence from the
+    // eager files is asserted.
+    const read = (file: string) => readFileSync(join(dist, file), 'utf8');
+    const screens = [
+      { chunk: 'NetworkList', marker: 'Could not load networks' },
+      { chunk: 'Settings', marker: 'Could not load the token status' },
+      { chunk: 'Login', marker: 'Could not sign in. Check your connection and try again.' },
+      { chunk: 'Setup', marker: 'Could not complete setup. Check your connection and try again.' },
+    ];
+    for (const { chunk, marker } of screens) {
+      const lazyChunk = lazyFiles.find((f: string) => chunkName(f) === chunk);
+      expect(lazyChunk, `${chunk} is a lazy chunk`).toBeDefined();
+      expect(read(lazyChunk as string), `${chunk} carries its screen`).toContain(marker);
+      for (const file of eagerFiles) expect(read(file), `${file} must not contain ${chunk} code`).not.toContain(marker);
+    }
+    const shared = [
+      { name: 'AuthCard', marker: 'Localhost only. For remote access use a TLS reverse proxy.' },
+      { name: 'PasswordForm', marker: 'Password changed. Other sessions were signed out.' },
+      { name: 'UpdateCard', marker: 'Could not load the update status' },
+      { name: 'networkSummary', marker: 'owned by stacks' },
+      { name: 'CreateNetworkDialog', marker: 'The Docker host itself cannot reach containers on this network.' },
+    ];
+    for (const { name, marker } of shared) {
+      expect(lazyFiles.some((f: string) => read(f).includes(marker)), `${name} ships in a lazy chunk`).toBe(true);
+      for (const file of eagerFiles) expect(read(file), `${file} must not contain ${name} code`).not.toContain(marker);
+    }
+  });
 });

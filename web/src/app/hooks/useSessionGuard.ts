@@ -9,7 +9,7 @@ import { useStore } from './useStore';
 
 /**
  * Returns a stable handler for "the server says this session is gone": stops live updates, expires
- * the session and sends the user to Login carrying `next` (except from `/` and `/login`).
+ * the session and sends the user to Login carrying `next` (except from `/`, `/login` and `/setup`, which are never destinations).
  * It reads the session and URL at call time, because 401s arrive outside React renders and two can
  * land in the same tick: once the session is no longer authenticated a late 401 must not clobber `next`.
  */
@@ -22,7 +22,8 @@ export function useSessionLost(): () => void {
     stopLive();
     const here = window.location.pathname + window.location.search;
     expireSession();
-    navigateRef.current(here.startsWith('/login') || here === '/' ? '/login' : `/login?next=${encodeURIComponent(here)}`, { replace: true });
+    const carriesNoNext = here === '/' || here.startsWith('/login') || here.startsWith('/setup');
+    navigateRef.current(carriesNoNext ? '/login' : `/login?next=${encodeURIComponent(here)}`, { replace: true });
   }, []);
 }
 
@@ -49,7 +50,8 @@ export function useSessionGuard({ booted, loggingOut }: SessionGuardOptions): vo
     if (state === 'needs-setup' && path !== '/setup') {
       navigate('/setup', { replace: true });
     } else if (state === 'anonymous' && path !== '/login') {
-      if (loggingOut.current) navigate('/login', { replace: true });
+      // A user logout and the Setup page (someone else finished setup) carry no `next`: /setup is never a destination.
+      if (loggingOut.current || path === '/setup') navigate('/login', { replace: true });
       else navigate(`/login?next=${encodeURIComponent(path + window.location.search)}`, { replace: true });
     }
     if (state === 'authenticated') {
