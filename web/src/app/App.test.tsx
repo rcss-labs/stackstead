@@ -353,7 +353,8 @@ describe('App routing and session', () => {
       'GET /api/setup/status': { body: { needsSetup: false } },
       'POST /api/logout': { status: 500, body: { error: 'boom' } },
     });
-    await user().click(screen.getByRole('button', { name: 'Log out' }));
+    // Settings now also has an Account "Log out"; this test covers the shell's (titled with the user name).
+    await user().click(screen.getByTitle('admin · Log out'));
     expect(await screen.findByLabelText('Username')).toBeTruthy();
     expect(get(toasts).some((t) => t.kind === 'warning' && t.message === 'Logout may not have completed on the server')).toBe(true);
     expect(loc().path).toBe('/login');
