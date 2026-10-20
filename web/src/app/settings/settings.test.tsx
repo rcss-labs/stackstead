@@ -39,7 +39,12 @@ const UPDATE_STATUS = {
   error: '',
 };
 const installSettingsFetch = (routes: Routes) =>
-  installFakeFetch({ 'GET /api/settings/update': { body: UPDATE_STATUS }, ...routes });
+  installFakeFetch({
+    'GET /api/settings/update': { body: UPDATE_STATUS },
+    // The connected-servers card loads on every Settings render too.
+    'GET /api/peers/self': { body: { instanceId: 'i', name: 'Here', slug: 'here', advertisedUrl: '', suggestedUrl: '', version: '0.2.0' } },
+    ...routes,
+  });
 const tokenStatus = (configured: boolean) => ({ [`GET ${STATUS}`]: { body: { configured } } });
 const mountSettings = () => mountAt('/settings');
 
@@ -360,9 +365,9 @@ describe('Settings layout', () => {
     mountSettings();
     const nav = await screen.findByRole('navigation', { name: 'Settings sections' });
     const links = within(nav).getAllByRole('link');
-    const ids = ['settings-system', 'settings-updates', 'settings-prometheus', 'settings-appearance', 'settings-account'];
+    const ids = ['settings-system', 'settings-updates', 'settings-prometheus', 'settings-servers', 'settings-appearance', 'settings-account'];
     expect(links.map((a) => a.getAttribute('href'))).toEqual(ids.map((id) => `#${id}`));
-    expect(links.map((a) => a.textContent)).toEqual(['System', 'Updates', 'Prometheus', 'Appearance', 'Account']);
+    expect(links.map((a) => a.textContent)).toEqual(['System', 'Updates', 'Prometheus', 'Connected servers', 'Appearance', 'Account']);
     for (const id of ids) expect(document.getElementById(id)).not.toBeNull();
     expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['Settings']);
   });
@@ -390,6 +395,7 @@ describe('Settings section nav', () => {
     ['System', 'System status', 'settings-system'],
     ['Updates', 'Software update', 'settings-updates'],
     ['Prometheus', 'Prometheus token', 'settings-prometheus'],
+    ['Connected servers', 'Connected servers', 'settings-servers'],
     ['Appearance', 'Appearance', 'settings-appearance'],
     ['Account', 'Account', 'settings-account'],
   ])('%s scrolls to its card, focuses the heading and sets the hash', async (link, heading, sectionId) => {
