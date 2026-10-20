@@ -30,6 +30,7 @@ func (s *server) writeStackError(w http.ResponseWriter, r *http.Request, err err
 		validation *stacks.ValidationError
 		exit       *composecli.ExitError
 		readOnly   *composefile.ReadOnlyFieldError
+		notEdit    *stacks.NotEditableError
 	)
 	switch {
 	case errors.As(err, &validation):
@@ -45,8 +46,15 @@ func (s *server) writeStackError(w http.ResponseWriter, r *http.Request, err err
 		}
 		writeError(w, http.StatusUnprocessableEntity, msg)
 
+	case errors.Is(err, stacks.ErrOutsideStack):
+		writeError(w, http.StatusForbidden, stacks.ErrOutsideStack.Error())
+	case errors.As(err, &notEdit):
+		writeError(w, http.StatusUnprocessableEntity, notEdit.Error())
+	case errors.Is(err, stacks.ErrDockerfileConflict):
+		writeError(w, http.StatusConflict, stacks.ErrDockerfileConflict.Error())
+
 	case errors.Is(err, stacks.ErrStackNotFound), errors.Is(err, stacks.ErrOperationNotFound),
-		errors.Is(err, composefile.ErrServiceNotFound):
+		errors.Is(err, stacks.ErrNoBuild), errors.Is(err, composefile.ErrServiceNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, stacks.ErrStackUnavailable):
 		// A state conflict, not a missing resource: the registered stack's file is gone or broken.
