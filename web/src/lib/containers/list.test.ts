@@ -2,7 +2,7 @@ import { get, writable } from '$lib/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContainerRow } from '../api/types';
 import type { LiveChange } from '../stores/live';
-import { chipCounts, createContainerList, filterContainers, isProblem, sortContainers } from './list';
+import { chipCounts, containerLed, createContainerList, filterContainers, isProblem, sortContainers } from './list';
 
 function row(name: string, over: Partial<ContainerRow> = {}): ContainerRow {
   return {
@@ -44,6 +44,21 @@ describe('isProblem', () => {
     [{ state: 'paused' }, false],
   ] as [Partial<ContainerRow>, boolean][])('%j -> %s', (over, expected) => {
     expect(isProblem(row('c', over))).toBe(expected);
+  });
+});
+
+describe('containerLed', () => {
+  it.each([
+    ['running', { state: 'running' }, { tone: 'success', pulse: false }],
+    ['running + unhealthy', { state: 'running', health: 'unhealthy' }, { tone: 'danger', pulse: true }],
+    ['restarting', { state: 'restarting' }, { tone: 'danger', pulse: true }],
+    ['exited with code 137', { state: 'exited', exitCode: 137 }, { tone: 'danger', pulse: true }],
+    ['running + starting', { state: 'running', health: 'starting' }, { tone: 'warning', pulse: false }],
+    ['paused', { state: 'paused' }, { tone: 'warning', pulse: false }],
+    ['exited with code 0', { state: 'exited', exitCode: 0 }, { tone: 'faint', pulse: false }],
+    ['created', { state: 'created' }, { tone: 'faint', pulse: false }],
+  ] as [string, Partial<ContainerRow>, { tone: string; pulse: boolean }][])('%s', (_name, over, expected) => {
+    expect(containerLed(row('c', over))).toEqual(expected);
   });
 });
 

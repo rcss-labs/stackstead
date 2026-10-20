@@ -1,0 +1,23 @@
+.btns {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.btns button[data-action='start']:hover {
+  color: var(--success);
+}
+
+.btns button[data-action='stop']:hover {
+  color: var(--danger);
+}
+
+.manage {
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.manage:hover {
+  text-decoration: underline;
+}

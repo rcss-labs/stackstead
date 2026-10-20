@@ -1,0 +1,91 @@
+.peekRow {
+  border-bottom: 1px solid var(--hi);
+}
+
+.cell {
+  min-width: 0;
+}
+
+.peek {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px 12px;
+  background: var(--chassis);
+  animation: fadeUp 0.18s ease-out;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.spacer { flex: 1; }
+
+.status { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); }
+.status[data-tone='live'] { color: var(--success); }
+.status[data-tone='warning'] { color: var(--warning); }
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% { opacity: 0.35; }
+}
+
+.dockerStatus { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+
+.actions button { height: 28px; }
+
+.full { font-size: 12px; color: var(--accent); text-decoration: none; white-space: nowrap; }
+.full:hover { text-decoration: underline; }
+
+.error {
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.lines {
+  max-height: 150px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.75;
+}
+
+.line {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr);
+  gap: 10px;
+  animation: lineIn 1.2s ease-out;
+}
+
+@keyframes lineIn {
+  from { background: var(--accent-soft); }
+  to { background: transparent; }
+}
+
+.time { color: var(--faint); }
+.text { color: var(--text); overflow-wrap: anywhere; }
+.line[data-tone='danger'] .text { color: var(--danger); }
+.line[data-tone='warning'] .text { color: var(--warning); }
+
+@media (max-width: 759px) {
+  .actions button,
+  .full { min-height: 40px; display: inline-flex; align-items: center; }
+  .actions button { height: 40px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .peek, .line, .dot { animation: none; }
+}

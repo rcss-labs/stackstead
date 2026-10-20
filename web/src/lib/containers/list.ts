@@ -51,3 +51,16 @@ export interface ContainerListDeps {
 export function createContainerList(deps: ContainerListDeps) {
   return createRefreshList({ ...deps, key: (row) => row.id });
 }
+
+export interface ContainerLed {
+  tone: 'success' | 'warning' | 'danger' | 'faint';
+  pulse: boolean;
+}
+
+/** The status LED of a container: problems pulse red, transitional states are amber, stopped is dim. */
+export function containerLed(c: ContainerRow): ContainerLed {
+  if (isProblem(c)) return { tone: 'danger', pulse: true };
+  if (c.state === 'paused' || (c.state === 'running' && c.health === 'starting')) return { tone: 'warning', pulse: false };
+  if (c.state === 'running') return { tone: 'success', pulse: false };
+  return { tone: 'faint', pulse: false };
+}

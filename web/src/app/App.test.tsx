@@ -19,6 +19,7 @@ import { setUnsavedChanges } from '$lib/stores/guard';
 import { toasts } from '$lib/stores/toasts';
 import { installFakeFetch, installFakeStream, type FakeFetch, type FakeResponse, type FakeStream } from '../vitest-setup';
 import { App } from './App';
+import { row as containerRow } from './containers/containersTestKit';
 import { ROUTES } from './routes';
 
 let fake: FakeFetch;
@@ -46,6 +47,8 @@ beforeEach(() => {
     'GET /api/status': () => ({ body: status }),
     'GET /api/stacks': () => stacksRes,
     'GET /api/host': () => ({ body: {} }),
+    'GET /api/containers': () => ({ body: [containerRow('web')] }),
+    'GET /api/containers/web000000000': () => ({ status: 404, body: { error: 'not loaded in this test' } }),
     'GET /api/operations?state=running': () => ({ body: running }),
     'GET /api/stacks/web': {
       body: {
