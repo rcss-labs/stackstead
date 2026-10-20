@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router';
 import { api, ApiError, createApi } from '$lib/api/client';
-import type { Action, DockerEvent, FleetServer, FleetStack, StackSummary } from '$lib/api/types';
-import { BUSY_REASON } from '$lib/stacks/lifecycle';
+import type { Action, DockerEvent, FleetServer, FleetStack, Operation, StackSummary } from '$lib/api/types';
+import { lifecycleDisabledReason } from '$lib/stacks/lifecycle';
 import { createFleet, serverPath } from '$lib/servers/fleet';
-import { peers } from '$lib/servers/peers';
+import { createOperationTracker } from '$lib/stores/operationTracker';
+import { createRunningOpsStore } from '$lib/stores/runningOps';
+import { writable } from '$lib/store';
 import { toasts } from '$lib/stores/toasts';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
@@ -20,7 +21,41 @@ import styles from './AllStacks.module.css';
 import overview from './Overview.module.css';
 
 const NO_STACKS: ReadonlySet<string> = new Set();
-const stripV = (version: string) => version.replace(/^v/, '');
+// A connected server's live state is unknown from here, so only its stack status and busy state gate actions.
+const PEER_LIVE = { compose: '', docker: 'ok', events: 'connected' } as const;
+
+/** One connected server's operation watcher: its running list feeds a tracker that resolves the toasts. */
+interface PeerWatch {
+  api: ReturnType<typeof createApi>;
+  tracker: ReturnType<typeof createOperationTracker>;
+  recheck: () => void;
+  stop: () => void;
+}
+
+function startPeerWatch(server: FleetServer, onRunning: (ops: Operation[]) => void): PeerWatch {
+  const peerApi = createApi(`/api/servers/${encodeURIComponent(server.id)}`);
+  const store = createRunningOpsStore();
+  const refresh = writable(0);
+  const tracker = createOperationTracker({
+    href: (path) => serverPath(server.slug, path),
+    stoppedMessage: `Still running on ${server.name}`,
+  });
+  const stopOps = store.startRunningOps({ list: peerApi.runningOperations, changes: writable(null), refresh });
+  const stopTracker = tracker.startOperationTracker({ runningOps: store.runningOps, get: peerApi.operation });
+  const unsubscribe = store.runningOps.subscribe(onRunning);
+  return {
+    api: peerApi,
+    tracker,
+    recheck: () => refresh.update((n) => n + 1),
+    stop: () => {
+      unsubscribe();
+      stopTracker();
+      stopOps();
+    },
+  };
+}
+
+const displayVersion = (v: string) => (/^v?\d/.test(v) ? `v${v.replace(/^v/, '')}` : v);
 
 // The list components are typed on StackSummary; every item here came from the fleet and carries its server.
 const fleetStack = (s: StackSummary) => s as FleetStack;
@@ -29,43 +64,53 @@ const rowKey = (s: StackSummary) => `${fleetStack(s).server}/${s.name}`;
 /** The Overview, fed by every connected server at once. A server that does not answer contributes a banner, never stale rows. */
 export default function AllStacks() {
   const scope = useServer();
-  const navigate = useNavigate();
   const fleet = useMemo(() => createFleet({ load: api.fleetStacks }), []);
   const { data, loading, error } = useStore(fleet.state);
-  const known = useStore(peers).items;
+  const liveState = useStore(scope.live);
+  const localOps = useStore(scope.runningOps);
   const [selected, setSelected] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [acting, setActing] = useState<ReadonlySet<string>>(NO_STACKS);
   const inFlight = useRef(new Set<string>());
-  const [selfVersion, setSelfVersion] = useState<string>();
+  const [peerOps, setPeerOps] = useState<Record<string, Operation[]>>({});
+  const watches = useRef(new Map<string, PeerWatch>());
 
   useEffect(() => {
     fleet.start();
     return () => fleet.stop();
   }, [fleet]);
 
-  const servers = data?.servers ?? [];
+  // Trackers live as long as the screen so a toast keeps resolving after the action; leaving settles the pending ones.
+  useEffect(() => {
+    const open = watches.current;
+    return () => {
+      for (const watch of open.values()) watch.stop();
+      open.clear();
+    };
+  }, []);
+
+  const servers = useMemo(() => data?.servers ?? [], [data]);
   const byId = useMemo(() => new Map(servers.map((s) => [s.id, s])), [servers]);
   const answering = servers.filter((s) => s.status === 'reachable');
   const failing = servers.filter((s) => s.status !== 'reachable');
-  const hasIncompatible = failing.some((s) => s.status === 'incompatible');
+  const localServer = servers.find((s) => s.local);
 
-  useEffect(() => {
-    if (!hasIncompatible) return;
-    let cancelled = false;
-    api
-      .serverSelf()
-      .then((s) => !cancelled && setSelfVersion(s.version))
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [hasIncompatible]);
+  const slugOf = useCallback(
+    (id: string) => {
+      const server = byId.get(id);
+      return server && !server.local ? server.slug : null;
+    },
+    [byId],
+  );
 
-  const slugOf = (id: string) => {
-    const server = byId.get(id);
-    return server && !server.local ? server.slug : null;
-  };
+  const watchFor = useCallback((server: FleetServer): PeerWatch => {
+    let watch = watches.current.get(server.id);
+    if (!watch) {
+      watch = startPeerWatch(server, (ops) => setPeerOps((prev) => (prev[server.id] === ops ? prev : { ...prev, [server.id]: ops })));
+      watches.current.set(server.id, watch);
+    }
+    return watch;
+  }, []);
 
   // Only servers that answered contribute rows; a failing server's last data would be stale.
   const combined = (data?.stacks ?? []).filter((s) => byId.get(s.server)?.status === 'reachable');
@@ -73,6 +118,13 @@ export default function AllStacks() {
   const shown = activeServer === null ? combined : combined.filter((s) => s.server === activeServer);
   const events = (data?.events ?? []).filter((e) => byId.get(e.server)?.status === 'reachable');
   const countOf = (id: string) => combined.filter((s) => s.server === id).length;
+
+  const runningKeys = useMemo(() => {
+    const keys = new Set<string>();
+    if (localServer) for (const o of localOps) keys.add(`${localServer.id}/${o.stack}`);
+    for (const [id, ops] of Object.entries(peerOps)) for (const o of ops) keys.add(`${id}/${o.stack}`);
+    return keys;
+  }, [localOps, peerOps, localServer]);
 
   const act = useCallback(
     async (stack: FleetStack, action: Action) => {
@@ -82,15 +134,14 @@ export default function AllStacks() {
       setActing(new Set(inFlight.current));
       try {
         const server = byId.get(stack.server);
-        const isLocal = server?.local ?? false;
-        const target = isLocal ? scope.api : createApi(`/api/servers/${encodeURIComponent(stack.server)}`);
-        const op = await target.act(stack.name, action);
-        // Only this server's tracker can resolve its operations; a connected server's progress is shown on its own screen.
-        if (isLocal) {
-          scope.trackOperation(op);
+        if (!server || server.local) {
+          scope.trackOperation(await scope.api.act(stack.name, action));
           scope.refreshRunningOps();
+        } else {
+          const watch = watchFor(server);
+          watch.tracker.trackOperation(await watch.api.act(stack.name, action));
+          watch.recheck();
         }
-        navigate(serverPath(slugOf(stack.server), `/stacks/${encodeURIComponent(stack.name)}?tab=operations&op=${encodeURIComponent(op.id)}`));
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         toasts.push({ kind: e instanceof ApiError && e.status === 409 ? 'warning' : 'danger', message: `Could not run ${action}: ${message}` });
@@ -99,10 +150,14 @@ export default function AllStacks() {
         setActing(new Set(inFlight.current));
       }
     },
-    // slugOf reads byId only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [byId, navigate, scope],
+    [byId, scope, watchFor],
   );
+
+  const reasonFor = (s: StackSummary) => {
+    const key = rowKey(s);
+    const busy = runningKeys.has(key) || acting.has(key);
+    return lifecycleDisabledReason({ live: byId.get(fleetStack(s).server)?.local ? liveState : PEER_LIVE, status: s.status, busy });
+  };
 
   const serverOf = (s: { server: string }) => ({ name: byId.get(s.server)?.name ?? s.server, slug: slugOf(s.server) });
   const stackHref = (s: StackSummary) => serverPath(slugOf(fleetStack(s).server), `/stacks/${encodeURIComponent(s.name)}`);
@@ -134,9 +189,9 @@ export default function AllStacks() {
         </div>
       )}
       {failing.map((server) => (
-        <ServerBanner key={server.id} server={server} version={known.find((p) => p.id === server.id)?.version} selfVersion={selfVersion} />
+        <ServerBanner key={server.id} server={server} selfVersion={localServer?.version ?? ''} />
       ))}
-      {data && (
+      {data && (combined.length > 0 || failing.length === 0) && (
         <>
           <StatusPanel items={combined} host={undefined} history={[]} lastEventIso={events[0]?.time} showActions={false} hrefOf={stackHref} keyOf={rowKey} />
           {combined.length === 0 ? (
@@ -160,10 +215,8 @@ export default function AllStacks() {
                   summary={undefined}
                   query={query}
                   onQuery={setQuery}
-                  runningStacks={NO_STACKS}
-                  reasonFor={(s) =>
-                    s.status === 'unavailable' ? 'the compose file cannot be parsed' : acting.has(rowKey(s)) ? BUSY_REASON : undefined
-                  }
+                  runningStacks={runningKeys}
+                  reasonFor={reasonFor}
                   acting={acting}
                   onAct={(_, action, stack) => void act(fleetStack(stack), action)}
                   serverOf={(s) => serverOf(fleetStack(s))}
@@ -172,7 +225,7 @@ export default function AllStacks() {
                 />
                 <SideColumn
                   events={events}
-                  connection="open"
+                  connection={error ? 'reconnecting' : 'open'}
                   top={undefined}
                   stackNames={{}}
                   hideTop
@@ -187,11 +240,11 @@ export default function AllStacks() {
   );
 }
 
-function ServerBanner({ server, version, selfVersion }: { server: FleetServer; version: string | undefined; selfVersion: string | undefined }) {
+function ServerBanner({ server, selfVersion }: { server: FleetServer; selfVersion: string }) {
   if (server.status === 'incompatible') {
-    return (
-      <Banner kind="danger" title={`${server.name} runs ${version ? `v${stripV(version)}` : 'another version'}, this server ${selfVersion ? `v${stripV(selfVersion)}` : '?'}. Update to match`} />
-    );
+    const runs = server.version ? `runs ${displayVersion(server.version)}` : 'runs a different version';
+    const self = server.version && selfVersion ? `, this server ${displayVersion(selfVersion)}` : '';
+    return <Banner kind="danger" title={`${server.name} ${runs}${self}. Update to match`} />;
   }
   return (
     <Banner kind="danger" title={`Can't reach ${server.name}`}>

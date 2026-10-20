@@ -743,6 +743,8 @@ export interface FleetServer {
   status: string;
   error: string;
   lastSeenAt: string | null;
+  /** The server's own version; the first server in the list is this one. */
+  version: string;
 }
 
 /** A stack row tagged with the instance ID of the server that owns it. */

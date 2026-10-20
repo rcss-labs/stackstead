@@ -2,9 +2,9 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { startPeers } from '$lib/servers/peers';
-import { api } from '$lib/api/client';
-import type { FleetServer, FleetStack, FleetStacks, PeerView, StackSummary } from '$lib/api/types';
+import { get } from '$lib/store';
+import { toasts } from '$lib/stores/toasts';
+import type { FleetServer, FleetStack, FleetStacks, StackSummary } from '$lib/api/types';
 import { installFakeFetch, installFakeStream, type FakeFetch, type FakeStream } from '../../vitest-setup';
 import AllStacks from './AllStacks';
 
@@ -21,24 +21,10 @@ const summary = (name: string, over: Partial<StackSummary> = {}): StackSummary =
   ...over,
 });
 
-const local: FleetServer = { id: 'a0', name: 'here', slug: 'here', local: true, status: 'reachable', error: '', lastSeenAt: null };
-const mini: FleetServer = { id: 'b1', name: 'mini-02', slug: 'mini-02', local: false, status: 'reachable', error: '', lastSeenAt: null };
-const down: FleetServer = { id: 'c2', name: 'nas', slug: 'nas', local: false, status: 'unreachable', error: 'timeout', lastSeenAt: null };
-const old: FleetServer = { id: 'd3', name: 'attic', slug: 'attic', local: false, status: 'incompatible', error: '', lastSeenAt: null };
-
-const peerView = (s: FleetServer, version: string): PeerView => ({
-  id: s.id,
-  name: s.name,
-  slug: s.slug,
-  url: `https://${s.slug}:8080`,
-  version,
-  status: s.status as PeerView['status'],
-  stackCount: 0,
-  lastSeenAt: null,
-  lastError: '',
-  compatible: s.status !== 'incompatible',
-  plaintext: false,
-});
+const local: FleetServer = { id: 'a0', name: 'here', slug: 'here', local: true, status: 'reachable', error: '', lastSeenAt: null, version: '1.5' };
+const mini: FleetServer = { id: 'b1', name: 'mini-02', slug: 'mini-02', local: false, status: 'reachable', error: '', lastSeenAt: null, version: '1.5' };
+const down: FleetServer = { id: 'c2', name: 'nas', slug: 'nas', local: false, status: 'unreachable', error: 'timeout', lastSeenAt: null, version: '' };
+const old: FleetServer = { id: 'd3', name: 'attic', slug: 'attic', local: false, status: 'incompatible', error: '', lastSeenAt: null, version: '1.3' };
 
 const fleetStack = (server: string, name: string): FleetStack => ({ ...summary(name), server });
 
@@ -53,7 +39,7 @@ function fleet(over: Partial<FleetStacks> = {}): FleetStacks {
 
 let fake: FakeFetch;
 let stream: FakeStream;
-let stopPeers: () => void;
+let view: ReturnType<typeof render>;
 
 function Where() {
   const { pathname, search } = useLocation();
@@ -63,13 +49,11 @@ function Where() {
 function mount(data: FleetStacks, extra: Record<string, { status?: number; body?: unknown }> = {}) {
   fake = installFakeFetch({
     'GET /api/fleet/stacks': { body: data },
-    'GET /api/peers': { body: [peerView(mini, '1.5'), peerView(old, '1.3')] },
-    'GET /api/peers/self': { body: { instanceId: 'x', name: 'here', slug: 'here', advertisedUrl: '', suggestedUrl: '', version: '1.5' } },
+    'GET /api/servers/b1/api/operations': { body: [] },
     ...extra,
   });
   stream = installFakeStream({});
-  stopPeers = startPeers({ list: api.peers });
-  render(
+  view = render(
     <MemoryRouter initialEntries={['/all']}>
       <Where />
       <Routes>
@@ -82,7 +66,7 @@ function mount(data: FleetStacks, extra: Record<string, { status?: number; body?
 
 afterEach(() => {
   cleanup();
-  stopPeers();
+  toasts.reset();
   fake.restore();
   stream.restore();
 });
@@ -137,16 +121,67 @@ describe('All stacks', () => {
     expect(await screen.findByText('attic runs v1.3, this server v1.5. Update to match')).toBeTruthy();
   });
 
-  it('row action on a remote stack posts to /api/servers/b1/api/stacks/pihole/actions/restart', async () => {
+  it('row action on a remote stack posts to /api/servers/b1/api/stacks/pihole/actions/restart and toasts', async () => {
     mount(fleet(), {
       'POST /api/servers/b1/api/stacks/pihole/actions/restart': {
         status: 202,
         body: { id: 'op9', stack: 'pihole', action: 'restart', state: 'running', startedAt: '2026-10-20T10:00:00Z', lines: [] },
       },
+      'GET /api/servers/b1/api/operations/op9': { body: { id: 'op9', stack: 'pihole', action: 'restart', state: 'running', startedAt: '2026-10-20T10:00:00Z', lines: [] } },
     });
     await userEvent.click(await screen.findByRole('button', { name: 'Restart pihole' }));
     await waitFor(() => expect(fake.calls.some((c) => c.method === 'POST' && c.path === '/api/servers/b1/api/stacks/pihole/actions/restart')).toBe(true));
-    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/s/mini-02/stacks/pihole?tab=operations&op=op9'));
+    await waitFor(() => expect(get(toasts)).toHaveLength(1));
+    expect(get(toasts)[0].link?.href).toBe('/s/mini-02/stacks/pihole?tab=operations&op=op9');
+    expect(screen.getByTestId('location').textContent).toBe('/all');
+  });
+
+  it('settles a pending peer toast when the screen unmounts', async () => {
+    mount(fleet(), {
+      'POST /api/servers/b1/api/stacks/pihole/actions/restart': {
+        status: 202,
+        body: { id: 'op9', stack: 'pihole', action: 'restart', state: 'running', startedAt: '2026-10-20T10:00:00Z', lines: [] },
+      },
+      'GET /api/servers/b1/api/operations/op9': { body: { id: 'op9', stack: 'pihole', action: 'restart', state: 'running', startedAt: '2026-10-20T10:00:00Z', lines: [] } },
+    });
+    await userEvent.click(await screen.findByRole('button', { name: 'Restart pihole' }));
+    await waitFor(() => expect(get(toasts)[0]?.pending).toBe(true));
+    view.unmount();
+    expect(get(toasts)[0]).toMatchObject({ message: 'Still running on mini-02', pending: undefined });
+  });
+
+  it('keeps same-named stacks of two servers apart', async () => {
+    mount(fleet({ stacks: [fleetStack('a0', 'web'), fleetStack('b1', 'web')], events: [] }), {
+      'POST /api/servers/b1/api/stacks/web/actions/restart': {
+        status: 202,
+        body: { id: 'op1', stack: 'web', action: 'restart', state: 'running', startedAt: '2026-10-20T10:00:00Z', lines: [] },
+      },
+      'GET /api/servers/b1/api/operations': { body: [{ id: 'op1', stack: 'web', action: 'restart', state: 'running', startedAt: '2026-10-20T10:00:00Z', lines: [] }] },
+      'GET /api/servers/b1/api/operations/op1': { body: { id: 'op1', stack: 'web', action: 'restart', state: 'running', startedAt: '2026-10-20T10:00:00Z', lines: [] } },
+    });
+    const links = await screen.findAllByRole('link', { name: 'web' });
+    expect(links.map((l) => l.getAttribute('href'))).toEqual(['/stacks/web', '/s/mini-02/stacks/web']);
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Restart web' })[1]);
+    await waitFor(() => expect(get(toasts)).toHaveLength(1));
+    // Only the mini-02 row is busy.
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Restart web' })[1].getAttribute('aria-disabled')).toBe('true'));
+    expect(screen.getAllByRole('button', { name: 'Restart web' })[0].getAttribute('aria-disabled')).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: /^mini-02/ }));
+    expect(screen.getAllByRole('link', { name: 'web' })).toHaveLength(1);
+    expect(screen.getByRole('link', { name: 'web' }).getAttribute('href')).toBe('/s/mini-02/stacks/web');
+  });
+
+  it('shows only the banner when every answering server is empty', async () => {
+    mount(fleet({ servers: [local, down], stacks: [], events: [] }));
+    expect(await screen.findByText("Can't reach nas")).toBeTruthy();
+    expect(screen.queryByText('No stacks yet')).toBeNull();
+  });
+
+  it('omits the version clause when the peer reports none', async () => {
+    mount(fleet({ servers: [local, { ...old, version: '' }], stacks: [fleetStack('a0', 'web')] }));
+    expect(await screen.findByText('attic runs a different version. Update to match')).toBeTruthy();
   });
 
   it('opens no event stream of its own', async () => {
