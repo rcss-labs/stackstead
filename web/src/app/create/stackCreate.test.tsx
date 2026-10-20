@@ -193,7 +193,7 @@ describe('New stack screen', () => {
     const user = await mount();
     await fillImage(user);
     await addImage(user);
-    await user.click(screen.getByLabelText('From Dockerfile'));
+    await user.click(screen.getByLabelText('From Existing build'));
     await user.type(screen.getByLabelText('Build context'), '/srv/app');
     await user.click(screen.getByRole('button', { name: 'Browse for Dockerfile' }));
     const dialog = await screen.findByRole('dialog');
@@ -275,7 +275,7 @@ describe('New stack screen', () => {
   it('400 on build.context lands on the Build context field', async () => {
     const user = await mount({ 'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'services[0].build.context', message: 'path is outside the allowed roots' }] } } });
     await user.type(screen.getByLabelText('Stack name'), 'web');
-    await user.click(screen.getByLabelText('From Dockerfile'));
+    await user.click(screen.getByLabelText('From Existing build'));
     await user.type(screen.getByLabelText('Build context'), '/etc');
     await submit(user);
     expect(await screen.findByText('path is outside the allowed roots')).toBeTruthy();
@@ -293,7 +293,7 @@ describe('New stack screen', () => {
   it('a server image error on a build card stays on the Image tag field through other edits and is dropped by a source switch', async () => {
     const user = await mount({ 'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'services[0].image', message: 'bad tag' }] } } });
     await user.type(screen.getByLabelText('Stack name'), 'web');
-    await user.click(screen.getByLabelText('From Dockerfile'));
+    await user.click(screen.getByLabelText('From Existing build'));
     await user.type(screen.getByLabelText('Build context'), '/srv/app');
     await user.type(screen.getByLabelText('Image tag'), 'x');
     await submit(user);
@@ -302,7 +302,7 @@ describe('New stack screen', () => {
     expect(screen.getByText('bad tag')).toBeTruthy();
     await user.click(screen.getByLabelText('From Image'));
     expect(screen.getByText('bad tag')).toBeTruthy(); // the Image field is the error's own field
-    await user.click(screen.getByLabelText('From Dockerfile'));
+    await user.click(screen.getByLabelText('From Existing build'));
     expect(screen.queryByText('bad tag')).toBeNull();
   });
 
@@ -321,12 +321,12 @@ describe('New stack screen', () => {
   it('a stale build error is dropped when switching back to image', async () => {
     const user = await mount({ 'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'services[0].build.context', message: 'bad context' }] } } });
     await user.type(screen.getByLabelText('Stack name'), 'web');
-    await user.click(screen.getByLabelText('From Dockerfile'));
+    await user.click(screen.getByLabelText('From Existing build'));
     await user.type(screen.getByLabelText('Build context'), '/etc');
     await submit(user);
     await screen.findByText('bad context');
     await user.click(screen.getByLabelText('From Image'));
-    await user.click(screen.getByLabelText('From Dockerfile'));
+    await user.click(screen.getByLabelText('From Existing build'));
     expect(screen.queryByText('bad context')).toBeNull();
   });
 
@@ -335,7 +335,7 @@ describe('New stack screen', () => {
       'GET /api/fs': { body: [{ name: '/', isDir: true, size: 0 }] },
       'GET /api/fs?path=%2F': { body: [{ name: 'Dockerfile', isDir: false, size: 5 }] },
     });
-    await user.click(screen.getByLabelText('From Dockerfile'));
+    await user.click(screen.getByLabelText('From Existing build'));
     await user.type(screen.getByLabelText('Build context'), '/');
     await user.click(screen.getByRole('button', { name: 'Browse for Dockerfile' }));
     await user.click(await screen.findByRole('button', { name: '/' }));
@@ -372,7 +372,7 @@ describe('New stack screen', () => {
   it('a picked Dockerfile inside the context is stored relative to it', async () => {
     const user = await mount();
     await user.type(screen.getByLabelText('Stack name'), 'web');
-    await user.click(screen.getByLabelText('From Dockerfile'));
+    await user.click(screen.getByLabelText('From Existing build'));
     await user.type(screen.getByLabelText('Build context'), '/srv/app');
     await user.click(screen.getByRole('button', { name: 'Browse for Dockerfile' }));
     await user.click(await screen.findByRole('button', { name: '/srv/app' }));

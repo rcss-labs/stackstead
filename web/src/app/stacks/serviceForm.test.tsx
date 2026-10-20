@@ -4,8 +4,8 @@ import { act, cleanup, render, screen, waitFor, within } from '@testing-library/
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Field } from '$lib/api/types';
-import { emptyForm, type FormErrors, type ServiceForm as Form } from '$lib/compose/form';
-import { ServiceForm, type BrowsePurpose, type ServiceFormHandle, type ServiceFormProps } from './ServiceForm';
+import { DOCKERFILE_TEMPLATE, emptyForm, type FormErrors, type ServiceForm as Form } from '$lib/compose/form';
+import { fieldLabel, ServiceForm, type BrowsePurpose, type ServiceFormHandle, type ServiceFormProps } from './ServiceForm';
 
 afterEach(cleanup);
 
@@ -28,6 +28,8 @@ interface HostProps {
   showName?: boolean;
   nameReadonly?: boolean;
   idPrefix?: string;
+  readOnlyHint?: string;
+  onSourceChange?: ServiceFormProps['onSourceChange'];
   handle?: Ref<HostHandle>;
 }
 
@@ -116,7 +118,7 @@ describe('ServiceForm', () => {
   it("hides the build source's errors while the image source is selected", async () => {
     setup({ errors: { 'build.context': 'build context is required' } });
     expect(screen.queryByText('build context is required')).toBeNull();
-    await userEvent.setup().click(screen.getByRole('radio', { name: 'From Dockerfile' }));
+    await userEvent.setup().click(screen.getByRole('radio', { name: 'From Existing build' }));
     expect(screen.getByText('build context is required')).toBeTruthy();
     await userEvent.setup().click(screen.getByRole('radio', { name: 'From Image' }));
     expect(screen.queryByText('build context is required')).toBeNull();
@@ -446,5 +448,67 @@ describe('ServiceForm', () => {
   it('does not announce build errors while the image source is selected', () => {
     setup({ errors: { 'build.context': 'x' } });
     expect(screen.getByRole('status').textContent).toBe('');
+  });
+
+  describe('Dockerfile source', () => {
+    it('offers three sources', () => {
+      setup();
+      const names = screen.getAllByRole('radio').map((r) => r.getAttribute('aria-label') ?? r.closest('label')?.textContent?.replace(/\s+/g, ' ').trim());
+      expect(screen.getByRole('radio', { name: 'From Image' })).toBeTruthy();
+      expect(screen.getByRole('radio', { name: 'From Existing build' })).toBeTruthy();
+      expect(screen.getByRole('radio', { name: 'Write a Dockerfile' })).toBeTruthy();
+      expect(names).toHaveLength(3);
+    });
+
+    it('Write a Dockerfile shows the editor prefilled with the template', async () => {
+      const { handle } = setup();
+      await userEvent.setup().click(screen.getByRole('radio', { name: 'Write a Dockerfile' }));
+      expect(handle.current.getForm().source).toBe('dockerfile');
+      expect(handle.current.getForm().dockerfileText).toBe(DOCKERFILE_TEMPLATE);
+      expect((screen.getByRole('textbox', { name: 'Dockerfile for web' }) as HTMLTextAreaElement).value).toBe(DOCKERFILE_TEMPLATE);
+      expect(screen.getByLabelText('Image tag')).toBeTruthy();
+      expect(screen.queryByLabelText('Build context')).toBeNull();
+    });
+
+    it('keeps typed Dockerfile text when switching away and back', async () => {
+      const user = userEvent.setup();
+      const { handle } = setup({ initial: { source: 'dockerfile', dockerfileText: 'FROM busybox\n' } });
+      await user.click(screen.getByRole('radio', { name: 'From Image' }));
+      await user.click(screen.getByRole('radio', { name: 'Write a Dockerfile' }));
+      expect(handle.current.getForm().dockerfileText).toBe('FROM busybox\n');
+    });
+
+    it('keeps dockerfileAt when selecting the Dockerfile source', async () => {
+      const at = { context: '/srv', dockerfile: 'Dockerfile' };
+      const { handle } = setup({ initial: { dockerfileAt: at } });
+      await userEvent.setup().click(screen.getByRole('radio', { name: 'Write a Dockerfile' }));
+      expect(handle.current.getForm().dockerfileAt).toEqual(at);
+    });
+
+    it('lets onSourceChange adjust the form before the source is applied', async () => {
+      const { handle } = setup({ onSourceChange: (source) => (source === 'dockerfile' ? { ...emptyForm(), image: 'stackstead/s:latest' } : undefined) });
+      await userEvent.setup().click(screen.getByRole('radio', { name: 'Write a Dockerfile' }));
+      expect(handle.current.getForm().image).toBe('stackstead/s:latest');
+      expect(handle.current.getForm().source).toBe('dockerfile');
+    });
+
+    it('shows a Dockerfile error and counts it in the summary', () => {
+      setup({ initial: { source: 'dockerfile', dockerfileText: '' }, errors: { dockerfileText: 'Dockerfile is required' } });
+      expect(screen.getByText(/Dockerfile is required/)).toBeTruthy();
+      expect(screen.getByRole('status').textContent).toBe('1 field has an error: Dockerfile');
+    });
+
+    it('uses the readOnlyHint for read-only groups', () => {
+      setup({ initial: { ports: ['80:80'], readOnly: new Set<Field>(['ports']) }, readOnlyHint: 'Edit this in the stack file' });
+      expect(screen.getByText('Edit this in the stack file')).toBeTruthy();
+      expect(screen.queryByText(HINT)).toBeNull();
+    });
+
+    it('fieldLabel names dockerfileText and the image tag for both build sources', () => {
+      expect(fieldLabel('dockerfileText', 'dockerfile')).toBe('Dockerfile');
+      expect(fieldLabel('image', 'dockerfile')).toBe('Image tag');
+      expect(fieldLabel('image', 'build')).toBe('Image tag');
+      expect(fieldLabel('image', 'image')).toBe('Image');
+    });
   });
 });
