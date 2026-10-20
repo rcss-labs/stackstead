@@ -26,18 +26,31 @@ import (
 // bodyRecorder keeps what a handler wrote so the test can scan it for secrets.
 type bodyRecorder struct {
 	http.ResponseWriter
-	mu   *sync.Mutex
-	into *bytes.Buffer
+	mu     *sync.Mutex
+	into   *bytes.Buffer
+	status int
+	// allowed is true for the two responses that carry a secret by design.
+	allowed func(status int) bool
 }
 
-func (r bodyRecorder) Write(p []byte) (int, error) {
-	r.mu.Lock()
-	r.into.Write(p)
-	r.mu.Unlock()
+func (r *bodyRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *bodyRecorder) Write(p []byte) (int, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	if !r.allowed(r.status) {
+		r.mu.Lock()
+		r.into.Write(p)
+		r.mu.Unlock()
+	}
 	return r.ResponseWriter.Write(p)
 }
-func (r bodyRecorder) Flush()                      { r.ResponseWriter.(http.Flusher).Flush() }
-func (r bodyRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+func (r *bodyRecorder) Flush()                      { r.ResponseWriter.(http.Flusher).Flush() }
+func (r *bodyRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
 // integrationNode is a peerNode with stacks, a captured log and recorded
 // browser-facing response bodies, whose peer checker is running.
@@ -81,13 +94,14 @@ func newIntegrationNode(t *testing.T, name string, stackNames ...string) *integr
 	})
 	n := &integrationNode{logs: logs}
 	recorded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The connection token is shown once on creation and the peer protocol
-		// carries credentials by design; every other response must be clean.
-		if r.URL.Path == "/api/peers/tokens" || strings.HasPrefix(r.URL.Path, "/api/peer/") {
-			handler.ServeHTTP(w, r)
-			return
+		// Only a created connection token (201) and a successful pairing
+		// response (200) carry a secret by design; everything else, error
+		// bodies included, must be clean.
+		allowed := func(status int) bool {
+			return r.Method == "POST" && (r.URL.Path == "/api/peers/tokens" && status == http.StatusCreated ||
+				r.URL.Path == "/api/peer/pair" && status == http.StatusOK)
 		}
-		handler.ServeHTTP(bodyRecorder{ResponseWriter: w, mu: &n.mu, into: &n.bodies}, r)
+		handler.ServeHTTP(&bodyRecorder{ResponseWriter: w, mu: &n.mu, into: &n.bodies, allowed: allowed}, r)
 	})
 	n.peerNode = &peerNode{t: t, name: name, svc: svc, store: st}
 	n.srv = httptest.NewServer(recorded)
@@ -129,13 +143,19 @@ func TestConnectedServersInProcess(t *testing.T) {
 		t.Fatalf("forwarded stacks = %d %s", status, body)
 	}
 
-	req, _ := http.NewRequest("GET", a.url()+"/api/servers/"+bID+"/api/events", nil)
+	req, err := http.NewRequest("GET", a.url()+"/api/servers/"+bID+"/api/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	req.AddCookie(a.cookie)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	resp, err := http.DefaultClient.Do(req.WithContext(ctx))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("forwarded events = %d", resp.StatusCode)
 	}
 	sawStatus := false
 	sc := bufio.NewScanner(resp.Body)

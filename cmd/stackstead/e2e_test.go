@@ -67,6 +67,8 @@ type e2eServer struct {
 	base   string
 	bin    string
 	stderr *syncBuffer
+	// stop interrupts the process and waits for it to exit; safe to call twice.
+	stop func()
 }
 
 func freePort(t *testing.T) int {
@@ -127,15 +129,19 @@ func startServer(t *testing.T, socket string) *e2eServer {
 	}
 	done := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(done) }()
-	t.Cleanup(func() {
-		_ = cmd.Process.Signal(os.Interrupt)
-		select {
-		case <-done:
-		case <-time.After(15 * time.Second):
-			_ = cmd.Process.Kill()
-			<-done
-		}
-	})
+	var stopOnce sync.Once
+	stop := func() {
+		stopOnce.Do(func() {
+			_ = cmd.Process.Signal(os.Interrupt)
+			select {
+			case <-done:
+			case <-time.After(15 * time.Second):
+				_ = cmd.Process.Kill()
+				<-done
+			}
+		})
+	}
+	t.Cleanup(stop)
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
 	deadline := time.Now().Add(20 * time.Second)
 	for {
@@ -149,7 +155,7 @@ func startServer(t *testing.T, socket string) *e2eServer {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return &e2eServer{base: base, bin: bin, stderr: stderr}
+	return &e2eServer{base: base, bin: bin, stderr: stderr, stop: stop}
 }
 
 type client struct {
@@ -1163,7 +1169,7 @@ func TestE2EConnectedServers(t *testing.T) {
 	if err := json.Unmarshal(a.expect(200, "GET", "/api/peers", nil), &aViews); err != nil {
 		t.Fatal(err)
 	}
-	if len(aViews) != 1 {
+	if len(aViews) != 1 || aViews[0].URL != srvB.base {
 		t.Fatalf("A lists %+v, want B", aViews)
 	}
 	bID := aViews[0].ID
@@ -1178,6 +1184,9 @@ func TestE2EConnectedServers(t *testing.T) {
 		t.Errorf("B still lists %+v after A removed it", bViews)
 	}
 
+	// Stop both first so shutdown logs are scanned too.
+	srvA.stop()
+	srvB.stop()
 	for name, srv := range map[string]*e2eServer{"A": srvA, "B": srvB} {
 		log := redact(srv.stderr.String())
 		for _, prefix := range []string{"ssc_", "ssp_"} {
