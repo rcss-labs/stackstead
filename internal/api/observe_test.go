@@ -2082,3 +2082,41 @@ func TestContainerLogsFollowProjectlessEmptyStreamRetriesAreCapped(t *testing.T)
 		t.Fatalf("Logs calls %d -> %d, want the poll to stop retrying", calls, n)
 	}
 }
+
+// The poll-retry budget is per container start: a container that writes
+// nothing, but ran for a while between quick restarts, is still re-attached
+// after many of them.
+func TestContainerLogsFollowProjectlessSilentContainerSurvivesManyRestarts(t *testing.T) {
+	const id = "dddddddddddd"
+	fake := newFakeObserve()
+	fake.containers = []engine.Container{{ID: id, Name: "solo-1", State: "running"}}
+	env, cookie := newObserveEnv(t, fake) // the 20 ms heartbeat is also the poll interval
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, ch := openSSE(t, env, cookie, ctx, "/api/containers/"+id+"/logs?follow=1")
+	eventually(t, "the first attach", func() bool { return fake.logCallsFor(id) == 1 })
+
+	for restart := 1; restart <= 8; restart++ {
+		fake.setLogs(id, fakeLogSpec{endsAtOnce: true}) // stopped
+		calls := fake.logCallsFor(id)
+		fake.endLogs(id)
+		eventually(t, fmt.Sprintf("restart %d: the re-attach while stopped", restart), func() bool { return fake.logCallsFor(id) > calls })
+		var running fakeLogSpec
+		if restart == 8 {
+			running.lines = []engine.LogLine{{Stream: "stdout", Time: time.Now(), Text: "finally"}}
+		}
+		fake.setLogs(id, running)
+		eventually(t, fmt.Sprintf("restart %d: the re-attach once running", restart), func() bool {
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			return fake.logStops[id] != nil && len(fake.logCallOpts[id]) > calls+1
+		})
+		if restart < 8 {
+			time.Sleep(150 * time.Millisecond) // runs for a while before the next restart
+		}
+	}
+	evs := collectEvents(t, ch, time.Second)
+	if got := logTexts(t, evs...); len(got) != 1 || got[0] != "finally" {
+		t.Fatalf("logs = %v, want [finally]", got)
+	}
+}

@@ -464,7 +464,10 @@ const (
 )
 
 // maxIdleRetries bounds the poll retries of a container whose stream keeps
-// ending empty while it is listed as running.
+// ending empty while it is listed as running. The budget is per container
+// start: a stream that stayed attached for maxIdleRetries poll intervals saw
+// the container running, so its end restores the budget even when the
+// container wrote nothing.
 const maxIdleRetries = 5
 
 // reconcileTrigger is why reconcile runs.
@@ -627,7 +630,7 @@ func (f *logFollower) pumpEnded(d pumpDone) {
 		return
 	}
 	p.active = false
-	if d.delivered > 0 {
+	if d.delivered > 0 || time.Since(p.attachedAt) >= maxIdleRetries*f.s.statusPollInterval() {
 		p.idleRetries = 0
 	}
 	switch {
