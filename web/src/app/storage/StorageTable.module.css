@@ -1,0 +1,50 @@
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--hi);
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.title { margin: 0; font-size: 14px; font-weight: 600; }
+.status { margin: 0; font-size: 12px; color: var(--faint); }
+.spacer { flex: 1; }
+.age { font-size: 12px; color: var(--muted); }
+.banner { padding: 10px 14px 0; }
+
+.table { display: block; }
+.row {
+  display: grid;
+  grid-template-columns: var(--cols);
+  gap: 12px;
+  align-items: center;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.row:last-child { border-bottom: 0; }
+.row:hover { background: var(--hover); }
+.columns, .columns:hover { background: transparent; }
+
+.cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell[data-mono='true'] { font-family: var(--mono); font-size: 12.5px; }
+.cell a { color: var(--text); text-decoration: none; }
+.cell a:hover { color: var(--accent); }
+
+.none { margin: 0; padding: 14px; font-size: 13px; color: var(--muted); }
+
+@media (max-width: 759px) {
+  .columns { display: none; }
+  .row { grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; }
+  .cell[data-place='primary'] { grid-column: 1; grid-row: 1; }
+  .cell[data-place='end'] { grid-column: 2; grid-row: 1; }
+  .cell[data-place='sub'] { grid-column: 1 / -1; font-size: 11.5px; color: var(--muted); }
+}

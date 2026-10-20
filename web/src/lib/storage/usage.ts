@@ -45,6 +45,8 @@ export interface UsageSummary {
   reclaimable: number;
   sizesAt: string | null;
   refreshing: boolean;
+  /** False while every kind's reclaimable value is still unknown, so the 0 above means "no reading", not "nothing". */
+  reclaimableKnown: boolean;
 }
 
 export function usageSummary(overview: StorageOverview): UsageSummary {
@@ -56,6 +58,7 @@ export function usageSummary(overview: StorageOverview): UsageSummary {
     reclaimable: reclaimableTotal(overview),
     sizesAt: stamps.length ? stamps.reduce((a, b) => (b > a ? b : a)) : null,
     refreshing: all.some(t => t.refreshing),
+    reclaimableKnown: all.some(t => t.reclaimable !== null),
   };
 }
 
@@ -64,7 +67,9 @@ export function usedText(summary: UsageSummary): string {
   return summary.refreshing ? 'Size calculating…' : 'Size not available yet';
 }
 
-export function reclaimableText(summary: UsageSummary): string {
+/** Undefined until at least one kind has a reclaimable reading. */
+export function reclaimableText(summary: UsageSummary): string | undefined {
+  if (!summary.reclaimableKnown) return undefined;
   return summary.reclaimable === 0 ? 'nothing reclaimable' : `${formatBytes(summary.reclaimable)} reclaimable`;
 }
 

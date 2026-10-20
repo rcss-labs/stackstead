@@ -54,7 +54,11 @@ describe('usageSummary', () => {
       containers: { size: GiB, reclaimable: 256 * MiB, sizesAt: null, refreshing: false },
       buildCache: { size: GiB, reclaimable: 0, sizesAt: '2026-01-01T12:00:00Z', refreshing: false },
     }));
-    expect(summary).toEqual({ used: 4 * GiB, reclaimable: 768 * MiB, sizesAt: '2026-01-02T00:00:00Z', refreshing: false });
+    expect(summary).toEqual({ used: 4 * GiB, reclaimable: 768 * MiB, sizesAt: '2026-01-02T00:00:00Z', refreshing: false, reclaimableKnown: true });
+  });
+  it('reclaimable is known only once at least one kind reports a number', () => {
+    expect(usageSummary(overview({})).reclaimableKnown).toBe(false);
+    expect(usageSummary(overview({ images: { reclaimable: 0 } })).reclaimableKnown).toBe(true);
   });
   it('used is unknown while any size is unknown', () => {
     const summary = usageSummary(overview({ images: { size: GiB, refreshing: false }, volumes: { size: GiB, refreshing: false }, containers: { size: GiB, refreshing: false }, buildCache: { size: null, refreshing: true } }));
@@ -64,12 +68,13 @@ describe('usageSummary', () => {
 });
 
 describe('usedText / reclaimableText', () => {
-  const base = { reclaimable: 0, sizesAt: null };
+  const base = { reclaimable: 0, sizesAt: null, reclaimableKnown: true };
   it('formats the used size', () => expect(usedText({ ...base, used: 4 * GiB, refreshing: false })).toBe('4.0 GiB used by Docker'));
   it('says calculating while sizes are refreshing', () => expect(usedText({ ...base, used: null, refreshing: true })).toBe('Size calculating…'));
   it('says not available when unknown and idle', () => expect(usedText({ ...base, used: null, refreshing: false })).toBe('Size not available yet'));
   it('formats reclaimable bytes', () => expect(reclaimableText({ ...base, used: null, refreshing: false, reclaimable: 768 * MiB })).toBe('768.0 MiB reclaimable'));
-  it('says nothing reclaimable at zero', () => expect(reclaimableText({ ...base, used: null, refreshing: false })).toBe('nothing reclaimable'));
+  it('says nothing reclaimable at a known zero', () => expect(reclaimableText({ ...base, used: null, refreshing: false })).toBe('nothing reclaimable'));
+  it('says nothing while every reclaimable value is unknown', () => expect(reclaimableText({ ...base, used: null, refreshing: false, reclaimableKnown: false })).toBeUndefined());
 });
 
 describe('sortBySize', () => {
