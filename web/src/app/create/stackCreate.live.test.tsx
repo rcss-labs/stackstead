@@ -164,7 +164,7 @@ describe('New stack compose preview', () => {
     const user = await mount();
     await user.type(screen.getByLabelText('Stack name'), 'app');
     expect(preview().textContent).toContain('  app:');
-    await user.click(screen.getByLabelText('From Dockerfile'));
+    await user.click(screen.getByLabelText('From Existing build'));
     await user.type(screen.getByLabelText('Build context'), '/srv/app');
     expect(preview().textContent).toContain('build:');
     expect(preview().textContent).toContain('context: /srv/app');
