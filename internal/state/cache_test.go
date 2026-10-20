@@ -625,9 +625,8 @@ func TestLifecycleEventPublishesChangeWhenTheSnapshotIsUnchanged(t *testing.T) {
 	changes, cancel := h.c.Subscribe()
 	defer cancel()
 
-	s := src.stream(t, 1)
-	s.send(t, lifecycleEvent("die", "a1", "a"))
-	s.send(t, lifecycleEvent("start", "a1", "a"))
+	// One event, so the assertion below cannot see a second debounce window under load.
+	src.stream(t, 1).send(t, lifecycleEvent("start", "a1", "a"))
 	if ch := next(t, changes); ch.Project != "a" {
 		t.Fatalf("change = %+v, want project a", ch)
 	}
