@@ -83,6 +83,44 @@ func TestAddServerActivatePendingReplacesTemporaryRow(t *testing.T) {
 	}
 }
 
+func TestAddServerPendingRowRemovedMidPairing(t *testing.T) {
+	var (
+		st       *Store
+		unpaired atomic.Bool
+	)
+	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/health":
+			_, _ = w.Write([]byte(`{"peering":1}`))
+		case "/api/peer/pair":
+			list, _ := st.Peers(context.Background())
+			for _, p := range list {
+				_ = st.DeletePeer(context.Background(), p.InstanceID) // the person removed the pending row
+			}
+			_, _ = w.Write([]byte(`{"protocol":1,"instanceId":"real-b","name":"mini-02","version":"1.0.0","credential":"ssp_b"}`))
+		case "/api/peer/unpair":
+			unpaired.Store(true)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer b.Close()
+	var svc *Service
+	svc, st = newTestService(t)
+	_, err := svc.AddServer(context.Background(), apitypes.AddPeerRequest{
+		URL: b.URL, Token: "ssc_x", AdvertisedURL: "http://127.0.0.1:9",
+		Trust: apitypes.PeerTrust{Plaintext: true}, SelfTrust: apitypes.PeerTrust{Plaintext: true},
+	})
+	if !errors.Is(err, ErrPairingCancelled) {
+		t.Fatalf("err = %v, want ErrPairingCancelled", err)
+	}
+	if !unpaired.Load() {
+		t.Error("the other server was not asked to drop its half")
+	}
+}
+
 func TestAddServerAlreadyPairedLocallyIsAFieldError(t *testing.T) {
 	var unpaired atomic.Bool
 	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

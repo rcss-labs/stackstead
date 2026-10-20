@@ -306,6 +306,7 @@ func (s *Service) ApplyUpdate(ctx context.Context, from Peer, u apitypes.PeerUpd
 // AcceptUnpair forgets the calling peer.
 func (s *Service) AcceptUnpair(ctx context.Context, from Peer) error {
 	err := s.cfg.Store.DeletePeer(ctx, from.InstanceID)
+	s.forgetRuntime(from.InstanceID)
 	s.Kick()
 	if errors.Is(err, ErrPeerNotFound) {
 		return nil

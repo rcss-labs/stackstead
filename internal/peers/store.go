@@ -12,6 +12,9 @@ import (
 var (
 	ErrPeerNotFound  = errors.New("peer not found")
 	ErrAlreadyPaired = errors.New("server is already paired")
+	// ErrPairingCancelled means the pending row of a pairing was removed
+	// while the pairing was in flight.
+	ErrPairingCancelled = errors.New("pairing was cancelled; this connection was removed while it was being set up")
 )
 
 // Secret is a credential that must not leak into logs or API output; its
@@ -292,6 +295,21 @@ func (s *Store) UpdatePeer(ctx context.Context, id string, fn func(*Peer) error)
 		return err
 	}
 	return tx.Commit()
+}
+
+// MarkRemoved ends the pairing a hello was sent with: the row becomes
+// removed, loses its credentials and records message. It does nothing (false)
+// unless the row is still active with the same outbound credential, so a
+// stale answer cannot destroy a fresh re-pairing of the same instance.
+func (s *Store) MarkRemoved(ctx context.Context, id string, credential Secret, message string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE peers SET state = ?, out_credential = '', in_hash = '', last_error = ?
+		WHERE instance_id = ? AND state = ? AND out_credential = ?`,
+		string(StateRemoved), message, id, string(StateActive), string(credential))
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 func (s *Store) SetInboundHash(ctx context.Context, id, hash string) error {

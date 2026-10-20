@@ -118,8 +118,9 @@ func TestCheckerCadence(t *testing.T) {
 				r.clock.advance(c.age)
 			}
 			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			go r.svc.Run(ctx)
+			exited := make(chan struct{})
+			defer func() { cancel(); <-exited }()
+			go func() { r.svc.Run(ctx); close(exited) }()
 			deadline := time.Now().Add(3 * time.Second)
 			for len(r.waits()) == 0 && time.Now().Before(deadline) {
 				time.Sleep(5 * time.Millisecond)
@@ -201,6 +202,61 @@ func TestNotPairedRemovesConnection(t *testing.T) {
 	}
 	_, err = r.svc.Usable("b-id")
 	assertPeerCode(t, err, CodeUnpaired)
+}
+
+func TestStaleNotPairedDoesNotDestroyFreshPairing(t *testing.T) {
+	release := make(chan struct{})
+	arrived := make(chan struct{})
+	r := newCheckRig(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(arrived)
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"not paired","code":"peer_not_paired"}`))
+	}), true)
+	ctx := context.Background()
+	done := make(chan struct{})
+	go func() { _, _ = r.svc.CheckNow(ctx, "b-id"); close(done) }()
+	<-arrived
+	// Meanwhile the connection is removed and paired again with new credentials.
+	if err := r.st.DeletePeer(ctx, "b-id"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.st.InsertPeer(ctx, Peer{
+		InstanceID: "b-id", Name: "mini-02", URL: r.peerURL, TLS: TLSOptions{Plaintext: true},
+		OutCredential: "ssp_out2", State: StateActive,
+	}, HashSecret("ssp_in2")); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	<-done
+	p, err := r.st.Peer(ctx, "b-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.State != StateActive || p.OutCredential != "ssp_out2" || p.LastError != "" {
+		t.Errorf("fresh pairing damaged by a stale hello: state %s, credential %q, lastError %q", p.State, p.OutCredential, p.LastError)
+	}
+	if _, err := r.st.PeerByInboundHash(ctx, HashSecret("ssp_in2")); err != nil {
+		t.Errorf("fresh inbound hash lost: %v", err)
+	}
+}
+
+func TestRemoveAndUnpairForgetRuntimeStatus(t *testing.T) {
+	r := newCheckRig(t, helloHandler(goodHello()), true)
+	ctx := context.Background()
+	if _, err := r.svc.CheckNow(ctx, "b-id"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r.svc.runtimeOf("b-id"); !ok {
+		t.Fatal("no runtime status after a check")
+	}
+	if err := r.svc.AcceptUnpair(ctx, Peer{InstanceID: "b-id"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r.svc.runtimeOf("b-id"); ok {
+		t.Error("runtime status survived AcceptUnpair")
+	}
 }
 
 func TestProxyAnswerNeverRemoves(t *testing.T) {

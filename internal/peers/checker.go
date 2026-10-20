@@ -37,6 +37,12 @@ type peerRuntime struct {
 	message string
 }
 
+// maxReportedText caps peer-supplied text kept in the record.
+const (
+	maxReportedText   = 200
+	usableReadTimeout = 2 * time.Second
+)
+
 var errNotActive = errors.New("peer is no longer active")
 
 // Kick wakes the checker: a peer was added or removed, or a person returned.
@@ -195,35 +201,26 @@ func failureMessage(name string, err error) string {
 			return "the TLS certificate of " + name + " could not be verified"
 		}
 	case errors.As(err, &remote):
-		return name + " answered with an error: " + stripUnprintable(remote.Body.Error)
+		return name + " answered with an error: " + capText(remote.Body.Error, maxReportedText)
 	}
 	return name + " could not be reached"
 }
 
 func (s *Service) recordFailure(ctx context.Context, p Peer, status, message string) {
-	s.setRuntime(p.InstanceID, status, message)
-	s.persist(ctx, p.InstanceID, func(cur *Peer) { cur.LastError = message })
+	if s.persist(ctx, p, func(cur *Peer) { cur.LastError = message }) {
+		s.setRuntime(p.InstanceID, status, message)
+	}
 }
 
 func (s *Service) recordRemoved(ctx context.Context, p Peer) {
 	message := p.Name + " removed this connection"
-	err := s.cfg.Store.UpdatePeer(ctx, p.InstanceID, func(cur *Peer) error {
-		if cur.State != StateActive {
-			return errNotActive
-		}
-		cur.State = StateRemoved
-		cur.OutCredential = ""
-		cur.LastError = message
-		return nil
-	})
+	removed, err := s.cfg.Store.MarkRemoved(ctx, p.InstanceID, p.OutCredential, message)
 	if err != nil {
-		if !errors.Is(err, errNotActive) && !errors.Is(err, ErrPeerNotFound) {
-			s.cfg.Logger.Warn("could not mark a server as removed", "peer", p.Name, "err", err)
-		}
+		s.cfg.Logger.Warn("could not mark a server as removed", "peer", p.Name, "err", err)
 		return
 	}
-	if err := s.cfg.Store.SetInboundHash(ctx, p.InstanceID, ""); err != nil && !errors.Is(err, ErrPeerNotFound) {
-		s.cfg.Logger.Warn("could not clear the credential of a removed server", "peer", p.Name, "err", err)
+	if !removed {
+		return // the row changed since the hello was sent
 	}
 	s.forgetRuntime(p.InstanceID)
 	s.cfg.Logger.Info("server removed this connection", "peer", p.Name, "instance", p.InstanceID)
@@ -254,40 +251,52 @@ func (s *Service) recordHello(ctx context.Context, p Peer, hello apitypes.PeerHe
 		}
 	}
 	if name != p.Name || (newURL != "" && newURL != p.URL) {
-		if err := s.cfg.Store.RenamePeer(ctx, p.InstanceID, name, newURL); err != nil && !errors.Is(err, ErrPeerNotFound) {
-			s.cfg.Logger.Warn("could not store the name a server reported", "peer", p.Name, "err", err)
+		// Re-check the pairing first so a stale hello cannot rename a re-paired row.
+		if cur, err := s.cfg.Store.Peer(ctx, p.InstanceID); err == nil && cur.State == StateActive && cur.OutCredential == p.OutCredential {
+			if err := s.cfg.Store.RenamePeer(ctx, p.InstanceID, name, newURL); err != nil && !errors.Is(err, ErrPeerNotFound) {
+				s.cfg.Logger.Warn("could not store the name a server reported", "peer", p.Name, "err", err)
+			}
 		}
 	}
-	s.setRuntime(p.InstanceID, status, message)
 	now := s.cfg.Now()
-	s.persist(ctx, p.InstanceID, func(cur *Peer) {
+	if s.persist(ctx, p, func(cur *Peer) {
 		cur.Version = version
 		cur.StackCount = max(hello.StackCount, 0)
 		cur.LastSeenAt = &now
 		cur.LastError = message
-	})
+	}) {
+		s.setRuntime(p.InstanceID, status, message)
+	}
 }
 
-// persist applies change to a peer that is still active; a row that was
-// removed or deleted meanwhile is left alone.
-func (s *Service) persist(ctx context.Context, id string, change func(*Peer)) {
-	err := s.cfg.Store.UpdatePeer(ctx, id, func(cur *Peer) error {
-		if cur.State != StateActive {
+// persist applies change to the row the hello was sent for. A row that was
+// removed, deleted or paired again meanwhile is left alone (false).
+func (s *Service) persist(ctx context.Context, p Peer, change func(*Peer)) bool {
+	err := s.cfg.Store.UpdatePeer(ctx, p.InstanceID, func(cur *Peer) error {
+		if cur.State != StateActive || cur.OutCredential != p.OutCredential {
 			return errNotActive
 		}
 		change(cur)
 		return nil
 	})
-	if err != nil && !errors.Is(err, errNotActive) && !errors.Is(err, ErrPeerNotFound) {
-		s.cfg.Logger.Warn("could not store a server's status", "instance", id, "err", err)
+	if err != nil {
+		if !errors.Is(err, errNotActive) && !errors.Is(err, ErrPeerNotFound) {
+			s.cfg.Logger.Warn("could not store a server's status", "instance", p.InstanceID, "err", err)
+		}
+		return false
 	}
+	return true
 }
 
 // cleanVersion bounds and cleans a version string the peer reported.
 func cleanVersion(v string) string {
+	return capText(v, 64)
+}
+
+func capText(v string, limit int) string {
 	v = stripUnprintable(v)
-	if r := []rune(v); len(r) > 64 {
-		v = string(r[:64])
+	if r := []rune(v); len(r) > limit {
+		v = string(r[:limit])
 	}
 	return v
 }
@@ -306,7 +315,9 @@ func versionMessage(name, remote, local string) string {
 // A peer last seen unreachable is still returned: the request itself finds
 // out whether it is back.
 func (s *Service) Usable(id string) (Peer, error) {
-	p, err := s.cfg.Store.Peer(context.Background(), id)
+	ctx, cancel := context.WithTimeout(context.Background(), usableReadTimeout)
+	defer cancel()
+	p, err := s.cfg.Store.Peer(ctx, id)
 	if errors.Is(err, ErrPeerNotFound) {
 		return Peer{}, &PeerError{Code: CodeUnknown, Server: id, Msg: "server not found"}
 	}

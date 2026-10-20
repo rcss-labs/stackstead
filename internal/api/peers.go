@@ -33,6 +33,8 @@ func (s *server) writePeersError(w http.ResponseWriter, r *http.Request, err err
 		writeJSON(w, http.StatusBadRequest, fieldErrorBody{Error: validation.Error(), Fields: validation.Fields})
 	case errors.Is(err, peers.ErrPeerNotFound):
 		writeCodedError(w, http.StatusNotFound, "server not found", peers.CodeUnknown)
+	case errors.Is(err, peers.ErrPairingCancelled):
+		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, peers.ErrAlreadyPaired):
 		writeError(w, http.StatusConflict, "this server is already connected")
 	case errors.As(err, &pe):

@@ -333,6 +333,9 @@ func (s *Service) AddServer(ctx context.Context, req apitypes.AddPeerRequest) (a
 		if errors.Is(err, ErrAlreadyPaired) {
 			return apitypes.PeerView{}, validationError("url", "this server is already connected")
 		}
+		if errors.Is(err, ErrPeerNotFound) {
+			return apitypes.PeerView{}, ErrPairingCancelled
+		}
 		return apitypes.PeerView{}, err
 	}
 	paired = true
@@ -340,7 +343,9 @@ func (s *Service) AddServer(ctx context.Context, req apitypes.AddPeerRequest) (a
 	// Pairing succeeded; failing to read the row back must not undo that.
 	stored, err := s.cfg.Store.Peer(ctx, answer.InstanceID)
 	if err != nil {
+		s.cfg.Logger.Warn("could not read back the server just paired", "err", err)
 		stored = peer
+		stored.Slug = Slugify(peer.Name)
 	}
 	s.cfg.Logger.Info("server paired", "peer", stored.Name, "instance", stored.InstanceID)
 	return s.viewOf(stored), nil
@@ -437,6 +442,7 @@ func (s *Service) Remove(ctx context.Context, id string) error {
 	if err := s.cfg.Store.DeletePeer(ctx, id); err != nil {
 		return err
 	}
+	s.forgetRuntime(id)
 	s.Kick()
 	if p.State == StateActive && p.OutCredential != "" {
 		s.sendUnpair(ctx, p)
