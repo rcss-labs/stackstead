@@ -1,0 +1,27 @@
+.editor {
+  min-width: 0;
+}
+
+.fallback {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--mono);
+  font-size: 0.875rem;
+  padding: var(--space-3);
+  border: 0;
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+}
+
+.fallback:focus-visible {
+  outline-offset: -2px;
+}
+
+.editor :global(.cm-editor) {
+  max-height: 70vh;
+}
+
+.editor :global(.cm-scroller) {
+  overflow: auto;
+}

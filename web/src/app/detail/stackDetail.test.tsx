@@ -581,7 +581,7 @@ describe('stack detail screen', () => {
       mount('/stacks/web');
       await waitFor(() => expect(logRequests('web')).toHaveLength(1));
       act(() => setUnsavedChanges(true));
-      // dirty is not wired yet (18d); once it is, this also proves console actions skip the discard dialog.
+      // The dirty compose editor case is covered in stackDetail.guard.test.tsx.
       const before = here();
       await user().click(screen.getByRole('button', { name: 'Logs for app' }));
       expect(here()).toBe(before);

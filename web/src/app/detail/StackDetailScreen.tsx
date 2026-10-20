@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import type { Action } from '$lib/api/types';
 import { timelineLanes } from '$lib/stacks/timeline';
 import { lifecycleDisabledReason } from '$lib/stacks/lifecycle';
@@ -14,10 +14,13 @@ import { EmptyState } from '../components/EmptyState';
 import { Spinner } from '../components/Spinner';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useStore } from '../hooks/useStore';
+import { ComposeEditor } from './ComposeEditor';
 import { ComposeView } from './ComposeView';
+import { ConfigTab } from './ConfigTab';
 import { DetailHeader } from './DetailHeader';
 import { HealthTimeline } from './HealthTimeline';
 import { LogConsole } from './LogConsole';
+import { MetricsTab } from './MetricsTab';
 import { OperationsPane } from './OperationsPane';
 import { ServiceChips, ServiceRail } from './ServiceRail';
 import { ServicePane } from './ServicePane';
@@ -47,6 +50,7 @@ export function StackDetailScreen({ name }: { name: string }) {
   const [pendingLeave, setPendingLeave] = useState<(() => void) | undefined>();
   const mobile = useIsMobile();
   const [query] = useSearchParams();
+  const navigate = useNavigate();
   const [logsOpen, setLogsOpen] = useState(!mobile);
   const [logService, setLogService] = useState<string | undefined>();
   const consoleSlot = useRef<HTMLDivElement>(null);
@@ -70,18 +74,47 @@ export function StackDetailScreen({ name }: { name: string }) {
     document.title = `${name} · Stackstead`;
   }, [name]);
   useEffect(() => () => setUnsavedChanges(false), []);
+  // The compose editor is the only producer of unsaved changes for now (18e adds the service and add flags).
+  const parseErrorPresent = !!detail?.parseError;
+  const rawOnly = parseErrorPresent && !missingComposeFile(detail?.parseError);
+  const [editRequested, setEditRequested] = useState(false);
+  const [composeDirty, setComposeDirty] = useState(false);
+  const onCompose = item.kind === 'compose';
+  const editingCompose = onCompose && (editRequested || rawOnly);
+  // Set when the user asked to edit, so the editor takes keyboard focus once loaded.
+  const [focusEditor, setFocusEditor] = useState(false);
   // Both loaders are idempotent; they run again when a refetch replaces the detail because that clears the
-  // cpu-hour cache (the controller refreshes a requested compose file itself).
+  // cpu-hour cache (the controller refreshes a requested compose file itself). The compose editor fetches the
+  // file itself, so the screen stays out of its way while editing.
   useEffect(() => {
-    if (item.kind === 'compose') void ctl.loadCompose();
-  }, [ctl, item.kind, detail]);
+    if (editingCompose) return;
+    if (item.kind === 'compose' || (item.kind === 'service' && serviceTab === 'config')) void ctl.loadCompose();
+  }, [ctl, item.kind, serviceTab, detail, editingCompose]);
   const overviewService = selectedService && serviceTab === 'overview' ? selectedService.name : undefined;
   useEffect(() => {
     if (overviewService) void ctl.loadCpuHour(overviewService);
   }, [ctl, overviewService, detail]);
 
-  // No editor can hold unsaved changes yet; the compose and service editors raise this in later plans.
-  const dirty: boolean = false;
+  const dirty = editingCompose && composeDirty;
+  useEffect(() => {
+    setUnsavedChanges(dirty);
+  }, [dirty]);
+  // A parse error opens the raw editor and latches edit mode: once the file is fixed (saved here or on disk)
+  // the parse error clears, but the editor, its Apply button and any draft must stay until the user leaves.
+  useEffect(() => {
+    if (!onCompose || !rawOnly) return;
+    setEditRequested(true);
+    // Compose is only the default item while the file fails to parse; pin it in the URL so a fix keeps it selected.
+    if (query.get('tab') !== 'compose') void navigate(location.hrefFor({ kind: 'compose' }), { replace: true });
+  }, [onCompose, rawOnly, query, navigate, location.hrefFor]);
+  // Leaving the compose item ends edit mode; a held draft is gone with the editor.
+  useEffect(() => {
+    if (!onCompose) {
+      setEditRequested(false);
+      setFocusEditor(false);
+      setComposeDirty(false);
+    }
+  }, [onCompose]);
   function guarded(action: () => void) {
     if (dirty) setPendingLeave(() => action);
     else action();
@@ -89,6 +122,9 @@ export function StackDetailScreen({ name }: { name: string }) {
   function discardAndLeave() {
     const action = pendingLeave;
     setPendingLeave(undefined);
+    setEditRequested(false);
+    setFocusEditor(false);
+    setComposeDirty(false);
     action?.();
   }
 
@@ -197,9 +233,67 @@ export function StackDetailScreen({ name }: { name: string }) {
               }}
               latestCpu={latest.get(selectedService.name)?.cpu}
               cpuHour={cpuHour.get(selectedService.name)}
-            />
+            >
+              {(tab) =>
+                tab === 'metrics' ? (
+                  <MetricsTab
+                    key={selectedService.name}
+                    stackName={name}
+                    service={selectedService.name}
+                    live={liveMetrics}
+                    metricsDegraded={liveState.metricsDegraded}
+                    metricsIntervalSeconds={liveState.metricsIntervalSeconds}
+                    metricsRetentionSeconds={liveState.metricsRetentionSeconds}
+                    allServices={detail.services.map((s) => s.name)}
+                  />
+                ) : tab === 'config' ? (
+                  <ConfigTab
+                    service={selectedService}
+                    compose={compose}
+                    error={composeError}
+                    onRetry={() => void ctl.loadCompose()}
+                    onEditYaml={() =>
+                      guarded(() => {
+                        location.go(location.hrefFor({ kind: 'compose' }));
+                        setEditRequested(true);
+                        setFocusEditor(true);
+                      })
+                    }
+                  />
+                ) : null
+              }
+            </ServicePane>
           ) : item.kind === 'compose' ? (
-            <ComposeView detail={detail} compose={compose} error={composeError} onRetry={() => void ctl.loadCompose()} />
+            <ComposeView
+              detail={detail}
+              compose={compose}
+              error={composeError}
+              onRetry={() => void ctl.loadCompose()}
+              editSlot={
+                !editingCompose &&
+                !missingFile && (
+                  <Button variant="secondary" size="sm" onClick={() => {
+                      setEditRequested(true);
+                      setFocusEditor(true);
+                    }}>
+                    Edit YAML
+                  </Button>
+                )
+              }
+              editor={
+                editingCompose && (
+                  <ComposeEditor
+                    key={name}
+                    stackName={name}
+                    composePath={detail.path}
+                    onDirtyChange={setComposeDirty}
+                    autoFocus={focusEditor}
+                    onSaved={() => void ctl.load()}
+                    onApply={() => void ctl.act('up')}
+                  />
+                )
+              }
+            />
           ) : item.kind === 'operations' ? (
             <OperationsPane
               operations={operations}

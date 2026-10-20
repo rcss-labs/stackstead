@@ -1,0 +1,73 @@
+.chart {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  min-width: 0;
+}
+
+.caption {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.total {
+  font-family: var(--mono);
+  color: var(--text);
+}
+
+.plot {
+  width: 100%;
+}
+
+.plot :global(.u-legend) {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.unavailable {
+  margin: 8px 0 0;
+  color: var(--danger);
+}
+
+.details {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.details summary {
+  cursor: pointer;
+}
+
+@media (max-width: 759px) {
+  .details summary {
+    display: flex;
+    align-items: center;
+    min-height: 40px;
+  }
+}
+
+.table {
+  margin-top: 8px;
+  border-collapse: collapse;
+}
+
+.table th,
+.table td {
+  padding: 2px 12px 2px 0;
+  text-align: left;
+}
+
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}

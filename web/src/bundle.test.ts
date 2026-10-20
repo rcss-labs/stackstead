@@ -94,7 +94,7 @@ describe('react app build shape', () => {
   const lazyNames = [
     'StackDetail', 'StackCreate', 'StackImport', 'ContainerList', 'ContainerDetail', 'NetworkList',
     'Storage', 'StorageImage', 'StorageVolume', 'Settings', 'Login', 'Setup', 'NotFound',
-    'CommandPalette',
+    'CommandPalette', 'cm', 'uPlot.esm',
   ];
   // Chunk files are named assets/<Name>-<hash>.js (see chunkFileNames in vite.app.config.ts).
   const chunkName = (file: string) => file.replace(/^assets\//, '').replace(/-[\w-]{8}\.js$/, '');

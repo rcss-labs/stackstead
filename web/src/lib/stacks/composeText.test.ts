@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { backupName, composeFileName, serviceBlock, serviceConfigYaml } from './composeText';
+import { backupName, composeFileName, dedent, serviceBlock, serviceConfigYaml } from './composeText';
 
 const compose = `name: demo
 services:
@@ -133,5 +133,15 @@ describe('file names', () => {
     expect(composeFileName('/srv/web/docker-compose.yml')).toBe('docker-compose.yml');
     expect(backupName('/srv/web/docker-compose.yml')).toBe('docker-compose.yml.bak');
     expect(backupName(undefined)).toBe('a .bak file next to it');
+  });
+});
+
+describe('dedent', () => {
+  it('strips the common leading indentation and keeps relative nesting and blank lines', () => {
+    expect(dedent('  app:\n    image: x\n\n    # c\n    ports:\n      - "1:1"')).toBe('app:\n  image: x\n\n  # c\n  ports:\n    - "1:1"');
+  });
+
+  it('leaves text that already starts at column 0', () => {
+    expect(dedent('app:\n  image: x')).toBe('app:\n  image: x');
   });
 });

@@ -11,11 +11,13 @@ export interface ComposeViewProps {
   compose: RawCompose | undefined;
   error: string;
   onRetry: () => void;
-  /** Where the Edit YAML control goes (a later plan fills it). */
+  /** Where the Edit YAML control goes. */
   editSlot?: ReactNode;
+  /** The compose editor; while present it replaces the read-only text. */
+  editor?: ReactNode;
 }
 
-export function ComposeView({ detail, compose, error, onRetry, editSlot }: ComposeViewProps) {
+export function ComposeView({ detail, compose, error, onRetry, editSlot, editor }: ComposeViewProps) {
   return (
     <div className={styles.view}>
       <header className={styles.header}>
@@ -25,11 +27,15 @@ export function ComposeView({ detail, compose, error, onRetry, editSlot }: Compo
         {editSlot}
       </header>
       {detail.parseError && (
-        <Banner kind="warning" title="This file cannot be edited with forms">
-          Edit it as text; the forms return once it parses.
-        </Banner>
+        <div className={styles.body}>
+          <Banner kind="warning" title="This file cannot be edited with forms">
+            Edit it as text; the forms return once it parses.
+          </Banner>
+        </div>
       )}
-      {error ? (
+      {editor ? (
+        editor
+      ) : error ? (
         <div className={styles.body}>
           <Banner kind="danger" title="Could not load the compose file">
             {error}

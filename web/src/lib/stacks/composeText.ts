@@ -47,6 +47,14 @@ export function serviceBlock(compose: string, service: string): string | undefin
   return block.join('\n');
 }
 
+/** Removes the indentation shared by every non-blank line, so a nested block reads from column 0. */
+export function dedent(text: string): string {
+  const lines = text.split('\n');
+  const indents = lines.filter((l) => !isBlank(l)).map(indentOf);
+  const common = indents.length === 0 ? 0 : Math.min(...indents);
+  return lines.map((l) => (isBlank(l) ? l : l.slice(common))).join('\n');
+}
+
 const RESERVED_WORDS = /^(true|false|null|yes|no|on|off|~)$/i;
 
 function scalar(value: string): string {
