@@ -47,6 +47,23 @@ beforeEach(() => {
     'GET /api/stacks': () => stacksRes,
     'GET /api/host': () => ({ body: {} }),
     'GET /api/operations?state=running': () => ({ body: running }),
+    'GET /api/stacks/web': {
+      body: {
+        name: 'web',
+        path: '/srv/stacks/web/compose.yaml',
+        project: 'web',
+        origin: 'managed',
+        status: 'running',
+        serviceCount: 0,
+        running: 0,
+        health: { healthy: 0, unhealthy: 0, starting: 0, none: 0, failed: 0 },
+        ports: [],
+        hash: 'h1',
+        services: [],
+      },
+    },
+    'GET /api/stacks/web/operations': { body: [] },
+    'GET /api/stacks/web/health?span=60m': { body: { from: 0, to: 3600, services: [] } },
     'POST /api/logout': { status: 204 },
     'POST /api/login': { status: 204 },
     'POST /api/stacks/web/actions/restart': () => {
@@ -84,7 +101,7 @@ const loc = () => ({ path: window.location.pathname, next: new URLSearchParams(w
 const mainNav = () => screen.getByRole('navigation', { name: 'Main' });
 
 describe('App landmarks', () => {
-  it.each(['/', '/stacks/new', '/stacks/import', '/settings', '/containers', '/networks', '/nope'])('has exactly one main landmark on %s', async (path) => {
+  it.each(['/', '/stacks/new', '/stacks/import', '/stacks/web', '/settings', '/containers', '/networks', '/nope'])('has exactly one main landmark on %s', async (path) => {
     at(path);
     render(<App />);
     await screen.findByRole('navigation', { name: 'Main' });
@@ -139,6 +156,15 @@ describe('App focus on navigation', () => {
     await screen.findByRole('heading', { level: 1 });
     // No other test loads the container detail screen, so its lazy chunk is still pending here.
     await push('/containers/web');
+    const h1 = await screen.findByRole('heading', { level: 1, name: 'web' });
+    await waitFor(() => expect(document.activeElement).toBe(h1));
+  });
+
+  it('moves focus to the stack name after navigating to a stack', async () => {
+    at('/');
+    render(<App />);
+    await screen.findByRole('heading', { level: 1 });
+    await push('/stacks/web');
     const h1 = await screen.findByRole('heading', { level: 1, name: 'web' });
     await waitFor(() => expect(document.activeElement).toBe(h1));
   });

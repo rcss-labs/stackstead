@@ -79,9 +79,20 @@ the only filter state is the query; no store is mirrored in React state. After
 the side column landed the entry measured 102.6 kB gz (ceiling 115, gate 110),
 so the side column stays in the entry and nothing inside the screen is lazy.
 
+The React stack detail is a lazy chunk keyed on the stack name. Its data comes
+from the `lib/stacks/detail.ts` controller (detail, operations, health, compose),
+the health timeline from `/health`, and the live CPU and memory totals from one
+shared `metrics/live` stream acquired by viewport width or the Metrics tab. The
+Operations pane lists the stack's operations and streams the selected one
+through `lib/stacks/operation.ts`. With the detail shell landed the entry
+measured 104.9 kB gz (baseline 104.7 after the react/react-router split, ceiling
+106).
+
 In-flight operations are tracked by `lib/stores/operationTracker.ts`: every entry
 point that starts one calls `trackOperation`, and the tracker resolves the
-toast from `runningOps` plus one `GET /api/operations/{id}`.
+toast from `runningOps` plus one `GET /api/operations/{id}`. A stack removal is
+the exception: the stack page reports its outcome itself ("Removed x" or the
+failure), so it is not tracked and shows a single toast.
 
 ## Tests
 

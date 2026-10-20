@@ -1,0 +1,18 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 1360px;
+  animation: fadeUp 0.22s ease-out;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.parseError {
+  margin: var(--space-2) 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

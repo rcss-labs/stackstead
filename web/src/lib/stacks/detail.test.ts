@@ -335,11 +335,11 @@ describe('actions and operations', () => {
     expect(get(ctl.acting)).toBe(false);
   });
 
-  it('removeStack tracks and, on a succeeded done event, toasts Removed, refreshes and navigates home once', async () => {
+  it('removeStack does not track (the controller alone reports it) and, on a succeeded done event, toasts Removed, refreshes and navigates home once', async () => {
     const { ctl, deps } = await started();
     await ctl.removeStack(true);
     expect(deps.remove).toHaveBeenCalledWith('web', true);
-    expect(deps.track).toHaveBeenCalledWith({ id: 'rm1', stack: 'web', action: 'remove' });
+    expect(deps.track).not.toHaveBeenCalled();
     expect(deps.navigate).toHaveBeenCalledWith('/stacks/web?tab=operations&op=rm1');
     expect(deps.refreshRunningOps).toHaveBeenCalledTimes(1);
 

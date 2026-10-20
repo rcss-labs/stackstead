@@ -1,0 +1,28 @@
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  animation: fadeUp 0.18s ease-out;
+}
+
+.header {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.panel { padding: 14px 18px; }
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 759px) {
+  .header, .panel { padding-inline: 14px; }
+}
