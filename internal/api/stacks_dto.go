@@ -1,6 +1,9 @@
 package api
 
 import (
+	"errors"
+	"fmt"
+
 	"github.com/rcss-labs/stackstead/internal/apitypes"
 	"github.com/rcss-labs/stackstead/internal/composefile"
 	"github.com/rcss-labs/stackstead/internal/fsguard"
@@ -107,6 +110,31 @@ func serviceConfigToDomain(c serviceConfig) composefile.ServiceConfig {
 		out.Healthcheck = &h
 	}
 	return out
+}
+
+// createServiceToDomain converts one entry of a create request. dockerfile is
+// nil when the entry carries no Dockerfile. A bad extra is a ValidationError
+// on services[i].extra.
+func createServiceToDomain(i int, e apitypes.CreateStackService) (service composefile.NamedService, dockerfile []byte, err error) {
+	extra, err := composefile.ParseExtra(e.Extra)
+	if err != nil {
+		return composefile.NamedService{}, nil, &stacks.ValidationError{Fields: []stacks.FieldError{extraFieldError(fmt.Sprintf("services[%d].extra", i), err)}}
+	}
+	if e.Dockerfile != nil {
+		dockerfile = []byte(e.Dockerfile.Content)
+	}
+	return composefile.NamedService{Name: e.Service, Config: serviceConfigToDomain(e.Config), Extra: extra}, dockerfile, nil
+}
+
+// extraFieldError reports err on field; the message of an extra problem is
+// the error text itself.
+func extraFieldError(field string, err error) stacks.FieldError {
+	msg := err.Error()
+	var ve *stacks.ValidationError
+	if errors.As(err, &ve) && len(ve.Fields) > 0 {
+		msg = ve.Fields[0].Message
+	}
+	return stacks.FieldError{Field: field, Message: msg}
 }
 
 func toOperation(o stacks.Operation) operationDTO {
