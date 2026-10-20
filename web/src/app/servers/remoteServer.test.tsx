@@ -1,10 +1,10 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { api } from '$lib/api/client';
 import type { PeerView } from '$lib/api/types';
-import { startPeers } from '$lib/servers/peers';
+import { refreshPeers, startPeers } from '$lib/servers/peers';
 import { installFakeFetch, installFakeStream, type FakeFetch, type FakeStream } from '../../vitest-setup';
 import RemoteServer from './RemoteServer';
 
@@ -38,11 +38,19 @@ const stack = {
 let fake: FakeFetch;
 let stream: FakeStream;
 let peerRes: PeerView;
+let renamed: PeerView | undefined;
 let stopPeers: () => void;
+
+let go: (path: string) => void = () => {};
 
 function Leave() {
   const navigate = useNavigate();
-  return <button onClick={() => navigate('/')}>leave</button>;
+  go = navigate;
+  return (
+    <>
+      <button onClick={() => navigate('/')}>leave</button>
+    </>
+  );
 }
 
 function mount(path: string) {
@@ -60,8 +68,9 @@ function mount(path: string) {
 
 beforeEach(() => {
   peerRes = peer();
+  renamed = undefined;
   fake = installFakeFetch({
-    'GET /api/peers': () => ({ body: [peerRes] }),
+    'GET /api/peers': () => ({ body: renamed ? [peerRes, renamed] : [peerRes] }),
     'POST /api/peers/b1/check': () => ({ body: peerRes }),
     'GET /api/peers/self': { body: { instanceId: 'x', name: 'here', slug: 'here', advertisedUrl: '', suggestedUrl: '', version: '1.5' } },
     'GET /api/servers/b1/api/stacks': { body: [stack] },
@@ -88,6 +97,18 @@ describe('RemoteServer', () => {
     expect(fake.calls.some((c) => c.path === '/api/servers/b1/api/stacks')).toBe(true);
     expect(fake.calls.some((c) => c.path === '/api/stacks')).toBe(false);
     expect(stream.requests.filter((r) => r.path === '/api/servers/b1/api/events')).toHaveLength(1);
+  });
+
+  it('a renamed server remounts its screens instead of keeping state on the old scope', async () => {
+    mount('/s/mini-02');
+    await screen.findAllByText('remote-web');
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Search stacks' }), 'rem');
+    // While the rename propagates, the old and the new slug both resolve to the same server id.
+    renamed = peer({ name: 'mini-03', slug: 'mini-03' });
+    await act(() => refreshPeers());
+    await act(async () => go('/s/mini-03'));
+    await screen.findAllByText('remote-web');
+    expect((screen.getByRole('searchbox', { name: 'Search stacks' }) as HTMLInputElement).value).toBe('');
   });
 
   it('leaving the peer closes its events stream', async () => {

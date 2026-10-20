@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { Route, Routes, useNavigate, useParams } from 'react-router';
 import { api, createApi } from '$lib/api/client';
 import type { PeerView } from '$lib/api/types';
@@ -17,6 +17,7 @@ import { useStore } from '../hooks/useStore';
 import { SERVER_ROUTES } from '../routes';
 import { ServerContext } from './ServerContext';
 import type { ServerScope } from './ServerContext';
+import { publishViewedScope } from './viewedServer';
 import styles from './RemoteServer.module.css';
 
 const NotFound = lazy(() => import('../routes/NotFound'));
@@ -28,8 +29,8 @@ export default function RemoteServer() {
   const peer = items.find((p) => p.slug === slug);
   if (!loaded) return <Spinner label="Loading server" />;
   if (!peer) return <NotFoundPage />;
-  // Keyed so another server never inherits this one's stores and streams.
-  return <ConnectedServer key={peer.id} peer={peer} />;
+  // Keyed so another server (or this one under a new slug, which rebuilds its scope) never inherits stopped stores.
+  return <ConnectedServer key={`${peer.id}:${peer.slug}`} peer={peer} />;
 }
 
 function NotFoundPage() {
@@ -100,6 +101,9 @@ function ConnectedServer({ peer }: { peer: PeerView }) {
   const { scope, start } = useMemo(() => createScope(peer), [peer.id, peer.slug]); // eslint-disable-line react-hooks/exhaustive-deps
   const value = useMemo(() => ({ ...scope, name: peer.name }), [scope, peer.name]);
   const reachable = peer.status === 'reachable';
+
+  // The shell describes this server too, even while it is unreachable and no screen is shown.
+  useLayoutEffect(() => publishViewedScope(value), [value]);
 
   // Streams run only while the server answers, and always stop when the user leaves it.
   useEffect(() => (reachable ? start() : undefined), [reachable, start]);

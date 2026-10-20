@@ -179,6 +179,7 @@ function SignedInFrame({ runningOps, guard }: SignedInFrameProps) {
           runningOps={runningOps}
           attention={needsAttention(items)}
           onOpenPalette={() => setPaletteOpen(true)}
+          onNavigate={guard.go}
           banners={banners.length > 0 ? <div className={styles.banners}>{banners}</div> : undefined}
         >
           <main ref={mainRef} className={styles.main}>

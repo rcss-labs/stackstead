@@ -4,8 +4,8 @@ import type { Operation } from '$lib/api/types';
 import { splitServerPath } from '$lib/router';
 import { peers } from '$lib/servers/peers';
 import { breadcrumb } from '$lib/shell/breadcrumb';
-import { live } from '$lib/stores/live';
 import { useStore } from '../hooks/useStore';
+import { useServer } from '../servers/ServerContext';
 import styles from './TopBar.module.css';
 
 export interface TopBarProps {
@@ -17,7 +17,7 @@ export function TopBar({ path, runningOps }: TopBarProps) {
   const { slug } = splitServerPath(path);
   const { items: peerList } = useStore(peers);
   const crumbs = breadcrumb(path, slug === null ? undefined : (peerList.find((p) => p.slug === slug)?.name ?? slug));
-  const { connection } = useStore(live);
+  const { connection } = useStore(useServer().live);
   const liveState = connection === 'open' || connection === 'reconnecting' ? connection : undefined;
   const runningText = runningOps.length === 1 ? `${runningOps[0].action} · ${runningOps[0].stack}` : `${runningOps.length} running`;
 

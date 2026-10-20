@@ -65,3 +65,16 @@
   background: var(--accent);
   color: var(--accent-ink);
 }
+
+.switcher {
+  flex: none;
+  max-width: 38vw;
+  height: 30px;
+  padding: 0 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+}
