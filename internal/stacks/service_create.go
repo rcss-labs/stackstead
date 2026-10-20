@@ -74,9 +74,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 			return false
 		}
 		if content, ok := req.Dockerfiles[i]; ok {
-			if len(content) == 0 {
-				collect(&ValidationError{Fields: []FieldError{{Field: "dockerfile", Message: "Dockerfile is required"}}})
-			} else if err := ValidateDockerfile("dockerfile", content); err != nil {
+			if err := ValidateDockerfile("dockerfile", content); err != nil {
 				collect(err)
 			}
 		}
@@ -241,13 +239,19 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 		return Summary{}, err
 	}
 	wroteFile, ok := false, false
-	var rollbacks []func()
+	var rollbacks []func() error
 	defer func() {
 		if ok {
 			return
 		}
 		for i := len(rollbacks) - 1; i >= 0; i-- {
-			rollbacks[i]()
+			if err := rollbacks[i](); err != nil {
+				var pathErr *fs.PathError
+				if errors.As(err, &pathErr) { // keep absolute paths out of the log
+					err = pathErr.Err
+				}
+				s.log.Error("Dockerfile rollback failed", "stack", req.Name, "err", err)
+			}
 		}
 		if wroteFile {
 			os.Remove(path)
