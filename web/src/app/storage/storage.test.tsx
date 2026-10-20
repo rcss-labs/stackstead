@@ -82,8 +82,8 @@ describe('Storage screen', () => {
     fake.restore();
     fake = installFakeFetch(routes({ 'GET /api/storage': { body: { ...overview, images: idle, volumes: idle, containers: idle, buildCache: idle } } }));
     mountAt('/storage');
-    const lead = (await screen.findByText(/Sizes not available yet/)).closest('p')!;
-    expect(lead.textContent).not.toMatch(/calculating|refreshing…/);
+    const lead = (await screen.findByText(/Size not available yet/)).closest('p')!;
+    expect(lead.textContent).toBe('Size not available yet');
   });
 
   it('the lead notes a refresh while dated sizes are shown', async () => {
@@ -155,6 +155,12 @@ describe('Storage screen', () => {
     await screen.findByText('No storage actions yet.');
     expect(screen.getAllByRole('heading', { name: 'Recent storage actions' })).toHaveLength(1);
     expect(screen.getByRole('region', { name: 'Recent storage actions' })).toBeTruthy();
+  });
+
+  it('wraps each table in a horizontal scroller so fixed columns never clip', async () => {
+    mountAt('/storage');
+    const table = await screen.findByRole('table', { name: 'Images' });
+    expect(table.parentElement!.className).toMatch(/scroller/);
   });
 
   it('counts a single recent action in the singular', async () => {

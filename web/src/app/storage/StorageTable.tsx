@@ -43,6 +43,12 @@ function SizesAge({ sizes }: { sizes: StorageKindTotals }) {
   return <>{sizes.refreshing ? 'Sizes calculating…' : 'Sizes not available yet'}</>;
 }
 
+/** Smallest width the grid needs: fixed tracks, `minmax` minimums, the row gaps and padding. */
+function minTableWidth(columns: StorageColumn[]): number {
+  const tracks = columns.reduce((sum, c) => sum + (Number.parseFloat((c.width ?? '').replace(/^minmax\(/, '')) || 0), 0);
+  return tracks + 12 * (columns.length - 1) + 28;
+}
+
 export function StorageTable({ label, columns, status, titleId, sizes, children, empty, toolbar, footer, failure }: StorageTableProps) {
   const cols = columns.map((c) => c.width ?? 'minmax(0, 1fr)').join(' ');
   return (
@@ -78,15 +84,17 @@ export function StorageTable({ label, columns, status, titleId, sizes, children,
       ) : (
         <>
           {toolbar}
-          <div role="table" aria-label={label} className={styles.table} style={{ '--cols': cols } as CSSProperties}>
-            <div role="row" className={`${styles.row} ${styles.columns}`}>
-              {columns.map((c) => (
-                <div key={c.key} role="columnheader">
-                  <PanelLabel as="div">{c.label}</PanelLabel>
-                </div>
-              ))}
+          <div className={styles.scroller}>
+            <div role="table" aria-label={label} className={styles.table} style={{ '--cols': cols, '--min-width': `${minTableWidth(columns)}px` } as CSSProperties}>
+              <div role="row" className={`${styles.row} ${styles.columns}`}>
+                {columns.map((c) => (
+                  <div key={c.key} role="columnheader">
+                    <PanelLabel as="div">{c.label}</PanelLabel>
+                  </div>
+                ))}
+              </div>
+              <div role="rowgroup">{children}</div>
             </div>
-            <div role="rowgroup">{children}</div>
           </div>
         </>
       )}

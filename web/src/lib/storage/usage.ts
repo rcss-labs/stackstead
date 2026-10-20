@@ -73,10 +73,10 @@ export function reclaimableText(summary: UsageSummary): string | undefined {
   return summary.reclaimable === 0 ? 'nothing reclaimable' : `${formatBytes(summary.reclaimable)} reclaimable`;
 }
 
-/** Largest first, unknown sizes last; ties keep their input order. Returns a new array. */
 /** `1 image` / `3 images`. */
 export const countText = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
 
+/** Largest first, unknown sizes last; ties keep their input order. Returns a new array. */
 export function sortBySize<T>(rows: T[], size: (row: T) => number | null): T[] {
   return rows
     .map((row, index) => ({ row, index, bytes: size(row) }))

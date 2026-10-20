@@ -20,7 +20,11 @@
 .age { font-size: 12px; color: var(--muted); }
 .banner { padding: 10px 14px 0; }
 
+.scroller { overflow-x: auto; }
 .table { display: block; }
+@media (min-width: 760px) {
+  .table { min-width: var(--min-width); }
+}
 .row {
   display: grid;
   grid-template-columns: var(--cols);
@@ -35,7 +39,7 @@
 .row:hover { background: var(--hover); }
 .columns, .columns:hover { background: transparent; }
 
-.cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell { position: relative; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cell[data-mono='true'] { font-family: var(--mono); font-size: 12.5px; }
 .cell a { color: var(--text); text-decoration: none; }
 .cell a:hover { color: var(--accent); }

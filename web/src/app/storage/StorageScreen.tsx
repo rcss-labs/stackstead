@@ -105,7 +105,8 @@ function Lead({ overview }: { overview: StorageOverview }) {
         </>
       ) : (
         // While the first sizes are being calculated the used text already says so; do not also claim they are unavailable.
-        !summary.refreshing && ' · Sizes not available yet'
+        // When nothing is known either, usedText already says 'Size not available yet'.
+        !summary.refreshing && summary.used !== null && ' · Sizes not available yet'
       )}
     </p>
   );
