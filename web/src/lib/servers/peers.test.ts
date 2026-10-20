@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from '$lib/store';
-import type { PeerView } from '$lib/api/types';
-import { peers, refreshPeers, startPeers } from './peers';
+import type { PeerView, ServerSelf } from '$lib/api/types';
+import { peers, refreshPeers, selfName, startPeers } from './peers';
 
 const peer = (over: Partial<PeerView> = {}): PeerView => ({
   id: 'b1',
@@ -78,5 +78,28 @@ describe('peers store', () => {
     expect(list).toHaveBeenCalledTimes(2);
     expect(get(peers).items).toEqual([peer()]);
     stop();
+  });
+});
+
+describe('this server\'s own name', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('is loaded once, and only when a connected server exists', async () => {
+    const self = vi.fn(async () => ({ name: 'ratsrv01' }) as ServerSelf);
+    const { doc } = fakeDoc();
+    let items: PeerView[] = [];
+    const stop = startPeers({ list: async () => items, self, doc });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(self).not.toHaveBeenCalled();
+    expect(get(selfName)).toBeUndefined();
+
+    items = [peer()];
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(get(selfName)).toBe('ratsrv01');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(self).toHaveBeenCalledTimes(1);
+    stop();
+    expect(get(selfName)).toBeUndefined();
   });
 });

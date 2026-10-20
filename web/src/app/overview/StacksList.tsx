@@ -1,4 +1,4 @@
-import type { Action, Alert, MetricsSummary, StackSummary } from '$lib/api/types';
+import type { Action, Alert, MetricsSummary, ProjectSummary, StackSummary } from '$lib/api/types';
 import { failingServices } from '$lib/dashboard/issues';
 import { filterByQuery, groupStacks } from '$lib/dashboard/overview';
 import { ICONS } from '$lib/shell/icons';
@@ -10,6 +10,8 @@ export interface StacksListProps {
   items: StackSummary[];
   alerts: Alert[] | undefined;
   summary: MetricsSummary | undefined;
+  /** Per-row usage for lists that span servers (a project name is only unique within one); wins over `summary`. */
+  usageOf?: (stack: StackSummary) => ProjectSummary | undefined;
   query: string;
   onQuery: (query: string) => void;
   /** Stacks with a running operation, from the shared store. */
@@ -29,7 +31,7 @@ const COLUMNS = ['Status', 'Stack', 'Services', 'Ports', 'CPU', 'Memory', 'Actio
 const FLEET_COLUMNS = ['Status', 'Stack', 'Server', 'Services', 'Ports', 'CPU', 'Memory', 'Actions'];
 
 /** The stacks card: filter, then one group per health bucket with a row per stack. */
-export function StacksList({ items, alerts, summary, query, onQuery, runningStacks, reasonFor, acting, onAct, serverOf, hrefOf, keyOf }: StacksListProps) {
+export function StacksList({ items, alerts, summary, usageOf, query, onQuery, runningStacks, reasonFor, acting, onAct, serverOf, hrefOf, keyOf }: StacksListProps) {
   const columns = serverOf ? FLEET_COLUMNS : COLUMNS;
   const visible = filterByQuery(items, query);
   const groups = groupStacks(visible);
@@ -75,7 +77,7 @@ export function StacksList({ items, alerts, summary, query, onQuery, runningStac
                     key={key}
                     stack={s}
                     failing={failingServices(alerts, s.name)}
-                    usage={summary?.stacks[s.project]}
+                    usage={usageOf ? usageOf(s) : summary?.stacks[s.project]}
                     running={runningStacks.has(key)}
                     reason={reasonFor(s)}
                     acting={acting.has(key)}

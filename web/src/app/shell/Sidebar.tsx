@@ -1,7 +1,7 @@
 import { Link } from 'react-router';
 import { ICONS } from '$lib/shell/icons';
 import { effectiveTheme, setTheme } from '$lib/stores/appearance';
-import { connectedPeers, peers } from '$lib/servers/peers';
+import { connectedPeers, peers, selfName } from '$lib/servers/peers';
 import { live } from '$lib/stores/live';
 import { useStore } from '../hooks/useStore';
 import { localScope } from '../servers/ServerContext';
@@ -30,6 +30,7 @@ export function Sidebar({ username, onLogout, current, stackCount, attention, on
   const dark = useStore(effectiveTheme) === 'dark';
   const status = useStore(live);
   const peerList = connectedPeers(useStore(peers).items);
+  const ownName = useStore(selfName);
   const initials = (username ?? '').slice(0, 2).toUpperCase();
   const themeLabel = dark ? 'Switch to light theme' : 'Switch to dark theme';
 
@@ -70,7 +71,7 @@ export function Sidebar({ username, onLogout, current, stackCount, attention, on
         </kbd>
       </button>
       {peerList.length > 0 ? (
-        <ServerNav current={current} localName={localScope.name} localStackCount={stackCount} peers={peerList} attention={attention} onNavigate={onNavigate} />
+        <ServerNav current={current} localName={ownName ?? localScope.name} localTagged={ownName !== undefined} localStackCount={stackCount} peers={peerList} attention={attention} onNavigate={onNavigate} />
       ) : (
         <>
           <div className={styles.group}>{NAV.filter((e) => e.group === 'main').map(item)}</div>

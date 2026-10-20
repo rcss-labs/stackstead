@@ -8,6 +8,7 @@ describe('breadcrumb', () => {
     ['/stacks/import', [{ label: 'Stacks', href: '/' }, { label: 'Import' }]],
     ['/stacks/web', [{ label: 'Stacks', href: '/' }, { label: 'web', mono: true }]],
     ['/stacks/my%20stack', [{ label: 'Stacks', href: '/' }, { label: 'my stack', mono: true }]],
+    ['/all', [{ label: 'All stacks' }]],
     ['/settings', [{ label: 'Settings' }]],
     ['/containers', [{ label: 'Containers' }]],
     ['/networks', [{ label: 'Networks' }]],

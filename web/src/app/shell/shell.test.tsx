@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api/client';
-import type { HostSnapshot, Operation, PeerView, Status } from '$lib/api/types';
+import type { HostSnapshot, Operation, PeerView, ServerSelf, Status } from '$lib/api/types';
 import { startPeers } from '$lib/servers/peers';
 import { installFakeFetch, installFakeStream } from '../../vitest-setup';
 import RemoteServer from '../servers/RemoteServer';
@@ -506,8 +506,8 @@ describe('server navigation', () => {
     stopPeers?.();
     stopPeers = undefined;
   });
-  const withPeers = async (list: PeerView[]) => {
-    stopPeers = startPeers({ list: async () => list });
+  const withPeers = async (list: PeerView[], self: () => Promise<ServerSelf> = async () => ({ name: 'ratsrv01' }) as ServerSelf) => {
+    stopPeers = startPeers({ list: async () => list, self });
     await sleep(0);
   };
   const props = { ...sidebarProps, stackCount: 3 };
@@ -517,6 +517,7 @@ describe('server navigation', () => {
     renderIn(<Sidebar {...props} current="/" />);
     expect(screen.queryByRole('link', { name: 'All stacks' })).toBeNull();
     expect(screen.queryByText('this server')).toBeNull();
+    expect(screen.queryByText('ratsrv01')).toBeNull();
     expect(screen.queryByRole('button', { name: /expand|this server/i })).toBeNull();
   });
 
@@ -526,7 +527,7 @@ describe('server navigation', () => {
     const all = await screen.findByRole('link', { name: 'All stacks' });
     expect(all.getAttribute('href')).toBe('/all');
     expect(all.textContent).toContain('7');
-    expect(heading(/this server/).getAttribute('aria-expanded')).toBe('true');
+    expect(heading(/ratsrv01/).getAttribute('aria-expanded')).toBe('true');
     for (const label of ['Stacks', 'Containers', 'Networks', 'Storage', 'New stack', 'Import']) {
       expect(screen.getByRole('link', { name: label })).toBeTruthy();
     }
@@ -537,12 +538,28 @@ describe('server navigation', () => {
     expect(screen.getByRole('link', { name: 'Settings' })).toBeTruthy();
   });
 
+  it('names this server by its real name with a muted tag, and falls back until the name loads or if it fails', async () => {
+    await withPeers([peer()]);
+    renderIn(<Sidebar {...props} current="/" />);
+    const named = await screen.findByRole('button', { name: /ratsrv01/ });
+    expect(within(named).getByText('this server')).toBeTruthy();
+    cleanup();
+    stopPeers?.();
+    await withPeers([peer()], async () => {
+      throw new Error('down');
+    });
+    renderIn(<Sidebar {...props} current="/" />);
+    await screen.findByRole('link', { name: 'All stacks' });
+    expect(heading(/this server/).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.queryByText('ratsrv01')).toBeNull();
+  });
+
   it('viewing a peer expands it and collapses this server', async () => {
     await withPeers([peer()]);
     renderIn(<Sidebar {...props} current="/s/mini-02/containers" />);
     await screen.findByRole('link', { name: 'All stacks' });
     expect(heading(/mini-02/).getAttribute('aria-expanded')).toBe('true');
-    expect(heading(/this server/).getAttribute('aria-expanded')).toBe('false');
+    expect(heading(/ratsrv01/).getAttribute('aria-expanded')).toBe('false');
     expect(screen.getByRole('link', { name: 'Containers' }).getAttribute('href')).toBe('/s/mini-02/containers');
     expect(screen.getByRole('link', { name: 'Stacks' }).getAttribute('href')).toBe('/s/mini-02');
     expect(current('Containers')).toBe('page');
@@ -575,7 +592,7 @@ describe('server navigation', () => {
     renderIn(<Sidebar {...props} current="/" />);
     await screen.findByRole('link', { name: 'All stacks' });
     const names = screen.getAllByRole('button', { expanded: undefined }).map((b) => b.textContent ?? '');
-    const order = ['this server', 'zeta', 'alpha'].map((n) => names.findIndex((t) => t.includes(n)));
+    const order = ['ratsrv01', 'zeta', 'alpha'].map((n) => names.findIndex((t) => t.includes(n)));
     expect(order).toEqual([...order].sort((a, b) => a - b));
     expect(order.every((i) => i >= 0)).toBe(true);
   });
@@ -609,7 +626,7 @@ describe('server navigation', () => {
     const select = await screen.findByRole('combobox', { name: 'Server' });
     await user.selectOptions(select, 'mini-02');
     expect(screen.getByTestId('where').textContent).toBe('/s/mini-02');
-    await user.selectOptions(select, 'this server');
+    await user.selectOptions(select, 'ratsrv01 (this server)');
     expect(screen.getByTestId('where').textContent).toBe('/');
   });
 

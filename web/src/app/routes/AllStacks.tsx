@@ -3,6 +3,8 @@ import { api, ApiError, createApi } from '$lib/api/client';
 import type { Action, DockerEvent, FleetServer, FleetStack, Operation, StackSummary } from '$lib/api/types';
 import { lifecycleDisabledReason } from '$lib/stacks/lifecycle';
 import { createFleet, serverPath } from '$lib/servers/fleet';
+import { combineHosts, type HostInput } from '$lib/servers/fleetHost';
+import { createFleetStats } from '$lib/servers/fleetStats';
 import { createOperationTracker } from '$lib/stores/operationTracker';
 import { createRunningOpsStore } from '$lib/stores/runningOps';
 import { writable } from '$lib/store';
@@ -55,6 +57,16 @@ function startPeerWatch(server: FleetServer, onRunning: (ops: Operation[]) => vo
   };
 }
 
+const peerApis = new Map<string, ReturnType<typeof createApi>>();
+const peerApi = (id: string) => {
+  let client = peerApis.get(id);
+  if (!client) {
+    client = createApi(`/api/servers/${encodeURIComponent(id)}`);
+    peerApis.set(id, client);
+  }
+  return client;
+};
+
 const displayVersion = (v: string) => (/^v?\d/.test(v) ? `v${v.replace(/^v/, '')}` : v);
 
 // The list components are typed on StackSummary; every item here came from the fleet and carries its server.
@@ -66,6 +78,14 @@ export default function AllStacks() {
   const scope = useServer();
   const fleet = useMemo(() => createFleet({ load: api.fleetStacks }), []);
   const { data, loading, error } = useStore(fleet.state);
+  const localIdRef = useRef<string | undefined>(undefined);
+  const fleetStats = useMemo(() => {
+    const clientFor = (id: string) => (id === localIdRef.current ? api : peerApi(id));
+    // This server's host comes from the shell's own host store, so /api/host is not fetched twice.
+    return createFleetStats({ loadSummary: (id) => clientFor(id).metricsSummary(), loadHost: (id) => clientFor(id).host(), hostOf: (id) => id !== localIdRef.current });
+  }, []);
+  const stats = useStore(fleetStats.state);
+  const localHost = useStore(scope.host);
   const liveState = useStore(scope.live);
   const localOps = useStore(scope.runningOps);
   const [selected, setSelected] = useState<string | null>(null);
@@ -79,6 +99,11 @@ export default function AllStacks() {
     fleet.start();
     return () => fleet.stop();
   }, [fleet]);
+
+  useEffect(() => {
+    fleetStats.start();
+    return () => fleetStats.stop();
+  }, [fleetStats]);
 
   // Trackers live as long as the screen so a toast keeps resolving after the action; leaving settles the pending ones.
   useEffect(() => {
@@ -94,6 +119,23 @@ export default function AllStacks() {
   const answering = servers.filter((s) => s.status === 'reachable');
   const failing = servers.filter((s) => s.status !== 'reachable');
   const localServer = servers.find((s) => s.local);
+  localIdRef.current = localServer?.id;
+
+  const answeringKey = answering.map((s) => s.id).join('\n');
+  useEffect(() => {
+    fleetStats.setServers(answeringKey === '' ? [] : answeringKey.split('\n'));
+  }, [fleetStats, answeringKey]);
+
+  // A server that has not answered yet is neither counted nor listed; one that failed or is unreachable is named.
+  const hostInputs: HostInput[] = servers.flatMap((server): HostInput[] => {
+    if (server.status !== 'reachable') return [{ name: server.name, reason: server.status === 'incompatible' ? 'incompatible version' : 'unreachable' }];
+    if (server.local) return localHost ? [{ name: server.name, host: localHost }] : [];
+    const entry = stats[server.id];
+    if (!entry || (!entry.host && !entry.hostError)) return [];
+    return [{ name: server.name, host: entry.host, reason: entry.hostError ? `unavailable (${entry.hostError})` : 'unavailable' }];
+  });
+  const { host: combinedHost, notes } = combineHosts(hostInputs);
+  const hostNotes = combinedHost ? [`Host stats combined from ${combinedHost.hostname}`, ...notes] : notes;
 
   const slugOf = useCallback(
     (id: string) => {
@@ -193,7 +235,8 @@ export default function AllStacks() {
       ))}
       {data && (combined.length > 0 || failing.length === 0) && (
         <>
-          <StatusPanel items={combined} host={undefined} history={[]} lastEventIso={events[0]?.time} showActions={false} hrefOf={stackHref} keyOf={rowKey} />
+          <StatusPanel items={combined} host={combinedHost} history={[]} lastEventIso={events[0]?.time} showActions={false} hrefOf={stackHref} keyOf={rowKey} />
+          {hostNotes.length > 0 && <p className={styles.hostNote}>{hostNotes.join(' · ')}</p>}
           {combined.length === 0 ? (
             <EmptyState title="No stacks yet" description="None of the connected servers has a stack." />
           ) : (
@@ -213,6 +256,7 @@ export default function AllStacks() {
                   items={shown}
                   alerts={undefined}
                   summary={undefined}
+                  usageOf={(s) => stats[fleetStack(s).server]?.summary?.stacks[s.project]}
                   query={query}
                   onQuery={setQuery}
                   runningStacks={runningKeys}

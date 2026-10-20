@@ -10,6 +10,8 @@ export interface ServerNavProps {
   /** Path of the page being shown. */
   current: string;
   localName: string;
+  /** Shows the muted "this server" tag; off while the name is still the generic fallback. */
+  localTagged?: boolean;
   localStackCount: number;
   peers: PeerView[];
   /** This server has a stack that needs attention. */
@@ -33,16 +35,17 @@ interface ServerEntry {
   key: string;
   slug: string | null;
   name: string;
+  tag?: string;
   status: PeerStatus;
   stackCount: number;
 }
 
 /** The accordion: All stacks, then one section per server; only the server being viewed lists its pages. */
-export function ServerNav({ current, localName, localStackCount, peers, attention, onNavigate }: ServerNavProps) {
+export function ServerNav({ current, localName, localTagged, localStackCount, peers, attention, onNavigate }: ServerNavProps) {
   const navigate = useNavigate();
   const viewed = splitServerPath(current).slug;
   const servers: ServerEntry[] = [
-    { key: 'local', slug: null, name: localName, status: 'reachable', stackCount: localStackCount },
+    { key: 'local', slug: null, name: localName, tag: localTagged ? 'this server' : undefined, status: 'reachable', stackCount: localStackCount },
     ...peers.map((p) => ({ key: p.id, slug: p.slug, name: p.name, status: p.status, stackCount: p.stackCount })),
   ];
   const total = servers.reduce((sum, s) => sum + (s.status === 'reachable' ? s.stackCount : 0), 0);
@@ -62,6 +65,7 @@ export function ServerNav({ current, localName, localStackCount, peers, attentio
             <button type="button" className={styles.heading} aria-expanded={open} onClick={() => (onNavigate ?? navigate)(stacksHref)}>
               <Led tone={status.tone} size={7} label={status.text} />
               <span className={styles.name}>{server.name}</span>
+              {server.tag && <span className={styles.tag}>{server.tag}</span>}
               {!open && <span className={styles.summary}>{server.status === 'reachable' ? server.stackCount : status.text}</span>}
             </button>
             {open && (
