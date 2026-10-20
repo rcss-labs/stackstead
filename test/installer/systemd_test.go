@@ -171,7 +171,7 @@ func assertServiceRunning(t *testing.T, s *scenario, bin, version string, fresh 
 	t.Helper()
 	s.waitFor("service active", "systemctl is-active --quiet stackstead", 15*time.Second)
 	health := s.waitFor("/api/health", "curl -fsS http://127.0.0.1:8420/api/health", 15*time.Second)
-	expectEqual(t, "/api/health", strings.ReplaceAll(health, " ", ""), `{"ok":true}`)
+	expectEqual(t, "/api/health", strings.ReplaceAll(health, " ", ""), `{"ok":true,"peering":1}`)
 	setup := s.shOK("curl -fsS http://127.0.0.1:8420/api/setup/status")
 	expectContains(t, "/api/setup/status", strings.ReplaceAll(setup, " ", ""), `"needsSetup":true`)
 	if fresh {
