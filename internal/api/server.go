@@ -147,6 +147,7 @@ func New(opts Options) http.Handler {
 	}
 	if opts.Peers != nil {
 		s.registerPeerRoutes(mux)
+		s.registerFleetRoutes(mux)
 	}
 	if opts.Stacks != nil && opts.Observe != nil {
 		s.registerContainerRoutes(mux)
