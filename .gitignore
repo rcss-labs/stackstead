@@ -37,3 +37,6 @@ bin/
 .dev/
 node_modules/
 dist/
+
+# Local tool state (brainstorming companion, SDD ledgers)
+.superpowers/
