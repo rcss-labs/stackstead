@@ -1125,3 +1125,65 @@ func storageProtectedVolume(t *testing.T, c *client, stack, name string) {
 		t.Fatal("bulk preview omits protected volume")
 	}
 }
+
+// TestE2EConnectedServers pairs two real server processes over loopback and
+// checks forwarding, removal and that neither log leaks a peer secret.
+func TestE2EConnectedServers(t *testing.T) {
+	if !web.Built() {
+		t.Skip("web UI not built (run make ui)")
+	}
+	srvA := startServer(t, "")
+	srvB := startServer(t, "")
+	password := randomSecret(t)
+	signIn := func(srv *e2eServer) *client {
+		c := newClient(t, srv.base)
+		c.expect(204, "POST", "/api/setup", map[string]string{"username": "admin", "password": password, "setupToken": ""})
+		c.expect(204, "POST", "/api/login", map[string]string{"username": "admin", "password": password})
+		return c
+	}
+	a, b := signIn(srvA), signIn(srvB)
+
+	var token apitypes.ConnectionToken
+	if err := json.Unmarshal(b.expect(201, "POST", "/api/peers/tokens", nil), &token); err != nil {
+		t.Fatal(err)
+	}
+	a.expect(200, "PUT", "/api/peers/self", apitypes.ServerSelfUpdate{Name: "e2e-a", AdvertisedURL: srvA.base})
+	plaintext := apitypes.PeerTrust{Plaintext: true}
+	a.expect(201, "POST", "/api/peers", apitypes.AddPeerRequest{
+		URL: srvB.base, Token: token.Token, AdvertisedURL: srvA.base, Trust: plaintext, SelfTrust: plaintext,
+	})
+
+	var bViews, aViews []apitypes.PeerView
+	if err := json.Unmarshal(b.expect(200, "GET", "/api/peers", nil), &bViews); err != nil {
+		t.Fatal(err)
+	}
+	if len(bViews) != 1 || bViews[0].Name != "e2e-a" {
+		t.Fatalf("B lists %+v, want A", bViews)
+	}
+	if err := json.Unmarshal(a.expect(200, "GET", "/api/peers", nil), &aViews); err != nil {
+		t.Fatal(err)
+	}
+	if len(aViews) != 1 {
+		t.Fatalf("A lists %+v, want B", aViews)
+	}
+	bID := aViews[0].ID
+
+	a.expect(200, "GET", "/api/servers/"+bID+"/api/stacks", nil)
+
+	a.expect(204, "DELETE", "/api/peers/"+bID, nil)
+	if err := json.Unmarshal(b.expect(200, "GET", "/api/peers", nil), &bViews); err != nil {
+		t.Fatal(err)
+	}
+	if len(bViews) != 0 {
+		t.Errorf("B still lists %+v after A removed it", bViews)
+	}
+
+	for name, srv := range map[string]*e2eServer{"A": srvA, "B": srvB} {
+		log := redact(srv.stderr.String())
+		for _, prefix := range []string{"ssc_", "ssp_"} {
+			if strings.Contains(log, prefix) {
+				t.Errorf("server %s log contains a %s secret", name, prefix)
+			}
+		}
+	}
+}
