@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StrictMode } from 'react';
+import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as session from '$lib/api/session';
 import { get } from '$lib/store';
@@ -243,7 +244,9 @@ describe('Settings metrics token', () => {
     fake = installSettingsFetch(tokenStatus(false));
     render(
       <StrictMode>
-        <SettingsScreen />
+        <MemoryRouter>
+          <SettingsScreen />
+        </MemoryRouter>
       </StrictMode>,
     );
     await screen.findByRole('button', { name: 'Create token' });
@@ -404,5 +407,41 @@ describe('Settings section nav', () => {
     expect(document.activeElement).toBe(screen.getByRole('heading', { level: 2, name: heading }));
     expect(window.location.hash).toBe(`#${sectionId}`);
     expect(scrolled).toEqual([{ id: sectionId, options: { behavior: 'auto' } }]);
+  });
+});
+
+describe('Settings deep links', () => {
+  const originalScrollIntoView = Element.prototype.scrollIntoView;
+  let scroll: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    // jsdom has no layout and no scrollIntoView; record the calls instead.
+    scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll as unknown as typeof Element.prototype.scrollIntoView;
+  });
+  afterEach(() => {
+    Element.prototype.scrollIntoView = originalScrollIntoView;
+  });
+
+  it('a #section deep link scrolls to the card and focuses its heading once it is mounted', async () => {
+    fake = installSettingsFetch(tokenStatus(false));
+    mountAt('/settings#settings-account');
+    const heading = await screen.findByRole('heading', { level: 2, name: 'Account' });
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(scroll.mock.contexts[0]).toBe(document.getElementById('settings-account'));
+    expect(document.activeElement).toBe(heading);
+  });
+
+  it('without a hash nothing scrolls', async () => {
+    fake = installSettingsFetch(tokenStatus(false));
+    mountSettings();
+    await screen.findByRole('heading', { level: 2, name: 'Account' });
+    expect(scroll).not.toHaveBeenCalled();
+  });
+
+  it('an unknown hash is ignored', async () => {
+    fake = installSettingsFetch(tokenStatus(false));
+    mountAt('/settings#settings-nope');
+    await screen.findByRole('heading', { level: 2, name: 'Account' });
+    expect(scroll).not.toHaveBeenCalled();
   });
 });

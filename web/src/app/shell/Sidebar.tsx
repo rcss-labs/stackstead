@@ -71,7 +71,7 @@ export function Sidebar({ username, onLogout, current, stackCount, attention, on
       <div className={styles.bottom}>
         <div className={styles.group}>{NAV.filter((e) => e.group === 'settings').map(item)}</div>
         <div className={styles.user}>
-        <button type="button" className={styles.avatar} aria-label="Log out" title={`${username ?? ''} · Log out`} onClick={onLogout}>
+        <button type="button" className={styles.avatar} aria-label={username ? `Log out ${username}` : 'Log out'} title={`${username ?? ''} · Log out`} onClick={onLogout}>
           {initials}
         </button>
         <div className={styles.who}>

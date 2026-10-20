@@ -140,10 +140,15 @@ describe('Sidebar', () => {
     expect(screen.getByRole('button', { name: 'Switch to light theme' })).toBeTruthy();
   });
 
+  it('the avatar is named after the user so it never collides with the Settings Log out button', () => {
+    renderIn(<Sidebar {...sidebarProps} username="ana" onLogout={vi.fn()} current="/" />);
+    expect(screen.getByRole('button', { name: 'Log out ana' }).getAttribute('title')).toBe('ana · Log out');
+  });
+
   it('avatar shows initials and logs out through onLogout', async () => {
     const onLogout = vi.fn();
     renderIn(<Sidebar {...sidebarProps} username="ana" onLogout={onLogout} current="/" />);
-    const avatar = screen.getByRole('button', { name: 'Log out' });
+    const avatar = screen.getByRole('button', { name: 'Log out ana' });
     expect(avatar.textContent?.trim()).toBe('AN');
     expect(avatar.getAttribute('title')).toBe('ana · Log out');
     await userEvent.setup().click(avatar);
@@ -385,7 +390,7 @@ describe('Mobile', () => {
       </Shell>,
     );
     expect(screen.getAllByRole('navigation', { name: 'Main' })).toHaveLength(1);
-    expect(screen.queryByRole('button', { name: 'Log out' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Log out/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Search or run a command' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'New stack' }).getAttribute('href')).toBe('/stacks/new');
     expect(screen.getAllByRole('main')).toHaveLength(1);
@@ -440,7 +445,7 @@ describe('Mobile', () => {
       </Shell>,
     );
     expect(screen.getAllByRole('navigation', { name: 'Main' })).toHaveLength(1);
-    expect(screen.getByRole('button', { name: 'Log out' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Log out ana' })).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'Settings' })?.closest('nav')).toBe(screen.getByRole('navigation', { name: 'Main' }));
   });
 

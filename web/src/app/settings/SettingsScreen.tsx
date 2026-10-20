@@ -1,4 +1,5 @@
-import type { MouseEvent } from 'react';
+import { useLayoutEffect, type MouseEvent } from 'react';
+import { useLocation } from 'react-router';
 import { logout, session } from '$lib/api/session';
 import { density, setDensity, setTheme, theme, type ThemeChoice } from '$lib/stores/appearance';
 import { toasts } from '$lib/stores/toasts';
@@ -37,14 +38,19 @@ const DENSITY_OPTIONS = [
  * scroll-margin-top on the target keeps the heading below the sticky bar; `behavior: 'auto'` follows the
  * page's own scroll-behavior (instant under reduced motion).
  */
+function scrollToSection(sectionId: string): boolean {
+  const target = document.getElementById(sectionId);
+  if (!target) return false;
+  target.scrollIntoView({ behavior: 'auto' });
+  target.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true });
+  return true;
+}
+
 function goToSection(event: MouseEvent<HTMLAnchorElement>, sectionId: string) {
   // Modified and non-primary clicks open the section in a new tab or window; leave those to the browser.
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-  const target = document.getElementById(sectionId);
-  if (!target) return;
+  if (!scrollToSection(sectionId)) return;
   event.preventDefault();
-  target.scrollIntoView({ behavior: 'auto' });
-  target.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true });
   window.history.replaceState(window.history.state, '', `#${sectionId}`);
 }
 
@@ -52,6 +58,14 @@ export function SettingsScreen() {
   const { username } = useStore(session);
   const themeValue = useStore(theme);
   const densityValue = useStore(density);
+  const { hash } = useLocation();
+
+  // The cards mount after the browser's own fragment scroll has run, so a /settings#section link
+  // (bookmark or in-app navigation) is honoured here once the target exists.
+  useLayoutEffect(() => {
+    const sectionId = hash.slice(1);
+    if (SECTIONS.some((section) => section.id === sectionId)) scrollToSection(sectionId);
+  }, [hash]);
 
   async function doLogout() {
     const { ok } = await logout();

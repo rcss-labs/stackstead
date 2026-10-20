@@ -235,7 +235,7 @@ describe('App routing and session', () => {
     // The overview must not start a second host poller: App owns it.
     expect(fake.calls.filter((c) => c.path === '/api/host')).toHaveLength(1);
     expect(mainNav()).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Log out' }).getAttribute('title')).toBe('admin · Log out');
+    expect(screen.getByRole('button', { name: 'Log out admin' }).getAttribute('title')).toBe('admin · Log out');
   });
 
   it('renders the Containers page at /containers with its title', async () => {
@@ -331,7 +331,7 @@ describe('App routing and session', () => {
     refreshRunningOps();
     await waitFor(() => expect(checks()).toBeGreaterThan(0));
     const beforeLogout = checks();
-    await user().click(screen.getByRole('button', { name: 'Log out' }));
+    await user().click(screen.getByRole('button', { name: 'Log out admin' }));
     expect(await screen.findByLabelText('Username')).toBeTruthy();
     // Stopping the running-ops store empties its list; a tracker still alive would check the absent id.
     expect(checks()).toBe(beforeLogout);
@@ -360,6 +360,17 @@ describe('App routing and session', () => {
     at('/');
     render(<App />);
     expect(await screen.findByText(/2 running/)).toBeTruthy();
+  });
+
+  it('on /settings the two logout controls have distinct accessible names', async () => {
+    at('/settings');
+    render(<App />);
+    await screen.findByRole('heading', { name: 'Settings' });
+    const account = within(screen.getByRole('region', { name: 'Account' }));
+    expect(account.getByRole('button', { name: 'Log out' })).toBeTruthy();
+    expect(account.queryByRole('button', { name: 'Log out admin' })).toBeNull();
+    expect(within(mainNav()).getByRole('button', { name: 'Log out admin' })).toBeTruthy();
+    expect(within(mainNav()).queryByRole('button', { name: 'Log out' })).toBeNull();
   });
 
   it('logout returns to Login; a failed logout warns', async () => {
@@ -499,7 +510,7 @@ describe('App session edge cases', () => {
     render(<App />);
     await screen.findByRole('heading', { level: 1 });
     act(() => setUnsavedChanges(true));
-    await user().click(screen.getByRole('button', { name: 'Log out' }));
+    await user().click(screen.getByRole('button', { name: 'Log out admin' }));
     const dlg = await screen.findByRole('alertdialog');
     expect(get(session).state).toBe('authenticated');
     await user().click(within(dlg).getByRole('button', { name: 'Cancel' }));
