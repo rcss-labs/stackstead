@@ -1,6 +1,6 @@
 import type { Operation } from '$lib/api/types';
 import { toasts } from '$lib/stores/toasts';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
 import { Dialog } from '../components/Dialog';
 import type { CommandPaletteProps } from './CommandPalette';
@@ -30,8 +30,12 @@ export interface PaletteHostProps {
 
 /** A one-input stand-in shown while the palette chunk loads; what is typed here seeds the real palette. */
 function PaletteFallback({ draft, onDraft, onClose }: { draft: string; onDraft: (value: string) => void; onClose: () => void }) {
+  const titleId = useId();
   return (
-    <Dialog open onClose={onClose} title="Command palette" width="lg" placement="top">
+    <Dialog open onClose={onClose} title="Command palette" labelledBy={titleId} width="lg" placement="top" closeOnBackdrop>
+      <h2 id={titleId} className={styles.visuallyHidden}>
+        Command palette
+      </h2>
       <input
         className={styles.input}
         aria-label="Search or run a command"
@@ -63,6 +67,15 @@ export function PaletteHost({ open, runningOps, onClose, onNavigate, load = load
   loadRef.current = load;
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const openRef = useRef(open);
+  openRef.current = open;
+
+  // A chunk that will not load: drop the draft, close, and say so. The next open tries the import again.
+  function failToOpen() {
+    setDraft('');
+    onCloseRef.current();
+    toasts.push({ kind: 'danger', message: 'Could not open the command palette' });
+  }
 
   // Fetch on the first open; a failure closes with a toast and the next open tries again.
   useEffect(() => {
@@ -76,9 +89,7 @@ export function PaletteHost({ open, runningOps, onClose, onNavigate, load = load
       },
       () => {
         loading.current = false;
-        setDraft('');
-        onCloseRef.current();
-        toasts.push({ kind: 'danger', message: 'Could not open the command palette' });
+        failToOpen();
       },
     );
   }, [open]);
@@ -103,6 +114,8 @@ export function PaletteHost({ open, runningOps, onClose, onNavigate, load = load
         },
         () => {
           loading.current = false;
+          // Silent while closed; if the palette was opened meanwhile it is waiting on this load.
+          if (!cancelled && openRef.current) failToOpen();
         },
       );
     };

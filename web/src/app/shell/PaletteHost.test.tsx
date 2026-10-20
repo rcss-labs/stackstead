@@ -28,8 +28,12 @@ function stack(name: string): StackSummary {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => (resolve = r));
-  return { promise, resolve };
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 let stopStacks: () => void;
@@ -174,5 +178,39 @@ describe('PaletteHost', () => {
     await act(async () => setOpen(true));
     expect(screen.getByRole('listbox', { name: 'Results' })).toBeTruthy();
     expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it('a prefetch that fails while the palette is open closes it with the chunk-error toast, and the next open retries', async () => {
+    vi.useFakeTimers();
+    const gate = deferred<PaletteModule>();
+    const load = vi
+      .fn<() => Promise<PaletteModule>>()
+      .mockImplementationOnce(() => gate.promise)
+      .mockResolvedValue({ default: CommandPalette });
+    const onClose = vi.fn();
+    render(<Harness load={load} onClose={onClose} />);
+    await act(async () => {
+      vi.advanceTimersByTime(1500);
+    });
+    await act(async () => setOpen(true));
+    expect(screen.getByRole('textbox', { name: 'Search or run a command' })).toBeTruthy();
+    await act(async () => gate.reject(new Error('Failed to fetch dynamically imported module')));
+    expect(get(toasts).some((t) => t.kind === 'danger' && t.message === 'Could not open the command palette')).toBe(true);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await act(async () => setOpen(true));
+    expect(screen.getByRole('listbox', { name: 'Results' })).toBeTruthy();
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it('a click on the backdrop closes the loading stand-in, which is named by a hidden heading', async () => {
+    const gate = deferred<PaletteModule>();
+    const onClose = vi.fn();
+    render(<Harness load={() => gate.promise} onClose={onClose} />);
+    await act(async () => setOpen(true));
+    const dialog = screen.getByRole('dialog', { name: 'Command palette' });
+    expect(within(dialog).getByRole('heading', { name: 'Command palette' })).toBeTruthy();
+    await userEvent.setup().click(dialog.parentElement as HTMLElement);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

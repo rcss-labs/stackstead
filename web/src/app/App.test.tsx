@@ -16,6 +16,7 @@ import { installFakeFetch, installFakeStream, type FakeFetch, type FakeResponse,
 import { App } from './App';
 import { row as containerRow } from './containers/containersTestKit';
 import { ROUTES } from './routes';
+import { resetPalettePrefetchForTests } from './shell/PaletteHost';
 
 let fake: FakeFetch;
 let stream: FakeStream;
@@ -73,6 +74,7 @@ beforeEach(() => {
   stream = installFakeStream({ '/api/events': [] });
 });
 afterEach(async () => {
+  resetPalettePrefetchForTests();
   // Unmount before resetting the stores so no guard reacts to the reset.
   cleanup();
   vi.unstubAllGlobals();
