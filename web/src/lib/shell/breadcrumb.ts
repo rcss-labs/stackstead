@@ -1,3 +1,5 @@
+import { splitServerPath } from '../router';
+
 export interface Crumb {
   label: string;
   href?: string;
@@ -16,8 +18,21 @@ const decode = (segment: string) => {
   }
 };
 
-/** Breadcrumb trail for a route path; the last crumb is the current page. */
-export function breadcrumb(path: string): Crumb[] {
+/**
+ * Breadcrumb trail for a route path; the last crumb is the current page.
+ * On a connected server the trail starts with the server and every link stays inside it.
+ */
+export function breadcrumb(path: string, serverName?: string): Crumb[] {
+  const { slug, inner } = splitServerPath(path);
+  if (serverName === undefined || slug === null) return localBreadcrumb(path);
+  const prefix = `/s/${encodeURIComponent(slug)}`;
+  const scoped = localBreadcrumb(inner).map((c) =>
+    c.href === undefined ? c : { ...c, href: c.href === '/' ? prefix : prefix + c.href },
+  );
+  return [{ label: serverName, href: prefix }, ...scoped];
+}
+
+function localBreadcrumb(path: string): Crumb[] {
   if (path === '/storage') return [{ label: 'Storage' }];
   const storage = /^\/storage\/(images|volumes)\/([^/]+)$/.exec(path);
   if (storage) return [{ label: 'Storage', href: '/storage' }, { label: storage[1] === 'images' ? 'Images' : 'Volumes', href: `/storage?tab=${storage[1]}` }, { label: decode(storage[2]), mono: true }];

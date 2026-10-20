@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
-import { api } from '$lib/api/client';
 import type { Alert, MetricsSummary, StorageOverview } from '$lib/api/types';
 import { createDashboard } from '$lib/dashboard/controller';
 import type { DashboardErrors } from '$lib/dashboard/controller';
-import { changes } from '$lib/stores/live';
+import { useServer } from '../servers/ServerContext';
 import { useStore } from './useStore';
 
 export interface DashboardData {
@@ -17,6 +16,7 @@ export interface DashboardData {
 
 /** One dashboard controller per mount: its timers run while the screen is mounted and stop with it. */
 export function useDashboard(): DashboardData {
+  const { api, changes } = useServer();
   const [dashboard] = useState(() =>
     createDashboard({ alerts: api.alerts, summary: api.metricsSummary, storage: api.storageOverview, changes }),
   );

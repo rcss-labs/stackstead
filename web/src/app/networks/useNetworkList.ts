@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from '$lib/api/client';
 import type { Network } from '$lib/api/types';
 import { createNetworkList } from '$lib/networks/networks';
-import { changes } from '$lib/stores/live';
 import { useStore } from '../hooks/useStore';
+import { useServer } from '../servers/ServerContext';
 
 export interface NetworkListState {
   rows: Network[] | undefined;
@@ -12,6 +11,7 @@ export interface NetworkListState {
 }
 
 export function useNetworkList(): NetworkListState {
+  const { api, changes } = useServer();
   const [list] = useState(() => createNetworkList({ list: api.networks, changes }));
   // StrictMode runs mount, cleanup, mount back to back. Deferring start to a microtask lets the cleanup
   // cancel it, so the throwaway first mount never fetches; start and stop are idempotent either way.

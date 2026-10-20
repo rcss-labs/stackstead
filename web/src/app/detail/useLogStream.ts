@@ -6,6 +6,7 @@ import { createLogStream, type LogSource, type LogStream, type LogStreamOptions 
 import type { SSEStatus } from '$lib/sse/client';
 import { useStore } from '../hooks/useStore';
 
+import { useServer } from '../servers/ServerContext';
 // Stand-ins used until the effect has opened the stream, so the hook always reads real stores.
 const NO_LINES = readable<LogLine[]>([]);
 const NO_ERRORS = readable<LogError[]>([]);
@@ -29,6 +30,7 @@ export interface LogStreamState {
  * is read once per source; later option changes go through `restart`.
  */
 export function useLogStream(source: LogSource, initial: LogStreamOptions): LogStreamState {
+  const { open } = useServer();
   const [stream, setStream] = useState<LogStream | undefined>();
   const initialRef = useRef(initial);
   initialRef.current = initial;
@@ -37,13 +39,13 @@ export function useLogStream(source: LogSource, initial: LogStreamOptions): LogS
   sourceRef.current = source;
 
   useEffect(() => {
-    const opened = createLogStream(sourceRef.current, initialRef.current);
+    const opened = createLogStream(sourceRef.current, initialRef.current, { open });
     setStream(opened);
     return () => {
       opened.close();
       setStream(undefined);
     };
-  }, [sourceKey]);
+  }, [sourceKey, open]);
 
   const lines = useStore(stream?.buffer ?? NO_LINES);
   const status = useStore(stream?.status ?? CONNECTING);

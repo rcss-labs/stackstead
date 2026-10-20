@@ -1,6 +1,6 @@
 import { lazy } from 'react';
 import type { ComponentType, LazyExoticComponent } from 'react';
-import { matchRoute } from '$lib/router';
+import { matchRoute, splitServerPath } from '$lib/router';
 import Overview from './routes/Overview';
 
 export interface AppRoute {
@@ -25,10 +25,26 @@ export const ROUTES: AppRoute[] = [
   { path: '/settings', title: 'Settings', screen: lazy(() => import('./routes/Settings')) },
   { path: '/login', screen: lazy(() => import('./routes/Login')) },
   { path: '/setup', screen: lazy(() => import('./routes/Setup')) },
+  { path: '/all', title: 'All stacks', screen: lazy(() => import('./routes/AllStacks')) },
+  // Lazy: RemoteServer reads SERVER_ROUTES from this module.
+  { path: '/s/:server/*', screen: lazy(() => import('./servers/RemoteServer')) },
   { path: '*', title: 'Page not found', screen: lazy(() => import('./routes/NotFound')) },
 ];
 
+const NOT_ON_A_SERVER = new Set(['/settings', '/login', '/setup', '/all', '/s/:server/*', '*']);
+
+/** The screens that also open on a connected server, with paths relative to `/s/{slug}` ('' = index). */
+export const SERVER_ROUTES: AppRoute[] = ROUTES.filter((r) => !NOT_ON_A_SERVER.has(r.path)).map((r) => ({
+  ...r,
+  path: r.path === '/' ? '' : r.path.slice(1),
+}));
+
+const NOT_FOUND = ROUTES.find((r) => r.path === '*')!;
+
 /** The route a path renders; ROUTES lists static paths before the `:param` patterns that overlap them. */
 export function findRoute(path: string): AppRoute | undefined {
-  return ROUTES.find((r) => r.path === '*' || matchRoute(r.path, path) !== null);
+  const { slug, inner } = splitServerPath(path);
+  if (slug === null) return ROUTES.find((r) => r.path === '*' || matchRoute(r.path, path) !== null);
+  const known = ROUTES.find((r) => !NOT_ON_A_SERVER.has(r.path) && matchRoute(r.path, inner) !== null);
+  return known ?? NOT_FOUND;
 }

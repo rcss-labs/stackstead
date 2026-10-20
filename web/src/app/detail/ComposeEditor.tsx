@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { api } from '$lib/api/client';
 import { createComposeEditor } from '$lib/stacks/compose';
 import { get } from '$lib/store';
 import { toasts } from '$lib/stores/toasts';
@@ -10,6 +9,7 @@ import { DiffView } from '../stacks/DiffView';
 import { YamlEditor, type YamlEditorHandle } from '../stacks/YamlEditor';
 import styles from './ComposeEditor.module.css';
 
+import { useServer } from '../servers/ServerContext';
 export interface ComposeEditorProps {
   stackName: string;
   parseError?: string;
@@ -27,6 +27,7 @@ const CONFLICT_REASON = 'Resolve the conflict first (Reload or Discard)';
 
 export function ComposeEditor({ stackName, parseError, composePath, onSaved, onApply, onDirtyChange, autoFocus }: ComposeEditorProps) {
   // The screen keys this component by stack, so the name is fixed for its lifetime.
+  const { api } = useServer();
   const [editor] = useState(() =>
     createComposeEditor(stackName, {
       load: () => api.compose(stackName),

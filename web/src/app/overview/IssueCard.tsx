@@ -7,6 +7,7 @@ import { PanelLabel } from '../components/PanelLabel';
 import { RelativeTime } from '../components/RelativeTime';
 import styles from './IssueCard.module.css';
 
+import { useServer } from '../servers/ServerContext';
 export interface IssueCardProps {
   card: IssueCardData;
   /** Why the card's lifecycle action is unavailable, or undefined. */
@@ -20,6 +21,7 @@ const KIND_TONE = { danger: 'danger', warning: 'warning', info: 'info' } as cons
 
 export function IssueCard({ card, disabledReason, acting, onAct }: IssueCardProps) {
   const titleId = useId();
+  const { href } = useServer();
 
   function renderAction(action: IssueAction, variant: 'primary' | 'secondary') {
     if (action.kind === 'act') {
@@ -30,7 +32,7 @@ export function IssueCard({ card, disabledReason, acting, onAct }: IssueCardProp
       );
     }
     return (
-      <Link to={action.href} className={styles.action} data-variant={variant}>
+      <Link to={href(action.href)} className={styles.action} data-variant={variant}>
         {action.label}
       </Link>
     );
@@ -45,7 +47,7 @@ export function IssueCard({ card, disabledReason, acting, onAct }: IssueCardProp
         </PanelLabel>
         <span className="visually-hidden">{card.tone}</span>
         {card.where && (
-          <Link to={card.where.href} className={styles.where} data-mono={card.where.mono ? 'true' : undefined}>
+          <Link to={href(card.where.href)} className={styles.where} data-mono={card.where.mono ? 'true' : undefined}>
             {card.where.label}
           </Link>
         )}

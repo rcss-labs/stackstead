@@ -14,6 +14,7 @@ import { Tag } from '../components/Tag';
 import { PortLinks } from './PortLinks';
 import styles from './StackRow.module.css';
 
+import { useServer } from '../servers/ServerContext';
 export interface StackRowProps {
   stack: StackSummary;
   /** Services with a container problem, from the alerts. */
@@ -26,6 +27,10 @@ export interface StackRowProps {
   /** An action request for this stack is in flight. */
   acting: boolean;
   onAct: (name: string, action: Action) => void;
+  /** The owning server, shown as a chip column on lists that span servers. */
+  serverName?: string;
+  /** Overrides the link to the stack (a connected server's stack from the All stacks list). */
+  href?: string;
 }
 
 function ledFor(s: StackSummary): { tone: LedProps['tone']; pulse: boolean } {
@@ -35,9 +40,10 @@ function ledFor(s: StackSummary): { tone: LedProps['tone']; pulse: boolean } {
   return { tone: s.status === 'stopped' ? 'faint' : 'muted', pulse: false };
 }
 
-export function StackRow({ stack: s, failing, usage, running, reason, acting, onAct }: StackRowProps) {
+export function StackRow({ stack: s, failing, usage, running, reason, acting, onAct, serverName, href: hrefOverride }: StackRowProps) {
   const navigate = useNavigate();
-  const href = `/stacks/${encodeURIComponent(s.name)}`;
+  const { href: toServerHref } = useServer();
+  const href = hrefOverride ?? toServerHref(`/stacks/${encodeURIComponent(s.name)}`);
   const health = healthCell(s.health);
   const primary = rowPrimaryAction(s);
   const led = ledFor(s);
@@ -53,7 +59,7 @@ export function StackRow({ stack: s, failing, usage, running, reason, acting, on
   const cells = <ServiceCells count={s.serviceCount} good={health.good} bad={health.bad} starting={health.starting} title={health.title} />;
 
   return (
-    <div role="row" className={styles.row} data-stack={s.name} onClick={openFromRow}>
+    <div role="row" className={styles.row} data-stack={s.name} data-fleet={serverName !== undefined ? 'true' : undefined} onClick={openFromRow}>
       <div role="cell" className={styles.led}>
         <Led tone={led.tone} pulse={led.pulse} />
         <span className="visually-hidden">{s.status}</span>
@@ -76,6 +82,11 @@ export function StackRow({ stack: s, failing, usage, running, reason, acting, on
           </div>
         )}
       </div>
+      {serverName !== undefined && (
+        <div role="cell" className={styles.server} data-desktop="true">
+          <Tag>{serverName}</Tag>
+        </div>
+      )}
       <div role="cell" className={styles.services} data-desktop="true">
         {cells}
         <span className={styles.mono}>

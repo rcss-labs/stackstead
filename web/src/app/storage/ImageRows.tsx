@@ -5,6 +5,7 @@ import { deleteDisabledReason, imagePath, knownTime, sizeText, type PageView } f
 import { Button } from '../components/Button';
 import { RelativeTime } from '../components/RelativeTime';
 import { Tag } from '../components/Tag';
+import { useServer } from '../servers/ServerContext';
 import styles from './StorageTable.module.css';
 import { StorageCell, StorageRow } from './StorageTable';
 import { UsedBy } from './UsedBy';
@@ -14,6 +15,7 @@ const shortId = (id: string) => id.replace(/^sha256:/, '').slice(0, 12);
 const statusText = (image: StorageImage) => (image.containers.length ? 'in use' : image.dangling ? 'dangling' : 'no containers');
 
 export function ImageRows({ page, totals, dockerDown, onDelete }: { page: PageView<StorageImage>; totals: StorageKindTotals; dockerDown: boolean; onDelete: (image: StorageImage) => void }) {
+  const { href } = useServer();
   return (
     <>
       {page.rows.map((image) => {
@@ -28,7 +30,7 @@ export function ImageRows({ page, totals, dockerDown, onDelete }: { page: PageVi
                 {image.tags.length ? (
                   image.tags.map((tag) =>
                     path ? (
-                      <Link key={tag} className={styles.tag} to={path}>
+                      <Link key={tag} className={styles.tag} to={href(path)}>
                         {tag}
                       </Link>
                     ) : (
@@ -38,7 +40,7 @@ export function ImageRows({ page, totals, dockerDown, onDelete }: { page: PageVi
                     ),
                   )
                 ) : path ? (
-                  <Link className={styles.mono} to={path}>{`<none> ${shortId(image.id)}`}</Link>
+                  <Link className={styles.mono} to={href(path)}>{`<none> ${shortId(image.id)}`}</Link>
                 ) : (
                   <span className={styles.mono}>{`<none> ${shortId(image.id)}`}</span>
                 )}

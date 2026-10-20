@@ -1,4 +1,4 @@
-import type { Action, StackSummary } from '$lib/api/types';
+import type { Action, FleetServer, FleetStack, StackSummary } from '$lib/api/types';
 import type { LiveState } from '$lib/stores/live';
 import { lifecycleDisabledReason } from '$lib/stacks/lifecycle';
 import { needsAttention } from '$lib/stacks/summary';
@@ -25,6 +25,9 @@ export interface PaletteInput {
   stacks: StackSummary[];
   live: Pick<LiveState, 'compose' | 'docker' | 'events'>;
   busyStacks: Set<string>;
+  /** Stacks of connected servers (this server's own come from `stacks`). */
+  remote?: FleetStack[];
+  servers?: FleetServer[];
 }
 
 const GROUP_ORDER: PaletteGroup[] = ['Go to', 'Stacks', 'Actions'];
@@ -61,7 +64,7 @@ function lifecycleActions(stack: StackSummary, reason: string | undefined): Pale
 }
 
 /** Every palette entry for the current stores, filtered by the query, in group order. */
-export function paletteEntries({ query, stacks, live, busyStacks }: PaletteInput): PaletteEntry[] {
+export function paletteEntries({ query, stacks, live, busyStacks, remote = [], servers = [] }: PaletteInput): PaletteEntry[] {
   // Go to lists the main pages and Settings; New stack and Import are offered as actions instead.
   const pages: PaletteEntry[] = NAV.filter((n) => n.group !== 'create').map((n) => ({
     id: `go:${n.href}`,
@@ -81,6 +84,22 @@ export function paletteEntries({ query, stacks, live, busyStacks }: PaletteInput
     command: { kind: 'navigate', to: `/stacks/${encodeURIComponent(s.name)}` },
   }));
 
+  const remoteEntries: PaletteEntry[] = remote.flatMap((s) => {
+    const server = servers.find((f) => f.id === s.server && !f.local);
+    if (!server) return [];
+    return [
+      {
+        id: `remote:${server.id}:${s.name}`,
+        group: 'Stacks' as const,
+        label: s.name,
+        hint: `${server.name} · ${s.running}/${s.serviceCount} · ${s.status}`,
+        mono: true,
+        led: stackLed(s),
+        command: { kind: 'navigate' as const, to: `/s/${encodeURIComponent(server.slug)}/stacks/${encodeURIComponent(s.name)}` },
+      },
+    ];
+  });
+
   const q = query.trim().toLowerCase();
   const actions: PaletteEntry[] = [
     { id: 'act:new-stack', group: 'Actions', label: 'New stack', command: { kind: 'navigate', to: '/stacks/new' } },
@@ -95,7 +114,7 @@ export function paletteEntries({ query, stacks, live, busyStacks }: PaletteInput
     }
   }
 
-  const all = [...pages, ...stackEntries, ...actions];
+  const all = [...pages, ...stackEntries, ...remoteEntries, ...actions];
   const matching = q ? all.filter((e) => `${e.label} ${e.group} ${e.hint ?? ''}`.toLowerCase().includes(q)) : all;
   return GROUP_ORDER.flatMap((group) => matching.filter((e) => e.group === group));
 }

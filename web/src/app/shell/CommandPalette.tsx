@@ -2,7 +2,8 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router';
 import { api } from '$lib/api/client';
-import type { Operation } from '$lib/api/types';
+import type { FleetStacks, Operation } from '$lib/api/types';
+import { peers } from '$lib/servers/peers';
 import { effectiveTheme, setTheme } from '$lib/stores/appearance';
 import { live } from '$lib/stores/live';
 import { trackOperation } from '$lib/stores/operationTracker';
@@ -33,6 +34,8 @@ export default function CommandPalette({ open, runningOps, onClose, onNavigate, 
   const { items } = useStore(stacks);
   const liveState = useStore(live);
   const theme = useStore(effectiveTheme);
+  const hasPeers = useStore(peers).items.length > 0;
+  const [fleet, setFleet] = useState<FleetStacks>();
   const [query, setQuery] = useState(initialQuery ?? '');
   const [selected, setSelected] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
@@ -40,8 +43,8 @@ export default function CommandPalette({ open, runningOps, onClose, onNavigate, 
 
   const busyStacks = useMemo(() => new Set(runningOps.map((op) => op.stack)), [runningOps]);
   const entries = useMemo(
-    () => paletteEntries({ query, stacks: items, live: liveState, busyStacks }),
-    [query, items, liveState, busyStacks],
+    () => paletteEntries({ query, stacks: items, live: liveState, busyStacks, remote: fleet?.stacks, servers: fleet?.servers }),
+    [query, items, liveState, busyStacks, fleet],
   );
   const active = Math.min(selected, Math.max(0, entries.length - 1));
   const optionId = (index: number) => `${uid}-option-${index}`;
@@ -52,6 +55,19 @@ export default function CommandPalette({ open, runningOps, onClose, onNavigate, 
     if (open && end > 0) inputRef.current?.setSelectionRange(end, end);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Other servers' stacks are fetched once per open, only when some are connected.
+  useEffect(() => {
+    if (!open || !hasPeers) return;
+    let cancelled = false;
+    api
+      .fleetStacks()
+      .then((result) => !cancelled && setFleet(result))
+      .catch(() => {}); // this server's own stacks still list
+    return () => {
+      cancelled = true;
+    };
+  }, [open, hasPeers]);
 
   // A reopened palette starts empty.
   useEffect(() => {

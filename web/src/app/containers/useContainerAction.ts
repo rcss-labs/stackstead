@@ -1,10 +1,10 @@
 import { useRef, useState } from 'react';
-import { api, ApiError } from '$lib/api/client';
+import { ApiError } from '$lib/api/client';
 import type { ContainerRow } from '$lib/api/types';
 import { BUSY_REASON } from '$lib/stacks/lifecycle';
-import { live, refreshStatus } from '$lib/stores/live';
 import { toasts } from '$lib/stores/toasts';
 import { useStore } from '../hooks/useStore';
+import { useServer } from '../servers/ServerContext';
 
 export type ContainerAction = 'start' | 'stop' | 'restart';
 
@@ -30,6 +30,7 @@ export const actionsFor = (row: ContainerRow): ContainerAction[] => (row.state =
 const DONE_TEXT: Record<ContainerAction, string> = { start: 'started', stop: 'stopped', restart: 'restarted' };
 
 export function useContainerAction(onChanged: (row: ContainerRow, fresh: ContainerRow | undefined) => void): ContainerActionState {
+  const { api, live, refreshStatus } = useServer();
   const liveState = useStore(live);
   const [acting, setActing] = useState<ReadonlySet<string>>(new Set());
   const [confirming, setConfirming] = useState<ConfirmingAction | undefined>();

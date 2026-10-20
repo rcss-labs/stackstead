@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createStorageRefresh } from '$lib/storage/controller';
-import { changes } from '$lib/stores/live';
-import { operationsRefresh } from '$lib/stores/stacks';
 import { useStore } from '../hooks/useStore';
+import { useServer } from '../servers/ServerContext';
 
 export interface StorageRefreshState<T> {
   data: T | undefined;
@@ -12,6 +11,7 @@ export interface StorageRefreshState<T> {
 
 /** Binds the storage refresh controller (event, operation and size-polling refetches) to a component. */
 export function useStorageRefresh<T>(load: () => Promise<T>, refreshing: (data: T) => boolean): StorageRefreshState<T> {
+  const { changes, operationsRefresh } = useServer();
   // The controller outlives renders; it reads the latest callbacks through refs instead of closing over stale ones.
   const loadRef = useRef(load);
   const refreshingRef = useRef(refreshing);
