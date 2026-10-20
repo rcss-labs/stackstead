@@ -103,6 +103,12 @@ describe('console derivations', () => {
     const base = { ended: false, paused: false, sourceKind: 'stack' as const };
     expect(consoleStatus({ ...base, status: 'open' })).toEqual({ label: 'live', tone: 'live' });
     expect(consoleStatus({ ...base, status: 'open', paused: true })).toEqual({ label: 'paused', tone: 'warning' });
+    // A follow stream stays open while its container is stopped: say so instead of live.
+    expect(consoleStatus({ ...base, status: 'open', containerState: 'exited' })).toEqual({
+      label: 'waiting - container exited',
+      tone: 'warning',
+    });
+    expect(consoleStatus({ ...base, status: 'open', containerState: 'running' })).toEqual({ label: 'live', tone: 'live' });
     expect(consoleStatus({ ...base, status: 'reconnecting' })).toEqual({ label: 'reconnecting', tone: 'warning' });
     expect(consoleStatus({ ...base, status: 'gone', sourceKind: 'container' })).toEqual({
       label: 'container or logs no longer available',

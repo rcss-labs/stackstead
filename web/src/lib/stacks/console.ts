@@ -91,12 +91,18 @@ export function consoleStatus(input: {
   ended: boolean;
   paused: boolean;
   sourceKind: 'stack' | 'container';
+  /** The followed container's Docker state, when known: an open stream of a stopped container is waiting, not live. */
+  containerState?: string;
 }): { label: string; tone: 'live' | 'warning' | 'muted' } {
-  const { status, ended, paused, sourceKind } = input;
+  const { status, ended, paused, sourceKind, containerState } = input;
   if (ended) return { label: 'ended', tone: 'muted' };
   switch (status) {
     case 'open':
-      return paused ? { label: 'paused', tone: 'warning' } : { label: 'live', tone: 'live' };
+      if (paused) return { label: 'paused', tone: 'warning' };
+      if (containerState !== undefined && containerState !== 'running') {
+        return { label: `waiting - container ${containerState}`, tone: 'warning' };
+      }
+      return { label: 'live', tone: 'live' };
     case 'connecting':
     case 'reconnecting':
       return { label: status, tone: 'warning' };
