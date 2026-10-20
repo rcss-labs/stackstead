@@ -238,6 +238,42 @@ x-common:
     expect(parsed(y2)).toEqual(parsed(y1));
   });
 
+  it('integers beyond 2^53 keep their exact digits', () => {
+    const text = `x-id: 123456789012345678
+services:
+  a:
+    image: x
+    environment:
+      CHAN: 123456789012345678
+      SMALL: 42
+      NEG: -9007199254740993
+    labels:
+      com.example.id: 123456789012345678
+      com.example.n: 7
+    stop_signal: 9007199254740993
+    healthcheck:
+      test: ["CMD", "true"]
+      retries: 3
+`;
+    const r = mustParse(text);
+    const card = r.cards[0];
+    expect(card.form.env).toEqual([
+      { name: 'CHAN', value: '123456789012345678' },
+      { name: 'SMALL', value: '42' },
+      { name: 'NEG', value: '-9007199254740993' },
+    ]);
+    expect(r.extra['x-id']).toBe('123456789012345678');
+    const out = JSON.stringify(joinService(card));
+    expect(out).toContain('"CHAN":"123456789012345678"');
+    expect(JSON.stringify(card.extra)).toContain('123456789012345678');
+    expect(JSON.stringify(card.extra)).not.toContain('123456789012345680');
+    expect(JSON.stringify(card.extra)).toContain('"com.example.n":7');
+    expect(JSON.stringify(card.extra)).toContain('9007199254740993');
+    const [y1] = roundTrip(text);
+    expect(y1).not.toContain('123456789012345680');
+    expect(y1).toContain('123456789012345678');
+  });
+
   it('legacy octal is read through anchors and merge keys and in extras', () => {
     const text = 'x-e: &e {MODE: 0755}\nx-plain: {m: 0755, q: "0755"}\nservices:\n  a:\n    image: x\n    environment:\n      <<: *e\n';
     const r = mustParse(text);

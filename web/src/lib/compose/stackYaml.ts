@@ -370,29 +370,34 @@ const NEEDS_SERVICES = 'A stack needs a services: section';
 
 function hasNonFinite(v: unknown): boolean {
   if (typeof v === 'number') return !Number.isFinite(v);
-  if (typeof v === 'bigint') return true;
   if (Array.isArray(v)) return v.some(hasNonFinite);
   if (isPlain(v)) return Object.values(v).some(hasNonFinite);
   return false;
 }
 
 /**
+ * Integers are parsed as bigint so nothing above 2^53 is rounded. A safe integer goes back to a number; a larger one
+ * becomes its exact decimal text (from the bigint, never from a float), so env values, labels and extras keep every digit.
+ */
+const fromBigInt = (n: bigint): number | string => (n >= BigInt(Number.MIN_SAFE_INTEGER) && n <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(n) : n.toString());
+
+/**
  * YAML 1.2 core reads a plain 0755 as decimal 755, but the Go server (yaml.v3) reads legacy octal as 493. The create request
  * carries JSON values the server re-renders, so plain scalars are read the way Go reads them. Hex (0x1F) already agrees. 1_000 does not: Go reads it as 1000 while this library keeps the text "1_000"; that is left as is.
  * Visiting the whole document also covers anchored values, merge keys and top-level x-* blocks. Quoted scalars are untouched.
  */
-function readLegacyOctal(doc: Document.Parsed): void {
+function readNumbers(doc: Document.Parsed): void {
   visit(doc, {
     Scalar(_key, node) {
-      if (node.type === 'PLAIN' && typeof node.value === 'number' && typeof node.source === 'string' && /^[-+]?0[0-7]+$/.test(node.source)) {
-        node.value = parseInt(node.source, 8);
-      }
+      if (typeof node.value !== 'bigint') return;
+      const octal = node.type === 'PLAIN' && typeof node.source === 'string' ? /^([-+]?)0([0-7]+)$/.exec(node.source) : null;
+      node.value = octal ? fromBigInt((octal[1] === '-' ? -1n : 1n) * BigInt('0o' + octal[2])) : fromBigInt(node.value);
     },
   });
 }
 
 export function yamlToStack(text: string, dockerfiles: Record<string, string>, maxServices: number): ParseResult {
-  const doc = parseDocument(text, { merge: true, uniqueKeys: true });
+  const doc = parseDocument(text, { merge: true, uniqueKeys: true, intAsBigInt: true });
   const err = doc.errors[0];
   if (err) {
     // yaml appends " at line N, column M:" and a source excerpt to the message; the line is reported separately.
@@ -401,7 +406,7 @@ export function yamlToStack(text: string, dockerfiles: Record<string, string>, m
   let root: unknown;
   try {
     // JSON round trip: expands aliases into independent copies (no shared references that would be written back as anchors).
-    readLegacyOctal(doc);
+    readNumbers(doc);
     const js = doc.toJS({ maxAliasCount: 1000 });
     if (hasNonFinite(js)) return { ok: false, message: 'Values such as .inf and .nan cannot be kept' };
     root = js === undefined ? undefined : JSON.parse(JSON.stringify(js));
