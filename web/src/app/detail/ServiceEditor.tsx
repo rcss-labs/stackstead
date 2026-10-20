@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ApiError } from '$lib/api/client';
 import type { Operation, ServiceDetail, StackDetail } from '$lib/api/types';
-import type { ServiceForm as Form } from '$lib/compose/form';
+import { defaultImageTag, type ServiceForm as Form } from '$lib/compose/form';
 import { createServiceEdit } from '$lib/stacks/serviceEdit';
 import { get } from '$lib/store';
 import { toasts } from '$lib/stores/toasts';
@@ -42,6 +42,7 @@ export interface ServiceEditorProps {
 
 type FocusRequest = { kind: 'preview' | 'save' | 'first'; n: number };
 
+const OUTSIDE_NOTE = "This Dockerfile is outside the stack's folder and can't be edited here.";
 const cloneForm = (f: Form): Form => ({ ...f, readOnly: new Set(f.readOnly) });
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -60,11 +61,12 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
       {
         // A 503 means Docker went away: have the status banners catch up.
         preview: (config, hash) => api.previewService(stackName, serviceName, config, hash).catch((e) => unavailableRefresh(e, refreshStatus)),
-        update: async (config, hash) => {
-          const res = await api.updateService(stackName, serviceName, config, hash).catch((e) => unavailableRefresh(e, refreshStatus));
+        update: async (config, hash, dockerfile) => {
+          const res = await api.updateService(stackName, serviceName, config, hash, dockerfile).catch((e) => unavailableRefresh(e, refreshStatus));
           return { hash: res.data.hash, checksPartial: res.checksPartial };
         },
         compose: () => api.compose(stackName),
+        loadDockerfile: () => api.dockerfile(stackName, serviceName),
         reloadDetail: () => reloadRef.current(),
       },
     ),
@@ -78,6 +80,9 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
   const discardedGroups = useStore(edit.discardedGroups);
   const formVersion = useStore(edit.formVersion);
   const isDirty = useStore(edit.dirty);
+  const dockerfileView = useStore(edit.dockerfileView);
+  // A Dockerfile the form cannot edit leaves the build read-only; say why above it.
+  const dockerfileNote = dockerfileView && !dockerfileView.editable ? (dockerfileView.reason ?? OUTSIDE_NOTE) : undefined;
 
   // The form is controlled here and pushed to the state machine as a copy on every change.
   const [form, setForm] = useState<Form>(() => cloneForm(get(edit.form)));
@@ -178,10 +183,10 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
       return;
     }
     if (keep) {
-      edit.reload(detail);
+      await edit.reload(detail);
       await preview(); // show the user's values against the new file
     } else {
-      edit.discard(detail);
+      await edit.discard(detail);
       requestFocus('first');
     }
   }
@@ -290,6 +295,14 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
           onChange={change}
           errors={errors}
           idPrefix="svc"
+          name={serviceName}
+          readOnlyHint={dockerfileNote}
+          onSourceChange={(source) => {
+            const current = formRef.current;
+            // Building replaces the image, so a pulled image's name must not become the built image's tag.
+            if (source !== 'dockerfile' || (current.source !== 'image' && current.image.trim() !== '')) return;
+            return { ...cloneForm(current), image: defaultImageTag(stackName, serviceName) };
+          }}
           onBrowse={(mode, cb, purpose) => setBrowse({ mode, purpose, cb })}
           onRawEditor={onRawEditor}
           networkPicker={(f, rowErrors) => (
