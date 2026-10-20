@@ -215,6 +215,20 @@ describe('build shape', () => {
     }
   });
 
+  it.skipIf(!existsSync(manifestPath))('keeps the Dockerfile mode in the lazy cm chunk', () => {
+    const sizes = measure(dist);
+    const lazyFiles = sizes.lazy.map((l: { file: string }) => l.file);
+    const eagerFiles = readdirSync(join(dist, 'assets'))
+      .filter((f) => f.endsWith('.js'))
+      .map((f) => `assets/${f}`)
+      .filter((f) => !lazyFiles.includes(f));
+    // 'stopsignal' is an instruction in the legacy Dockerfile mode's keyword list; it only exists if the mode is bundled.
+    const cmChunk = lazyFiles.find((f: string) => chunkName(f) === 'cm');
+    expect(cmChunk, 'cm is a lazy chunk').toBeDefined();
+    expect(readFileSync(join(dist, cmChunk as string), 'utf8'), 'cm carries the Dockerfile mode').toContain('stopsignal');
+    for (const file of eagerFiles) expect(readFileSync(join(dist, file), 'utf8'), `${file} must not contain the Dockerfile mode`).not.toContain('stopsignal');
+  });
+
   it.skipIf(!existsSync(manifestPath))('keeps the networks, settings and auth screens out of the eager entry', () => {
     const sizes = measure(dist);
     const lazyFiles = sizes.lazy.map((l: { file: string }) => l.file);

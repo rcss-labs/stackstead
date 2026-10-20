@@ -14,4 +14,20 @@ describe('createEditor (real CodeMirror in jsdom)', () => {
     h.destroy();
     expect(parent.querySelector('.cm-editor')).toBeNull();
   });
+
+  it('createEditor with language dockerfile tags the content as dockerfile', () => {
+    const parent = document.createElement('div');
+    document.body.append(parent);
+    const h = createEditor({ parent, value: 'FROM alpine\n', readonly: false, ariaLabel: 'Dockerfile', onchange: vi.fn(), language: 'dockerfile' });
+    expect(parent.querySelector('.cm-content')?.getAttribute('data-language')).toBe('dockerfile');
+    h.destroy();
+  });
+
+  it('createEditor defaults to yaml', () => {
+    const parent = document.createElement('div');
+    document.body.append(parent);
+    const h = createEditor({ parent, value: 'a: 1\n', readonly: false, ariaLabel: 'Compose file', onchange: vi.fn() });
+    expect(parent.querySelector('.cm-content')?.getAttribute('data-language')).toBe('yaml');
+    h.destroy();
+  });
 });

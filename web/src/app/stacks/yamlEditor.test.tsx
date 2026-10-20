@@ -92,6 +92,14 @@ describe('YamlEditor', () => {
   });
 });
 
+describe('YamlEditor language', () => {
+  it('passes the language to CodeMirror', async () => {
+    render(<YamlEditor value="FROM alpine" ariaLabel="Dockerfile for web" language="dockerfile" />);
+    await waitFor(() => expect(created).toHaveLength(1));
+    expect(created[0].opts.language).toBe('dockerfile');
+  });
+});
+
 describe('YamlEditor late chunk', () => {
   it('does not create an editor when the chunk resolves after unmount', async () => {
     const { unmount } = render(<YamlEditor value="a" ariaLabel="x" />);
