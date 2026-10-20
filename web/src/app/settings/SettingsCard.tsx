@@ -17,7 +17,7 @@ export function SettingsCard({ id, title, headerEnd, footer, children, className
         <h2 id={id} className={styles.title}>
           {title}
         </h2>
-        {headerEnd && (
+        {headerEnd != null && (
           <>
             <span className={styles.spacer} />
             {headerEnd}
@@ -25,7 +25,7 @@ export function SettingsCard({ id, title, headerEnd, footer, children, className
         )}
       </header>
       <div className={styles.body}>{children}</div>
-      {footer && <footer className={styles.footer}>{footer}</footer>}
+      {footer != null && <footer className={styles.footer}>{footer}</footer>}
     </section>
   );
 }

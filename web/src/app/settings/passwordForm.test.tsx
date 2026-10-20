@@ -148,4 +148,36 @@ describe('PasswordForm', () => {
     await waitFor(() => expect(current().value).toBe(''));
     expect(fake.calls.filter((c) => c.method === 'POST')).toHaveLength(1);
   });
+
+  describe('never puts typed passwords into the DOM markup', () => {
+    const SECRETS = ['old-secret-pw', 'brand-new-secret-1'];
+    function expectNoSecretInMarkup(container: HTMLElement) {
+      for (const secret of SECRETS) {
+        expect(container.innerHTML).not.toContain(secret);
+        expect(document.body.innerHTML).not.toContain(secret);
+      }
+      for (const el of document.querySelectorAll('[value]')) {
+        for (const secret of SECRETS) expect(el.getAttribute('value') ?? '').not.toContain(secret);
+      }
+    }
+
+    it('while typing', async () => {
+      fake = installFakeFetch({});
+      const user = userEvent.setup();
+      const { container } = render(<PasswordForm />);
+      await fill(user, SECRETS[0], SECRETS[1]);
+      expect(current().value).toBe(SECRETS[0]);
+      expectNoSecretInMarkup(container);
+    });
+
+    it.each([400, 403])('after a %i response', async (status) => {
+      fake = installFakeFetch({ 'POST /api/password': { status, body: { error: 'rejected' } } });
+      const user = userEvent.setup();
+      const { container } = render(<PasswordForm />);
+      await fill(user, SECRETS[0], SECRETS[1]);
+      await user.click(submit());
+      await screen.findByText(status === 403 ? 'Current password is incorrect.' : 'rejected');
+      expectNoSecretInMarkup(container);
+    });
+  });
 });

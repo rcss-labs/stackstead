@@ -10,11 +10,11 @@ import styles from './PasswordForm.module.css';
 const MIN_LENGTH = 12;
 const LOCK_MS = 15 * 60 * 1000;
 
-// Password values live only in component state: never logged, toasted, rendered or persisted.
+// Password inputs are uncontrolled: the typed values live only in the DOM inputs (read through refs at
+// submit), never in React state or a value attribute, and are never logged, toasted, rendered or persisted.
+// State holds only derived booleans.
 export function PasswordForm({ actions }: { actions?: ReactNode }) {
-  const [current, setCurrent] = useState('');
-  const [next, setNext] = useState('');
-  const [confirm, setConfirm] = useState('');
+  const [filled, setFilled] = useState({ current: false, next: false, confirm: false, matches: true });
   const [busy, setBusy] = useState(false);
   const [currentError, setCurrentError] = useState<string>();
   const [newError, setNewError] = useState<string>();
@@ -22,6 +22,8 @@ export function PasswordForm({ actions }: { actions?: ReactNode }) {
   const busyRef = useRef(false);
   const unlockTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const currentInput = useRef<HTMLInputElement>(null);
+  const nextInput = useRef<HTMLInputElement>(null);
+  const confirmInput = useRef<HTMLInputElement>(null);
   const pendingFocus = useRef(false);
 
   function unlock() {
@@ -38,13 +40,23 @@ export function PasswordForm({ actions }: { actions?: ReactNode }) {
     }
   }, [currentError]);
 
-  const ready = current !== '' && next !== '' && confirm !== '' && next === confirm;
+  // Derive the booleans from the inputs without keeping their values.
+  function syncFilled() {
+    const c = currentInput.current?.value ?? '';
+    const n = nextInput.current?.value ?? '';
+    const k = confirmInput.current?.value ?? '';
+    setFilled({ current: c !== '', next: n !== '', confirm: k !== '', matches: n === k });
+  }
+
+  const ready = filled.current && filled.next && filled.confirm && filled.matches;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!ready || busyRef.current || rateLimited) return;
     setCurrentError(undefined);
     setNewError(undefined);
+    const current = currentInput.current?.value ?? '';
+    const next = nextInput.current?.value ?? '';
     if ([...next].length < MIN_LENGTH) {
       setNewError(`Use at least ${MIN_LENGTH} characters.`);
       return; // validation error: keep what the user typed
@@ -70,10 +82,10 @@ export function PasswordForm({ actions }: { actions?: ReactNode }) {
         unlockTimer.current = setTimeout(unlock, LOCK_MS);
       } else toasts.push({ kind: 'danger', message: 'Could not change the password. Try again.' });
     } finally {
-      const savedCurrent = current;
-      setCurrent(keepCurrent ? savedCurrent : '');
-      setNext('');
-      setConfirm('');
+      if (currentInput.current && !keepCurrent) currentInput.current.value = '';
+      if (nextInput.current) nextInput.current.value = '';
+      if (confirmInput.current) confirmInput.current.value = '';
+      syncFilled();
       pendingFocus.current = wrongCurrent;
       busyRef.current = false;
       setBusy(false);
@@ -97,17 +109,17 @@ export function PasswordForm({ actions }: { actions?: ReactNode }) {
       <div className={styles.fields}>
         <Field label="Current password" id="pw-current" error={currentError}>
           {({ readOnly: _, ...c }) => (
-            <input {...c} ref={currentInput} type="password" autoComplete="current-password" value={current} disabled={!!rateLimited} onChange={(e) => setCurrent(e.target.value)} />
+            <input {...c} ref={currentInput} type="password" autoComplete="current-password" disabled={!!rateLimited} onChange={syncFilled} />
           )}
         </Field>
         <Field label="New password" id="pw-new" error={newError} hint={`At least ${MIN_LENGTH} characters.`}>
           {({ readOnly: _, ...c }) => (
-            <input {...c} type="password" autoComplete="new-password" value={next} disabled={!!rateLimited} onChange={(e) => setNext(e.target.value)} />
+            <input {...c} ref={nextInput} type="password" autoComplete="new-password" disabled={!!rateLimited} onChange={syncFilled} />
           )}
         </Field>
-        <Field label="Confirm new password" id="pw-confirm" error={confirm !== '' && next !== confirm ? 'Passwords do not match.' : undefined}>
+        <Field label="Confirm new password" id="pw-confirm" error={filled.confirm && !filled.matches ? 'Passwords do not match.' : undefined}>
           {({ readOnly: _, ...c }) => (
-            <input {...c} type="password" autoComplete="new-password" value={confirm} disabled={!!rateLimited} onChange={(e) => setConfirm(e.target.value)} />
+            <input {...c} ref={confirmInput} type="password" autoComplete="new-password" disabled={!!rateLimited} onChange={syncFilled} />
           )}
         </Field>
       </div>
