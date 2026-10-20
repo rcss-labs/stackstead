@@ -110,7 +110,7 @@ func serviceConfigToDomain(c serviceConfig) composefile.ServiceConfig {
 }
 
 func toOperation(o stacks.Operation) operationDTO {
-	dto := operationDTO{ID: o.ID, Stack: o.Stack, Action: o.Action, State: string(o.State),
+	dto := operationDTO{ID: o.ID, Stack: o.Stack, Service: o.Service, Action: o.Action, State: string(o.State),
 		StartedAt: o.StartedAt, Error: o.Error}
 	// The internal -1 means "no exit code"; only report real ones. A
 	// succeeded operation ran compose to exit 0.
