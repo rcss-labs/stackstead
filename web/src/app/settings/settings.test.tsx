@@ -103,12 +103,12 @@ describe('Settings metrics token', () => {
     expect(snippet).toContain(`credentials: ${TOKEN}`);
     expect(snippet).toContain(window.location.host);
     expect(snippet).toContain(`scheme: ${window.location.protocol.slice(0, -1)}`);
-    await waitFor(() => expect(document.activeElement).toBe(input));
+    expect(document.activeElement).toBe(input);
     expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy();
 
     await user.click(screen.getByRole('button', { name: 'I have saved it' }));
     expect(document.body.innerHTML).not.toContain(TOKEN);
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Rotate token' })));
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Rotate token' }));
     expect(JSON.stringify({ ...localStorage })).not.toContain(TOKEN);
     expect(JSON.stringify({ ...sessionStorage })).not.toContain(TOKEN);
   });
@@ -371,16 +371,25 @@ describe('Settings layout', () => {
 
 describe('Settings section nav', () => {
   it.each([
-    ['System', 'System status'],
-    ['Updates', 'Software update'],
-    ['Prometheus', 'Prometheus token'],
-    ['Appearance', 'Appearance'],
-    ['Account', 'Account'],
-  ])('%s moves focus to its card heading', async (link, heading) => {
+    ['System', 'System status', 'settings-system'],
+    ['Updates', 'Software update', 'settings-updates'],
+    ['Prometheus', 'Prometheus token', 'settings-prometheus'],
+    ['Appearance', 'Appearance', 'settings-appearance'],
+    ['Account', 'Account', 'settings-account'],
+  ])('%s scrolls to its card, focuses the heading and sets the hash', async (link, heading, sectionId) => {
     fake = installSettingsFetch(tokenStatus(false));
+    // jsdom has no layout, so scrollIntoView is absent; record the call instead.
+    const scrolled: Array<{ id: string; options: unknown }> = [];
+    Element.prototype.scrollIntoView = function (this: Element, options?: unknown) {
+      scrolled.push({ id: this.id, options });
+    };
+    window.history.replaceState(null, '', '/');
     const user = userEvent.setup();
     mountSettings();
     await user.click(within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('link', { name: link }));
+    // Default fragment navigation would blur the heading in a real browser, so the handler does it all itself.
     expect(document.activeElement).toBe(screen.getByRole('heading', { level: 2, name: heading }));
+    expect(window.location.hash).toBe(`#${sectionId}`);
+    expect(scrolled).toEqual([{ id: sectionId, options: { behavior: 'auto' } }]);
   });
 });

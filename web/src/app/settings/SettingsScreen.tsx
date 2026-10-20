@@ -1,3 +1,4 @@
+import type { MouseEvent } from 'react';
 import { logout, session } from '$lib/api/session';
 import { density, setDensity, setTheme, theme, type ThemeChoice } from '$lib/stores/appearance';
 import { toasts } from '$lib/stores/toasts';
@@ -30,9 +31,19 @@ const DENSITY_OPTIONS = [
   { value: 'comfortable', label: 'Comfortable' },
 ];
 
-/** The anchor scrolls to the card; focus follows it so keyboard and screen-reader users land on the card too. */
-function focusCardHeading(sectionId: string) {
-  document.getElementById(sectionId)?.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true });
+/**
+ * Section links scroll to a card and move focus to its heading. The default fragment navigation would
+ * blur the heading again (the target div is not focusable), so scroll, focus and the hash are done here.
+ * scroll-margin-top on the target keeps the heading below the sticky bar; `behavior: 'auto'` follows the
+ * page's own scroll-behavior (instant under reduced motion).
+ */
+function goToSection(event: MouseEvent<HTMLAnchorElement>, sectionId: string) {
+  const target = document.getElementById(sectionId);
+  if (!target) return;
+  event.preventDefault();
+  target.scrollIntoView({ behavior: 'auto' });
+  target.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true });
+  window.history.replaceState(window.history.state, '', `#${sectionId}`);
 }
 
 export function SettingsScreen() {
@@ -53,7 +64,7 @@ export function SettingsScreen() {
         </h1>
         <nav className={styles.sections} aria-label="Settings sections">
           {SECTIONS.map((section) => (
-            <a key={section.id} href={`#${section.id}`} onClick={() => focusCardHeading(section.id)}>
+            <a key={section.id} href={`#${section.id}`} onClick={(event) => goToSection(event, section.id)}>
               {section.label}
             </a>
           ))}
