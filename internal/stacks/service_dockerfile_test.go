@@ -108,7 +108,7 @@ func TestUpdateServiceRestoresExistingDockerfileWhenComposeSaveFails(t *testing.
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "web", "Dockerfile")
-	if err := os.WriteFile(path, []byte("FROM old\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("FROM old\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	stacks.SetBeforeComposeSave(h.svc, func() {
@@ -121,6 +121,9 @@ func TestUpdateServiceRestoresExistingDockerfileWhenComposeSaveFails(t *testing.
 	}
 	if got := readTestFile(t, path); got != "FROM old\n" {
 		t.Errorf("Dockerfile = %q, want the original restored", got)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Errorf("mode after rollback = %v, %v; want 0600", info.Mode().Perm(), err)
 	}
 }
 
@@ -203,7 +206,8 @@ func TestUpdateServiceDockerfileSymlinkedFolderRefused(t *testing.T) {
 	_, err := h.svc.UpdateService(context.Background(), "lab", "web", buildCfg("./web"), composeHash(t, h, "lab"),
 		&stacks.DockerfileWrite{Content: []byte("FROM x\n"), Hash: "", CheckHash: true})
 	fields := fieldsOf(t, err)
-	if len(fields) != 1 || fields[0].Field != "dockerfile" {
+	if len(fields) != 1 || fields[0].Field != "dockerfile" ||
+		fields[0].Message != "a Dockerfile can only be written inside the stack's folder" {
 		t.Fatalf("fields = %+v", fields)
 	}
 	entries, _ := os.ReadDir(outside)
@@ -251,5 +255,26 @@ func TestUpdateServiceDockerfileOnImageServiceRefused(t *testing.T) {
 	fields := fieldsOf(t, err)
 	if len(fields) != 1 || fields[0].Field != "dockerfile" || fields[0].Message != "this service doesn't build an image, so it has no Dockerfile" {
 		t.Fatalf("fields = %+v", fields)
+	}
+}
+
+func TestAddServiceDockerfileOutsideManagedPathNeedsHash(t *testing.T) {
+	h := newHarness(t)
+	dir := dockerfileStack(t, h, "lab", imageOnlyCompose)
+	path := filepath.Join(dir, "Dockerfile")
+	if err := os.WriteFile(path, []byte("FROM mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hash := composeHash(t, h, "lab")
+	_, err := h.svc.AddService(context.Background(), "lab", "api", buildCfg("."), hash,
+		&stacks.DockerfileWrite{Content: []byte("FROM clobber\n")})
+	if !errors.Is(err, stacks.ErrDockerfileConflict) {
+		t.Fatalf("err = %v, want ErrDockerfileConflict", err)
+	}
+	if got := readTestFile(t, path); got != "FROM mine\n" {
+		t.Errorf("existing Dockerfile changed: %q", got)
+	}
+	if composeHash(t, h, "lab") != hash {
+		t.Error("compose changed")
 	}
 }

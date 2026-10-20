@@ -238,8 +238,8 @@ func isEscape(err error) bool {
 
 // writeDockerfile writes content to path, which must lie inside stackDir once
 // symlinks are resolved. See writeDockerfileInRoot for the write itself.
-func writeDockerfile(stackDir, path string, content []byte, expectedHash *string) (hash string, rollback func(), err error) {
-	noop := func() {}
+func writeDockerfile(stackDir, path string, content []byte, expectedHash *string) (hash string, rollback func() error, err error) {
+	noop := func() error { return nil }
 	realStack, err := filepath.EvalSymlinks(stackDir)
 	if err != nil {
 		return "", noop, ErrOutsideStack
@@ -265,11 +265,13 @@ func writeDockerfile(stackDir, path string, content []byte, expectedHash *string
 	}
 	// The caller may roll back long after this function returned, so the
 	// rollback opens the folder itself instead of holding a descriptor.
-	return hash, func() {
-		if r, err := os.OpenRoot(realStack); err == nil {
-			defer r.Close()
-			undo(r)
+	return hash, func() error {
+		r, err := os.OpenRoot(realStack)
+		if err != nil {
+			return err
 		}
+		defer r.Close()
+		return undo(r)
 	}, nil
 }
 
@@ -279,25 +281,27 @@ func writeDockerfile(stackDir, path string, content []byte, expectedHash *string
 // the content goes to a temp file renamed into place. The new file is 0644; an
 // existing file keeps its mode. rollback undoes the write and removes the
 // folders this call created.
-func writeDockerfileInRoot(root *os.Root, rel string, content []byte, expectedHash *string) (hash string, rollback func(), err error) {
+func writeDockerfileInRoot(root *os.Root, rel string, content []byte, expectedHash *string) (hash string, rollback func() error, err error) {
 	hash, undo, err := writeIn(root, rel, content, expectedHash)
 	if err != nil {
-		return "", func() {}, err
+		return "", func() error { return nil }, err
 	}
-	return hash, func() { undo(root) }, nil
+	return hash, func() error { return undo(root) }, nil
 }
 
 // writeIn does the write; undo takes the root to act through.
-func writeIn(root *os.Root, rel string, content []byte, expectedHash *string) (hash string, undo func(*os.Root), err error) {
-	noop := func(*os.Root) {}
+func writeIn(root *os.Root, rel string, content []byte, expectedHash *string) (hash string, undo func(*os.Root) error, err error) {
+	noop := func(*os.Root) error { return nil }
 	var created []string
-	removeDirs := func(root *os.Root) {
+	removeDirs := func(root *os.Root) error {
+		var errs []error
 		for i := len(created) - 1; i >= 0; i-- {
-			_ = root.Remove(created[i])
+			errs = append(errs, root.Remove(created[i]))
 		}
+		return errors.Join(errs...)
 	}
-	undoDirs := func() { removeDirs(root) }
-	fail := func(err error) (string, func(*os.Root), error) {
+	undoDirs := func() { _ = removeDirs(root) }
+	fail := func(err error) (string, func(*os.Root) error, error) {
 		undoDirs()
 		switch {
 		case isEscape(err):
@@ -375,13 +379,11 @@ func writeIn(root *os.Root, rel string, content []byte, expectedHash *string) (h
 	if err := writeAtomicIn(root, rel, content, mode); err != nil {
 		return fail(err)
 	}
-	undo = func(root *os.Root) {
+	undo = func(root *os.Root) error {
 		if exists {
-			_ = writeAtomicIn(root, rel, old, mode)
-			return
+			return writeAtomicIn(root, rel, old, mode)
 		}
-		_ = root.Remove(rel)
-		removeDirs(root)
+		return errors.Join(root.Remove(rel), removeDirs(root))
 	}
 	return composefile.Hash(content), undo, nil
 }

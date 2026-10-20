@@ -100,7 +100,7 @@ type DockerfileWrite struct {
 // step commit runs once compose accepts the edit. It returns nil for a nil df.
 // The target is resolved on the edited file, so the Dockerfile lands where the
 // saved service will look for it, and only inside the stack folder.
-func dockerfilePreSave(e Entry, edited *composefile.File, service string, df *DockerfileWrite) (func() (func(), error), error) {
+func dockerfilePreSave(e Entry, edited *composefile.File, service string, df *DockerfileWrite) (func() (func() error, error), error) {
 	if df == nil {
 		return nil, nil
 	}
@@ -118,11 +118,14 @@ func dockerfilePreSave(e Entry, edited *composefile.File, service string, df *Do
 	if !inside {
 		return nil, &ValidationError{Fields: []FieldError{{Field: "dockerfile", Message: "a Dockerfile can only be written inside the stack's folder"}}}
 	}
+	// Add may replace a leftover file only at the managed path; anywhere else
+	// (build: ., another service's file) it must find no file, like an update
+	// that loaded none.
 	var expected *string
-	if df.CheckHash {
+	if df.CheckHash || path != filepath.Join(stackDir, service, "Dockerfile") {
 		expected = &df.Hash
 	}
-	return func() (func(), error) {
+	return func() (func() error, error) {
 		_, rollback, err := writeDockerfile(stackDir, path, df.Content, expected)
 		return rollback, err
 	}, nil
@@ -169,7 +172,7 @@ func (s *Service) SaveRaw(ctx context.Context, stack string, content []byte, has
 // hash and refresh the recorded project name. old may be nil. preSave, when
 // not nil, runs after compose accepted the candidate and just before the save;
 // the rollback it returns is called if the project claim or the save fails.
-func (s *Service) commit(ctx context.Context, e Entry, old, edited *composefile.File, hash string, qualify bool, preSave func() (rollback func(), err error)) (EditResult, error) {
+func (s *Service) commit(ctx context.Context, e Entry, old, edited *composefile.File, hash string, qualify bool, preSave func() (rollback func() error, err error)) (EditResult, error) {
 	if err := refuseOverrides(e.ComposePath); err != nil {
 		return EditResult{}, err
 	}
@@ -210,7 +213,7 @@ func (s *Service) commit(ctx context.Context, e Entry, old, edited *composefile.
 			return EditResult{}, err
 		}
 		partial = partial || p
-		rollback, err := runPreSave(preSave)
+		rollback, err := s.runPreSave(e, preSave)
 		if err != nil {
 			return EditResult{}, err
 		}
@@ -232,7 +235,7 @@ func (s *Service) commit(ctx context.Context, e Entry, old, edited *composefile.
 		}
 		return EditResult{Hash: composefile.Hash(candidate), ChecksPartial: partial}, nil
 	}
-	rollback, err := runPreSave(preSave)
+	rollback, err := s.runPreSave(e, preSave)
 	if err != nil {
 		return EditResult{}, err
 	}
@@ -246,16 +249,22 @@ func (s *Service) commit(ctx context.Context, e Entry, old, edited *composefile.
 	return EditResult{Hash: composefile.Hash(candidate), ChecksPartial: partial}, nil
 }
 
-// runPreSave runs preSave, which may be nil; the returned rollback is never nil.
-func runPreSave(preSave func() (func(), error)) (func(), error) {
+// runPreSave runs preSave, which may be nil; the returned rollback is never nil
+// and logs, rather than drops, a failure to undo the write.
+func (s *Service) runPreSave(e Entry, preSave func() (func() error, error)) (func(), error) {
 	if preSave == nil {
 		return func() {}, nil
 	}
-	rollback, err := preSave()
+	undo, err := preSave()
 	if err != nil {
 		return func() {}, err
 	}
-	return rollback, nil
+	return func() {
+		if err := undo(); err != nil {
+			s.log.Error("Dockerfile rollback failed; the Dockerfile may disagree with the compose file",
+				"stack", e.Name, "err", err)
+		}
+	}, nil
 }
 
 // revertProject hands the claimed project back after a failed save and returns
