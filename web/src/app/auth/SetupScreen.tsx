@@ -12,14 +12,13 @@ import { AuthCard, AuthError, AuthHint } from './AuthCard';
 /** Mirrors the server's MinPasswordLength. */
 const MIN_PASSWORD = 12;
 
-// Password inputs are uncontrolled: values live only in the DOM inputs and are read through refs at
+// Password and setup-token inputs are uncontrolled: values live only in the DOM inputs and are read through refs at
 // submit, never in state, a value attribute, a message, storage or the URL. State holds derived
 // booleans (length, match) only.
 export function SetupScreen() {
   const navigate = useNavigate();
   const { state: sessionState } = useStore(session);
   const [username, setUsername] = useState('');
-  const [token, setToken] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   const [submitted, setSubmitted] = useState(false);
@@ -30,6 +29,7 @@ export function SetupScreen() {
   const pendingRef = useRef(false);
   const passwordInput = useRef<HTMLInputElement>(null);
   const confirmInput = useRef<HTMLInputElement>(null);
+  const tokenInput = useRef<HTMLInputElement>(null);
 
   const passwordError = submitted && tooShort ? `Password must be at least ${MIN_PASSWORD} characters.` : '';
   const confirmError = submitted && mismatch ? 'Passwords do not match.' : '';
@@ -73,7 +73,7 @@ export function SetupScreen() {
     setPending(true);
     let created = false;
     try {
-      await api.setup(username, password, token.trim() || undefined);
+      await api.setup(username, password, (tokenInput.current?.value ?? '').trim() || undefined);
       created = true;
       await login(username, password);
       navigate('/', { replace: true });
@@ -122,7 +122,7 @@ export function SetupScreen() {
       </Field>
       <Field label="Setup token (optional)" id="setup-token" hint="Needed unless you open this page from the machine itself.">
         {({ readOnly: _, ...c }) => (
-          <input {...c} type="text" autoComplete="off" spellCheck={false} autoCapitalize="off" value={token} onChange={(e) => setToken(e.target.value)} />
+          <input {...c} ref={tokenInput} type="text" autoComplete="off" spellCheck={false} autoCapitalize="off" />
         )}
       </Field>
       <Button variant="primary" type="submit" loading={pending}>

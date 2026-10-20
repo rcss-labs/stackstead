@@ -84,6 +84,20 @@ describe('Setup', () => {
     expect(get(session).state).toBe('authenticated');
   });
 
+  it('never puts the typed setup token in the DOM, while typing or after a failed setup', async () => {
+    const token = 'setup-secret-9f3a7c';
+    await setupWith({ 'POST /api/setup': { status: 403, body: { error: 'forbidden' } } });
+    mountAuth('/setup');
+    const u = await fillForm({ token });
+    expect((screen.getByLabelText(/Setup token/) as HTMLInputElement).value).toBe(token);
+    expect(document.body.innerHTML).not.toContain(token);
+    expect(document.body.querySelector(`[value*="${token}"]`)).toBeNull();
+    await submit(u);
+    await screen.findByRole('alert');
+    expect(document.body.innerHTML).not.toContain(token);
+    expect(document.body.querySelector(`[value*="${token}"]`)).toBeNull();
+  });
+
   it('omits the setup token when the field is blank', async () => {
     await setupWith({
       'POST /api/setup': { body: {} },
