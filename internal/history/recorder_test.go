@@ -564,3 +564,36 @@ func TestRecorder_StartupLatestErrorFallsBack(t *testing.T) {
 		t.Fatalf("no warning logged:\n%s", h.logs.String())
 	}
 }
+
+// A compose restart emits kill, die, start, restart per container; each
+// service counts once, and the health-check flip afterwards adds nothing.
+func TestRecorder_ComposeRestartCountsEachService(t *testing.T) {
+	h := start(t,
+		ctr("db1", "web", "db", "running", "Up (healthy)"),
+		ctr("app1", "web", "app", "running", "Up"))
+	ev := func(a, id, service string) engine.Event {
+		return engine.Event{Type: "container", Action: a, ContainerID: id, Name: "web-" + service + "-1",
+			Labels: map[string]string{labelComposeProject: "web", labelComposeService: service}}
+	}
+	for _, c := range [][2]string{{"db1", "db"}, {"app1", "app"}} {
+		for _, a := range []string{"kill", "die", "start", "restart"} {
+			h.src.events <- ev(a, c[0], c[1])
+		}
+	}
+	healthy := ev("health_status", "db1", "db")
+	healthy.Health = "healthy"
+	h.src.events <- healthy
+
+	var services []string
+	for range 2 {
+		rows := h.next(t)
+		if len(rows) != 1 || rows[0].State != StateRestart {
+			t.Fatalf("rows = %+v", rows)
+		}
+		services = append(services, rows[0].Service)
+	}
+	if services[0] != "db" || services[1] != "app" {
+		t.Fatalf("restart services = %v, want [db app]", services)
+	}
+	h.noInsert(t)
+}

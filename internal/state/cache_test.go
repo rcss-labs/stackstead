@@ -609,3 +609,66 @@ func TestSubscribeEventsCancelIdempotent(t *testing.T) {
 		t.Error("channel not closed after cancel")
 	}
 }
+
+func lifecycleEvent(action, id, project string) engine.Event {
+	ev := engine.Event{Type: "container", Action: action, ContainerID: id}
+	if project != "" {
+		ev.Labels = map[string]string{composeProjectLabel: project}
+	}
+	return ev
+}
+
+func TestLifecycleEventPublishesChangeWhenTheSnapshotIsUnchanged(t *testing.T) {
+	src := &fakeSource{containers: []engine.Container{ctr("a", "a1", "running")}}
+	h := start(t, src)
+	waitFor(t, h.c.Connected)
+	changes, cancel := h.c.Subscribe()
+	defer cancel()
+
+	s := src.stream(t, 1)
+	s.send(t, lifecycleEvent("die", "a1", "a"))
+	s.send(t, lifecycleEvent("start", "a1", "a"))
+	if ch := next(t, changes); ch.Project != "a" {
+		t.Fatalf("change = %+v, want project a", ch)
+	}
+	noChange(t, changes, 60*time.Millisecond)
+}
+
+func TestHealthStatusAloneDoesNotForceAChange(t *testing.T) {
+	src := &fakeSource{containers: []engine.Container{ctr("a", "a1", "running")}}
+	h := start(t, src)
+	waitFor(t, h.c.Connected)
+	changes, cancel := h.c.Subscribe()
+	defer cancel()
+
+	ev := lifecycleEvent("health_status", "a1", "a")
+	ev.Health = "healthy"
+	src.stream(t, 1).send(t, ev)
+	noChange(t, changes, 100*time.Millisecond)
+}
+
+func TestForcedChangeIsCoalescedWithTheDiff(t *testing.T) {
+	src := &fakeSource{containers: []engine.Container{ctr("a", "a1", "running")}}
+	h := start(t, src)
+	waitFor(t, h.c.Connected)
+	changes, cancel := h.c.Subscribe()
+	defer cancel()
+
+	src.set([]engine.Container{ctr("a", "a1", "exited")}, nil)
+	src.stream(t, 1).send(t, lifecycleEvent("die", "a1", "a"))
+	if ch := next(t, changes); ch.Project != "a" {
+		t.Fatalf("change = %+v, want project a", ch)
+	}
+	noChange(t, changes, 100*time.Millisecond)
+}
+
+func TestEventWithoutProjectLabelForcesNothing(t *testing.T) {
+	src := &fakeSource{containers: []engine.Container{ctr("a", "a1", "running")}}
+	h := start(t, src)
+	waitFor(t, h.c.Connected)
+	changes, cancel := h.c.Subscribe()
+	defer cancel()
+
+	src.stream(t, 1).send(t, lifecycleEvent("die", "a1", ""))
+	noChange(t, changes, 100*time.Millisecond)
+}

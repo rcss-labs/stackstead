@@ -280,7 +280,8 @@ running container.
   startup. Refetch on the stack's `change` event. An unknown stack is 404.
 - **Events.** `GET /api/events` sends `status` (`events`, `metricsDegraded`)
   when it connects or changes, and `change` (`project`, `seq`) when a
-  project's containers changed; refetch the affected stack on `change`. It
+  project's containers changed, including a restart that leaves the listing
+  identical; refetch the affected stack on `change`. It
   also sends `event`, one Docker container event: `action`, `container`
   (name), `project` and `service` (empty strings for a container that is not
   part of a compose project), `image` and `time`, plus

@@ -24,6 +24,8 @@ const (
 	defaultMinBackoff = 500 * time.Millisecond
 	defaultMaxBackoff = 30 * time.Second
 	subscriberBuffer  = 64
+
+	composeProjectLabel = "com.docker.compose.project"
 )
 
 // Source is the engine as the cache uses it; satisfied by *engine.Client.
@@ -148,11 +150,15 @@ func (c *Cache) session(ctx context.Context) (stable bool, err error) {
 	// Lasting Backoff.Max counts as stable only after a successful resync; a
 	// listing that hangs and then fails proves nothing.
 	defer func() { stable = stable || (synced && time.Since(begun) >= c.backoff.Max) }()
-	if err := c.resync(sctx); err != nil {
+	if err := c.resync(sctx, nil); err != nil {
 		return false, err
 	}
 	synced = true
 
+	// touched collects the projects of lifecycle events seen since the last
+	// resync. A quick restart leaves the projected listing identical, so the
+	// diff alone would publish nothing; touched projects get a Change anyway.
+	touched := map[string]struct{}{}
 	var timer *time.Timer
 	var fire <-chan time.Time
 	defer func() {
@@ -174,6 +180,9 @@ func (c *Cache) session(ctx context.Context) (stable bool, err error) {
 			stable = true
 			if slices.Contains(ForwardedActions, ev.Action) {
 				c.publishEvent(ev)
+				if p := ev.Labels[composeProjectLabel]; p != "" && ev.Action != "health_status" {
+					touched[p] = struct{}{}
+				}
 			}
 			if fire == nil {
 				timer = time.NewTimer(c.debounce)
@@ -186,9 +195,11 @@ func (c *Cache) session(ctx context.Context) (stable bool, err error) {
 			return stable, err
 		case <-fire:
 			fire = nil
-			if err := c.resync(sctx); err != nil {
+			forced := slices.Collect(maps.Keys(touched))
+			if err := c.resync(sctx, forced); err != nil {
 				return stable, err
 			}
+			clear(touched)
 		}
 	}
 }
@@ -207,7 +218,9 @@ func streamEnd(errs <-chan error) error {
 // connected and publishes a Change for every project whose containers differ
 // from the previous snapshot (including projects that vanished). The previous
 // snapshot is kept across disconnects so changes made meanwhile are reported.
-func (c *Cache) resync(ctx context.Context) error {
+// Projects in forced are published too even when their containers are
+// unchanged (a quick restart), once each together with the diff.
+func (c *Cache) resync(ctx context.Context, forced []string) error {
 	fresh, err := c.src.Containers(ctx)
 	if err != nil {
 		return err
@@ -217,6 +230,11 @@ func (c *Cache) resync(ctx context.Context) error {
 	old := byProject(c.containers)
 	c.containers = fresh
 	projects := changedProjects(old, byProject(fresh))
+	if len(forced) > 0 {
+		projects = append(projects, forced...)
+		slices.Sort(projects)
+		projects = slices.Compact(projects)
+	}
 	if !c.connected {
 		c.connected = true
 		c.publishLocked("")
