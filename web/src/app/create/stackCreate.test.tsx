@@ -1,6 +1,6 @@
 import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { get } from '$lib/store';
 import { operationsRefresh } from '$lib/stores/stacks';
 import { toasts } from '$lib/stores/toasts';
@@ -281,6 +281,33 @@ describe('New stack screen', () => {
     expect(alert.getAttribute('role')).toBe('alert');
   });
 
+  it('a server image error on a build card stays on the Image tag field through other edits and is dropped by a source switch', async () => {
+    const user = await mount({ 'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'services[0].image', message: 'bad tag' }] } } });
+    await user.type(screen.getByLabelText('Stack name'), 'web');
+    await user.click(screen.getByLabelText('From Dockerfile'));
+    await user.type(screen.getByLabelText('Build context'), '/srv/app');
+    await user.type(screen.getByLabelText('Image tag'), 'x');
+    await submit(user);
+    await screen.findByText('bad tag');
+    await user.type(screen.getByLabelText('Build context'), '2');
+    expect(screen.getByText('bad tag')).toBeTruthy();
+    await user.click(screen.getByLabelText('From Image'));
+    expect(screen.getByText('bad tag')).toBeTruthy(); // the Image field is the error's own field
+    await user.click(screen.getByLabelText('From Dockerfile'));
+    expect(screen.queryByText('bad tag')).toBeNull();
+  });
+
+  // user-event's Enter only looks for a submit button inside the form, but a browser also counts a button whose `form`
+  // attribute names it, so Enter in the Stack name input is pinned by the association the browser uses.
+  it('Create is the default submit button of the form that holds the Stack name input, although it sits outside it', async () => {
+    await mount();
+    const create = screen.getByRole('button', { name: 'Create stack' }) as HTMLButtonElement;
+    const stackName = screen.getByLabelText('Stack name') as HTMLInputElement;
+    expect(create.type).toBe('submit');
+    expect(create.form).toBe(stackName.form);
+    expect(stackName.form?.contains(create)).toBe(false);
+  });
+
   it('a stale build error is dropped when switching back to image', async () => {
     const user = await mount({ 'POST /api/stacks': { status: 400, body: { error: 'invalid', fields: [{ field: 'services[0].build.context', message: 'bad context' }] } } });
     await user.type(screen.getByLabelText('Stack name'), 'web');
@@ -328,7 +355,7 @@ describe('New stack screen', () => {
     const user = await mount({ 'POST /api/stacks': { status: 201, body: SUMMARY, headers: { 'X-Stackstead-Checks': 'partial' } } });
     await fillImage(user);
     await submit(user);
-    await waitFor(() => expect(location()).toMatch(/^\/stacks\/web/));
+    await waitFor(() => expect(location()).toBe('/stacks/web?tab=operations&op=op1'));
     expect(get(toasts).some((t) => t.kind === 'warning')).toBe(true);
   });
 

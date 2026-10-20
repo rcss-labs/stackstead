@@ -150,7 +150,9 @@ export function useCreateForm(): CreateForm {
 
   function setCardForm(id: number, form: ServiceForm) {
     patchCard(id, (card) => {
-      // An error about the source that is not selected is stale.
+      // Switching the source makes the other source's errors stale; any other edit keeps them (in build mode an
+      // `image` error belongs to the visible Image tag field).
+      if (form.source === card.form.source) return { form };
       const stale = form.source === 'build' ? (key: string) => key === 'image' : (key: string) => key.startsWith('build.');
       const errors = Object.fromEntries(Object.entries(card.errors).filter(([key]) => !stale(key)));
       return { form, errors };
