@@ -10,7 +10,7 @@ import { changes, events, live, refreshStatus } from '$lib/stores/live';
 import type { LiveChange, LiveState } from '$lib/stores/live';
 import { trackOperation } from '$lib/stores/operationTracker';
 import { runningOps } from '$lib/stores/runningOps';
-import { refreshRunningOps, refreshStacks, stacks } from '$lib/stores/stacks';
+import { operationsRefresh, refreshRunningOps, refreshStacks, stacks } from '$lib/stores/stacks';
 import type { StacksState } from '$lib/stores/stacks';
 import type { TrackedOperation } from '$lib/stores/operationTracker';
 
@@ -37,6 +37,8 @@ export interface ServerScope {
   /** Asks the running-operations list to re-check; call after trackOperation. */
   refreshRunningOps: () => void;
   trackOperation: (op: TrackedOperation) => number;
+  /** Ticks when an operation may have ended; screens re-check their data on each tick. */
+  operationsRefresh: Readable<number>;
   /** Maps an app path ('/stacks/x') into this server's URL space ('/s/mini-02/stacks/x'). */
   href: (path: string) => string;
 }
@@ -58,6 +60,7 @@ export const localScope: ServerScope = {
   hostHistory,
   runningOps,
   refreshRunningOps,
+  operationsRefresh,
   trackOperation,
   href: (path) => path,
 };

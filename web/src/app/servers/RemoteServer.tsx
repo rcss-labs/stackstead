@@ -69,6 +69,7 @@ function createScope(peer: Pick<PeerView, 'id' | 'slug' | 'name'>) {
     hostHistory: hostStore.hostHistory,
     runningOps: opsStore.runningOps,
     refreshRunningOps: stacksStore.refreshRunningOps,
+    operationsRefresh: stacksStore.operationsRefresh,
     trackOperation: tracker.trackOperation,
     href,
   };

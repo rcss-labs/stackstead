@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, ApiError } from '$lib/api/client';
+import { ApiError } from '$lib/api/client';
+import { useServer } from '../servers/ServerContext';
 
 const DEFAULT_COOLDOWN_MS = 60_000;
 
@@ -15,6 +16,7 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Requests a fresh size reading, then holds the button for the server's cooldown (60 s, or its 429 retryAfter). */
 export function useRecalculate(dockerDown: boolean, refresh: () => void): Recalculate {
+  const { api } = useServer();
   const [recalculating, setRecalculating] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [error, setError] = useState('');
