@@ -34,8 +34,8 @@ func TestContainerTransitionsMigrationFromVersion5(t *testing.T) {
 	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 6 || store.SupportedSchema() != 6 {
-		t.Fatalf("schema = %d supported = %d, want 6", version, store.SupportedSchema())
+	if version != 7 || store.SupportedSchema() != 7 {
+		t.Fatalf("schema = %d supported = %d, want 7", version, store.SupportedSchema())
 	}
 	if n := count(t, db, "users"); n != 1 {
 		t.Fatal("migration lost users")

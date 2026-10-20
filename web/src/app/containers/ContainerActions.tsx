@@ -3,6 +3,7 @@ import type { ContainerRow } from '$lib/api/types';
 import { ICONS } from '$lib/shell/icons';
 import { Button } from '../components/Button';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { useServer } from '../servers/ServerContext';
 import styles from './ContainerActions.module.css';
 import { actionsFor, type ConfirmingAction, type ContainerAction } from './useContainerAction';
 
@@ -19,9 +20,10 @@ export interface ContainerActionsProps {
 }
 
 export function ContainerActions({ row, size, reason, onRequest }: ContainerActionsProps) {
+  const { href } = useServer();
   if (row.managed === 'stack') {
     return (
-      <Link to={`/stacks/${encodeURIComponent(row.stack)}`} className={styles.manage}>
+      <Link to={href(`/stacks/${encodeURIComponent(row.stack)}`)} className={styles.manage}>
         Manage in stack →
       </Link>
     );

@@ -1,7 +1,7 @@
 import { formatDuration } from '$lib/format';
-import { host } from '$lib/stores/host';
 import { useStore } from '../hooks/useStore';
 import { Led } from '../components/Led';
+import { useServer } from '../servers/ServerContext';
 import styles from './HostBlock.module.css';
 
 const GIB = 1024 ** 3;
@@ -44,7 +44,7 @@ function Row({ name, percent, value }: RowProps) {
 }
 
 export function HostBlock() {
-  const snapshot = useStore(host);
+  const snapshot = useStore(useServer().host);
   if (!snapshot) {
     return (
       <div className={styles.block}>

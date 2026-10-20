@@ -87,6 +87,31 @@ var migrations = []string{
 		exit_code INTEGER NULL
 	);
 	CREATE INDEX container_transitions_project_ts ON container_transitions(project, ts);`,
+	// Connected servers: paired peers and their one-time connection tokens
+	// (hash is the SHA-256 of the token; the plaintext is never stored).
+	`CREATE TABLE peers (
+		instance_id    TEXT    NOT NULL PRIMARY KEY,
+		name           TEXT    NOT NULL,
+		slug           TEXT    NOT NULL UNIQUE,
+		url            TEXT    NOT NULL,
+		ca_pem         TEXT    NOT NULL DEFAULT '',
+		pin_sha256     TEXT    NOT NULL DEFAULT '',
+		plaintext      INTEGER NOT NULL DEFAULT 0,
+		out_credential TEXT    NOT NULL DEFAULT '',
+		in_hash        TEXT    NOT NULL DEFAULT '',
+		version        TEXT    NOT NULL DEFAULT '',
+		stack_count    INTEGER NOT NULL DEFAULT 0,
+		created_at     INTEGER NOT NULL,
+		last_seen_at   INTEGER,
+		last_error     TEXT    NOT NULL DEFAULT '',
+		state          TEXT    NOT NULL CHECK (state IN ('pending','active','removed'))
+	);
+	CREATE UNIQUE INDEX peers_in_hash ON peers(in_hash) WHERE in_hash != '';
+	CREATE TABLE connection_tokens (
+		hash       TEXT    NOT NULL PRIMARY KEY,
+		created_at INTEGER NOT NULL,
+		expires_at INTEGER NOT NULL
+	);`,
 }
 
 // preMigration checks run inside the migration's transaction, before its SQL.

@@ -1,14 +1,12 @@
 import { useCallback, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { api, ApiError } from '$lib/api/client';
+import { ApiError } from '$lib/api/client';
 import type { Action, StackStatus } from '$lib/api/types';
 import { lifecycleDisabledReason } from '$lib/stacks/lifecycle';
-import { live, refreshStatus } from '$lib/stores/live';
-import { trackOperation } from '$lib/stores/operationTracker';
-import { runningOps, runningStackNames } from '$lib/stores/runningOps';
-import { refreshRunningOps } from '$lib/stores/stacks';
+import { runningStackNames } from '$lib/stores/runningOps';
 import { toasts } from '$lib/stores/toasts';
 import { useStore } from '../hooks/useStore';
+import { useServer } from '../servers/ServerContext';
 
 export interface StackActions {
   /** Resolves true when the action started an operation; failures are toasted and resolve false. */
@@ -21,6 +19,7 @@ export interface StackActions {
 
 export function useStackAction(): StackActions {
   const navigate = useNavigate();
+  const { api, live, refreshStatus, runningOps, trackOperation, refreshRunningOps, href } = useServer();
   const liveState = useStore(live);
   const running = useStore(runningOps);
   const [acting, setActing] = useState<ReadonlySet<string>>(new Set());
@@ -35,7 +34,7 @@ export function useStackAction(): StackActions {
       try {
         const op = await api.act(name, action);
         trackOperation(op);
-        navigate(`/stacks/${encodeURIComponent(name)}?tab=operations&op=${encodeURIComponent(op.id)}`);
+        navigate(href(`/stacks/${encodeURIComponent(name)}?tab=operations&op=${encodeURIComponent(op.id)}`));
         refreshRunningOps();
         return true;
       } catch (e) {
@@ -48,7 +47,7 @@ export function useStackAction(): StackActions {
         setActing(new Set(inFlight.current));
       }
     },
-    [navigate],
+    [navigate, api, trackOperation, refreshRunningOps, refreshStatus, href],
   );
 
   const busyNames = runningStackNames(running);

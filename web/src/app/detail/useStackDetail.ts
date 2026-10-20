@@ -1,19 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { api } from '$lib/api/client';
 import { createStackDetail, type StackDetailController } from '$lib/stacks/detail';
-import { changes, refreshStatus } from '$lib/stores/live';
-import { trackOperation } from '$lib/stores/operationTracker';
-import { operationsRefresh, refreshRunningOps, refreshStacks } from '$lib/stores/stacks';
 import { toasts } from '$lib/stores/toasts';
 import { useStore } from '../hooks/useStore';
 
+import { useServer } from '../servers/ServerContext';
 /**
  * The page's controller, created once per mounted screen (the route is keyed on the name) and started and
  * stopped by one effect. Every store is read through useStore; nothing is mirrored into React state.
  */
 export function useStackDetail(name: string) {
   const navigate = useNavigate();
+  const { api, changes, refreshStatus, trackOperation, operationsRefresh, refreshRunningOps, refreshStacks, href } = useServer();
   // The controller outlives renders; reading the latest navigate through a ref keeps it from holding a stale one.
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
@@ -35,7 +33,7 @@ export function useStackDetail(name: string) {
       refreshRunningOps,
       refreshStatus,
       track: trackOperation,
-      navigate: (href, opts) => navigateRef.current(href, opts),
+      navigate: (path, opts) => navigateRef.current(href(path), opts),
       toasts,
     }),
   );

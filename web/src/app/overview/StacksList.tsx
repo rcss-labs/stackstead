@@ -16,13 +16,21 @@ export interface StacksListProps {
   runningStacks: ReadonlySet<string>;
   reasonFor: (stack: StackSummary) => string | undefined;
   acting: ReadonlySet<string>;
-  onAct: (name: string, action: Action) => void;
+  onAct: (name: string, action: Action, stack: StackSummary) => void;
+  /** Adds the Server chip column; the slug is null for this server. */
+  serverOf?: (stack: StackSummary) => { name: string; slug: string | null };
+  /** Per-row link, for stacks that live on other servers. */
+  hrefOf?: (stack: StackSummary) => string;
+  /** Identity of a row in `runningStacks`, `acting` and React keys; defaults to the stack name. */
+  keyOf?: (stack: StackSummary) => string;
 }
 
 const COLUMNS = ['Status', 'Stack', 'Services', 'Ports', 'CPU', 'Memory', 'Actions'];
+const FLEET_COLUMNS = ['Status', 'Stack', 'Server', 'Services', 'Ports', 'CPU', 'Memory', 'Actions'];
 
 /** The stacks card: filter, then one group per health bucket with a row per stack. */
-export function StacksList({ items, alerts, summary, query, onQuery, runningStacks, reasonFor, acting, onAct }: StacksListProps) {
+export function StacksList({ items, alerts, summary, query, onQuery, runningStacks, reasonFor, acting, onAct, serverOf, hrefOf, keyOf }: StacksListProps) {
+  const columns = serverOf ? FLEET_COLUMNS : COLUMNS;
   const visible = filterByQuery(items, query);
   const groups = groupStacks(visible);
 
@@ -44,7 +52,7 @@ export function StacksList({ items, alerts, summary, query, onQuery, runningStac
         <div role="table" aria-labelledby="stacks-heading" className={styles.table}>
           <div role="rowgroup" className="visually-hidden">
             <div role="row">
-              {COLUMNS.map((name) => (
+              {columns.map((name) => (
                 <div key={name} role="columnheader">
                   {name}
                 </div>
@@ -54,24 +62,29 @@ export function StacksList({ items, alerts, summary, query, onQuery, runningStac
           {groups.map((group) => (
             <div key={group.id} role="rowgroup">
               <div role="row" className={styles.groupRow} data-group={group.id}>
-                <div role="cell" aria-colspan={COLUMNS.length}>
+                <div role="cell" aria-colspan={columns.length}>
                   <PanelLabel as="div" tone={group.id === 'attention' ? 'warning' : 'muted'}>
                     {group.title} <span className={styles.groupCount}>{group.items.length}</span>
                   </PanelLabel>
                 </div>
               </div>
-              {group.items.map((s) => (
-                <StackRow
-                  key={s.name}
-                  stack={s}
-                  failing={failingServices(alerts, s.name)}
-                  usage={summary?.stacks[s.project]}
-                  running={runningStacks.has(s.name)}
-                  reason={reasonFor(s)}
-                  acting={acting.has(s.name)}
-                  onAct={onAct}
-                />
-              ))}
+              {group.items.map((s) => {
+                const key = keyOf ? keyOf(s) : s.name;
+                return (
+                  <StackRow
+                    key={key}
+                    stack={s}
+                    failing={failingServices(alerts, s.name)}
+                    usage={summary?.stacks[s.project]}
+                    running={runningStacks.has(key)}
+                    reason={reasonFor(s)}
+                    acting={acting.has(key)}
+                    onAct={(name, action) => onAct(name, action, s)}
+                    serverName={serverOf?.(s).name}
+                    href={hrefOf?.(s)}
+                  />
+                );
+              })}
             </div>
           ))}
         </div>

@@ -31,3 +31,14 @@ describe('breadcrumb', () => {
     expect(breadcrumb(path)).toEqual(crumbs);
   });
 });
+
+describe('breadcrumb on a connected server', () => {
+  it('prefixes the server and keeps links inside it', () => {
+    expect(breadcrumb('/s/mini-02', 'mini-02')).toEqual([{ label: 'mini-02', href: '/s/mini-02' }, { label: 'Stacks' }]);
+    expect(breadcrumb('/s/mini-02/stacks/web', 'mini-02')).toEqual([
+      { label: 'mini-02', href: '/s/mini-02' },
+      { label: 'Stacks', href: '/s/mini-02' },
+      { label: 'web', mono: true },
+    ]);
+  });
+});

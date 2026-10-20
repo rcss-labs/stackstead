@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { StackStatus, StackSummary } from '$lib/api/types';
+import type { FleetServer, FleetStack, StackStatus, StackSummary } from '$lib/api/types';
 import { nextIndex, paletteEntries } from './palette';
 
 const healthy = { compose: '2.29.0', docker: 'ok', events: 'connected' } as const;
@@ -98,3 +98,25 @@ describe('nextIndex', () => {
     expect(nextIndex(0, 1, 0)).toBe(0);
   });
 });
+
+describe('paletteEntries across servers', () => {
+  const servers: FleetServer[] = [
+    { id: 'self', name: 'this server', slug: '', local: true, status: 'reachable', error: '', lastSeenAt: null, version: 'v0.4.0' },
+    { id: 'b1', name: 'mini-02', slug: 'mini-02', local: false, status: 'reachable', error: '', lastSeenAt: null, version: 'v0.4.0' },
+  ];
+  const remote: FleetStack[] = [{ ...stack('pihole', 'running', 1, 1), server: 'b1' }, { ...stack('web', 'running', 2, 2), server: 'self' }];
+
+  it('lists a connected server\'s stacks with the server name and a link into that server', () => {
+    const list = paletteEntries({ query: 'pihole', stacks, live: healthy, busyStacks: new Set(), remote, servers });
+    const entry = list.find((e) => e.label === 'pihole')!;
+    expect(entry.group).toBe('Stacks');
+    expect(entry.hint).toContain('mini-02');
+    expect(entry.command).toEqual({ kind: 'navigate', to: '/s/mini-02/stacks/pihole' });
+  });
+
+  it('leaves out this server\'s own rows, which come from the local stacks', () => {
+    const list = paletteEntries({ query: '', stacks, live: healthy, busyStacks: new Set(), remote, servers });
+    expect(list.filter((e) => e.label === 'web')).toHaveLength(0);
+  });
+});
+

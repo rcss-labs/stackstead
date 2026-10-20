@@ -15,6 +15,7 @@ import { toasts } from '$lib/stores/toasts';
 import { installFakeFetch, installFakeStream, type FakeFetch, type FakeStream } from '../../vitest-setup';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useGlobalShortcut } from '../hooks/useGlobalShortcut';
+import { startPeers } from '$lib/servers/peers';
 import { PaletteHost } from './PaletteHost';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -48,6 +49,16 @@ beforeEach(() => {
   operationState = 'running';
   fake = installFakeFetch({
     'GET /api/stacks': { body: [stack('web', 'running', 2, 2), stack('db', 'stopped', 0, 1)] },
+    'GET /api/fleet/stacks': {
+      body: {
+        servers: [
+          { id: 'self', name: 'this server', slug: '', local: true, status: 'reachable', error: '', lastSeenAt: null },
+          { id: 'b1', name: 'mini-02', slug: 'mini-02', local: false, status: 'reachable', error: '', lastSeenAt: null },
+        ],
+        stacks: [{ ...stack('pihole', 'running', 1, 1), server: 'b1' }],
+        events: [],
+      },
+    },
     'GET /api/status': () => ({ body: { docker: 'ok', compose: composeStatus, events: 'connected', metricsDegraded: false } }),
     'GET /api/operations?state=running': () => ({ body: runningNow }),
     'GET /api/operations/op1': () => ({ body: { ...operation, state: operationState, lines: [] } }),
@@ -303,4 +314,18 @@ describe('CommandPalette', () => {
     expect(get(effectiveTheme)).toBe('light');
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
+
+  it('lists connected servers\' stacks with the server name and opens one', async () => {
+    const stopPeers = startPeers({ list: async () => [{ id: 'b1', name: 'mini-02', slug: 'mini-02', url: '', version: '1.5', status: 'reachable', stackCount: 1, lastSeenAt: null, lastError: '', compatible: true, plaintext: false }] });
+    afterEachStops.push(stopPeers);
+    const user = await renderPalette();
+    await user.keyboard('{Control>}k{/Control}');
+    await palette();
+    await user.type(search(), 'pihole');
+    const option = await screen.findByRole('option', { name: /pihole.*mini-02/ });
+    expect(fake.calls.filter((c) => c.path === '/api/fleet/stacks')).toHaveLength(1);
+    await user.click(option);
+    expect(where()).toBe('/s/mini-02/stacks/pihole');
+  });
 });
+

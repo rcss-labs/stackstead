@@ -1,0 +1,22 @@
+.group { display: flex; flex-direction: column; gap: 10px; }
+.group + .group { padding-top: 14px; border-top: 1px solid var(--border); }
+.subtitle { margin: 0; font-size: 14px; font-weight: 600; }
+.small { color: var(--muted); font-size: 12px; font-family: var(--mono); overflow-wrap: anywhere; }
+.fingerprint { font-family: var(--mono); overflow-wrap: anywhere; }
+.pem { width: 100%; min-height: 80px; font-family: var(--mono); }
+.check { display: flex; align-items: center; gap: 8px; }
+.peers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.peer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.peerMain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.peerName { font-weight: 600; }
+.meta { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.tokenInput { flex: 1; min-width: 0; font-family: var(--mono); }
+.cluster { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

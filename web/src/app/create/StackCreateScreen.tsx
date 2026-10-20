@@ -11,7 +11,9 @@ import { ComposePreview } from './ComposePreview';
 import { usePortCheck } from './usePortCheck';
 import styles from './StackCreateScreen.module.css';
 
+import { useServer } from '../servers/ServerContext';
 export function StackCreateScreen() {
+  const { href } = useServer();
   const form = useCreateForm();
   const { cards, browser, pending } = form;
   const frozen = pending || browser !== null;
@@ -94,7 +96,7 @@ export function StackCreateScreen() {
           </span>
         </label>
         <div className={styles.actions}>
-          <Link to="/" className={styles.cancel}>
+          <Link to={href('/')} className={styles.cancel}>
             Cancel
           </Link>
           <Button variant="primary" type="submit" form="create-form" className={styles.create} loading={pending}>

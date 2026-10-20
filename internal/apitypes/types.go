@@ -179,6 +179,8 @@ type FieldError struct {
 type ErrorBody struct {
 	Error  string       `json:"error"`
 	Fields []FieldError `json:"fields,omitempty"`
+	// Code is a machine-readable error code, set by peer errors.
+	Code string `json:"code,omitempty"`
 }
 
 type RawCompose struct {
@@ -364,8 +366,146 @@ type MetricsToken struct {
 	Token string `json:"token"`
 }
 
+// Health is the public liveness answer. Peering is the connected-servers
+// protocol version this binary speaks, nothing more.
 type Health struct {
-	OK bool `json:"ok"`
+	OK      bool `json:"ok"`
+	Peering int  `json:"peering"`
+}
+
+// PeerTrust says how the receiving server verifies the connecting server's
+// certificate when it calls back during pairing.
+type PeerTrust struct {
+	CAPEM     string `json:"caPem"`
+	PinSHA256 string `json:"pinSha256"`
+	Plaintext bool   `json:"plaintext"`
+}
+
+type PeerPairRequest struct {
+	Protocol   int       `json:"protocol"`
+	InstanceID string    `json:"instanceId"`
+	Name       string    `json:"name"`
+	URL        string    `json:"url"`
+	Version    string    `json:"version"`
+	Credential string    `json:"credential"`
+	Trust      PeerTrust `json:"trust"`
+}
+
+type PeerPairResponse struct {
+	Protocol   int    `json:"protocol"`
+	InstanceID string `json:"instanceId"`
+	Name       string `json:"name"`
+	Version    string `json:"version"`
+	Credential string `json:"credential"`
+}
+
+type PeerHello struct {
+	Protocol   int    `json:"protocol"`
+	InstanceID string `json:"instanceId"`
+	Name       string `json:"name"`
+	Version    string `json:"version"`
+	URL        string `json:"url"`
+	StackCount int    `json:"stackCount"`
+}
+
+type PeerUpdate struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+// ServerSelf is how this server presents itself in Settings. SuggestedURL
+// comes from the request the browser made, for the person to confirm.
+type ServerSelf struct {
+	InstanceID    string `json:"instanceId"`
+	Name          string `json:"name"`
+	Slug          string `json:"slug"`
+	AdvertisedURL string `json:"advertisedUrl"`
+	SuggestedURL  string `json:"suggestedUrl"`
+	Version       string `json:"version"`
+}
+
+type ServerSelfUpdate struct {
+	Name          string `json:"name"`
+	AdvertisedURL string `json:"advertisedUrl"`
+}
+
+// ConnectionToken is shown once, at creation; nothing returns it again.
+type ConnectionToken struct {
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+// AddPeerRequest pairs this server with another. Trust says how to verify the
+// other server; SelfTrust how the other server should verify this one.
+// Plaintext must be equal in both.
+type AddPeerRequest struct {
+	URL           string    `json:"url"`
+	Token         string    `json:"token"`
+	Trust         PeerTrust `json:"trust"`
+	SelfTrust     PeerTrust `json:"selfTrust"`
+	AdvertisedURL string    `json:"advertisedUrl"`
+}
+
+type PeerProbeRequest struct {
+	URL string `json:"url"`
+}
+
+type PeerProbe struct {
+	Peering           int    `json:"peering"`
+	FingerprintSHA256 string `json:"fingerprintSha256"`
+	SystemTrusted     bool   `json:"systemTrusted"`
+	PlaintextAllowed  bool   `json:"plaintextAllowed"`
+}
+
+// PeerView is a connected server as Settings and the sidebar show it. Status
+// is one of reachable, unreachable, wrong_instance, incompatible, removed or
+// pending.
+type PeerView struct {
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	Slug       string     `json:"slug"`
+	URL        string     `json:"url"`
+	Version    string     `json:"version"`
+	Status     string     `json:"status"`
+	StackCount int        `json:"stackCount"`
+	LastSeenAt *time.Time `json:"lastSeenAt"`
+	LastError  string     `json:"lastError"`
+	Compatible bool       `json:"compatible"`
+	Plaintext  bool       `json:"plaintext"`
+}
+
+// FleetServer is one server in GET /api/fleet/stacks. Status is reachable for
+// this server and a PeerView status (or unreachable) for the others; Error says
+// why a peer's stacks are missing. Version is that server's own version.
+type FleetServer struct {
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	Slug       string     `json:"slug"`
+	Local      bool       `json:"local"`
+	Status     string     `json:"status"`
+	Error      string     `json:"error"`
+	LastSeenAt *time.Time `json:"lastSeenAt"`
+	Version    string     `json:"version"`
+}
+
+// FleetStack is a stack of the server whose instance ID is Server.
+type FleetStack struct {
+	Server string `json:"server"`
+	StackSummary
+}
+
+// FleetEvent is a Docker container event of the server whose instance ID is Server.
+type FleetEvent struct {
+	Server string `json:"server"`
+	EventMessage
+}
+
+// FleetStacks is the GET /api/fleet/stacks body: this server first, then the
+// connected ones in the order they were added; events are newest first.
+type FleetStacks struct {
+	Servers []FleetServer `json:"servers"`
+	Stacks  []FleetStack  `json:"stacks"`
+	Events  []FleetEvent  `json:"events"`
 }
 
 // Actions are the lifecycle actions an operation can run.

@@ -1,12 +1,13 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { api, ApiError } from '$lib/api/client';
+import { ApiError } from '$lib/api/client';
 import type { CreateNetworkRequest, HostInterface, Network, NetworkDriver } from '$lib/api/types';
 import { autofill, needsParent } from '$lib/networks/networks';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
 import { Field } from '../components/Field';
+import { useServer } from '../servers/ServerContext';
 import styles from './CreateNetworkDialog.module.css';
 
 export interface CreateNetworkDialogProps {
@@ -50,6 +51,7 @@ const KNOWN_FIELDS = ['name', 'driver', 'parent', 'subnet', 'gateway', 'ipRange'
 const DHCP_NOTE = "The Docker host itself cannot reach containers on this network. Pick addresses outside your router's DHCP pool, or set an IP range outside it.";
 
 export function CreateNetworkDialog({ open, onClose, onCreated }: CreateNetworkDialogProps) {
+  const { api } = useServer();
   const [form, setForm] = useState<Form>(emptyForm);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [banner, setBanner] = useState('');

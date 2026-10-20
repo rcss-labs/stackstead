@@ -1,11 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { api, ApiError } from '$lib/api/client';
+import { ApiError } from '$lib/api/client';
 import type { StackDetail } from '$lib/api/types';
 import type { ServiceForm as Form } from '$lib/compose/form';
 import { createServiceAdd } from '$lib/stacks/serviceAdd';
 import { get } from '$lib/store';
-import { refreshStatus } from '$lib/stores/live';
-import { refreshStacks } from '$lib/stores/stacks';
 import { toasts } from '$lib/stores/toasts';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
@@ -16,6 +14,7 @@ import { NetworkPicker } from '../stacks/NetworkPicker';
 import { BROWSE_TITLES, ServiceForm, type BrowsePurpose, type ServiceFormHandle } from '../stacks/ServiceForm';
 import styles from './AddServicePanel.module.css';
 
+import { useServer } from '../servers/ServerContext';
 export interface AddServicePanelProps {
   stack: StackDetail;
   /** Called with the refreshed detail and the reviewed service name after the add (never after the panel unmounted). */
@@ -30,12 +29,13 @@ export interface AddServicePanelProps {
 const cloneForm = (f: Form): Form => ({ ...f, readOnly: new Set(f.readOnly) });
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-function unavailableRefresh(e: unknown): never {
+function unavailableRefresh(e: unknown, refreshStatus: () => Promise<void>): never {
   if (e instanceof ApiError && e.status === 503) void refreshStatus();
   throw e;
 }
 
 export function AddServicePanel({ stack, onAdded, onCancel, onReload, onDirtyChange }: AddServicePanelProps) {
+  const { api, refreshStatus, refreshStacks } = useServer();
   const stackName = stack.name;
   const reloadRef = useRef(onReload);
   reloadRef.current = onReload;
@@ -45,15 +45,15 @@ export function AddServicePanel({ stack, onAdded, onCancel, onReload, onDirtyCha
 
   const [add] = useState(() =>
     createServiceAdd(stack.hash, {
-      preview: (service, config, hash) => api.previewAddService(stackName, service, config, hash).catch(unavailableRefresh),
+      preview: (service, config, hash) => api.previewAddService(stackName, service, config, hash).catch((e) => unavailableRefresh(e, refreshStatus)),
       add: async (service, config, hash) => {
         savedService.current = service;
-        const res = await api.addService(stackName, service, config, hash).catch(unavailableRefresh);
+        const res = await api.addService(stackName, service, config, hash).catch((e) => unavailableRefresh(e, refreshStatus));
         // The server accepted the write even if this panel has since been closed.
         void refreshStacks();
         return { detail: res.data, checksPartial: res.checksPartial };
       },
-      compose: () => api.compose(stackName).catch(unavailableRefresh),
+      compose: () => api.compose(stackName).catch((e) => unavailableRefresh(e, refreshStatus)),
       reloadDetail: () => reloadRef.current(),
     }),
   );

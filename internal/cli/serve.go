@@ -26,6 +26,7 @@ import (
 	"github.com/rcss-labs/stackstead/internal/host"
 	"github.com/rcss-labs/stackstead/internal/lockfile"
 	"github.com/rcss-labs/stackstead/internal/metrics"
+	"github.com/rcss-labs/stackstead/internal/peers"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 	"github.com/rcss-labs/stackstead/internal/state"
 	"github.com/rcss-labs/stackstead/internal/storage"
@@ -173,9 +174,18 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	if err != nil {
 		return err
 	}
+	// One peer store and service per process; the service's checker runs in
+	// the background group so it stops before the database closes.
+	peersSvc := peers.NewService(peers.ServiceConfig{
+		Store:    peers.NewStore(db, time.Now),
+		Version:  version.Get().Version,
+		Hostname: os.Hostname,
+		Now:      time.Now,
+		Logger:   logger,
+	})
 	// A service context separate from the signal context: background work
 	// must outlive the signal until HTTP and operations have drained.
-	bg := startBackground(context.Background(), cache.Run, recorder.Run, sampler.Run, checker.Run)
+	bg := startBackground(context.Background(), cache.Run, recorder.Run, sampler.Run, checker.Run, peersSvc.Run)
 	defer bg.stop(time.Second) // safety net for early returns; the normal path stops it in order below
 
 	registry := stacks.NewRegistry(db, time.Now)
@@ -228,6 +238,7 @@ func serve(ctx context.Context, env *Env, args []string) error {
 			MetricsInterval:  cfg.MetricsInterval,
 			MetricsRetention: cfg.MetricsRetention,
 			Closing:          closing,
+			Peers:            peersSvc,
 			Updates:          checker,
 			Version:          version.Get().Version,
 			Host:             collector,

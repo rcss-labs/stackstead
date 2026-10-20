@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installFakeFetch, type FakeFetch } from '../../vitest-setup';
-import { ApiError, api, onUnauthorized, request } from './client';
+import { ApiError, api, createApi, onUnauthorized, request } from './client';
 
 let fake: FakeFetch;
 afterEach(() => fake?.restore());
@@ -405,4 +405,98 @@ it('uses storage wrapper routes and action-log filters; keeps refresh rate-limit
   expect(await api.recentActions({ kind: 'storage.', limit: 20 })).toEqual([]);
   await expect(api.refreshStorage()).rejects.toMatchObject({ status: 429, message: 'Wait for the current reading', body: { retryAfter: 42 } });
   expect(fake.calls.at(-1)?.body).toEqual({});
+});
+
+describe('createApi', () => {
+  beforeEach(() => onUnauthorized(() => {}));
+
+  it('prefixes every path with the base', async () => {
+    fake = installFakeFetch({
+      'GET /api/servers/b1/api/stacks': { body: [] },
+      'GET /api/servers/b1/api/stacks/a%20b': { body: { name: 'a b' } },
+      'POST /api/servers/b1/api/stacks/a%20b/actions/up': { body: { id: 'op' } },
+    });
+    const scoped = createApi('/api/servers/b1');
+    await scoped.stacks();
+    await scoped.stack('a b');
+    await scoped.act('a b', 'up');
+    expect(fake.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      'GET /api/servers/b1/api/stacks',
+      'GET /api/servers/b1/api/stacks/a%20b',
+      'POST /api/servers/b1/api/stacks/a%20b/actions/up',
+    ]);
+  });
+
+  it('keeps the default api unprefixed', async () => {
+    fake = installFakeFetch({ 'GET /api/stacks': { body: [] } });
+    await api.stacks();
+    expect(fake.calls[0].path).toBe('/api/stacks');
+  });
+
+  it('exposes the error code of a peer failure', async () => {
+    fake = installFakeFetch({
+      'GET /api/servers/b1/api/stacks': {
+        status: 502,
+        body: { error: "Can't reach mini-02", code: 'peer_unreachable' },
+      },
+    });
+    const err = await createApi('/api/servers/b1').stacks().catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.code).toBe('peer_unreachable');
+    expect(err.status).toBe(502);
+    expect(err.message).toBe("Can't reach mini-02");
+  });
+
+  it('leaves the code undefined when the body has none', async () => {
+    fake = installFakeFetch({ 'GET /api/stacks': { status: 500, body: { error: 'boom' } } });
+    const err = await api.stacks().catch((e) => e);
+    expect(err.code).toBeUndefined();
+  });
+
+  it('a 502 peer error does not trigger the unauthorized handler', async () => {
+    const handler = vi.fn();
+    onUnauthorized(handler);
+    fake = installFakeFetch({
+      'GET /api/servers/b1/api/stacks': { status: 502, body: { error: 'unpaired', code: 'peer_unpaired' } },
+    });
+    await createApi('/api/servers/b1').stacks().catch(() => {});
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('a 401 under /api/servers/ triggers the unauthorized handler', async () => {
+    const handler = vi.fn();
+    onUnauthorized(handler);
+    fake = installFakeFetch({
+      'GET /api/servers/b1/api/stacks': { status: 401, body: { error: 'unauthorized' } },
+    });
+    await createApi('/api/servers/b1').stacks().catch(() => {});
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls the local-only peer endpoints', async () => {
+    fake = installFakeFetch({
+      'GET /api/peers': { body: [] },
+      'POST /api/peers': { status: 201, body: {} },
+      'DELETE /api/peers/p%201': { status: 204 },
+      'POST /api/peers/probe': { body: {} },
+      'POST /api/peers/tokens': { body: {} },
+      'GET /api/peers/self': { body: {} },
+      'PUT /api/peers/self': { body: {} },
+      'POST /api/peers/p1/check': { body: {} },
+      'GET /api/fleet/stacks': { body: {} },
+    });
+    const trust = { caPem: '', pinSha256: '', plaintext: false };
+    await api.peers();
+    await api.addPeer({ url: 'u', token: 't', trust, selfTrust: trust, advertisedUrl: 'a' });
+    await api.removePeer('p 1');
+    await api.probePeer('https://x');
+    await api.createConnectionToken();
+    await api.serverSelf();
+    await api.updateServerSelf({ name: 'n', advertisedUrl: 'a' });
+    await api.checkPeer('p1');
+    await api.fleetStacks();
+    expect(fake.calls.map((c) => `${c.method} ${c.path}`)).toHaveLength(9);
+    expect(fake.calls[3].body).toEqual({ url: 'https://x' });
+    expect(fake.calls[6].body).toEqual({ name: 'n', advertisedUrl: 'a' });
+  });
 });
