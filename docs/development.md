@@ -176,6 +176,28 @@ lazy `Storage` / `StorageImage` / `StorageVolume` chunks, and `bundle.test.ts`
 pins that nothing of theirs, nor the dialog, `usage.ts` or `OperationPanel`, is
 eager.
 
+The React Networks, Settings and auth screens live under
+`web/src/app/networks/`, `app/settings/` and `app/auth/`. Networks reads
+today's `createNetworkList` through `useNetworkList` and renders cards (built-ins
+fold their containers behind today's toggle), reuses the shared
+`CreateNetworkDialog` and confirms removal through `ConfirmDialog` with a once
+guard. Settings is the five cards on the existing `live`, `session` and
+`appearance` stores, with `PasswordForm` and `UpdateCard` ported one-to-one and
+the one-time metrics token held only in component state (never in a `value`
+attribute). The password inputs are uncontrolled (read through refs): a
+controlled input mirrors what is typed into the DOM `value` attribute, where
+page scripts, extensions and DOM snapshots can read it, which Svelte's
+`bind:value` never did; the Login, Setup and password-change tests assert the
+typed password never appears in the markup. Login and Setup share `AuthCard`,
+stay outside the shell (mounted by `App` from the session state), title
+themselves, pass `?next=` through `safeNext`, and the session guard never
+carries `/setup` as `next`. Settings `Log out` keeps today's direct `logout()`
+(it lands on `/login?next=%2Fsettings`, as before; unify with the rail in Plan
+23). The four screens ride in the lazy `NetworkList` / `Settings` / `Login` /
+`Setup` chunks, and `bundle.test.ts` pins that nothing of theirs, nor
+`AuthCard`, `PasswordForm`, `UpdateCard` or `CreateNetworkDialog`, is eager.
+With this plan every screen of the spec is React; Plan 23 switches the entry.
+
 ## Tests
 
 ```bash
