@@ -1,3 +1,4 @@
+import { splitServerPath } from '$lib/router';
 import { breadcrumb } from '$lib/shell/breadcrumb';
 import type { ICONS } from '$lib/shell/icons';
 
@@ -47,7 +48,7 @@ export const TAB_BAR: NavEntry[] = [stacks, containers, storage, networks, setti
 
 /** Mobile top bar title: the last breadcrumb, mono when it is an entity name. */
 export function pageTitle(path: string): { title: string; mono: boolean } {
-  const crumbs = breadcrumb(path);
+  const crumbs = breadcrumb(path, splitServerPath(path).slug ?? undefined);
   const last = crumbs[crumbs.length - 1];
   return { title: last.label, mono: last.mono === true };
 }

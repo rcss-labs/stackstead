@@ -1,7 +1,7 @@
 import { get, writable } from '$lib/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Operation } from '../api/types';
-import { operationToast, startOperationTracker, trackOperation, TRACKER_RECHECK_MS } from './operationTracker';
+import { createOperationTracker, operationToast, startOperationTracker, trackOperation, TRACKER_RECHECK_MS } from './operationTracker';
 import { toasts } from './toasts';
 
 const running = (id: string, stack = 'web', action = 'up'): Operation => ({ id, stack, action, state: 'running', startedAt: '2026-10-19T10:00:00Z' });
@@ -275,5 +275,13 @@ describe('operation tracker', () => {
     ops.set([]);
     await vi.advanceTimersByTimeAsync(0);
     expect(toast()).toMatchObject({ kind: 'success', message: 'storage-cleanup succeeded' });
+  });
+});
+
+describe('createOperationTracker with a scope href', () => {
+  it('links the toast inside the connected server', () => {
+    const scoped = createOperationTracker({ href: (path) => `/s/mini-02${path}` });
+    scoped.trackOperation({ id: 'op9', stack: 'web', action: 'up' });
+    expect(toast().link?.href).toBe('/s/mini-02/stacks/web?tab=operations&op=op9');
   });
 });

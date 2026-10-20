@@ -1,16 +1,14 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { issueCards } from '$lib/dashboard/issues';
-import { host, hostHistory } from '$lib/stores/host';
-import { events, live } from '$lib/stores/live';
-import { runningOps, runningStackNames } from '$lib/stores/runningOps';
-import { refreshStacks, stacks } from '$lib/stores/stacks';
+import { runningStackNames } from '$lib/stores/runningOps';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { EmptyState } from '../components/EmptyState';
 import { Spinner } from '../components/Spinner';
 import { useDashboard } from '../hooks/useDashboard';
 import { useStore } from '../hooks/useStore';
+import { useServer } from '../servers/ServerContext';
 import { IssueCards } from '../overview/IssueCards';
 import SideColumn from '../overview/SideColumn';
 import { StacksList } from '../overview/StacksList';
@@ -20,6 +18,7 @@ import styles from './Overview.module.css';
 
 /** Health first: the status panel, then the stack list. Eager: the only screen in the entry chunk. */
 export default function Overview() {
+  const { stacks, host, hostHistory, events, live, runningOps, refreshStacks } = useServer();
   const { items, loading, error } = useStore(stacks);
   const hostSnapshot = useStore(host);
   const history = useStore(hostHistory);

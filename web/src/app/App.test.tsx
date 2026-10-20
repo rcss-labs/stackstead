@@ -623,6 +623,8 @@ it('every route is lazy except the overview', () => {
     '/settings',
     '/login',
     '/setup',
+    '/all',
+    '/s/:server/*',
     '*',
   ]);
   for (const route of ROUTES) {

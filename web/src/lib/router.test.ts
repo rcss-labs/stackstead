@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchRoute, safeNext } from './router';
+import { matchRoute, safeNext, splitServerPath } from './router';
 
 describe('matchRoute', () => {
   it.each([
@@ -51,5 +51,18 @@ describe('safeNext', () => {
     null,
   ])('rejects %j', (v) => {
     expect(safeNext(v)).toBe('/');
+  });
+});
+
+describe('splitServerPath', () => {
+  it.each([
+    ['/s/mini-02/stacks/x', { slug: 'mini-02', inner: '/stacks/x' }],
+    ['/s/mini-02', { slug: 'mini-02', inner: '/' }],
+    ['/s/mini-02/', { slug: 'mini-02', inner: '/' }],
+    ['/stacks/x', { slug: null, inner: '/stacks/x' }],
+    ['/s/', { slug: null, inner: '/s/' }],
+    ['/s', { slug: null, inner: '/s' }],
+  ])('%s', (path, want) => {
+    expect(splitServerPath(path)).toEqual(want);
   });
 });

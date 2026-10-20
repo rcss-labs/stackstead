@@ -25,6 +25,8 @@ import { useStore } from './hooks/useStore';
 import { useGlobalShortcut } from './hooks/useGlobalShortcut';
 import { useUnsavedGuard } from './hooks/useUnsavedGuard';
 import type { UnsavedGuard } from './hooks/useUnsavedGuard';
+import { peers, startPeers } from '$lib/servers/peers';
+import { splitServerPath } from '$lib/router';
 import { ROUTES, findRoute } from './routes';
 import { PaletteHost } from './shell/PaletteHost';
 import { Shell } from './shell/Shell';
@@ -69,18 +71,22 @@ function AppFrame() {
   // Owned here, not in the signed-in frame, so the toast region (outside the frame) goes through it too.
   const guard = useUnsavedGuard({ navigate, loggingOut });
   const runningOps = useRunningOps();
-  useDocumentTitle(findRoute(pathname), authenticated);
+  const { items: peerList } = useStore(peers);
+  const { slug } = splitServerPath(pathname);
+  useDocumentTitle(findRoute(pathname), authenticated, slug === null ? undefined : peerList.find((p) => p.slug === slug)?.name);
 
   // Live updates, the stack list and the host poller live exactly as long as the session.
   useEffect(() => {
     if (!authenticated) return;
     startLive({ fetchStatus: api.status });
+    const stopPeers = startPeers({ list: api.peers });
     const stopStacks = startStacks({ list: api.stacks, changes });
     const releaseHost = startHost({ host: api.host });
     const stopRunningOps = startRunningOps({ list: api.runningOperations, changes, refresh: operationsRefresh });
     const stopTracker = startOperationTracker({ runningOps: runningOpsStore, get: api.operation });
     return () => {
       stopTracker();
+      stopPeers();
       stopRunningOps();
       releaseHost();
       stopStacks();

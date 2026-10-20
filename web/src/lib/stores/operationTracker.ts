@@ -41,7 +41,8 @@ export function operationToast(op: Pick<Operation, 'stack' | 'action' | 'state'>
 }
 
 /** One independent set of tracked operations; the module-level exports below are the local server's instance. */
-export function createOperationTracker() {
+export function createOperationTracker(opts: { href?: (path: string) => string } = {}) {
+  const scopeHref = opts.href ?? ((path: string) => path);
   const tracked = new Map<string, Entry>();
   let stopActive: (() => void) | null = null;
 
@@ -57,7 +58,9 @@ export function createOperationTracker() {
       clearTimeout(existing.timer); // the toast was dismissed (or reset): track the operation afresh
       tracked.delete(op.id);
     }
-    const href = op.stack ? `/stacks/${encodeURIComponent(op.stack)}?tab=operations&op=${encodeURIComponent(op.id)}` : undefined;
+    const href = op.stack
+      ? scopeHref(`/stacks/${encodeURIComponent(op.stack)}?tab=operations&op=${encodeURIComponent(op.id)}`)
+      : undefined;
     const toastId = toasts.push({
       ...operationToast({ stack: op.stack, action: op.action, state: 'running' }),
       ...(href && { link: { label: 'View', href } }),

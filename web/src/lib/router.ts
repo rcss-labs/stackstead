@@ -43,3 +43,10 @@ export function safeNext(next: string | null): string {
     return '/';
   }
 }
+
+/** Splits '/s/{slug}/rest' into the connected server's slug and the path inside it; other paths are local. */
+export function splitServerPath(path: string): { slug: string | null; inner: string } {
+  const m = /^\/s\/([^/]+)(\/.*)?$/.exec(path);
+  if (!m) return { slug: null, inner: path };
+  return { slug: decodeURIComponent(m[1]), inner: m[2] || '/' };
+}

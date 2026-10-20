@@ -164,11 +164,16 @@ function query(params: Record<string, string | undefined>): string {
 }
 
 /** Every member takes paths relative to `base` ('' = this server, '/api/servers/{id}' = a connected one). */
-export function createApi(base: string) {
+function helpers(base: string) {
   const call = <T>(method: Method, path: string, body?: unknown, opts: { signal?: AbortSignal } = {}) =>
     request<T>(method, base + path, body, opts);
   const get = <T>(path: string, signal?: AbortSignal) => call<T>('GET', path, undefined, { signal }).then((r) => r.data);
   const post = <T>(path: string, body: unknown = {}) => call<T>('POST', path, body).then((r) => r.data);
+  return { call, get, post };
+}
+
+export function createApi(base: string) {
+  const { call, get, post } = helpers(base);
 
   return {
     setupStatus: () => get<SetupStatus>('/api/setup/status'),
@@ -274,8 +279,15 @@ export function createApi(base: string) {
         undefined,
         { signal },
       ).then((r) => r.data),
+  };
+}
 
-    // Local-only: meant for the base-less `api`; the server never proxies these to a connected server.
+export type Api = ReturnType<typeof createApi>;
+
+/** Members for this server's own peering and fleet endpoints; the server never proxies them to a connected server. */
+function createLocalOnlyApi() {
+  const { call, get, post } = helpers('');
+  return {
     peers: () => get<PeerView[]>('/api/peers'),
     addPeer: (req: AddPeerRequest) => post<PeerView>('/api/peers', req),
     removePeer: (id: string) => call<void>('DELETE', `/api/peers/${seg(id)}`).then((r) => r.data),
@@ -288,6 +300,7 @@ export function createApi(base: string) {
   };
 }
 
-export type Api = ReturnType<typeof createApi>;
+export const api = { ...createApi(''), ...createLocalOnlyApi() };
 
-export const api = createApi('');
+/** The local `api`: every scoped member plus this server's own peering and fleet endpoints. */
+export type LocalApi = typeof api;
