@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -107,7 +109,7 @@ func (s *server) handleListStacks(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleCreateStack(w http.ResponseWriter, r *http.Request) {
 	var req createStackRequest
-	if !decodeJSON(w, r, &req) {
+	if !decodeJSONLimit(w, r, &req, createBodyBytes) {
 		return
 	}
 	if req.HasMixedForms() {
@@ -116,11 +118,46 @@ func (s *server) handleCreateStack(w http.ResponseWriter, r *http.Request) {
 	}
 	domain := stacks.CreateRequest{Name: req.Name, IndexedFields: req.UsesServices()}
 	if req.UsesServices() {
+		var fields []stacks.FieldError
+		topExtra, err := composefile.ParseExtra(req.Extra)
+		if err == nil {
+			err = stacks.CheckTopExtra(topExtra)
+		}
+		if err != nil {
+			fields = append(fields, extraFieldError("extra", err))
+		}
+		domain.Extra = topExtra
 		domain.Services = make([]composefile.NamedService, 0, len(req.Services))
-		for _, entry := range req.Services {
-			domain.Services = append(domain.Services, composefile.NamedService{Name: entry.Service, Config: serviceConfigToDomain(entry.Config)})
+		for i, entry := range req.Services {
+			service, dockerfile, err := createServiceToDomain(i, entry)
+			if err != nil {
+				var ve *stacks.ValidationError
+				if errors.As(err, &ve) {
+					fields = append(fields, ve.Fields...)
+					continue
+				}
+				s.writeStackError(w, r, err)
+				return
+			}
+			domain.Services = append(domain.Services, service)
+			if dockerfile != nil {
+				if domain.Dockerfiles == nil {
+					domain.Dockerfiles = map[int][]byte{}
+				}
+				domain.Dockerfiles[i] = dockerfile
+			}
+		}
+		if len(fields) > 0 {
+			s.writeStackError(w, r, &stacks.ValidationError{Fields: fields})
+			return
 		}
 	} else {
+		// The single-service form has no place for extras; silently dropping
+		// one would lose the user's compose keys.
+		if extra := bytes.TrimSpace(req.Extra); len(extra) > 0 && string(extra) != "null" {
+			s.writeStackError(w, r, &stacks.ValidationError{Fields: []stacks.FieldError{{Field: "extra", Message: "extra needs the services form"}}})
+			return
+		}
 		var cfg serviceConfig
 		if req.Config != nil {
 			cfg = *req.Config

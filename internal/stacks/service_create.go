@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/rcss-labs/stackstead/internal/composefile"
@@ -20,6 +21,11 @@ type CreateRequest struct {
 	Name          string
 	Services      []composefile.NamedService
 	IndexedFields bool
+	// Extra is merged into the top level of the rendered file. Dockerfiles
+	// holds the content to write for the Services entries (by index) that
+	// build from the stack folder.
+	Extra       composefile.Extra
+	Dockerfiles map[int][]byte
 }
 
 // Create writes a new stack <StacksDir>/<name>/compose.yaml, validates it with
@@ -47,7 +53,13 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 	var indices []int
 	fields := make([][]FieldError, len(req.Services))
 	var configErr error
+	var dockerfiles []createDockerfile
 	seen := map[string]bool{}
+	for index := range req.Dockerfiles {
+		if index < 0 || index >= len(req.Services) {
+			return Summary{}, &ValidationError{Fields: []FieldError{{Field: "services", Message: "a Dockerfile was given for a service that is not in the request"}}}
+		}
+	}
 	for i, entry := range req.Services {
 		prefix := ""
 		if req.IndexedFields {
@@ -60,6 +72,13 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 				return true
 			}
 			return false
+		}
+		if content, ok := req.Dockerfiles[i]; ok {
+			if len(content) == 0 {
+				collect(&ValidationError{Fields: []FieldError{{Field: "dockerfile", Message: "Dockerfile is required"}}})
+			} else if err := ValidateDockerfile("dockerfile", content); err != nil {
+				collect(err)
+			}
 		}
 		if i == 0 && entry.Name == "" {
 			entry.Name = req.Name
@@ -93,11 +112,71 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 			}
 			continue
 		}
-		services = append(services, composefile.NamedService{Name: entry.Name, Config: cfg})
+		if !entry.Extra.IsZero() {
+			// Merge this service's extra alone so a clash is blamed on it.
+			if _, err := composefile.NewStack([]composefile.NamedService{{Name: entry.Name, Config: cfg, Extra: entry.Extra}}, composefile.Extra{}); err != nil {
+				if !errors.Is(err, composefile.ErrInvalidExtra) {
+					return Summary{}, err
+				}
+				collect(&ValidationError{Fields: []FieldError{{Field: "extra", Message: err.Error()}}})
+				continue
+			}
+		}
+		services = append(services, composefile.NamedService{Name: entry.Name, Config: cfg, Extra: entry.Extra})
 		configs = append(configs, namedConfig{Name: entry.Name, Config: cfg})
 		indices = append(indices, i)
+		if content, ok := req.Dockerfiles[i]; ok {
+			dockerfiles = append(dockerfiles, createDockerfile{index: i, service: entry.Name, content: content})
+		}
 	}
-	partial, err := s.checkChanges(ctx, changeSet{services: configs, indexed: req.IndexedFields, indices: indices})
+
+	// Render the whole document now so every check below sees the merged
+	// result, including what the extras added.
+	var data []byte
+	var parsed *composefile.File
+	var topFields []FieldError
+	if err := CheckTopExtra(req.Extra); err != nil {
+		var ve *ValidationError
+		errors.As(err, &ve)
+		topFields = ve.Fields
+	} else if len(services) > 0 {
+		rendered, err := composefile.NewStack(services, req.Extra)
+		switch {
+		case errors.Is(err, composefile.ErrInvalidExtra):
+			topFields = []FieldError{{Field: "extra", Message: err.Error()}}
+		case err != nil:
+			return Summary{}, err
+		default:
+			if parsed, err = composefile.Parse(rendered); err != nil {
+				return Summary{}, err
+			}
+			data = rendered
+		}
+	}
+	var localNetworks map[string]bool
+	if parsed != nil {
+		localNetworks = parsed.LocalNetworks()
+		for position := range configs {
+			if services[position].Extra.IsZero() {
+				continue
+			}
+			index := indices[position]
+			prefix := ""
+			if req.IndexedFields {
+				prefix = fmt.Sprintf("services[%d].", index)
+			}
+			effective, buildFields, err := s.effectiveWithExtra(parsed, dir, configs[position])
+			if err != nil {
+				fields[index] = append(fields[index], FieldError{Field: prefix + "extra", Message: err.Error()})
+				continue
+			}
+			for _, field := range buildFields {
+				fields[index] = append(fields[index], FieldError{Field: prefix + field.Field, Message: field.Message})
+			}
+			configs[position].Config = effective
+		}
+	}
+	partial, err := s.checkChanges(ctx, changeSet{services: configs, indexed: req.IndexedFields, indices: indices, localNetworks: localNetworks})
 	if err != nil {
 		var ve *ValidationError
 		if !errors.As(err, &ve) {
@@ -115,15 +194,12 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 	for _, entryFields := range fields {
 		allFields = append(allFields, entryFields...)
 	}
+	allFields = append(allFields, topFields...)
 	if len(allFields) > 0 {
 		return Summary{}, &ValidationError{Fields: allFields}
 	}
 	if configErr != nil {
 		return Summary{}, configErr
-	}
-	data, err := composefile.New(services)
-	if err != nil {
-		return Summary{}, err
 	}
 
 	if err := s.requireCompose(ctx); err != nil {
@@ -148,9 +224,13 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 		return Summary{}, err
 	}
 	wroteFile, ok := false, false
+	var rollbacks []func()
 	defer func() {
 		if ok {
 			return
+		}
+		for i := len(rollbacks) - 1; i >= 0; i-- {
+			rollbacks[i]()
 		}
 		if wroteFile {
 			os.Remove(path)
@@ -161,6 +241,20 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Summary, error
 		return Summary{}, err
 	}
 	wroteFile = true
+	for _, df := range dockerfiles {
+		target, inside, err := dockerfileTarget(dir, parsed, df.service)
+		if err != nil || !inside {
+			return Summary{}, dockerfileOutsideError(req.IndexedFields, df.index)
+		}
+		_, rollback, err := writeDockerfile(dir, target, df.content, nil)
+		if err != nil {
+			if errors.Is(err, ErrOutsideStack) {
+				return Summary{}, dockerfileOutsideError(req.IndexedFields, df.index)
+			}
+			return Summary{}, err
+		}
+		rollbacks = append(rollbacks, rollback)
+	}
 	if err := s.compose.Config(ctx, path); err != nil {
 		return Summary{}, err
 	}
@@ -241,12 +335,26 @@ func (s *Service) prepareConfig(stack, service, stackDir string, cfg composefile
 	}
 	cfg.Build.Context = b.Context
 
+	confined, err := s.confineBuild(stackDir, b)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.Build.Context = confined.Context
+	return cfg, nil
+}
+
+// confineBuild checks that a build context lies inside the stack folder or an
+// allowed directory. An absolute context comes back with symlinks resolved.
+func (s *Service) confineBuild(stackDir string, b composefile.Build) (composefile.Build, error) {
+	if b.Context == "" {
+		b.Context = "."
+	}
 	target := b.Context
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(stackDir, target)
 		// Contexts inside the new stack folder need no further check.
 		if rel, err := filepath.Rel(stackDir, target); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return cfg, nil
+			return b, nil
 		}
 	}
 	resolved, err := fsguard.Resolve(s.roots, target)
@@ -255,12 +363,12 @@ func (s *Service) prepareConfig(stack, service, stackDir string, cfg composefile
 		if !errors.Is(err, fsguard.ErrOutsideRoots) {
 			msg = "build context: " + err.Error()
 		}
-		return cfg, &ValidationError{Fields: []FieldError{{Field: "build.context", Message: msg}}}
+		return b, &ValidationError{Fields: []FieldError{{Field: "build.context", Message: msg}}}
 	}
 	if filepath.IsAbs(b.Context) {
-		cfg.Build.Context = resolved
+		b.Context = resolved
 	}
-	return cfg, nil
+	return b, nil
 }
 
 // Import registers an existing compose file without ever writing to it. The
@@ -326,4 +434,88 @@ func (s *Service) Import(ctx context.Context, path string) (Summary, error) {
 	}
 	containers, engErr := s.engine.Containers(ctx)
 	return s.describe(entry, containers, engErr).Summary, nil
+}
+
+// createDockerfile is a Dockerfile to write for the service at Services[index].
+type createDockerfile struct {
+	index   int
+	service string
+	content []byte
+}
+
+const dockerfileOutsideMessage = "a Dockerfile can only be written inside the stack's folder"
+
+func dockerfileOutsideError(indexed bool, index int) error {
+	field := "dockerfile"
+	if indexed {
+		field = fmt.Sprintf("services[%d].dockerfile", index)
+	}
+	return &ValidationError{Fields: []FieldError{{Field: field, Message: dockerfileOutsideMessage}}}
+}
+
+// CheckTopExtra rejects a stack-level extra that sets keys the server owns.
+func CheckTopExtra(extra composefile.Extra) error {
+	for _, key := range extra.Keys() {
+		if key == "services" || key == "name" {
+			return &ValidationError{Fields: []FieldError{{Field: "extra", Message: "extra may not set services or name"}}}
+		}
+	}
+	return nil
+}
+
+// effectiveWithExtra reads a service back from the rendered document, so the
+// port and address checks see what its extra added, and confines a build
+// context the extra introduced. Problems with the build come back as fields
+// named relative to the service.
+func (s *Service) effectiveWithExtra(parsed *composefile.File, stackDir string, svc namedConfig) (composefile.ServiceConfig, []FieldError, error) {
+	effective, err := parsed.EffectiveService(svc.Name)
+	if err != nil {
+		return composefile.ServiceConfig{}, nil, err
+	}
+	var fields []FieldError
+	confine := func(b composefile.Build) bool {
+		_, err := s.confineBuild(stackDir, b)
+		var ve *ValidationError
+		if errors.As(err, &ve) {
+			fields = append(fields, ve.Fields...)
+			return false
+		}
+		return true
+	}
+	if svc.Config.Build == nil && effective.Build != nil && !confine(*effective.Build) {
+		return effective, fields, nil
+	}
+	ref, ok, err := parsed.BuildOf(svc.Name)
+	if err != nil {
+		return composefile.ServiceConfig{}, nil, err
+	}
+	if !ok {
+		return effective, fields, nil
+	}
+	names := make([]string, 0, len(ref.AdditionalContexts))
+	for name := range ref.AdditionalContexts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		value := ref.AdditionalContexts[name]
+		if isRemoteContext(value) || hasNonPathScheme(value) {
+			continue // fetched by the builder or another service, not read from this host
+		}
+		if !confine(composefile.Build{Context: value}) {
+			break
+		}
+	}
+	return effective, fields, nil
+}
+
+// hasNonPathScheme reports additional-context values that name an image,
+// another service or a build target instead of a directory.
+func hasNonPathScheme(value string) bool {
+	for _, prefix := range []string{"docker-image:", "service:", "target:", "oci-layout:"} {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
 }
