@@ -1,4 +1,4 @@
-import type { StackDetail } from '$lib/api/types';
+import type { ServiceDetail, StackDetail } from '$lib/api/types';
 
 export type DetailItem =
   | { kind: 'service'; name: string }
@@ -14,6 +14,11 @@ export interface DetailLocation {
   logsRequested: boolean;
   logService: string | undefined;
   op: string | undefined;
+}
+
+/** True when the service builds an image (its Dockerfile can be shown). */
+export function hasBuild(service: Pick<ServiceDetail, 'config' | 'readOnly'> | undefined): boolean {
+  return !!service && (!!service.config.build || service.readOnly.includes('build'));
 }
 
 export function missingComposeFile(parseError: string | undefined): boolean {
@@ -41,7 +46,13 @@ export function resolveDetailLocation(
 
   return {
     item,
-    serviceTab: tab === 'metrics' || tab === 'config' || tab === 'dockerfile' ? tab : 'overview',
+    // The Dockerfile tab exists only for services that build an image.
+    serviceTab:
+      tab === 'metrics' || tab === 'config'
+        ? tab
+        : tab === 'dockerfile' && item.kind === 'service' && hasBuild(detail.services.find((s) => s.name === item.name))
+          ? tab
+          : 'overview',
     logsRequested: tab === 'logs' && !detail.parseError,
     logService: known,
     op: item.kind === 'operations' ? op : undefined,

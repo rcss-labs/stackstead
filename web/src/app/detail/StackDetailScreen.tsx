@@ -104,9 +104,11 @@ export function StackDetailScreen({ name }: { name: string }) {
   const [serviceDirty, setServiceDirty] = useState(false);
   // The service editor counts only while it is open on the selected service.
   const serviceEditorOpen = item.kind === 'service' && editingService === item.name;
+  const [dockerfileDirty, setDockerfileDirty] = useState(false);
   const [addingService, setAddingService] = useState(false);
   const [addDirty, setAddDirty] = useState(false);
-  const dirty = (editingCompose && composeDirty) || (serviceEditorOpen && serviceDirty) || (addingService && addDirty);
+  const dirty = (editingCompose && composeDirty) || (serviceEditorOpen && serviceDirty) || (addingService && addDirty) ||
+    (item.kind === 'service' && serviceTab === 'dockerfile' && dockerfileDirty);
   const closeAdd = () => {
     setAddingService(false);
     setAddDirty(false);
@@ -155,6 +157,7 @@ export function StackDetailScreen({ name }: { name: string }) {
     setComposeDirty(false);
     setEditingService(undefined);
     setServiceDirty(false);
+    setDockerfileDirty(false);
     closeAdd();
     action?.();
   }
@@ -386,7 +389,7 @@ export function StackDetailScreen({ name }: { name: string }) {
                   />
                 ) : tab === 'dockerfile' ? (
                   <Suspense fallback={<Spinner />}>
-                    <DockerfilePanel key={`${name}/${selectedService.name}`} stackName={name} service={selectedService.name} />
+                    <DockerfilePanel key={`${name}/${selectedService.name}`} stackName={name} service={selectedService.name} onDirtyChange={setDockerfileDirty} />
                   </Suspense>
                 ) : tab === 'config' ? (
                   <ConfigTab

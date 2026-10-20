@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { ServiceDetail } from '$lib/api/types';
-import type { ServiceTab } from '$lib/stacks/detailLocation';
+import { hasBuild as serviceHasBuild, type ServiceTab } from '$lib/stacks/detailLocation';
 import { serviceState } from '$lib/stacks/summary';
 import { Button } from '../components/Button';
 import { Led } from '../components/Led';
@@ -34,7 +34,7 @@ const DOCKERFILE_TAB = { id: 'dockerfile' as const, label: 'Dockerfile' };
 
 export function ServicePane({ service, tab, onTab, onLogs, latestCpu, cpuHour, onEdit, onCloseEditor, editor, children }: ServicePaneProps) {
   const state = serviceState(service);
-  const hasBuild = !!service.config.build || service.readOnly.includes('build');
+  const hasBuild = serviceHasBuild(service);
   const tabs = hasBuild ? [...TABS, DOCKERFILE_TAB] : TABS;
   return (
     <div className={styles.pane}>

@@ -141,6 +141,32 @@ describe('Dockerfile tab', () => {
   });
 });
 
+describe('Dockerfile panel states', () => {
+  it('does not inject the template into a read-only view and hides the empty editor', async () => {
+    getRes = { body: { content: '', hash: '', exists: false, editable: false, path: '/etc/Dockerfile', reason: 'outside the allowed directories' } };
+    mount();
+    expect(await screen.findByText(/outside the stack's folder and can't be edited here\./)).toBeTruthy();
+    expect(screen.getByText(/content isn't shown/)).toBeTruthy();
+    expect(screen.queryByDisplayValue(/FROM alpine/)).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Dockerfile for web' })).toBeNull();
+  });
+
+  it('an untouched new-file template is not dirty, an edit is', async () => {
+    getRes = { body: { content: '', hash: '', exists: false, editable: true, path: 'web/Dockerfile' } };
+    const seen: boolean[] = [];
+    render(
+      <MemoryRouter>
+        <DockerfilePanel stackName="web" service="web" onDirtyChange={(d) => seen.push(d)} />
+      </MemoryRouter>,
+    );
+    const ta = await editor();
+    await waitFor(() => expect(ta.value).toMatch(/^FROM alpine/));
+    expect(seen.includes(true)).toBe(false);
+    edit(ta, 'FROM alpine:3.21\n');
+    await waitFor(() => expect(seen.at(-1)).toBe(true));
+  });
+});
+
 describe('operations list', () => {
   it('operations list names the rebuilt service', () => {
     const op: Operation = { id: 'o', stack: 'web', action: 'up', service: 'web', state: 'succeeded', startedAt: '2026-01-01T00:00:00Z' };
