@@ -46,9 +46,9 @@ export function AddServicePanel({ stack, onAdded, onCancel, onReload, onDirtyCha
   const [add] = useState(() =>
     createServiceAdd(stack.hash, {
       preview: (service, config, hash) => api.previewAddService(stackName, service, config, hash).catch((e) => unavailableRefresh(e, refreshStatus)),
-      add: async (service, config, hash) => {
+      add: async (service, config, hash, dockerfile) => {
         savedService.current = service;
-        const res = await api.addService(stackName, service, config, hash).catch((e) => unavailableRefresh(e, refreshStatus));
+        const res = await api.addService(stackName, service, config, hash, dockerfile).catch((e) => unavailableRefresh(e, refreshStatus));
         // The server accepted the write even if this panel has since been closed.
         void refreshStacks();
         return { detail: res.data, checksPartial: res.checksPartial };

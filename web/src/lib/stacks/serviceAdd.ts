@@ -1,6 +1,6 @@
 import { derived, get, writable } from '$lib/store';
 import { ApiError } from '../api/client';
-import type { RawCompose, ServiceConfig, StackDetail } from '../api/types';
+import type { DockerfileContent, RawCompose, ServiceConfig, StackDetail } from '../api/types';
 import { emptyForm, fromForm, mapServerErrors, validateForm, type FormErrors } from '../compose/form';
 export type AddPhase = 'editing' | 'busy' | 'previewing' | 'saving' | 'conflict';
 export interface ServiceAddDeps {
@@ -8,7 +8,7 @@ export interface ServiceAddDeps {
     content: string;
     hash: string;
   }>;
-  add: (service: string, config: ServiceConfig, hash: string) => Promise<{
+  add: (service: string, config: ServiceConfig, hash: string, dockerfile?: DockerfileContent) => Promise<{
     detail: StackDetail;
     checksPartial: boolean;
   }>;
@@ -39,6 +39,7 @@ export function createServiceAdd(initialHash: string, deps: ServiceAddDeps) {
     service: string;
     config: ServiceConfig;
     hash: string;
+    dockerfile?: DockerfileContent;
   } | undefined;
   const current = (mine: number) => !disposed && mine === generation;
   function conflict(message: string) {
@@ -86,7 +87,14 @@ export function createServiceAdd(initialHash: string, deps: ServiceAddDeps) {
       if (Object.keys(found).length)
         return;
       // Capture before the first await: even programmatic form changes cannot alter this candidate.
-      const candidate = { service: get(name), config: fromForm(get(form), null) };
+      const snapshot = get(form);
+      const service = get(name);
+      const candidate = {
+        service,
+        config: fromForm(snapshot, null, service),
+        // Only the save carries the Dockerfile text; the preview is of compose.yaml alone.
+        dockerfile: snapshot.source === 'dockerfile' ? { content: snapshot.dockerfileText } : undefined,
+      };
       const mine = generation;
       phase.set('busy');
       try {
@@ -107,7 +115,7 @@ export function createServiceAdd(initialHash: string, deps: ServiceAddDeps) {
           }
         }
         const sent = { ...candidate, hash: raw.hash };
-        const result = await deps.preview(sent.service, sent.config, sent.hash);
+        const result = await deps.preview(candidate.service, candidate.config, sent.hash);
         if (!current(mine))
           return;
         if (result.hash !== sent.hash) {
@@ -130,7 +138,7 @@ export function createServiceAdd(initialHash: string, deps: ServiceAddDeps) {
       const mine = generation;
       phase.set('saving');
       try {
-        const res = await deps.add(sent.service, sent.config, sent.hash);
+        const res = await deps.add(sent.service, sent.config, sent.hash, sent.dockerfile);
         if (!current(mine))
           return;
         checksPartial.set(res.checksPartial);

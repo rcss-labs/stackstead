@@ -87,6 +87,58 @@ async function changeImage(value: string) {
 }
 
 describe('ServiceEditor', () => {
+  it('prefills the image tag when switching to Write a Dockerfile', async () => {
+    mount({ stack: stack('h1', { ...svc, name: 'web' }), service: { ...svc, name: 'web' } });
+    await user().click(screen.getByLabelText('Write a Dockerfile'));
+    expect((screen.getByLabelText('Image tag') as HTMLInputElement).value).toBe('stackstead/web:latest');
+    expect(screen.getByLabelText('Dockerfile for web')).toBeTruthy();
+  });
+
+  it('loads an editable Dockerfile and saves its change with the loaded hash', async () => {
+    const built: ServiceDetail = { ...svc, config: { image: 'stackstead/web-app:latest', build: { context: './app' }, limits: {} } };
+    fake.restore();
+    fake = installFakeFetch({
+      'GET /api/stacks/web/compose': { body: { content: 'x', hash: 'h1' } },
+      'GET /api/stacks/web/services/app/dockerfile': { body: { content: 'FROM alpine:3.20\n', hash: 'd1', exists: true, editable: true, path: 'app/Dockerfile' } },
+      'POST /api/stacks/web/services/app/preview': (c) => ({ body: { content: 'x', hash: (c.body as { hash: string }).hash } }),
+      'PUT /api/stacks/web/services/app': { body: { hash: 'h2' } },
+      'GET /api/networks': { body: [] },
+    });
+    mount({ stack: stack('h1', built), service: built });
+    const editor = (await screen.findByLabelText('Dockerfile for app')) as HTMLTextAreaElement;
+    expect(editor.value).toBe('FROM alpine:3.20\n');
+    await user().type(editor, '# note');
+    await user().click(screen.getByRole('button', { name: 'Preview changes' }));
+    await user().click(await screen.findByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(calls('PUT', '/services/app')).toHaveLength(1));
+    const put = calls('PUT', '/services/app')[0].body as { dockerfile: { content: string; hash: string } };
+    expect(put.dockerfile).toEqual({ content: 'FROM alpine:3.20\n# note', hash: 'd1' });
+    expect((calls('POST', '/preview')[0].body as Record<string, unknown>).dockerfile).toBeUndefined();
+  });
+
+  it('explains a Dockerfile that is not editable for another reason', async () => {
+    const built: ServiceDetail = { ...svc, config: { build: { context: './app' }, limits: {} } };
+    fake.restore();
+    fake = installFakeFetch({
+      'GET /api/stacks/web/services/app/dockerfile': { body: { content: '', hash: '', exists: true, editable: false, path: 'app/Dockerfile', reason: 'uses variables' } },
+      'GET /api/networks': { body: [] },
+    });
+    mount({ stack: stack('h1', built), service: built });
+    expect(await screen.findByText("This Dockerfile can't be edited here: uses variables")).toBeTruthy();
+  });
+
+  it('shows an outside Dockerfile as a read-only build with its note', async () => {
+    const built: ServiceDetail = { ...svc, config: { build: { context: '/elsewhere' }, limits: {} } };
+    fake.restore();
+    fake = installFakeFetch({
+      'GET /api/stacks/web/services/app/dockerfile': { body: { content: '', hash: '', exists: true, editable: false, path: '/elsewhere/Dockerfile', reason: 'outside the stack folder' } },
+      'GET /api/networks': { body: [] },
+    });
+    mount({ stack: stack('h1', built), service: built });
+    expect(await screen.findByText("This Dockerfile is outside the stack's folder and can't be edited here.")).toBeTruthy();
+    expect(screen.queryByLabelText('Dockerfile for app')).toBeNull();
+  });
+
   it('previews the diff, saves with the same hash and then offers Apply', async () => {
     const h = mount();
     await changeImage('nginx:2');
