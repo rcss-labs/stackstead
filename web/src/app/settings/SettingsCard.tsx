@@ -14,7 +14,7 @@ export function SettingsCard({ id, title, headerEnd, footer, children, className
   return (
     <section className={[styles.card, className].filter(Boolean).join(' ')} aria-labelledby={id}>
       <header className={styles.header}>
-        <h2 id={id} className={styles.title}>
+        <h2 id={id} className={styles.title} tabIndex={-1}>
           {title}
         </h2>
         {headerEnd != null && headerEnd !== false && (

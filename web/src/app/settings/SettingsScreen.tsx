@@ -30,6 +30,11 @@ const DENSITY_OPTIONS = [
   { value: 'comfortable', label: 'Comfortable' },
 ];
 
+/** The anchor scrolls to the card; focus follows it so keyboard and screen-reader users land on the card too. */
+function focusCardHeading(sectionId: string) {
+  document.getElementById(sectionId)?.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true });
+}
+
 export function SettingsScreen() {
   const { username } = useStore(session);
   const themeValue = useStore(theme);
@@ -48,7 +53,7 @@ export function SettingsScreen() {
         </h1>
         <nav className={styles.sections} aria-label="Settings sections">
           {SECTIONS.map((section) => (
-            <a key={section.id} href={`#${section.id}`}>
+            <a key={section.id} href={`#${section.id}`} onClick={() => focusCardHeading(section.id)}>
               {section.label}
             </a>
           ))}

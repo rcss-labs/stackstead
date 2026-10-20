@@ -368,3 +368,19 @@ describe('Settings layout', () => {
     expect(findRoute('/settings')?.title).toBe('Settings');
   });
 });
+
+describe('Settings section nav', () => {
+  it.each([
+    ['System', 'System status'],
+    ['Updates', 'Software update'],
+    ['Prometheus', 'Prometheus token'],
+    ['Appearance', 'Appearance'],
+    ['Account', 'Account'],
+  ])('%s moves focus to its card heading', async (link, heading) => {
+    fake = installSettingsFetch(tokenStatus(false));
+    const user = userEvent.setup();
+    mountSettings();
+    await user.click(within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('link', { name: link }));
+    expect(document.activeElement).toBe(screen.getByRole('heading', { level: 2, name: heading }));
+  });
+});

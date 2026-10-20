@@ -25,6 +25,8 @@
 .sections a:hover { background: var(--hover); }
 
 .cards { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+/* Keep a card's title below the sticky top bar (56px) plus a gap when a section link scrolls to it. */
+.cards > div { scroll-margin-top: 72px; }
 
 .status {
   display: grid;
