@@ -3,6 +3,9 @@ package peers
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/rcss-labs/stackstead/internal/apitypes"
@@ -77,5 +80,40 @@ func TestAddServerActivatePendingReplacesTemporaryRow(t *testing.T) {
 	}
 	if _, err := st.Peer(ctx, "tmp-2"); err != nil {
 		t.Errorf("temporary row lost on a refused activation: %v", err)
+	}
+}
+
+func TestAddServerAlreadyPairedLocallyIsAFieldError(t *testing.T) {
+	var unpaired atomic.Bool
+	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/health":
+			_, _ = w.Write([]byte(`{"peering":1}`))
+		case "/api/peer/pair":
+			_, _ = w.Write([]byte(`{"protocol":1,"instanceId":"real-b","name":"mini-02","version":"1.0.0","credential":"ssp_b"}`))
+		case "/api/peer/unpair":
+			unpaired.Store(true)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer b.Close()
+	ctx := context.Background()
+	svc, st := newTestService(t)
+	if err := st.InsertPeer(ctx, Peer{InstanceID: "real-b", Name: "mini-02", State: StateActive}, HashSecret("ssp_old")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := svc.AddServer(ctx, apitypes.AddPeerRequest{
+		URL: b.URL, Token: "ssc_x", AdvertisedURL: "http://127.0.0.1:9",
+		Trust: apitypes.PeerTrust{Plaintext: true}, SelfTrust: apitypes.PeerTrust{Plaintext: true},
+	})
+	var verr *ValidationError
+	if !errors.As(err, &verr) || len(verr.Fields) == 0 || verr.Fields[0].Field != "url" {
+		t.Fatalf("err = %v, want a ValidationError on url", err)
+	}
+	if !unpaired.Load() {
+		t.Error("the other server was not asked to drop its half")
 	}
 }

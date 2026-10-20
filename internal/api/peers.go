@@ -14,6 +14,7 @@ func (s *server) registerPeerManagementRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/peers", s.requireSession(s.handleListPeers))
 	mux.Handle("POST /api/peers", s.requireSession(s.handleAddPeer))
 	mux.Handle("DELETE /api/peers/{id}", s.requireSession(s.handleRemovePeer))
+	mux.Handle("POST /api/peers/{id}/check", s.requireSession(s.handleCheckPeer))
 	mux.Handle("POST /api/peers/probe", s.requireSession(s.handleProbePeer))
 	mux.Handle("POST /api/peers/tokens", s.requireSession(s.handleCreatePeerToken))
 	mux.Handle("GET /api/peers/self", s.requireSession(s.handleGetSelf))
@@ -73,6 +74,15 @@ func (s *server) handleRemovePeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) handleCheckPeer(w http.ResponseWriter, r *http.Request) {
+	view, err := s.opts.Peers.CheckNow(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.writePeersError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *server) handleProbePeer(w http.ResponseWriter, r *http.Request) {

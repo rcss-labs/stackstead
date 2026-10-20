@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode"
@@ -43,6 +44,9 @@ type ServiceConfig struct {
 	Resolve  func(ctx context.Context, host string) ([]netip.Addr, error)
 	// Timeout bounds one unary call to a peer (default 30s).
 	Timeout time.Duration
+	// After returns a channel that fires after d (default time.After); a
+	// seam for the status checker's tests.
+	After func(d time.Duration) <-chan time.Time
 }
 
 // Service is this server's side of the peer protocol: it authenticates peers
@@ -50,6 +54,9 @@ type ServiceConfig struct {
 type Service struct {
 	cfg          ServiceConfig
 	lastActivity atomic.Int64
+	kick         chan struct{}
+	runtimeMu    sync.RWMutex
+	runtime      map[string]peerRuntime
 }
 
 func NewService(cfg ServiceConfig) *Service {
@@ -70,12 +77,20 @@ func NewService(cfg ServiceConfig) *Service {
 			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 		}
 	}
-	return &Service{cfg: cfg}
+	if cfg.After == nil {
+		cfg.After = time.After
+	}
+	return &Service{cfg: cfg, kick: make(chan struct{}, 1), runtime: map[string]peerRuntime{}}
 }
 
 // NoteSessionActivity records that a person is using this server's UI.
 func (s *Service) NoteSessionActivity() {
-	s.lastActivity.Store(s.cfg.Now().Unix())
+	now := s.cfg.Now()
+	previous := s.lastActivity.Swap(now.Unix())
+	if previous == 0 || now.Sub(time.Unix(previous, 0)) > sessionActiveWindow {
+		// A person is back: refresh the status they are about to look at.
+		s.Kick()
+	}
 }
 
 func (s *Service) identity(ctx context.Context) (Identity, error) {
@@ -131,6 +146,9 @@ func (s *Service) AcceptPair(ctx context.Context, token string, req apitypes.Pee
 		resp, err = s.pair(ctx, req)
 		return err
 	})
+	if err == nil {
+		s.Kick()
+	}
 	return resp, err
 }
 
@@ -288,6 +306,7 @@ func (s *Service) ApplyUpdate(ctx context.Context, from Peer, u apitypes.PeerUpd
 // AcceptUnpair forgets the calling peer.
 func (s *Service) AcceptUnpair(ctx context.Context, from Peer) error {
 	err := s.cfg.Store.DeletePeer(ctx, from.InstanceID)
+	s.Kick()
 	if errors.Is(err, ErrPeerNotFound) {
 		return nil
 	}

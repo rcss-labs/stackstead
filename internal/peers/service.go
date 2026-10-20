@@ -330,15 +330,20 @@ func (s *Service) AddServer(ctx context.Context, req apitypes.AddPeerRequest) (a
 	if err := s.cfg.Store.ActivatePending(ctx, tempID, peer, hash); err != nil {
 		// The other server already stored its half; ask it to drop that.
 		s.sendUnpair(context.WithoutCancel(ctx), peer)
+		if errors.Is(err, ErrAlreadyPaired) {
+			return apitypes.PeerView{}, validationError("url", "this server is already connected")
+		}
 		return apitypes.PeerView{}, err
 	}
 	paired = true
+	s.Kick()
+	// Pairing succeeded; failing to read the row back must not undo that.
 	stored, err := s.cfg.Store.Peer(ctx, answer.InstanceID)
 	if err != nil {
-		return apitypes.PeerView{}, err
+		stored = peer
 	}
 	s.cfg.Logger.Info("server paired", "peer", stored.Name, "instance", stored.InstanceID)
-	return viewOf(stored), nil
+	return s.viewOf(stored), nil
 }
 
 // mapPairError turns the other server's answer to a pairing request into
@@ -432,6 +437,7 @@ func (s *Service) Remove(ctx context.Context, id string) error {
 	if err := s.cfg.Store.DeletePeer(ctx, id); err != nil {
 		return err
 	}
+	s.Kick()
 	if p.State == StateActive && p.OutCredential != "" {
 		s.sendUnpair(ctx, p)
 	}
@@ -446,24 +452,31 @@ func (s *Service) Views(ctx context.Context) ([]apitypes.PeerView, error) {
 	}
 	views := make([]apitypes.PeerView, 0, len(list))
 	for _, p := range list {
-		views = append(views, viewOf(p))
+		views = append(views, s.viewOf(p))
 	}
 	return views, nil
 }
 
-func viewOf(p Peer) apitypes.PeerView {
-	status := "reachable"
+// viewOf shows a peer with the checker's last verdict. Without one (just
+// started) the persisted last error decides between reachable and unreachable.
+func (s *Service) viewOf(p Peer) apitypes.PeerView {
+	status := statusReachable
 	switch {
 	case p.State == StatePending:
 		status = "pending"
 	case p.State == StateRemoved:
 		status = "removed"
 	case p.LastError != "":
-		status = "unreachable"
+		status = statusUnreachable
+	}
+	if p.State == StateActive {
+		if r, ok := s.runtimeOf(p.InstanceID); ok {
+			status = r.status
+		}
 	}
 	return apitypes.PeerView{
 		ID: p.InstanceID, Name: p.Name, Slug: p.Slug, URL: p.URL, Version: p.Version, Status: status,
 		StackCount: p.StackCount, LastSeenAt: p.LastSeenAt, LastError: p.LastError,
-		Compatible: true, Plaintext: p.TLS.Plaintext,
+		Compatible: status != statusIncompatible, Plaintext: p.TLS.Plaintext,
 	}
 }

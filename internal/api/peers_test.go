@@ -351,3 +351,30 @@ func TestSuggestedURLHonoursForwardedProto(t *testing.T) {
 		t.Errorf("suggestedUrl = %q", self.SuggestedURL)
 	}
 }
+
+func TestCheckRouteReturnsFreshStatus(t *testing.T) {
+	a, b := newPeerNode(t, "mini-a"), newPeerNode(t, "mini-b")
+	a.login()
+	b.login()
+	pair(t, a, b)
+	id := a.list()[0].ID
+
+	status, body := a.do("POST", "/api/peers/"+id+"/check", "")
+	var view apitypes.PeerView
+	if status != 200 || json.Unmarshal([]byte(body), &view) != nil || view.Status != "reachable" {
+		t.Fatalf("check while B is up = %d %s", status, body)
+	}
+
+	b.srv.Close()
+	status, body = a.do("POST", "/api/peers/"+id+"/check", "")
+	if err := json.Unmarshal([]byte(body), &view); status != 200 || err != nil {
+		t.Fatalf("check while B is down = %d %s", status, body)
+	}
+	if view.Status != "unreachable" || view.LastError == "" {
+		t.Errorf("view = %+v, want unreachable with a lastError", view)
+	}
+
+	if status, _ := a.do("POST", "/api/peers/nope/check", ""); status != 404 {
+		t.Errorf("unknown peer check = %d, want 404", status)
+	}
+}

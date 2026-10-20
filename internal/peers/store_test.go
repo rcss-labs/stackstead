@@ -243,3 +243,16 @@ func TestConsumeTokenBogusTokenIsNotBlockedBySlowCallback(t *testing.T) {
 		t.Errorf("slow consume = %v", err)
 	}
 }
+
+func TestActivatePendingFailsWhenTemporaryRowIsGone(t *testing.T) {
+	ctx := context.Background()
+	_, st := newTestService(t)
+	// The person removed the pending row while the pairing was in flight.
+	err := st.ActivatePending(ctx, "tmp-gone", Peer{InstanceID: "real-b", Name: "mini-02", State: StateActive}, HashSecret("ssp_in"))
+	if !errors.Is(err, ErrPeerNotFound) {
+		t.Fatalf("err = %v, want ErrPeerNotFound", err)
+	}
+	if _, err := st.Peer(ctx, "real-b"); !errors.Is(err, ErrPeerNotFound) {
+		t.Errorf("peer was activated although its pending row was gone: %v", err)
+	}
+}

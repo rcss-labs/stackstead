@@ -173,7 +173,9 @@ func (s *Store) ActivatePending(ctx context.Context, tempID string, p Peer, inHa
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM peers WHERE instance_id = ?`, tempID); err != nil {
+	res, err := tx.ExecContext(ctx, `DELETE FROM peers WHERE instance_id = ?`, tempID)
+	if err := affectedOrNotFound(res, err); err != nil {
+		// The pending row is gone (the person removed it mid-pairing).
 		return err
 	}
 	if err := s.insertPeerTx(ctx, tx, p, inHash, true); err != nil {
