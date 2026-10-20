@@ -36,9 +36,11 @@ export function StorageImageScreen({ id }: { id: string }) {
 
   // A refresh that turns the page into not-found removes the focused control; move focus to the heading instead of body.
   const gone = item === null;
+  // A cleanup dialog stays mounted across the 404 and keeps focus until it closes; then the heading takes over.
+  const cleanupOpen = cleanup !== undefined;
   useEffect(() => {
-    if (gone) headingRef.current?.focus({ preventScroll: true });
-  }, [gone]);
+    if (gone && !cleanupOpen) headingRef.current?.focus({ preventScroll: true });
+  }, [gone, cleanupOpen]);
 
   const title = item
     ? (item.tags[0] ?? item.id.replace(/^sha256:/, '').slice(0, 12))

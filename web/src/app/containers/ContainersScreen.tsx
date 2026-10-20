@@ -83,8 +83,9 @@ export function ContainersScreen() {
     onClose: () => {
       if (openPeek === undefined) return;
       setOpenPeek(undefined);
-      // The log region that held focus unmounts with the peek; hand focus back to the row instead of body.
-      rowRefs.current.get(visible[focused]?.id)?.focus();
+      // The log region that held focus unmounts with the peek; hand focus back to the peeked container's row, not the focused one.
+      const peeked = visible.find((c) => c.name === openPeek);
+      if (peeked) rowRefs.current.get(peeked.id)?.focus();
     },
   });
 

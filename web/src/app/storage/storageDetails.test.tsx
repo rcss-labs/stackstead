@@ -215,6 +215,30 @@ describe('Storage detail screens', () => {
     expect(document.activeElement).toBe(heading);
   });
 
+  it.each([
+    { kind: 'image' as const, target: 'aaaaaaaaaaaa', found: 'redis:7', gone: 'Image not found' },
+    { kind: 'volume' as const, target: 'free', found: 'free', gone: 'Volume not found' },
+  ])('a $kind that disappears under an open cleanup dialog leaves focus in the dialog until it closes', async ({ kind, target, found, gone }) => {
+    let detail: FakeResponse = { body: kind === 'image' ? imageDetail() : volumeDetail() };
+    fake = installFakeFetch({
+      [`GET /api/storage/${kind}s/${target}`]: () => detail,
+      'POST /api/storage/plans': { body: planFor(kind) },
+    });
+    mountAt(`/storage/${kind}s/${target}`);
+    await screen.findByRole('heading', { level: 1, name: found });
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    const dialog = await screen.findByRole('dialog');
+    const field = await within(dialog).findByRole('textbox');
+    await waitFor(() => expect(document.activeElement).toBe(field));
+    detail = { status: 404, body: { error: 'not found' } };
+    await act(async () => void document.dispatchEvent(new Event('visibilitychange')));
+    const heading = await screen.findByRole('heading', { level: 1, name: gone });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(document.activeElement).toBe(heading);
+  });
+
   it('the h1 is present while the request is pending', async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
