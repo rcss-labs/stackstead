@@ -80,7 +80,7 @@ without a platform to maintain.
 - **Forms instead of YAML.** Image or Dockerfile, ports, volumes, environment
   variables, networks and static IPs, CPU and memory limits, restart policy
   and healthcheck. Port and IP clashes are checked before anything is
-  written.
+  written. Write a new stack as YAML or as cards, and switch between the two.
 - **Multi-service stacks.** Create several services together, and add or remove services
   on an existing stack, with the same validation and stale-file protection.
 - **See before you save.** Every change, from the form or the built-in YAML
@@ -89,6 +89,8 @@ without a platform to maintain.
   Stackstead notices and lets you merge instead of overwriting.
 - **Dockerfile first.** Build images from local Dockerfiles, not only pull
   from a registry. Pick folders and files with a built-in file browser.
+  Write a service's Dockerfile in Stackstead, and Save & rebuild it from the
+  stack page.
 - **Bring your existing stacks.** Import a compose file you already have,
   where it already lives. Nothing is moved, and nothing changes until you
   edit it.
