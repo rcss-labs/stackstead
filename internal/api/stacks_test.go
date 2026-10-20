@@ -36,14 +36,15 @@ type fakeStacks struct {
 	partial bool
 	op      stacks.Operation
 
-	gotCreate  stacks.CreateRequest
-	gotAction  string
-	gotVolumes bool
-	gotHash    string
-	gotContent string
-	gotService string
-	gotCfg     composefile.ServiceConfig
-	gotCancel  string
+	gotCreate     stacks.CreateRequest
+	gotAction     string
+	gotVolumes    bool
+	gotHash       string
+	gotContent    string
+	gotService    string
+	gotCfg        composefile.ServiceConfig
+	gotCancel     string
+	gotDockerfile *stacks.DockerfileWrite
 
 	replay       []string
 	first        int // absolute index of replay[0]
@@ -96,8 +97,8 @@ func (f *fakeStacks) SaveRaw(_ context.Context, _ string, content []byte, hash s
 	f.gotContent, f.gotHash = string(content), hash
 	return stacks.EditResult{Hash: "h2", ChecksPartial: f.partial}, f.err
 }
-func (f *fakeStacks) UpdateService(_ context.Context, _, service string, cfg composefile.ServiceConfig, hash string) (stacks.EditResult, error) {
-	f.gotService, f.gotCfg, f.gotHash = service, cfg, hash
+func (f *fakeStacks) UpdateService(_ context.Context, _, service string, cfg composefile.ServiceConfig, hash string, df *stacks.DockerfileWrite) (stacks.EditResult, error) {
+	f.gotService, f.gotCfg, f.gotHash, f.gotDockerfile = service, cfg, hash, df
 	return stacks.EditResult{Hash: "h2", ChecksPartial: f.partial}, f.err
 }
 func (f *fakeStacks) PreviewService(_ context.Context, _, service string, cfg composefile.ServiceConfig, hash string) ([]byte, error) {
@@ -826,8 +827,8 @@ func TestPreviewServiceRequiresSession(t *testing.T) {
 	}
 }
 
-func (f *fakeStacks) AddService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) (stacks.EditResult, error) {
-	return f.UpdateService(ctx, stack, service, cfg, hash)
+func (f *fakeStacks) AddService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string, df *stacks.DockerfileWrite) (stacks.EditResult, error) {
+	return f.UpdateService(ctx, stack, service, cfg, hash, df)
 }
 func (f *fakeStacks) PreviewAddService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) ([]byte, error) {
 	return f.PreviewService(ctx, stack, service, cfg, hash)
@@ -993,5 +994,48 @@ func TestServiceRoutesRequireSessionAndJSON(t *testing.T) {
 				t.Errorf("%s unknown=%d %s", rt.path, rec.Code, rec.Body)
 			}
 		}
+	}
+}
+
+func TestAddServicePassesDockerfile(t *testing.T) {
+	f := newFakeStacks()
+	env, cookie := newStacksEnv(t, f)
+	rec := env.do(t, "POST", "/api/stacks/web/services",
+		`{"service":"api","config":{"build":{"context":"./api"}},"hash":"h1","dockerfile":{"content":"FROM alpine\n","hash":"stale"}}`, withCookie(cookie))
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	df := f.gotDockerfile
+	if df == nil || string(df.Content) != "FROM alpine\n" || df.CheckHash {
+		t.Fatalf("dockerfile = %+v, want content and CheckHash=false", df)
+	}
+}
+
+func TestUpdateServicePassesDockerfile(t *testing.T) {
+	f := newFakeStacks()
+	env, cookie := newStacksEnv(t, f)
+	rec := env.do(t, "PUT", "/api/stacks/web/services/app",
+		`{"config":{"image":"x"},"hash":"h1","dockerfile":{"content":"FROM alpine\n","hash":"d1"}}`, withCookie(cookie))
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	df := f.gotDockerfile
+	if df == nil || string(df.Content) != "FROM alpine\n" || df.Hash != "d1" || !df.CheckHash {
+		t.Fatalf("dockerfile = %+v, want content, hash d1, CheckHash=true", df)
+	}
+	rec = env.do(t, "PUT", "/api/stacks/web/services/app", `{"config":{"image":"x"},"hash":"h1"}`, withCookie(cookie))
+	if rec.Code != 200 || f.gotDockerfile != nil {
+		t.Fatalf("without dockerfile: %d %+v", rec.Code, f.gotDockerfile)
+	}
+}
+
+func TestUpdateServiceDockerfileConflictIs409(t *testing.T) {
+	f := newFakeStacks()
+	f.err = stacks.ErrDockerfileConflict
+	env, cookie := newStacksEnv(t, f)
+	rec := env.do(t, "PUT", "/api/stacks/web/services/app",
+		`{"config":{"image":"x"},"hash":"h1","dockerfile":{"content":"FROM x","hash":"old"}}`, withCookie(cookie))
+	if rec.Code != 409 || !strings.Contains(rec.Body.String(), "Dockerfile changed on disk since it was loaded") {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 }

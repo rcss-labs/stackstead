@@ -43,6 +43,7 @@ var (
 // Operation is a snapshot of one long-running operation.
 type Operation struct {
 	ID, Stack, Action  string
+	Service            string // set when the operation is scoped to one service
 	State              OpState
 	StartedAt, EndedAt time.Time
 	ExitCode           int    // -1 when not applicable
@@ -107,6 +108,12 @@ func newOpID() (string, error) {
 // Start runs fn in the background. It returns ErrBusy if the stack already
 // has a running operation.
 func (o *Ops) Start(stack, action string, fn OpFunc) (Operation, error) {
+	return o.StartService(stack, action, "", fn)
+}
+
+// StartService is Start for an operation scoped to one service. The busy
+// rule is the same: one running operation per stack.
+func (o *Ops) StartService(stack, action, service string, fn OpFunc) (Operation, error) {
 	id, err := newOpID()
 	if err != nil {
 		return Operation{}, fmt.Errorf("generate operation id: %w", err)
@@ -129,7 +136,7 @@ func (o *Ops) Start(stack, action string, fn OpFunc) (Operation, error) {
 		ctx, cancel = context.WithCancel(context.Background())
 	}
 	rec := &op{
-		info: Operation{ID: id, Stack: stack, Action: action, State: OpRunning,
+		info: Operation{ID: id, Stack: stack, Service: service, Action: action, State: OpRunning,
 			StartedAt: o.now(), ExitCode: -1},
 		subs:     map[*subscriber]struct{}{},
 		cancel:   cancel,
