@@ -23,17 +23,20 @@ export interface CommandPaletteProps {
   onClose: () => void;
   /** Follows a navigate command; the app passes its unsaved-changes guard. Defaults to the router. */
   onNavigate?: (href: string) => void;
+  /** Text typed before this chunk loaded; seeds the search field once at mount. */
+  initialQuery?: string;
 }
 
-export default function CommandPalette({ open, runningOps, onClose, onNavigate }: CommandPaletteProps) {
+export default function CommandPalette({ open, runningOps, onClose, onNavigate, initialQuery }: CommandPaletteProps) {
   const uid = useId();
   const navigate = useNavigate();
   const { items } = useStore(stacks);
   const liveState = useStore(live);
   const theme = useStore(effectiveTheme);
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(initialQuery ?? '');
   const [selected, setSelected] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const busyStacks = useMemo(() => new Set(runningOps.map((op) => op.stack)), [runningOps]);
   const entries = useMemo(
@@ -42,6 +45,13 @@ export default function CommandPalette({ open, runningOps, onClose, onNavigate }
   );
   const active = Math.min(selected, Math.max(0, entries.length - 1));
   const optionId = (index: number) => `${uid}-option-${index}`;
+
+  // Carried-over text keeps the caret after it, as if typing had never paused.
+  useEffect(() => {
+    const end = (initialQuery ?? '').length;
+    if (open && end > 0) inputRef.current?.setSelectionRange(end, end);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // A reopened palette starts empty.
   useEffect(() => {
@@ -108,6 +118,7 @@ export default function CommandPalette({ open, runningOps, onClose, onNavigate }
             <path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-3.5-3.5" />
           </svg>
           <input
+            ref={inputRef}
             className={styles.input}
             role="combobox"
             aria-label="Search or run a command"
