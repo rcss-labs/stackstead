@@ -14,6 +14,10 @@ func (s *Service) RevertProject(ctx context.Context, e Entry, saveErr error) err
 // and before it saves the file.
 func (s *Service) SetAfterClaim(fn func()) { s.afterClaim = fn }
 
+// SetBeforeComposeSave installs a hook that runs just before an edit saves the
+// compose file.
+func SetBeforeComposeSave(s *Service, fn func()) { s.beforeComposeSave = fn }
+
 // SetProbeTimeout shortens the version probe's own timeout for tests.
 func SetProbeTimeout(c Compose, d time.Duration) { c.(*versionCache).probeTimeout = d }
 

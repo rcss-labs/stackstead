@@ -157,7 +157,7 @@ func TestUpdateServicePortClashWithLaterSiblingStillReported(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = h.svc.UpdateService(context.Background(), "lab", "a", webCfg("8080:80"), hash)
+	_, err = h.svc.UpdateService(context.Background(), "lab", "a", webCfg("8080:80"), hash, nil)
 	fs := fieldsOf(t, err)
 	if len(fs) != 1 || fs[0].Field != "ports[0]" || !strings.Contains(fs[0].Message, "service b") {
 		t.Fatal(fs)
@@ -175,7 +175,7 @@ func TestUpdateServiceStaticIPClashWithLaterSibling(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, hash, _ := composefile.Load(h.path("lab"))
-	_, err = h.svc.UpdateService(context.Background(), "lab", "a", config("10.0.0.6"), hash)
+	_, err = h.svc.UpdateService(context.Background(), "lab", "a", config("10.0.0.6"), hash, nil)
 	fs := fieldsOf(t, err)
 	if len(fs) != 1 || fs[0].Field != "networks.lan.ipv4_address" || !strings.Contains(fs[0].Message, "service b") {
 		t.Fatal(fs)
@@ -231,7 +231,7 @@ func TestLocalSiblingStaticIPsBeforeFirstUp(t *testing.T) {
 					t.Fatal(err)
 				}
 				cfg := composefile.ServiceConfig{Image: "nginx", Networks: []composefile.NetworkAttachment{{Name: tc.network, IPv4Address: tc.ip}}}
-				_, err = h.svc.AddService(context.Background(), "web", "cache", cfg, hash)
+				_, err = h.svc.AddService(context.Background(), "web", "cache", cfg, hash, nil)
 				if !tc.conflict {
 					if err != nil {
 						t.Fatal(err)
@@ -279,7 +279,7 @@ func TestLocalSiblingStaticIPConflictOnEditAndRawSave(t *testing.T) {
 			}
 			field, owner := "networks.lan.ipv4_address", "service cache"
 			if action == "edit" {
-				_, err = h.svc.UpdateService(context.Background(), "web", "web", composefile.ServiceConfig{Image: "nginx", Networks: []composefile.NetworkAttachment{{Name: "lan", IPv4Address: "10.9.0.6"}}}, hash)
+				_, err = h.svc.UpdateService(context.Background(), "web", "web", composefile.ServiceConfig{Image: "nginx", Networks: []composefile.NetworkAttachment{{Name: "lan", IPv4Address: "10.9.0.6"}}}, hash, nil)
 			} else {
 				field, owner = "services.cache.networks.lan.ipv4_address", "service web"
 				_, err = h.svc.SaveRaw(context.Background(), "web", []byte(strings.Replace(before, "10.9.0.6", "10.9.0.5", 1)), hash)

@@ -73,13 +73,59 @@ func (s *Service) stagedEdit(ctx context.Context, stack, service string, cfg com
 
 // UpdateService applies a form edit to one service. It shares its save
 // pipeline (commit) with SaveRaw.
-func (s *Service) UpdateService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) (EditResult, error) {
+// A non-nil df is written after compose accepts the edit.
+func (s *Service) UpdateService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string, df *DockerfileWrite) (EditResult, error) {
 	e, old, edited, unlock, err := s.stagedEdit(ctx, stack, service, cfg, hash)
 	if err != nil {
 		return EditResult{}, err
 	}
 	defer unlock()
-	return s.commit(ctx, e, old, edited, hash, false)
+	preSave, err := dockerfilePreSave(e, edited, service, df)
+	if err != nil {
+		return EditResult{}, err
+	}
+	return s.commit(ctx, e, old, edited, hash, false, preSave)
+}
+
+// DockerfileWrite is a Dockerfile to write along with a service edit. When
+// CheckHash is set, Hash is the version the caller loaded ("" for a file that
+// must not exist yet); otherwise an existing file is overwritten.
+type DockerfileWrite struct {
+	Content   []byte
+	Hash      string
+	CheckHash bool
+}
+
+// dockerfilePreSave checks df against the edited compose file and returns the
+// step commit runs once compose accepts the edit. It returns nil for a nil df.
+// The target is resolved on the edited file, so the Dockerfile lands where the
+// saved service will look for it, and only inside the stack folder.
+func dockerfilePreSave(e Entry, edited *composefile.File, service string, df *DockerfileWrite) (func() (func(), error), error) {
+	if df == nil {
+		return nil, nil
+	}
+	if err := ValidateDockerfile("dockerfile", df.Content); err != nil {
+		return nil, err
+	}
+	stackDir := filepath.Dir(e.ComposePath)
+	path, inside, err := dockerfileTarget(stackDir, edited, service)
+	if errors.Is(err, ErrNoBuild) {
+		return nil, &ValidationError{Fields: []FieldError{{Field: "dockerfile", Message: "the service has no build to write a Dockerfile for"}}}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !inside {
+		return nil, &ValidationError{Fields: []FieldError{{Field: "dockerfile", Message: "a Dockerfile can only be written inside the stack's folder"}}}
+	}
+	var expected *string
+	if df.CheckHash {
+		expected = &df.Hash
+	}
+	return func() (func(), error) {
+		_, rollback, err := writeDockerfile(stackDir, path, df.Content, expected)
+		return rollback, err
+	}, nil
 }
 
 // PreviewService returns the bytes UpdateService would write for the same
@@ -115,13 +161,15 @@ func (s *Service) SaveRaw(ctx context.Context, stack string, content []byte, has
 		return EditResult{}, err
 	}
 	old, _ := parseFile(data) // a currently broken file just means every port counts as changed
-	return s.commit(ctx, e, old, edited, hash, true)
+	return s.commit(ctx, e, old, edited, hash, true, nil)
 }
 
 // commit is the save pipeline: check the ports and IPs that changed, check
 // the candidate bytes with compose, then replace the file under the loaded
-// hash and refresh the recorded project name. old may be nil.
-func (s *Service) commit(ctx context.Context, e Entry, old, edited *composefile.File, hash string, qualify bool) (EditResult, error) {
+// hash and refresh the recorded project name. old may be nil. preSave, when
+// not nil, runs after compose accepted the candidate and just before the save;
+// the rollback it returns is called if the project claim or the save fails.
+func (s *Service) commit(ctx context.Context, e Entry, old, edited *composefile.File, hash string, qualify bool, preSave func() (rollback func(), err error)) (EditResult, error) {
 	if err := refuseOverrides(e.ComposePath); err != nil {
 		return EditResult{}, err
 	}
@@ -162,23 +210,52 @@ func (s *Service) commit(ctx context.Context, e Entry, old, edited *composefile.
 			return EditResult{}, err
 		}
 		partial = partial || p
+		rollback, err := runPreSave(preSave)
+		if err != nil {
+			return EditResult{}, err
+		}
 		// Claim the project before saving so a failed claim writes nothing;
 		// hand it back if the save then fails.
 		if err := s.reg.SetProject(ctx, e.Name, project); err != nil {
+			rollback()
 			return EditResult{}, s.mapProjectTaken(ctx, err, project, e.Name)
 		}
 		if s.afterClaim != nil {
 			s.afterClaim()
 		}
+		if s.beforeComposeSave != nil {
+			s.beforeComposeSave()
+		}
 		if err := composefile.Save(e.ComposePath, candidate, hash); err != nil {
+			rollback()
 			return EditResult{}, s.revertProject(ctx, e, err)
 		}
 		return EditResult{Hash: composefile.Hash(candidate), ChecksPartial: partial}, nil
 	}
+	rollback, err := runPreSave(preSave)
+	if err != nil {
+		return EditResult{}, err
+	}
+	if s.beforeComposeSave != nil {
+		s.beforeComposeSave()
+	}
 	if err := composefile.Save(e.ComposePath, candidate, hash); err != nil {
+		rollback()
 		return EditResult{}, err
 	}
 	return EditResult{Hash: composefile.Hash(candidate), ChecksPartial: partial}, nil
+}
+
+// runPreSave runs preSave, which may be nil; the returned rollback is never nil.
+func runPreSave(preSave func() (func(), error)) (func(), error) {
+	if preSave == nil {
+		return func() {}, nil
+	}
+	rollback, err := preSave()
+	if err != nil {
+		return func() {}, err
+	}
+	return rollback, nil
 }
 
 // revertProject hands the claimed project back after a failed save and returns
@@ -605,13 +682,19 @@ func (s *Service) stagedAdd(ctx context.Context, stack, service string, cfg comp
 }
 
 // AddService saves a new service after checking its ports, IPs and compose config.
-func (s *Service) AddService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) (EditResult, error) {
+// A non-nil df is written after compose accepts the edit and replaces any
+// leftover file at the managed path.
+func (s *Service) AddService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string, df *DockerfileWrite) (EditResult, error) {
 	e, old, edited, unlock, err := s.stagedAdd(ctx, stack, service, cfg, hash)
 	if err != nil {
 		return EditResult{}, err
 	}
 	defer unlock()
-	result, err := s.commit(ctx, e, old, edited, hash, false)
+	preSave, err := dockerfilePreSave(e, edited, service, df)
+	if err != nil {
+		return EditResult{}, err
+	}
+	result, err := s.commit(ctx, e, old, edited, hash, false, preSave)
 	if err == nil {
 		s.log.Info("added service", "stack", stack, "service", service)
 	}
@@ -653,7 +736,7 @@ func (s *Service) RemoveService(ctx context.Context, stack, service, hash string
 	if err != nil {
 		return EditResult{}, err
 	}
-	result, err := s.commit(ctx, e, old, edited, hash, false)
+	result, err := s.commit(ctx, e, old, edited, hash, false, nil)
 	if err == nil {
 		s.log.Info("removed service", "stack", stack, "service", service)
 	}
