@@ -1,0 +1,188 @@
+[
+  {
+    "id": "SEC-01",
+    "aliases": [],
+    "title": "[P2][SEC-01] Prevent old-password login from issuing a session after password recovery",
+    "url": "https://github.com/rcss-labs/stackstead/issues/19",
+    "number": 19,
+    "created": true
+  },
+  {
+    "id": "SEC-02",
+    "aliases": [],
+    "title": "[P1][SEC-02] Verify the expected IP identity in pinned peer TLS connections",
+    "url": "https://github.com/rcss-labs/stackstead/issues/20",
+    "number": 20,
+    "created": true
+  },
+  {
+    "id": "SEC-03",
+    "aliases": [],
+    "title": "[P2][SEC-03] Terminate authenticated streams when their session or peer is revoked",
+    "url": "https://github.com/rcss-labs/stackstead/issues/21",
+    "number": 21,
+    "created": true
+  },
+  {
+    "id": "SEC-04",
+    "aliases": [],
+    "title": "[P2][SEC-04] Separate reverse-proxy clients in authentication rate limiting",
+    "url": "https://github.com/rcss-labs/stackstead/issues/22",
+    "number": 22,
+    "created": true
+  },
+  {
+    "id": "SEC-05",
+    "aliases": [],
+    "title": "[P1][SEC-05] Require a patched Go toolchain and rebuild affected release artifacts",
+    "url": "https://github.com/rcss-labs/stackstead/issues/23",
+    "number": 23,
+    "created": true
+  },
+  {
+    "id": "SEC-06",
+    "aliases": [],
+    "title": "[P2][SEC-06] Enforce independent release authenticity for default install and upgrade",
+    "url": "https://github.com/rcss-labs/stackstead/issues/24",
+    "number": 24,
+    "created": true
+  },
+  {
+    "id": "F1",
+    "aliases": [],
+    "title": "[P2][F1] Preserve the predecessor health state at the retention boundary",
+    "url": "https://github.com/rcss-labs/stackstead/issues/25",
+    "number": 25,
+    "created": true
+  },
+  {
+    "id": "F2",
+    "aliases": [],
+    "title": "[P2][F2] Count rolling restarts correctly when initial start predates the window",
+    "url": "https://github.com/rcss-labs/stackstead/issues/26",
+    "number": 26,
+    "created": true
+  },
+  {
+    "id": "F3",
+    "aliases": [],
+    "title": "[P2][F3] Link remote service ports to their owning server",
+    "url": "https://github.com/rcss-labs/stackstead/issues/27",
+    "number": 27,
+    "created": true
+  },
+  {
+    "id": "F4",
+    "aliases": [],
+    "title": "[P2][F4] Allow slow fleet polls to publish completed responses",
+    "url": "https://github.com/rcss-labs/stackstead/issues/28",
+    "number": 28,
+    "created": true
+  },
+  {
+    "id": "F5",
+    "aliases": [],
+    "title": "[P2][F5] Protect dirty drafts against browser history navigation and reload",
+    "url": "https://github.com/rcss-labs/stackstead/issues/29",
+    "number": 29,
+    "created": true
+  },
+  {
+    "id": "F6",
+    "aliases": [],
+    "title": "[P2][F6] Apply the service filter to live CLI metrics output",
+    "url": "https://github.com/rcss-labs/stackstead/issues/30",
+    "number": 30,
+    "created": true
+  },
+  {
+    "id": "F7",
+    "aliases": [],
+    "title": "[P2][F7] Escape filesystem paths consistently when opening SQLite databases",
+    "url": "https://github.com/rcss-labs/stackstead/issues/31",
+    "number": 31,
+    "created": true
+  },
+  {
+    "id": "F8",
+    "aliases": [],
+    "title": "[P2][F8] Take the maintenance lock before database initialization and migration",
+    "url": "https://github.com/rcss-labs/stackstead/issues/32",
+    "number": 32,
+    "created": true
+  },
+  {
+    "id": "F9",
+    "aliases": [],
+    "title": "[P2][F9] Handle script-to-package installation transitions without retaining the old executable",
+    "url": "https://github.com/rcss-labs/stackstead/issues/33",
+    "number": 33,
+    "created": true
+  },
+  {
+    "id": "F10",
+    "aliases": [
+      "SEC-07"
+    ],
+    "title": "[P3][F10] Bound retained operation output by bytes and global lifetime",
+    "url": "https://github.com/rcss-labs/stackstead/issues/34",
+    "number": 34,
+    "created": true
+  },
+  {
+    "id": "F11",
+    "aliases": [],
+    "title": "[P3][F11] Reuse peer transports for fleet polling and hello checks",
+    "url": "https://github.com/rcss-labs/stackstead/issues/35",
+    "number": 35,
+    "created": true
+  },
+  {
+    "id": "F12",
+    "aliases": [],
+    "title": "[P3][F12] Reduce collapsed log rendering and repeated service-color computation",
+    "url": "https://github.com/rcss-labs/stackstead/issues/36",
+    "number": 36,
+    "created": true
+  },
+  {
+    "id": "CI-01",
+    "aliases": [],
+    "title": "[P2][CI-01] Enforce repository verification and security checks on pull requests",
+    "url": "https://github.com/rcss-labs/stackstead/issues/37",
+    "number": 37,
+    "created": true
+  },
+  {
+    "id": "M1",
+    "aliases": [],
+    "title": "[P3][M1] Measure sampler duration and sample age before changing metrics concurrency",
+    "url": "https://github.com/rcss-labs/stackstead/issues/38",
+    "number": 38,
+    "created": true
+  },
+  {
+    "id": "M2",
+    "aliases": [],
+    "title": "[P3][M2] Measure global metrics query and pruning plans before adding indexes",
+    "url": "https://github.com/rcss-labs/stackstead/issues/39",
+    "number": 39,
+    "created": true
+  },
+  {
+    "id": "M3",
+    "aliases": [],
+    "title": "[P3][M3] Profile repeated Compose reads and per-service container scans",
+    "url": "https://github.com/rcss-labs/stackstead/issues/40",
+    "number": 40,
+    "created": true
+  },
+  {
+    "id": "M4",
+    "aliases": [],
+    "title": "[P3][M4] Check recorder bookkeeping cleanup for destroyed containers",
+    "url": "https://github.com/rcss-labs/stackstead/issues/41",
+    "number": 41,
+    "created": true
+  }
+]

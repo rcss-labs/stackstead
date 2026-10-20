@@ -42,6 +42,7 @@ The hub for everything under `docs/`. Back to the [project README](../README.md)
 ## Codebase reviews
 
 - [Codebase review — 20 October 2026](codebase-review-2026-10-20.md): scored architecture, correctness, efficiency, and delivery audit.
+- [Security assessment — 20 October 2026](security-review-2026-10-20.md): threat model, reproduced security findings, dependency triage, and the unified GitHub backlog.
 
 ## The documents
 

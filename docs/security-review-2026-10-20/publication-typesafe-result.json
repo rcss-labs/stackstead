@@ -1,0 +1,19 @@
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "coverage": {
+      "type": "choice",
+      "choice": "covered",
+      "confidence": 1,
+      "probabilities": {
+        "covered": 1,
+        "partial": 0,
+        "missing": 0
+      }
+    }
+  },
+  "usage": {
+    "input_tokens": 1374,
+    "output_tokens": 38
+  }
+}

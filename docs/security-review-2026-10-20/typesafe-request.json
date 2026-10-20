@@ -1,0 +1,199 @@
+{
+  "model": "jev-latest",
+  "state": {
+    "context": "Authorized point-in-time local security audit. Parent existing make check and npm audit pass, four synthetic vulnerability checks fail expected security assertions. No application source fixes. Scores are advisory, independent human final review required.",
+    "findings": [
+      {
+        "id": "SEC-01",
+        "title": "Old-password login survives password recovery",
+        "reviewer_rating": "Medium, P2",
+        "evidence": "Isolated real auth.Service tests commit ChangePassword or ResetPassword after Login reads old hash but before verification returns. Both then create a valid seven-day session using old password. Requires knowing old password and racing recovery; no anonymous password bypass."
+      },
+      {
+        "id": "SEC-02",
+        "title": "IP-address peer certificate identity bypass",
+        "reviewer_rating": "High, P1",
+        "evidence": "Actual NewHTTPClient with IP URL accepts a locally trusted synthetic certificate valid only for unrelated DNS name when nonmatching pin is configured. TLS 1.2 and1.3 both reproduced. Ordinary verifier with same roots rejects. Exploit needs network interception, a certificate trusted by selected roots, configured pin, IP-address URL. Peer credentials grant root-equivalent remote powers."
+      },
+      {
+        "id": "SEC-03",
+        "title": "Active streams survive session revocation",
+        "reviewer_rating": "Medium, P2",
+        "evidence": "Real HTTP /api/events stream continues delivering new events after logout, password change by second session, or clock expiry. Fresh GET/api/me rejects same cookie401 in all controls. Log/metrics/forward/peer unpair coverage is static inference; only existing read streams persist, no new request bypass."
+      },
+      {
+        "id": "SEC-04",
+        "title": "Reverse proxy clients share login lockout",
+        "reviewer_rating": "Medium, P2",
+        "evidence": "HTTP handler regression simulates same loopback TCP peer with two XFF client addresses: five wrong passwords from one client cause correct password from second client429. Production window15min; password change same limiter source. Needs accessible shared reverse proxy; no credential theft."
+      },
+      {
+        "id": "SEC-05",
+        "title": "Known vulnerable local Go compiler and no release minimum patch gate",
+        "reviewer_rating": "High, P1",
+        "evidence": "Local Go1.26.4 source scan v1.9.0 DB2026-10-20 returns24 IDs,18 with symbol traces including unauthenticated static Range CPU advisory fixedGo1.26.9. go.mod minimum1.26.0, Makefile has no patch floor. Many traced HTTP2/Windows/CONNECT advisories not applicable to configured server; no deployed artifact inspection or CVE exploit executed. Rebuild patched compiler and enforce minimum."
+      },
+      {
+        "id": "SEC-06",
+        "title": "Unsigned release authenticity gap",
+        "reviewer_rating": "Medium hardening, P2",
+        "evidence": "Documented existing accepted gap: default install and CLI upgrade verify checksum from same GitHub release as executable/installer. Build signing and install.sh --signers exist as opt-in, but no signer shipped and default policy does not require signature; CLI Source.Download verifies SHA256 only before executing installer. Compromised release publisher could replace binary and checksum. No account compromise or upstream tampering observed."
+      },
+      {
+        "id": "SEC-07",
+        "title": "Operation output has no global byte/TTL budget",
+        "reviewer_rating": "Low, P3",
+        "evidence": "Earlier engineering F10 duplicate. Static limits20operations/stack,20k lines/op,8KiB/line imply about156MiB/op and3.05GiB/stack before overhead, not measured. No global lifetime bound or removed stack cleanup. Needs operator-triggered output or noisy build; admin is already root so not escalation."
+      },
+      {
+        "id": "SEC-08",
+        "title": "Relative extra build-context symlink can be repointed",
+        "reviewer_rating": "Low, P3",
+        "evidence": "Existing GitHub#18 duplicate confirmed source: only absolute extra build contexts reject symlink rewriting, relative escaping extra/additional contexts remain lexical. Needs host write access to allowed directory and later build; root-equivalent admin model, no external unauthorized compromise claimed."
+      },
+      {
+        "id": "CI-01",
+        "title": "No repository CI gate and main branch unprotected",
+        "reviewer_rating": "Medium delivery gap, P2",
+        "evidence": "git tracked workflows empty, release docs explicitly defer CI; GitHub branches/main API protected=false at review. Existing make check passes but no enforced PR gate. Need deterministic checks and code/dependency scanning with least-privilege Actions. Not evidence all org policy bypassed."
+      }
+    ]
+  },
+  "questions": {
+    "SEC-01_severity": {
+      "type": "score",
+      "instructions": "Rate the security impact or hardening priority of SEC-01 as worded, respecting every prerequisite and the deliberate single-admin root-equivalent trust model. Do not treat a source scanner trace as proven exploitation.",
+      "criteria": [
+        "Informational or optional hardening with no demonstrated material impact",
+        "Low conditional risk, limited effect, or defense-in-depth gap",
+        "Medium targeted confidentiality/availability/recovery defect, or material supply-chain/control gap",
+        "High material authentication/trust failure with potential host-level impact under explicit prerequisites, or actionable known-vulnerable release toolchain exposure",
+        "Critical broadly exploitable unauthenticated root compromise established by evidence"
+      ]
+    },
+    "SEC-01_support": {
+      "type": "noul",
+      "instructions": "Does the supplied evidence support the carefully qualified claim for SEC-01, without claiming production exploitation or broader reproduction than described?"
+    },
+    "SEC-02_severity": {
+      "type": "score",
+      "instructions": "Rate the security impact or hardening priority of SEC-02 as worded, respecting every prerequisite and the deliberate single-admin root-equivalent trust model. Do not treat a source scanner trace as proven exploitation.",
+      "criteria": [
+        "Informational or optional hardening with no demonstrated material impact",
+        "Low conditional risk, limited effect, or defense-in-depth gap",
+        "Medium targeted confidentiality/availability/recovery defect, or material supply-chain/control gap",
+        "High material authentication/trust failure with potential host-level impact under explicit prerequisites, or actionable known-vulnerable release toolchain exposure",
+        "Critical broadly exploitable unauthenticated root compromise established by evidence"
+      ]
+    },
+    "SEC-02_support": {
+      "type": "noul",
+      "instructions": "Does the supplied evidence support the carefully qualified claim for SEC-02, without claiming production exploitation or broader reproduction than described?"
+    },
+    "SEC-03_severity": {
+      "type": "score",
+      "instructions": "Rate the security impact or hardening priority of SEC-03 as worded, respecting every prerequisite and the deliberate single-admin root-equivalent trust model. Do not treat a source scanner trace as proven exploitation.",
+      "criteria": [
+        "Informational or optional hardening with no demonstrated material impact",
+        "Low conditional risk, limited effect, or defense-in-depth gap",
+        "Medium targeted confidentiality/availability/recovery defect, or material supply-chain/control gap",
+        "High material authentication/trust failure with potential host-level impact under explicit prerequisites, or actionable known-vulnerable release toolchain exposure",
+        "Critical broadly exploitable unauthenticated root compromise established by evidence"
+      ]
+    },
+    "SEC-03_support": {
+      "type": "noul",
+      "instructions": "Does the supplied evidence support the carefully qualified claim for SEC-03, without claiming production exploitation or broader reproduction than described?"
+    },
+    "SEC-04_severity": {
+      "type": "score",
+      "instructions": "Rate the security impact or hardening priority of SEC-04 as worded, respecting every prerequisite and the deliberate single-admin root-equivalent trust model. Do not treat a source scanner trace as proven exploitation.",
+      "criteria": [
+        "Informational or optional hardening with no demonstrated material impact",
+        "Low conditional risk, limited effect, or defense-in-depth gap",
+        "Medium targeted confidentiality/availability/recovery defect, or material supply-chain/control gap",
+        "High material authentication/trust failure with potential host-level impact under explicit prerequisites, or actionable known-vulnerable release toolchain exposure",
+        "Critical broadly exploitable unauthenticated root compromise established by evidence"
+      ]
+    },
+    "SEC-04_support": {
+      "type": "noul",
+      "instructions": "Does the supplied evidence support the carefully qualified claim for SEC-04, without claiming production exploitation or broader reproduction than described?"
+    },
+    "SEC-05_severity": {
+      "type": "score",
+      "instructions": "Rate the security impact or hardening priority of SEC-05 as worded, respecting every prerequisite and the deliberate single-admin root-equivalent trust model. Do not treat a source scanner trace as proven exploitation.",
+      "criteria": [
+        "Informational or optional hardening with no demonstrated material impact",
+        "Low conditional risk, limited effect, or defense-in-depth gap",
+        "Medium targeted confidentiality/availability/recovery defect, or material supply-chain/control gap",
+        "High material authentication/trust failure with potential host-level impact under explicit prerequisites, or actionable known-vulnerable release toolchain exposure",
+        "Critical broadly exploitable unauthenticated root compromise established by evidence"
+      ]
+    },
+    "SEC-05_support": {
+      "type": "noul",
+      "instructions": "Does the supplied evidence support the carefully qualified claim for SEC-05, without claiming production exploitation or broader reproduction than described?"
+    },
+    "SEC-06_severity": {
+      "type": "score",
+      "instructions": "Rate the security impact or hardening priority of SEC-06 as worded, respecting every prerequisite and the deliberate single-admin root-equivalent trust model. Do not treat a source scanner trace as proven exploitation.",
+      "criteria": [
+        "Informational or optional hardening with no demonstrated material impact",
+        "Low conditional risk, limited effect, or defense-in-depth gap",
+        "Medium targeted confidentiality/availability/recovery defect, or material supply-chain/control gap",
+        "High material authentication/trust failure with potential host-level impact under explicit prerequisites, or actionable known-vulnerable release toolchain exposure",
+        "Critical broadly exploitable unauthenticated root compromise established by evidence"
+      ]
+    },
+    "SEC-06_support": {
+      "type": "noul",
+      "instructions": "Does the supplied evidence support the carefully qualified claim for SEC-06, without claiming production exploitation or broader reproduction than described?"
+    },
+    "SEC-07_severity": {
+      "type": "score",
+      "instructions": "Rate the security impact or hardening priority of SEC-07 as worded, respecting every prerequisite and the deliberate single-admin root-equivalent trust model. Do not treat a source scanner trace as proven exploitation.",
+      "criteria": [
+        "Informational or optional hardening with no demonstrated material impact",
+        "Low conditional risk, limited effect, or defense-in-depth gap",
+        "Medium targeted confidentiality/availability/recovery defect, or material supply-chain/control gap",
+        "High material authentication/trust failure with potential host-level impact under explicit prerequisites, or actionable known-vulnerable release toolchain exposure",
+        "Critical broadly exploitable unauthenticated root compromise established by evidence"
+      ]
+    },
+    "SEC-07_support": {
+      "type": "noul",
+      "instructions": "Does the supplied evidence support the carefully qualified claim for SEC-07, without claiming production exploitation or broader reproduction than described?"
+    },
+    "SEC-08_severity": {
+      "type": "score",
+      "instructions": "Rate the security impact or hardening priority of SEC-08 as worded, respecting every prerequisite and the deliberate single-admin root-equivalent trust model. Do not treat a source scanner trace as proven exploitation.",
+      "criteria": [
+        "Informational or optional hardening with no demonstrated material impact",
+        "Low conditional risk, limited effect, or defense-in-depth gap",
+        "Medium targeted confidentiality/availability/recovery defect, or material supply-chain/control gap",
+        "High material authentication/trust failure with potential host-level impact under explicit prerequisites, or actionable known-vulnerable release toolchain exposure",
+        "Critical broadly exploitable unauthenticated root compromise established by evidence"
+      ]
+    },
+    "SEC-08_support": {
+      "type": "noul",
+      "instructions": "Does the supplied evidence support the carefully qualified claim for SEC-08, without claiming production exploitation or broader reproduction than described?"
+    },
+    "CI-01_severity": {
+      "type": "score",
+      "instructions": "Rate the security impact or hardening priority of CI-01 as worded, respecting every prerequisite and the deliberate single-admin root-equivalent trust model. Do not treat a source scanner trace as proven exploitation.",
+      "criteria": [
+        "Informational or optional hardening with no demonstrated material impact",
+        "Low conditional risk, limited effect, or defense-in-depth gap",
+        "Medium targeted confidentiality/availability/recovery defect, or material supply-chain/control gap",
+        "High material authentication/trust failure with potential host-level impact under explicit prerequisites, or actionable known-vulnerable release toolchain exposure",
+        "Critical broadly exploitable unauthenticated root compromise established by evidence"
+      ]
+    },
+    "CI-01_support": {
+      "type": "noul",
+      "instructions": "Does the supplied evidence support the carefully qualified claim for CI-01, without claiming production exploitation or broader reproduction than described?"
+    }
+  }
+}

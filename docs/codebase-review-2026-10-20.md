@@ -206,3 +206,7 @@ Severity uses five ordered levels: 0=P4 optional, 1=P3 low urgency, 2=P2 planned
 Two scoring requests used 3,454 input and 461 output tokens in total. Lower-concentration assessments for operation memory, initialization, and sampling are kept conditional and require targeted evidence; they are not grounds for an unmeasured rewrite. Reviewer priority places F10 at P3 pending impact measurement.
 
 Reference: [TypeSafe confidence semantics](https://docs.typesafe.ai/confidence).
+
+## GitHub follow-up
+
+The [unified issue index](security-review-2026-10-20/issues.md) maps all 12 findings, the CI recommendation, and four measurement/lifetime follow-ups to GitHub, alongside the [security assessment](security-review-2026-10-20.md). F10 and SEC-07 share an issue; SEC-08 reuses existing issue #18. Publication tracks follow-up work and does not mean these findings have been fixed.

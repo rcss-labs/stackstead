@@ -1,0 +1,263 @@
+{
+  "repository": "rcss-labs/stackstead",
+  "review_date": "2026-10-20",
+  "baseline": "18a23af72d3c74e54c814a9b59679387f80d4084",
+  "existing": [
+    {
+      "id": "SEC-08",
+      "number": 18,
+      "url": "https://github.com/rcss-labs/stackstead/issues/18",
+      "title": "Refuse relative extra build contexts that leave the stack folder through a symlink"
+    }
+  ],
+  "issues": [
+    {
+      "id": "SEC-01",
+      "aliases": [],
+      "title": "[P2][SEC-01] Prevent old-password login from issuing a session after password recovery",
+      "labels": [
+        "bug",
+        "priority:p2",
+        "security"
+      ],
+      "body_file": "issues/SEC-01.md"
+    },
+    {
+      "id": "SEC-02",
+      "aliases": [],
+      "title": "[P1][SEC-02] Verify the expected IP identity in pinned peer TLS connections",
+      "labels": [
+        "bug",
+        "priority:p1",
+        "security"
+      ],
+      "body_file": "issues/SEC-02.md"
+    },
+    {
+      "id": "SEC-03",
+      "aliases": [],
+      "title": "[P2][SEC-03] Terminate authenticated streams when their session or peer is revoked",
+      "labels": [
+        "bug",
+        "priority:p2",
+        "security"
+      ],
+      "body_file": "issues/SEC-03.md"
+    },
+    {
+      "id": "SEC-04",
+      "aliases": [],
+      "title": "[P2][SEC-04] Separate reverse-proxy clients in authentication rate limiting",
+      "labels": [
+        "bug",
+        "priority:p2",
+        "security"
+      ],
+      "body_file": "issues/SEC-04.md"
+    },
+    {
+      "id": "SEC-05",
+      "aliases": [],
+      "title": "[P1][SEC-05] Require a patched Go toolchain and rebuild affected release artifacts",
+      "labels": [
+        "bug",
+        "priority:p1",
+        "security"
+      ],
+      "body_file": "issues/SEC-05.md"
+    },
+    {
+      "id": "SEC-06",
+      "aliases": [],
+      "title": "[P2][SEC-06] Enforce independent release authenticity for default install and upgrade",
+      "labels": [
+        "enhancement",
+        "priority:p2",
+        "security"
+      ],
+      "body_file": "issues/SEC-06.md"
+    },
+    {
+      "id": "F1",
+      "aliases": [],
+      "title": "[P2][F1] Preserve the predecessor health state at the retention boundary",
+      "labels": [
+        "bug",
+        "priority:p2"
+      ],
+      "body_file": "issues/F1.md"
+    },
+    {
+      "id": "F2",
+      "aliases": [],
+      "title": "[P2][F2] Count rolling restarts correctly when initial start predates the window",
+      "labels": [
+        "bug",
+        "priority:p2"
+      ],
+      "body_file": "issues/F2.md"
+    },
+    {
+      "id": "F3",
+      "aliases": [],
+      "title": "[P2][F3] Link remote service ports to their owning server",
+      "labels": [
+        "bug",
+        "priority:p2"
+      ],
+      "body_file": "issues/F3.md"
+    },
+    {
+      "id": "F4",
+      "aliases": [],
+      "title": "[P2][F4] Allow slow fleet polls to publish completed responses",
+      "labels": [
+        "bug",
+        "priority:p2"
+      ],
+      "body_file": "issues/F4.md"
+    },
+    {
+      "id": "F5",
+      "aliases": [],
+      "title": "[P2][F5] Protect dirty drafts against browser history navigation and reload",
+      "labels": [
+        "bug",
+        "priority:p2"
+      ],
+      "body_file": "issues/F5.md"
+    },
+    {
+      "id": "F6",
+      "aliases": [],
+      "title": "[P2][F6] Apply the service filter to live CLI metrics output",
+      "labels": [
+        "bug",
+        "priority:p2"
+      ],
+      "body_file": "issues/F6.md"
+    },
+    {
+      "id": "F7",
+      "aliases": [],
+      "title": "[P2][F7] Escape filesystem paths consistently when opening SQLite databases",
+      "labels": [
+        "bug",
+        "priority:p2"
+      ],
+      "body_file": "issues/F7.md"
+    },
+    {
+      "id": "F8",
+      "aliases": [],
+      "title": "[P2][F8] Take the maintenance lock before database initialization and migration",
+      "labels": [
+        "bug",
+        "priority:p2"
+      ],
+      "body_file": "issues/F8.md"
+    },
+    {
+      "id": "F9",
+      "aliases": [],
+      "title": "[P2][F9] Handle script-to-package installation transitions without retaining the old executable",
+      "labels": [
+        "bug",
+        "priority:p2"
+      ],
+      "body_file": "issues/F9.md"
+    },
+    {
+      "id": "F10",
+      "aliases": [
+        "SEC-07"
+      ],
+      "title": "[P3][F10] Bound retained operation output by bytes and global lifetime",
+      "labels": [
+        "enhancement",
+        "priority:p3",
+        "security",
+        "performance"
+      ],
+      "body_file": "issues/F10.md"
+    },
+    {
+      "id": "F11",
+      "aliases": [],
+      "title": "[P3][F11] Reuse peer transports for fleet polling and hello checks",
+      "labels": [
+        "enhancement",
+        "priority:p3",
+        "performance"
+      ],
+      "body_file": "issues/F11.md"
+    },
+    {
+      "id": "F12",
+      "aliases": [],
+      "title": "[P3][F12] Reduce collapsed log rendering and repeated service-color computation",
+      "labels": [
+        "enhancement",
+        "priority:p3",
+        "performance"
+      ],
+      "body_file": "issues/F12.md"
+    },
+    {
+      "id": "CI-01",
+      "aliases": [],
+      "title": "[P2][CI-01] Enforce repository verification and security checks on pull requests",
+      "labels": [
+        "enhancement",
+        "priority:p2",
+        "security",
+        "ci"
+      ],
+      "body_file": "issues/CI-01.md"
+    },
+    {
+      "id": "M1",
+      "aliases": [],
+      "title": "[P3][M1] Measure sampler duration and sample age before changing metrics concurrency",
+      "labels": [
+        "enhancement",
+        "priority:p3",
+        "performance"
+      ],
+      "body_file": "issues/M1.md"
+    },
+    {
+      "id": "M2",
+      "aliases": [],
+      "title": "[P3][M2] Measure global metrics query and pruning plans before adding indexes",
+      "labels": [
+        "enhancement",
+        "priority:p3",
+        "performance"
+      ],
+      "body_file": "issues/M2.md"
+    },
+    {
+      "id": "M3",
+      "aliases": [],
+      "title": "[P3][M3] Profile repeated Compose reads and per-service container scans",
+      "labels": [
+        "enhancement",
+        "priority:p3",
+        "performance"
+      ],
+      "body_file": "issues/M3.md"
+    },
+    {
+      "id": "M4",
+      "aliases": [],
+      "title": "[P3][M4] Check recorder bookkeeping cleanup for destroyed containers",
+      "labels": [
+        "enhancement",
+        "priority:p3",
+        "performance"
+      ],
+      "body_file": "issues/M4.md"
+    }
+  ]
+}
