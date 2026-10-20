@@ -49,7 +49,8 @@ export function useSessionGuard({ booted, loggingOut }: SessionGuardOptions): vo
     if (state === 'needs-setup' && path !== '/setup') {
       navigate('/setup', { replace: true });
     } else if (state === 'anonymous' && path !== '/login') {
-      if (loggingOut.current) navigate('/login', { replace: true });
+      // A user logout and the Setup page (someone else finished setup) carry no `next`: /setup is never a destination.
+      if (loggingOut.current || path === '/setup') navigate('/login', { replace: true });
       else navigate(`/login?next=${encodeURIComponent(path + window.location.search)}`, { replace: true });
     }
     if (state === 'authenticated') {
