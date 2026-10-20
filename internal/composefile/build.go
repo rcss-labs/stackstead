@@ -256,10 +256,8 @@ func NewStack(services []NamedService, top Extra) ([]byte, error) {
 	if len(services) == 0 {
 		return nil, fmt.Errorf("%w: no services", ErrInvalidConfig)
 	}
-	for _, reserved := range []string{"services", "name"} {
-		if top.node != nil && mappingValue(top.node, reserved) != nil {
-			return nil, fmt.Errorf("%w: extra may not set services or name", ErrInvalidExtra)
-		}
+	if mappingValue(top.node, "services") != nil || mappingValue(top.node, "name") != nil {
+		return nil, fmt.Errorf("%w: extra may not set services or name", ErrInvalidExtra)
 	}
 	declared := map[string]bool{}
 	if top.node != nil {
@@ -285,7 +283,18 @@ func NewStack(services []NamedService, top Extra) ([]byte, error) {
 			return nil, fmt.Errorf("service %s: %w", service.Name, err)
 		}
 		node := serviceNode(cfg)
-		mergeExtra(node, service.Extra.node)
+		if extraNets := mappingValue(service.Extra.node, "networks"); extraNets != nil && extraNets.Kind == yaml.MappingNode && len(cfg.Networks) > 0 {
+			// the extra carries per-network options (aliases, ipv4_address), so
+			// the form's networks must be a mapping for them to merge into
+			for i := 0; i+1 < len(node.Content); i += 2 {
+				if node.Content[i].Value == "networks" {
+					node.Content[i+1] = networksNode(cfg.Networks, true)
+				}
+			}
+		}
+		if err := mergeExtra(node, service.Extra.node, "services."+service.Name); err != nil {
+			return nil, err
+		}
 		serviceMap.Content = append(serviceMap.Content, strNode(service.Name), node)
 		for _, network := range cfg.Networks {
 			if !declared[network.Name] {
@@ -306,6 +315,8 @@ func NewStack(services []NamedService, top Extra) ([]byte, error) {
 		}
 		root.Content = append(root.Content, strNode("networks"), nets)
 	}
-	mergeExtra(root, top.node)
+	if err := mergeExtra(root, top.node, ""); err != nil {
+		return nil, err
+	}
 	return []byte(encode(root, 2) + "\n"), nil
 }

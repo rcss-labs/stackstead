@@ -2,6 +2,7 @@ package composefile
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -21,24 +22,42 @@ type Extra struct {
 // ParseExtra reads a JSON object. Empty input and null give the zero Extra;
 // anything but an object is ErrInvalidExtra. Key order is kept.
 func ParseExtra(raw []byte) (Extra, error) {
-	if len(bytes.TrimSpace(raw)) == 0 {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
 		return Extra{}, nil
 	}
-	var doc yaml.Node
-	if err := yaml.Unmarshal(raw, &doc); err != nil {
-		return Extra{}, fmt.Errorf("%w: %v", ErrInvalidExtra, err)
+	// json.Valid keeps YAML-only syntax (anchors, bare keys, several
+	// documents) out before the YAML parser, which is used only to keep key order.
+	if trimmed[0] != '{' || !json.Valid(trimmed) {
+		return Extra{}, ErrInvalidExtra
 	}
-	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(trimmed, &doc); err != nil || len(doc.Content) != 1 {
 		return Extra{}, ErrInvalidExtra
 	}
 	body := doc.Content[0]
-	if body.Kind == yaml.ScalarNode && body.Tag == "!!null" {
-		return Extra{}, nil
-	}
-	if body.Kind != yaml.MappingNode {
+	if body.Kind != yaml.MappingNode || hasDuplicateKeys(body) {
 		return Extra{}, ErrInvalidExtra
 	}
 	return Extra{node: plainStyle(blockCopy(body))}, nil
+}
+
+func hasDuplicateKeys(n *yaml.Node) bool {
+	if n.Kind == yaml.MappingNode {
+		seen := map[string]bool{}
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if seen[n.Content[i].Value] {
+				return true
+			}
+			seen[n.Content[i].Value] = true
+		}
+	}
+	for _, c := range n.Content {
+		if hasDuplicateKeys(c) {
+			return true
+		}
+	}
+	return false
 }
 
 func (e Extra) IsZero() bool { return e.node == nil }
@@ -55,23 +74,52 @@ func (e Extra) Keys() []string {
 	return keys
 }
 
-// mergeExtra deep-merges extra into base. Two mappings merge recursively; at
-// any other collision base wins. Keys only in extra are appended in order.
-func mergeExtra(base, extra *yaml.Node) {
+// mergeError is an ErrInvalidExtra whose message names the colliding key path.
+type mergeError struct{ msg string }
+
+func (e *mergeError) Error() string { return e.msg }
+func (e *mergeError) Unwrap() error { return ErrInvalidExtra }
+
+func kindName(n *yaml.Node) string {
+	switch n.Kind {
+	case yaml.MappingNode:
+		return "mapping"
+	case yaml.SequenceNode:
+		return "sequence"
+	}
+	return "scalar"
+}
+
+// mergeExtra deep-merges extra into base; path names base for error messages.
+// Mappings merge recursively; scalars and sequences of the same kind keep the
+// form's value; a kind mismatch is an error so no extra is dropped silently.
+// Keys only in extra are appended in order.
+func mergeExtra(base, extra *yaml.Node, path string) error {
 	if extra == nil {
-		return
+		return nil
 	}
 	for i := 0; i+1 < len(extra.Content); i += 2 {
 		key, value := extra.Content[i], extra.Content[i+1]
-		if existing := mappingValue(base, key.Value); existing != nil {
-			if existing.Kind == yaml.MappingNode && value.Kind == yaml.MappingNode {
-				mergeExtra(existing, value)
-			}
+		keyPath := key.Value
+		if path != "" {
+			keyPath = path + "." + key.Value
+		}
+		existing := mappingValue(base, key.Value)
+		if existing == nil {
+			base.Content = append(base.Content, blockCopy(key), blockCopy(value))
+			base.Style &^= yaml.FlowStyle // an empty {} that gained keys must print as a block
 			continue
 		}
-		base.Content = append(base.Content, blockCopy(key), blockCopy(value))
-		base.Style &^= yaml.FlowStyle // an empty {} that gained keys must print as a block
+		if existing.Kind != value.Kind {
+			return &mergeError{fmt.Sprintf("extra: %s: cannot merge %s into %s", keyPath, kindName(value), kindName(existing))}
+		}
+		if existing.Kind == yaml.MappingNode {
+			if err := mergeExtra(existing, value, keyPath); err != nil {
+				return err
+			}
+		}
 	}
+	return nil
 }
 
 // plainStyle drops the double quotes JSON puts on every string so keys and

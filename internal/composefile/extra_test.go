@@ -170,3 +170,43 @@ func TestNewStackRejectsReservedTopKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestParseExtraRejectsNonJSONObjects(t *testing.T) {
+	for _, raw := range []string{
+		`a: 1`, `{"a":1} {"b":2}`, `{"a":1,"a":2}`, `{"o":{"a":1,"a":2}}`,
+		`{"o":[{"a":1,"a":2}]}`, "&x {\"a\":1}", `{"a": *x}`, `{a: 1}`, `{"a":1,}`,
+	} {
+		if _, err := ParseExtra([]byte(raw)); !errors.Is(err, ErrInvalidExtra) || err.Error() != "extra must be a JSON object" {
+			t.Errorf("ParseExtra(%s) err = %v; want exactly ErrInvalidExtra", raw, err)
+		}
+	}
+}
+
+func TestNewStackServiceNetworksExtraKeepsAliases(t *testing.T) {
+	src, err := NewStack([]NamedService{{Name: "web", Extra: mustExtra(t, `{"networks":{"lan":{"aliases":["w"],"ipv4_address":"10.0.0.9"}}}`),
+		Config: ServiceConfig{Image: "x", Networks: []NetworkAttachment{{Name: "lan"}, {Name: "b"}}}}}, Extra{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nets := decode(t, src)["services"].(map[string]any)["web"].(map[string]any)["networks"].(map[string]any)
+	lan := nets["lan"].(map[string]any)
+	if lan["ipv4_address"] != "10.0.0.9" || len(lan["aliases"].([]any)) != 1 {
+		t.Errorf("lan = %v; extra aliases/ip lost\n%s", lan, src)
+	}
+	if _, ok := nets["b"]; !ok {
+		t.Errorf("form network b dropped\n%s", src)
+	}
+}
+
+func TestNewStackKindMismatchIsAnError(t *testing.T) {
+	_, err := NewStack([]NamedService{{Name: "web", Extra: mustExtra(t, `{"deploy":"bad"}`),
+		Config: ServiceConfig{Image: "x", Limits: Limits{CPUs: "1"}}}}, Extra{})
+	if !errors.Is(err, ErrInvalidExtra) || !strings.Contains(err.Error(), "services.web.deploy") {
+		t.Errorf("service err = %v", err)
+	}
+	_, err = NewStack([]NamedService{{Name: "web", Config: ServiceConfig{Image: "x", Networks: []NetworkAttachment{{Name: "lan"}}}}},
+		mustExtra(t, `{"networks":["lan"]}`))
+	if !errors.Is(err, ErrInvalidExtra) || !strings.Contains(err.Error(), "networks") {
+		t.Errorf("top err = %v", err)
+	}
+}
