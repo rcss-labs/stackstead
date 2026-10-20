@@ -94,8 +94,11 @@ which builds first so `web/src/bundle.test.ts` measures the shipped `web/dist`.
 ### Bundle shape
 
 Only the shell, the stores and the Overview screen are eager; every other
-screen and the command palette are route-level `React.lazy` chunks, and
-CodeMirror and uPlot load on first use. `make ui` fails when a budget is
+screen is a route-level `React.lazy` chunk, and CodeMirror and uPlot load on
+first use. The command palette is a lazy chunk too, but `PaletteHost` loads it
+with an explicit `load()` promise (prefetched when the browser is idle, or on
+first open) and, until it arrives, shows a small fallback dialog from the eager
+chunk that keeps early keystrokes and hands them to the palette. `make ui` fails when a budget is
 exceeded (`web/scripts/check-bundle.mjs`), and `web/src/bundle.test.ts` pins the
 shape against `web/dist`: the entry stays at most 106 kB gzipped, and for each
 lazy screen (and shared piece such as `ServiceForm`, `FileBrowser`,

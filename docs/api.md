@@ -249,7 +249,8 @@ running container.
   (new replicas, malformed entries) start from the normal `tail`. Residual
   limits come from Docker: lines already evicted by log rotation cannot be
   replayed, a host clock that steps backwards can hide lines on resume, a
-  recreated container has a new id and starts from `tail`, and log drivers with coarse clocks only make the ordinal do more work. Resume
+  recreated container has a new id and starts from `tail`, and log drivers
+  with coarse clocks only make the ordinal do more work. Resume
   reads the container's log from the start (`tail=all` plus `since`) and skips
   to the cursor, so its cost grows with the log: configure log rotation
   (for example `max-size`) on stacks you tail for long.
