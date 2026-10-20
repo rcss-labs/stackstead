@@ -108,8 +108,8 @@ func TestOpenCreatesStacksTableAtLatestVersion(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 6 {
-		t.Errorf("user_version = %d, want 6", version)
+	if version != 7 {
+		t.Errorf("user_version = %d, want 7", version)
 	}
 	if _, err := db.Exec(`INSERT INTO stacks (name, compose_path, origin, project, created_at) VALUES ('a', '/a/compose.yaml', 'managed', 'a', 0)`); err != nil {
 		t.Fatalf("insert stack: %v", err)
@@ -230,5 +230,19 @@ func TestOpenUpgradesVersion3DatabaseKeepingStacks(t *testing.T) {
 	}
 	if _, err := db.Exec(`INSERT INTO settings (key, value) VALUES ('k', 'v')`); err != nil {
 		t.Fatalf("settings table missing: %v", err)
+	}
+}
+
+func TestMigrationAddsPeerTables(t *testing.T) {
+	db := openTemp(t)
+	if got := store.SupportedSchema(); got != 7 {
+		t.Fatalf("SupportedSchema = %d, want 7", got)
+	}
+	for _, table := range []string{"peers", "connection_tokens"} {
+		count(t, db, table)
+	}
+	_, err := db.Exec(`INSERT INTO peers (instance_id, name, slug, url, created_at, state) VALUES ('i', 'n', 's', 'u', 0, 'removing')`)
+	if err == nil {
+		t.Fatal("insert with state 'removing' succeeded, want CHECK failure")
 	}
 }

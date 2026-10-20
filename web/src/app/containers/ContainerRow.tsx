@@ -8,6 +8,7 @@ import { Button } from '../components/Button';
 import { Led } from '../components/Led';
 import { StatusBadge } from '../components/StatusBadge';
 import { Tag } from '../components/Tag';
+import { useServer } from '../servers/ServerContext';
 import styles from './ContainerRow.module.css';
 
 export interface ContainerRowProps {
@@ -24,6 +25,7 @@ export interface ContainerRowProps {
 }
 
 export function ContainerRow({ row, index, focused, open, peekId, mobile, onFocus, onToggle, rowRef }: ContainerRowProps) {
+  const { href } = useServer();
   const led = containerLed(row);
   const ports = portChips(row.ports, 2);
   const cpu = row.cpu !== null ? formatPercent(row.cpu) : '—';
@@ -52,7 +54,7 @@ export function ContainerRow({ row, index, focused, open, peekId, mobile, onFocu
         <Led tone={led.tone} pulse={led.pulse} label={row.state} />
       </div>
       <div role="cell" className={styles.name}>
-        <Link to={`/containers/${encodeURIComponent(row.name)}`} className={styles.nameLink} title={row.name}>
+        <Link to={href(`/containers/${encodeURIComponent(row.name)}`)} className={styles.nameLink} title={row.name}>
           {row.name}
         </Link>
         {mobile && (
@@ -63,7 +65,7 @@ export function ContainerRow({ row, index, focused, open, peekId, mobile, onFocu
       </div>
       <div role="cell" data-col="stack" data-desktop className={styles.stack}>
         {row.managed === 'stack' ? (
-          <Link to={`/stacks/${encodeURIComponent(row.stack)}`} className={styles.stackLink}>
+          <Link to={href(`/stacks/${encodeURIComponent(row.stack)}`)} className={styles.stackLink}>
             {row.stack}
           </Link>
         ) : row.managed === 'compose' ? (

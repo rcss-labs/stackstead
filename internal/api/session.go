@@ -49,6 +49,13 @@ func (s *server) requireSession(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie(sessionCookieName)
 		if err != nil {
+			if s.usesPeerCredential(r) {
+				user := s.authenticatePeerRequest(w, r)
+				if user != nil {
+					next(w, r.WithContext(context.WithValue(r.Context(), userKey{}, *user)))
+				}
+				return
+			}
 			writeError(w, http.StatusUnauthorized, "authentication required")
 			return
 		}
@@ -61,6 +68,9 @@ func (s *server) requireSession(next http.HandlerFunc) http.Handler {
 		if err != nil {
 			s.internalError(w, r, err)
 			return
+		}
+		if s.opts.Peers != nil {
+			s.opts.Peers.NoteSessionActivity()
 		}
 		next(w, r.WithContext(context.WithValue(r.Context(), userKey{}, user)))
 	})

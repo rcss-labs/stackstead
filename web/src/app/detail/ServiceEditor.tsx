@@ -1,13 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { api, ApiError } from '$lib/api/client';
+import { ApiError } from '$lib/api/client';
 import type { Operation, ServiceDetail, StackDetail } from '$lib/api/types';
 import type { ServiceForm as Form } from '$lib/compose/form';
 import { createServiceEdit } from '$lib/stacks/serviceEdit';
 import { get } from '$lib/store';
-import { refreshStatus } from '$lib/stores/live';
-import { trackOperation } from '$lib/stores/operationTracker';
-import { refreshRunningOps, refreshStacks } from '$lib/stores/stacks';
 import { toasts } from '$lib/stores/toasts';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
@@ -19,6 +16,7 @@ import { BROWSE_TITLES, ServiceForm, type BrowsePurpose, type ServiceFormHandle 
 import { OperationPanel } from './OperationPanel';
 import styles from './ServiceEditor.module.css';
 
+import { useServer } from '../servers/ServerContext';
 export interface ServiceEditorProps {
   stack: StackDetail;
   service: ServiceDetail;
@@ -49,6 +47,7 @@ const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor, onReload, lifecycleDisabledReason, onDirtyChange, removeSlot }: ServiceEditorProps) {
   // The page keys this editor by stack and service; both are fixed for its lifetime.
+  const { api, refreshStatus, trackOperation, refreshRunningOps, refreshStacks } = useServer();
   const stackName = stack.name;
   const serviceName = service.name;
   const reloadRef = useRef(onReload);
@@ -60,9 +59,9 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
       { config: service.config, readOnly: service.readOnly, hash: stack.hash },
       {
         // A 503 means Docker went away: have the status banners catch up.
-        preview: (config, hash) => api.previewService(stackName, serviceName, config, hash).catch(unavailableRefresh),
+        preview: (config, hash) => api.previewService(stackName, serviceName, config, hash).catch((e) => unavailableRefresh(e, refreshStatus)),
         update: async (config, hash) => {
-          const res = await api.updateService(stackName, serviceName, config, hash).catch(unavailableRefresh);
+          const res = await api.updateService(stackName, serviceName, config, hash).catch((e) => unavailableRefresh(e, refreshStatus));
           return { hash: res.data.hash, checksPartial: res.checksPartial };
         },
         compose: () => api.compose(stackName),
@@ -364,7 +363,7 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
   );
 }
 
-function unavailableRefresh(e: unknown): never {
+function unavailableRefresh(e: unknown, refreshStatus: () => Promise<void>): never {
   if (e instanceof ApiError && e.status === 503) void refreshStatus();
   throw e;
 }

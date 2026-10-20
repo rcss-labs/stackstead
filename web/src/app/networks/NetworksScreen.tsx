@@ -1,5 +1,4 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { api } from '$lib/api/client';
 import type { Network } from '$lib/api/types';
 import { networkSummary, sortNetworks, summaryParts } from '$lib/networks/networks';
 import { toasts } from '$lib/stores/toasts';
@@ -7,6 +6,7 @@ import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState } from '../components/EmptyState';
+import { useServer } from '../servers/ServerContext';
 import { Spinner } from '../components/Spinner';
 import { CreateNetworkDialog } from './CreateNetworkDialog';
 import { NetworkCard } from './NetworkCard';
@@ -14,6 +14,7 @@ import styles from './NetworksScreen.module.css';
 import { useNetworkList } from './useNetworkList';
 
 export function NetworksScreen() {
+  const { api } = useServer();
   const { rows, error, refresh } = useNetworkList();
   const networks = useMemo(() => sortNetworks(rows ?? []), [rows]);
   const parts = useMemo(() => summaryParts(networkSummary(rows ?? [])), [rows]);

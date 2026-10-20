@@ -73,6 +73,8 @@ func (o ObserveSources) SubscribeEvents() (<-chan engine.Event, func()) {
 	return o.Cache.SubscribeEvents()
 }
 
+func (o ObserveSources) RecentEvents() []engine.Event { return o.Cache.RecentEvents() }
+
 // Logs requests multiplexed framing because the cache does not record whether
 // a container has a TTY. engine.Logs recognises a raw TTY stream from its first
 // bytes and reads it raw, so both kinds work without an inspect call.
@@ -112,6 +114,7 @@ func (s *server) registerObserveRoutes(mux *http.ServeMux) {
 	route := func(pattern string, h http.HandlerFunc) { mux.Handle(pattern, s.requireSession(h)) }
 	mux.HandleFunc("GET /metrics", s.handlePrometheus)
 	route("GET /api/events", s.handleEvents)
+	route("GET /api/events/recent", s.handleRecentEvents)
 	route("POST /api/settings/metrics-token", s.handleCreateMetricsToken)
 	route("DELETE /api/settings/metrics-token", s.handleDeleteMetricsToken)
 	route("GET /api/settings/metrics-token", s.handleMetricsTokenStatus)
@@ -950,6 +953,27 @@ func (s *server) statusPollInterval() time.Duration {
 		every = maxStatusPoll
 	}
 	return every
+}
+
+// recentEventsSource is implemented by observers that remember the last
+// forwarded events (the production cache does); others report none.
+type recentEventsSource interface{ RecentEvents() []engine.Event }
+
+// recentEvents returns the observer's remembered events, newest first, in wire form.
+func (s *server) recentEvents() []apitypes.EventMessage {
+	out := []apitypes.EventMessage{}
+	if src, ok := s.opts.Observe.(recentEventsSource); ok {
+		for _, ev := range src.RecentEvents() {
+			out = append(out, eventMessage(ev))
+		}
+	}
+	return out
+}
+
+// handleRecentEvents answers a client that just opened with the activity that
+// happened before it subscribed to the stream.
+func (s *server) handleRecentEvents(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.recentEvents())
 }
 
 // handleEvents streams the status cache: "status" {events, metricsDegraded}

@@ -7,6 +7,7 @@ import { Button } from '../components/Button';
 import { PanelLabel } from '../components/PanelLabel';
 import { Segmented } from '../components/Segmented';
 import { useStore } from '../hooks/useStore';
+import { ConnectedServersCard } from './ConnectedServersCard';
 import { MetricsTokenCard } from './MetricsTokenCard';
 import { PasswordForm } from './PasswordForm';
 import { SettingsCard } from './SettingsCard';
@@ -18,6 +19,7 @@ export const SECTIONS: readonly { id: string; label: string }[] = [
   { id: 'settings-system', label: 'System' },
   { id: 'settings-updates', label: 'Updates' },
   { id: 'settings-prometheus', label: 'Prometheus' },
+  { id: 'settings-servers', label: 'Connected servers' },
   { id: 'settings-appearance', label: 'Appearance' },
   { id: 'settings-account', label: 'Account' },
 ];
@@ -98,6 +100,9 @@ export function SettingsScreen() {
         </div>
         <div id="settings-prometheus">
           <MetricsTokenCard />
+        </div>
+        <div id="settings-servers">
+          <ConnectedServersCard />
         </div>
         <div id="settings-appearance">
           <SettingsCard id="appearance-h" title="Appearance">

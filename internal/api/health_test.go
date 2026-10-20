@@ -8,7 +8,7 @@ func TestHealthIsPublic(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("health = %d, body %s", rec.Code, rec.Body)
 	}
-	if got := rec.Body.String(); got != "{\"ok\":true}\n" && got != "{\"ok\":true}" {
+	if got := rec.Body.String(); got != "{\"ok\":true,\"peering\":1}\n" && got != "{\"ok\":true,\"peering\":1}" {
 		t.Errorf("body = %q", got)
 	}
 	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {

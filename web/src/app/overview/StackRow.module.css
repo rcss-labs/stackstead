@@ -9,6 +9,12 @@
   transition: background 0.12s;
 }
 
+.row[data-fleet='true'] {
+  grid-template-columns: 8px minmax(140px, 1.4fr) minmax(70px, 0.8fr) 96px minmax(70px, 1fr) 104px 104px 76px;
+}
+
+.server { min-width: 0; }
+
 .row:hover { background: var(--hover); }
 
 .led { display: flex; }
@@ -88,6 +94,8 @@
     min-height: 52px;
     min-width: 0;
   }
+
+  .row[data-fleet='true'] { grid-template-columns: 8px minmax(0, 1fr) auto; }
 
   .row [data-desktop='true'] { display: none; }
 

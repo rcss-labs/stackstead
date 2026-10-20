@@ -100,6 +100,83 @@ Private registries: the service reads Docker credentials from its own home, so l
 sudo -u stackstead -H docker login registry.example.com
 ```
 
+## Connected servers behind a login proxy
+
+If the reverse proxy in front of Stackstead asks for its own login (basic
+auth, forward-auth or SSO), it would also stop calls from connected servers.
+Let requests that carry `X-Stackstead-Peer` through to Stackstead. Be aware
+that this lets any request carrying that header skip the proxy's own login, so
+Stackstead's login page and setup page become reachable without it. Stackstead
+still requires its own login or a valid peer credential for everything else.
+
+nginx, with basic auth. The `map` goes in the `http` block:
+
+```nginx
+map $http_x_stackstead_peer $stackstead_auth {
+    ""      "Stackstead";
+    default off;
+}
+
+server {
+    # your existing TLS settings
+    location / {
+        auth_basic           $stackstead_auth;
+        auth_basic_user_file /etc/nginx/stackstead.htpasswd;
+        proxy_pass           http://127.0.0.1:8420;
+        proxy_set_header     Host $host;
+        proxy_set_header     X-Forwarded-For $remote_addr;
+        proxy_buffering      off;   # keeps event streams live
+    }
+}
+```
+
+`auth_basic` accepts a variable, so `off` skips the login for peer calls only.
+`auth_request` has no such switch. With it, have the auth service return
+success when `X-Stackstead-Peer` is present.
+
+Caddy and Traefik use forward-auth. Send requests that carry
+`X-Stackstead-Peer` past the forward-auth step. Caddy (the first matching
+`handle` wins, so the peer block comes first):
+
+```caddyfile
+stacks.example.com {
+    @peer header X-Stackstead-Peer *
+    handle @peer {
+        reverse_proxy 127.0.0.1:8420
+    }
+    handle {
+        forward_auth authelia:9091 {
+            # your existing forward_auth settings
+        }
+        reverse_proxy 127.0.0.1:8420
+    }
+}
+```
+
+Traefik v3 (file provider, v3 matcher syntax): a peer router with a higher
+priority and no forward-auth middleware:
+
+```yaml
+http:
+  routers:
+    stackstead-peer:
+      rule: "Host(`stacks.example.com`) && HeaderRegexp(`X-Stackstead-Peer`, `.+`)"
+      priority: 100
+      service: stackstead
+      tls: {}
+    stackstead:
+      rule: "Host(`stacks.example.com`)"
+      middlewares: [sso]   # your forward-auth middleware
+      service: stackstead
+      tls: {}
+```
+
+If a peer's address answers with a login page or another non-Stackstead
+response, the other server shows "{name}'s proxy answered instead of
+Stackstead". The status checker keeps retrying and shows the server as
+unreachable with that message; it does not remove the connection, so it
+recovers once the proxy lets Stackstead's peer requests through.
+
 ## Security notes
 
 - The `stackstead` user is in the `docker` group. Docker access is root-equivalent on the host, so anyone

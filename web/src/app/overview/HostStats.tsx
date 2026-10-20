@@ -7,6 +7,7 @@ import { PanelLabel } from '../components/PanelLabel';
 import { Sparkline } from '../components/Sparkline';
 import styles from './HostStats.module.css';
 
+import { useServer } from '../servers/ServerContext';
 export interface HostStatsProps {
   host: HostSnapshot | undefined;
   history: HostSample[];
@@ -27,6 +28,7 @@ export function HostStats({ host, history }: HostStatsProps) {
 }
 
 function StatCell({ stat }: { stat: HostStat }) {
+  const { href } = useServer();
   const body = (
     <>
       <div className={styles.top}>
@@ -47,7 +49,7 @@ function StatCell({ stat }: { stat: HostStat }) {
     </>
   );
   return stat.href ? (
-    <Link to={stat.href} className={styles.cell} data-stat={stat.id}>
+    <Link to={href(stat.href)} className={styles.cell} data-stat={stat.id}>
       {body}
     </Link>
   ) : (

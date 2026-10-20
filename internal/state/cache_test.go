@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"runtime"
 	"sync"
@@ -670,4 +671,31 @@ func TestEventWithoutProjectLabelForcesNothing(t *testing.T) {
 
 	src.stream(t, 1).send(t, lifecycleEvent("die", "a1", ""))
 	noChange(t, changes, 100*time.Millisecond)
+}
+
+func TestCacheKeepsRecentEvents(t *testing.T) {
+	src := &fakeSource{containers: []engine.Container{ctr("a", "a1", "running")}}
+	h := start(t, src)
+	waitFor(t, h.c.Connected)
+	if got := h.c.RecentEvents(); len(got) != 0 {
+		t.Fatalf("fresh cache has %d recent events", len(got))
+	}
+	events, cancel := h.c.SubscribeEvents()
+	defer cancel()
+	s := src.stream(t, 1)
+	for i := range 60 {
+		s.send(t, engine.Event{Type: "container", Action: "start", ContainerID: "a1", Name: fmt.Sprintf("c%02d", i)})
+		nextEvent(t, events)
+	}
+	got := h.c.RecentEvents()
+	if len(got) != 50 {
+		t.Fatalf("RecentEvents has %d events, want 50", len(got))
+	}
+	if got[0].Name != "c59" || got[49].Name != "c10" {
+		t.Errorf("order = %s ... %s, want c59 ... c10 (newest first)", got[0].Name, got[49].Name)
+	}
+	got[0].Name = "mutated"
+	if h.c.RecentEvents()[0].Name != "c59" {
+		t.Error("RecentEvents returned the cache's own slice")
+	}
 }

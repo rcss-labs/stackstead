@@ -1,10 +1,13 @@
 import { Link } from 'react-router';
 import { ICONS } from '$lib/shell/icons';
 import { effectiveTheme, setTheme } from '$lib/stores/appearance';
+import { connectedPeers, peers } from '$lib/servers/peers';
 import { live } from '$lib/stores/live';
 import { useStore } from '../hooks/useStore';
+import { localScope } from '../servers/ServerContext';
 import { PanelLabel } from '../components/PanelLabel';
 import { HostBlock } from './HostBlock';
+import { ServerNav } from './ServerNav';
 import { NavItem } from './NavItem';
 import { NAV, type NavEntry } from './nav';
 import styles from './Sidebar.module.css';
@@ -17,13 +20,16 @@ export interface SidebarProps {
   stackCount: number;
   attention: boolean;
   onOpenPalette: () => void;
+  /** Follows a server heading click; the app passes its unsaved-changes guard. */
+  onNavigate?: (href: string) => void;
 }
 
 const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
 
-export function Sidebar({ username, onLogout, current, stackCount, attention, onOpenPalette }: SidebarProps) {
+export function Sidebar({ username, onLogout, current, stackCount, attention, onOpenPalette, onNavigate }: SidebarProps) {
   const dark = useStore(effectiveTheme) === 'dark';
   const status = useStore(live);
+  const peerList = connectedPeers(useStore(peers).items);
   const initials = (username ?? '').slice(0, 2).toUpperCase();
   const themeLabel = dark ? 'Switch to light theme' : 'Switch to dark theme';
 
@@ -63,11 +69,17 @@ export function Sidebar({ username, onLogout, current, stackCount, attention, on
           {isMac ? '⌘K' : 'Ctrl K'}
         </kbd>
       </button>
-      <div className={styles.group}>{NAV.filter((e) => e.group === 'main').map(item)}</div>
-      <div className={styles.createLabel}>
-        <PanelLabel tone="faint">Create</PanelLabel>
-      </div>
-      <div className={styles.group}>{NAV.filter((e) => e.group === 'create').map(item)}</div>
+      {peerList.length > 0 ? (
+        <ServerNav current={current} localName={localScope.name} localStackCount={stackCount} peers={peerList} attention={attention} onNavigate={onNavigate} />
+      ) : (
+        <>
+          <div className={styles.group}>{NAV.filter((e) => e.group === 'main').map(item)}</div>
+          <div className={styles.createLabel}>
+            <PanelLabel tone="faint">Create</PanelLabel>
+          </div>
+          <div className={styles.group}>{NAV.filter((e) => e.group === 'create').map(item)}</div>
+        </>
+      )}
       <div className={styles.bottom}>
         <div className={styles.group}>{NAV.filter((e) => e.group === 'settings').map(item)}</div>
         <div className={styles.user}>

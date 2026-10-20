@@ -1,8 +1,9 @@
 import { get } from '$lib/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Status } from '../api/types';
+import { scopedOpen as scopedOpenFor } from '../sse/client';
 import { installFakeStream, type FakeStream } from '../../vitest-setup';
-import { changes, events, live, refreshStatus, startLive, stopLive } from './live';
+import { changes, createLiveStore, events, live, refreshStatus, startLive, stopLive } from './live';
 
 let fake: FakeStream;
 const status: Status = {
@@ -267,5 +268,30 @@ describe('live store', () => {
     expect(get(events)).toHaveLength(1);
     stopLive();
     expect(get(events)).toEqual([]);
+  });
+});
+
+describe('createLiveStore', () => {
+  it('two live stores are independent', async () => {
+    fake = installFakeStream({ '/a/api/events': [], '/b/api/events': [] });
+    const open = scopedOpenFor;
+    const a = createLiveStore();
+    const b = createLiveStore();
+    a.startLive({ fetchStatus, open: open('/a') });
+    b.startLive({ fetchStatus, open: open('/b') });
+    await tick();
+    fake.push(
+      '/a/api/events',
+      'event: event\ndata: {"action":"die","container":"c","project":"p","service":"s","image":"i","time":"t"}\n\n',
+    );
+    fake.push('/a/api/events', 'event: change\ndata: {"project":"web","seq":1}\n\n');
+    await tick();
+    expect(get(a.events)).toHaveLength(1);
+    expect(get(b.events)).toHaveLength(0);
+    expect(get(a.changes)).toEqual({ project: 'web', seq: 1 });
+    expect(get(b.changes)).toMatchObject({ resync: true });
+    a.stopLive();
+    expect(get(b.live).connection).toBe('open');
+    b.stopLive();
   });
 });

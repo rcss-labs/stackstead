@@ -100,6 +100,7 @@ without a platform to maintain.
 - **Resource history.** CPU, memory, network and disk I/O for every service,
   live and for the last 72 hours (configurable), so you can see what
   happened while you were away.
+- **Connected servers.** Connect two or more Stackstead servers, then manage all of them from any one UI, with an All stacks view. Each connection is root-equivalent on both machines; see [Security](docs/security.md#connected-servers).
 - **Plays well with Grafana.** An optional Prometheus `/metrics` endpoint,
   protected by its own token.
 - **No lock-in.** Stop using Stackstead tomorrow and your stacks are just

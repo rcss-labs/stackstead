@@ -124,7 +124,8 @@ describe('build shape', () => {
       .map((f) => `assets/${f}`)
       .filter((f) => !lazyFiles.includes(f));
     expect(eagerFiles.map(chunkName).some((name) => /Container|LogConsole|Peek/i.test(name))).toBe(false);
-    expect(sizes.entry).toBeLessThanOrEqual(106 * 1024);
+    // Ratchet below ENTRY_BUDGET: connected servers moved the server scope into the eager Overview.
+    expect(sizes.entry).toBeLessThanOrEqual(110 * 1024);
 
     // The eager code is one merged chunk (codeSplitting group in vite.config.ts), so a chunk name cannot reveal
     // container code folded into it; a string literal unique to each lazy screen can.
@@ -150,7 +151,8 @@ describe('build shape', () => {
       .filter((f) => !lazyFiles.includes(f));
     expect(eagerFiles.map(chunkName).some((name) => /StackCreate|StackImport|ServiceForm|FileBrowser|NetworkPicker|ComposePreview|portCheck|YamlEditor|^cm$/i.test(name))).toBe(false);
     expect(lazyFiles.some((f: string) => chunkName(f) === 'cm'), 'cm stays a lazy chunk').toBe(true);
-    expect(sizes.entry).toBeLessThanOrEqual(106 * 1024);
+    // Ratchet below ENTRY_BUDGET: connected servers moved the server scope into the eager Overview.
+    expect(sizes.entry).toBeLessThanOrEqual(110 * 1024);
 
     // As above: eager code is one merged chunk, so unique strings are what reveal folded-in screens. ServiceForm,
     // FileBrowser and NetworkPicker are shared with StackDetail and may sit in a shared lazy chunk, so only their
@@ -185,7 +187,8 @@ describe('build shape', () => {
       .map((f) => `assets/${f}`)
       .filter((f) => !lazyFiles.includes(f));
     expect(eagerFiles.map(chunkName).some((name) => /Storage|CleanupDialog|UsageCard|usage/i.test(name))).toBe(false);
-    expect(sizes.entry).toBeLessThanOrEqual(106 * 1024);
+    // Ratchet below ENTRY_BUDGET: connected servers moved the server scope into the eager Overview.
+    expect(sizes.entry).toBeLessThanOrEqual(110 * 1024);
 
     // As above: eager code is one merged chunk, so unique strings are what reveal folded-in code. CleanupDialog,
     // usage.ts and OperationPanel may sit in shared lazy chunks, so only their absence from the eager files is asserted.
@@ -220,7 +223,8 @@ describe('build shape', () => {
       .map((f) => `assets/${f}`)
       .filter((f) => !lazyFiles.includes(f));
     expect(eagerFiles.map(chunkName).some((name) => /NetworkList|NetworkCard|Settings|PasswordForm|UpdateCard|MetricsToken|Login|Setup|AuthCard|CreateNetworkDialog/i.test(name))).toBe(false);
-    expect(sizes.entry).toBeLessThanOrEqual(106 * 1024);
+    // Ratchet below ENTRY_BUDGET: connected servers moved the server scope into the eager Overview.
+    expect(sizes.entry).toBeLessThanOrEqual(110 * 1024);
 
     // As above: eager code is one merged chunk, so unique strings are what reveal folded-in code. Login and Setup are
     // mounted by App from the session state but through lazy() routes, so they are lazy too. AuthCard, PasswordForm,

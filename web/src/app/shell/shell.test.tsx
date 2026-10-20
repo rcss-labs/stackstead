@@ -1,8 +1,12 @@
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, useLocation } from 'react-router';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { HostSnapshot, Operation, Status } from '$lib/api/types';
+import { api } from '$lib/api/client';
+import type { HostSnapshot, Operation, PeerView, Status } from '$lib/api/types';
+import { startPeers } from '$lib/servers/peers';
+import { installFakeFetch, installFakeStream } from '../../vitest-setup';
+import RemoteServer from '../servers/RemoteServer';
 import { setTheme } from '$lib/stores/appearance';
 import { startHost } from '$lib/stores/host';
 import { startLive, stopLive } from '$lib/stores/live';
@@ -478,5 +482,176 @@ describe('Mobile', () => {
       </MemoryRouter>,
     );
     expect(screen.getByText('Networks').hasAttribute('data-mono')).toBe(false);
+  });
+});
+
+const peer = (over: Partial<PeerView> = {}): PeerView => ({
+  id: 'b1',
+  name: 'mini-02',
+  slug: 'mini-02',
+  url: 'https://mini-02:8080',
+  version: '1.5',
+  status: 'reachable',
+  stackCount: 4,
+  lastSeenAt: null,
+  lastError: '',
+  compatible: true,
+  plaintext: false,
+  ...over,
+});
+
+describe('server navigation', () => {
+  let stopPeers: (() => void) | undefined;
+  afterEach(() => {
+    stopPeers?.();
+    stopPeers = undefined;
+  });
+  const withPeers = async (list: PeerView[]) => {
+    stopPeers = startPeers({ list: async () => list });
+    await sleep(0);
+  };
+  const props = { ...sidebarProps, stackCount: 3 };
+  const heading = (name: string | RegExp) => screen.getByRole('button', { name });
+
+  it('sidebar without peers is unchanged', () => {
+    renderIn(<Sidebar {...props} current="/" />);
+    expect(screen.queryByRole('link', { name: 'All stacks' })).toBeNull();
+    expect(screen.queryByText('this server')).toBeNull();
+    expect(screen.queryByRole('button', { name: /expand|this server/i })).toBeNull();
+  });
+
+  it('sidebar with one peer sums the counts and expands this server', async () => {
+    await withPeers([peer()]);
+    renderIn(<Sidebar {...props} current="/" />);
+    const all = await screen.findByRole('link', { name: 'All stacks' });
+    expect(all.getAttribute('href')).toBe('/all');
+    expect(all.textContent).toContain('7');
+    expect(heading(/this server/).getAttribute('aria-expanded')).toBe('true');
+    for (const label of ['Stacks', 'Containers', 'Networks', 'Storage', 'New stack', 'Import']) {
+      expect(screen.getByRole('link', { name: label })).toBeTruthy();
+    }
+    const mini = heading(/mini-02/);
+    expect(mini.getAttribute('aria-expanded')).toBe('false');
+    expect(mini.textContent).toContain('4');
+    expect(screen.getAllByRole('link', { name: 'Containers' })).toHaveLength(1);
+    expect(screen.getByRole('link', { name: 'Settings' })).toBeTruthy();
+  });
+
+  it('viewing a peer expands it and collapses this server', async () => {
+    await withPeers([peer()]);
+    renderIn(<Sidebar {...props} current="/s/mini-02/containers" />);
+    await screen.findByRole('link', { name: 'All stacks' });
+    expect(heading(/mini-02/).getAttribute('aria-expanded')).toBe('true');
+    expect(heading(/this server/).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByRole('link', { name: 'Containers' }).getAttribute('href')).toBe('/s/mini-02/containers');
+    expect(screen.getByRole('link', { name: 'Stacks' }).getAttribute('href')).toBe('/s/mini-02');
+    expect(current('Containers')).toBe('page');
+    expect(current('Stacks')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Settings' }).getAttribute('href')).toBe('/settings');
+  });
+
+  it('clicking a collapsed server opens its Stacks', async () => {
+    const user = userEvent.setup();
+    await withPeers([peer()]);
+    renderIn(<Sidebar {...props} current="/" />);
+    await screen.findByRole('link', { name: 'All stacks' });
+    await user.click(heading(/mini-02/));
+    expect(screen.getByTestId('where').textContent).toBe('/s/mini-02');
+  });
+
+  it('an unreachable peer shows "unreachable" and a danger dot', async () => {
+    await withPeers([peer({ status: 'unreachable', stackCount: 0 })]);
+    renderIn(<Sidebar {...props} current="/" />);
+    await screen.findByRole('link', { name: 'All stacks' });
+    const mini = heading(/mini-02/);
+    expect(mini.textContent).toContain('unreachable');
+    expect(mini.querySelector('[data-tone="danger"]')).toBeTruthy();
+    expect(within(mini).getByRole('img', { name: /unreachable/i })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'All stacks' }).textContent).toContain('3');
+  });
+
+  it('several peers keep added order, after this server', async () => {
+    await withPeers([peer({ id: 'b1', name: 'zeta', slug: 'zeta' }), peer({ id: 'b2', name: 'alpha', slug: 'alpha' })]);
+    renderIn(<Sidebar {...props} current="/" />);
+    await screen.findByRole('link', { name: 'All stacks' });
+    const names = screen.getAllByRole('button', { expanded: undefined }).map((b) => b.textContent ?? '');
+    const order = ['this server', 'zeta', 'alpha'].map((n) => names.findIndex((t) => t.includes(n)));
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(order.every((i) => i >= 0)).toBe(true);
+  });
+
+  it('a pairing still pending does not turn the sidebar or switcher into the multi-server view', async () => {
+    await withPeers([peer({ status: 'pending' })]);
+    renderIn(<Sidebar {...props} current="/" />);
+    await screen.findByRole('link', { name: 'Stacks' });
+    expect(screen.queryByRole('link', { name: 'All stacks' })).toBeNull();
+    expect(screen.queryByText('this server')).toBeNull();
+    cleanup();
+    renderIn(<MobileTopBar title="Stacks" mono={false} attention={false} onOpenPalette={() => {}} />);
+    expect(screen.queryByRole('combobox', { name: 'Server' })).toBeNull();
+  });
+
+  it('mobile New stack creates on the viewed server, or locally when none is viewed', () => {
+    renderIn(<MobileTopBar title="Stacks" mono={false} attention={false} onOpenPalette={() => {}} />, '/s/mini-02/stacks');
+    expect(screen.getByRole('link', { name: 'New stack' }).getAttribute('href')).toBe('/s/mini-02/stacks/new');
+    cleanup();
+    renderIn(<MobileTopBar title="Stacks" mono={false} attention={false} onOpenPalette={() => {}} />, '/stacks');
+    expect(screen.getByRole('link', { name: 'New stack' }).getAttribute('href')).toBe('/stacks/new');
+  });
+
+  it('the mobile switcher appears only with peers and navigates to /s/{slug}', async () => {
+    const user = userEvent.setup();
+    renderIn(<MobileTopBar title="Stacks" mono={false} attention={false} onOpenPalette={() => {}} />);
+    expect(screen.queryByRole('combobox', { name: 'Server' })).toBeNull();
+    cleanup();
+    await withPeers([peer()]);
+    renderIn(<MobileTopBar title="Stacks" mono={false} attention={false} onOpenPalette={() => {}} />);
+    const select = await screen.findByRole('combobox', { name: 'Server' });
+    await user.selectOptions(select, 'mini-02');
+    expect(screen.getByTestId('where').textContent).toBe('/s/mini-02');
+    await user.selectOptions(select, 'this server');
+    expect(screen.getByTestId('where').textContent).toBe('/');
+  });
+
+  it('the mobile tab bar links into the viewed server', () => {
+    renderIn(<TabBar current="/s/mini-02/storage" attention={false} />);
+    expect(screen.getByRole('link', { name: 'Storage' }).getAttribute('href')).toBe('/s/mini-02/storage');
+    expect(current('Storage')).toBe('page');
+    expect(screen.getByRole('link', { name: 'Settings' }).getAttribute('href')).toBe('/settings');
+  });
+
+  it('the top bar and host block describe the viewed peer, with no second stream for it', async () => {
+    const fake = installFakeFetch({
+      'GET /api/peers': { body: [peer()] },
+      'GET /api/servers/b1/api/stacks': { body: [] },
+      'GET /api/servers/b1/api/status': { body: { docker: 'ok', compose: '2.29.0', events: 'connected', metricsDegraded: false } },
+      'GET /api/servers/b1/api/host': { body: { hostname: 'mini-02-host', cpu: null, memory: null, disk: null, uptime: null } },
+      'GET /api/servers/b1/api/operations?state=running': {
+        body: [{ id: 'o1', stack: 'remote-web', action: 'restart', state: 'running', startedAt: '2026-10-19T10:00:00Z' }],
+      },
+    });
+    const stream = installFakeStream({ '/api/servers/b1/api/events': [': ok\n\n'] });
+    stopPeers = startPeers({ list: api.peers });
+    vi.stubGlobal('matchMedia', () => ({ matches: false, media: '', addEventListener() {}, removeEventListener() {} }));
+    try {
+      renderIn(
+        <Shell {...{ onLogout: () => {}, runningOps: [], attention: false, onOpenPalette: () => {} }} username="ana">
+          <Routes>
+            <Route path="/s/:server/*" element={<RemoteServer />} />
+          </Routes>
+        </Shell>,
+        '/s/mini-02',
+      );
+      await screen.findByText('restart · remote-web');
+      await screen.findByText('mini-02-host');
+      await waitFor(() => expect(screen.getAllByText('live').length).toBeGreaterThan(0));
+      expect(stream.requests.filter((r) => r.path === '/api/servers/b1/api/events')).toHaveLength(1);
+      expect(stream.requests.filter((r) => r.path === '/api/events')).toHaveLength(0);
+    } finally {
+      cleanup();
+      await sleep(5);
+      stream.restore();
+      fake.restore();
+    }
   });
 });

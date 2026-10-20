@@ -6,7 +6,6 @@ import { lifecycleDisabledReason } from '$lib/stacks/lifecycle';
 import { detailHref, missingComposeFile, type DetailItem } from '$lib/stacks/detailLocation';
 import { removeServiceReason } from '$lib/stacks/detail';
 import { setUnsavedChanges } from '$lib/stores/guard';
-import { live } from '$lib/stores/live';
 import { mediaQuery } from '$lib/stores/media';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
@@ -34,10 +33,12 @@ import { useLiveMetrics } from './useLiveMetrics';
 import { useNowSeconds } from './useNowSeconds';
 import { useStackDetail } from './useStackDetail';
 
+import { useServer } from '../servers/ServerContext';
 // README: the split pane is two columns from 760px; keep in step with the 759px rules in the pane modules.
 const wideQuery = mediaQuery('(min-width: 760px)');
 
 export function StackDetailScreen({ name }: { name: string }) {
+  const { live, href: serverHref } = useServer();
   const { ctl, detail, notFound, loadError, operations, health, compose, composeError, cpuHour, acting, removing } = useStackDetail(name);
   const location = useDetailLocation(name, detail);
   const nowSeconds = useNowSeconds(60_000);
@@ -204,7 +205,7 @@ export function StackDetailScreen({ name }: { name: string }) {
   if (notFound) {
     body = (
       <EmptyState title="Stack not found" description={`There is no stack named "${name}".`}>
-        <Link to="/">Back to stacks</Link>
+        <Link to={serverHref('/')}>Back to stacks</Link>
       </EmptyState>
     );
   } else if (!detail && loadError) {
@@ -433,7 +434,7 @@ export function StackDetailScreen({ name }: { name: string }) {
             <OperationsPane
               operations={operations}
               selected={location.op}
-              href={(id) => detailHref(name, { tab: 'operations', op: id })}
+              href={(id) => serverHref(detailHref(name, { tab: 'operations', op: id }))}
               onCancel={ctl.cancelOperation}
               onFinished={ctl.operationFinished}
             />

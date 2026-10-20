@@ -1,11 +1,11 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { api } from '$lib/api/client';
 import type { Network } from '$lib/api/types';
 import { Field } from '../components/Field';
 import { ListEditor } from '../components/ListEditor';
 import { CreateNetworkDialog } from '../networks/CreateNetworkDialog';
 import styles from './NetworkPicker.module.css';
 
+import { useServer } from '../servers/ServerContext';
 export interface NetworkAttachment {
   name: string;
   ipv4Address: string;
@@ -31,6 +31,7 @@ const rename = (item: NetworkAttachment, name: string): NetworkAttachment => ({ 
 const label = (n: Network) => (n.subnets.length ? `${n.name} (${n.subnets.join(', ')})` : n.name);
 
 export function NetworkPicker({ value, onChange, readonly = false, errors = {}, idPrefix }: NetworkPickerProps) {
+  const { api } = useServer();
   const uid = useId();
   const prefix = idPrefix ?? uid;
   const [networks, setNetworks] = useState<Network[]>([]);
@@ -52,7 +53,7 @@ export function NetworkPicker({ value, onChange, readonly = false, errors = {}, 
     return () => {
       alive.current = false;
     };
-  }, []);
+  }, [api]);
 
   function choose(name: string, item: NetworkAttachment, index: number, set: (v: NetworkAttachment) => void) {
     if (name !== CREATE) {

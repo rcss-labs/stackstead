@@ -5,6 +5,7 @@ import { createOperationStream, operationDurationMs, operationStateLook, outputT
 import { Button } from '../components/Button';
 import { CopyButton } from '../components/CopyButton';
 import { useStore } from '../hooks/useStore';
+import { useServer } from '../servers/ServerContext';
 import styles from './OperationPanel.module.css';
 
 export interface OperationPanelProps {
@@ -24,11 +25,12 @@ export interface OperationPanelProps {
 export function OperationPanel(props: OperationPanelProps) {
   const [opened, setOpened] = useState<{ id: string; stream: OperationStream }>();
   const { operationId } = props;
+  const { api, open } = useServer();
   useEffect(() => {
-    const stream = createOperationStream(operationId);
+    const stream = createOperationStream(operationId, { open, get: api.operation });
     setOpened({ id: operationId, stream });
     return () => stream.close();
-  }, [operationId]);
+  }, [operationId, api, open]);
   return opened?.id === operationId ? <OperationOutput key={operationId} stream={opened.stream} {...props} /> : null;
 }
 
