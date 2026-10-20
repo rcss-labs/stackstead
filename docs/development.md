@@ -86,8 +86,10 @@ which builds first so `web/src/bundle.test.ts` measures the shipped `web/dist`.
   utility framework.
 - Tests are Vitest with React Testing Library and user-event. Pure modules are
   tested without a DOM, components through their rendered output and roles.
-- Mobile is CSS media queries only; there is no separate mobile markup or
-  user-agent switch.
+- Below 760px the shell swaps its chrome (`MobileTopBar` and `TabBar` instead of
+  `Sidebar` and `TopBar`) through the `useIsMobile()` media-query hook, keeping
+  the routed screen mounted; screens adapt with CSS media queries. There is no
+  user-agent sniffing.
 
 ### Bundle shape
 
@@ -154,8 +156,9 @@ through `guarded()`, so leaving with unsaved edits asks first.
 
 The service editors of the stack detail live under `web/src/app/stacks/`
 (`ServiceForm`, `FileBrowser`, `NetworkPicker`, `CreateNetworkDialog`; shared with
-New stack and also used by the container and network screens) and `web/src/app/detail/` (`ServiceEditor` behind `Edit`,
-`AddServicePanel` behind `+ Add` on the rail and chips). The state machines in
+New stack and also used by the container and network screens) and
+`web/src/app/detail/` (`ServiceEditor` behind `Edit`, `AddServicePanel` behind
+`+ Add` on the rail and chips). The state machines in
 `lib/stacks/serviceEdit.ts` and `serviceAdd.ts` own the data, validation and
 conflict handling; the React components only render them. Each editor reports a
 `dirty` flag to `StackDetailScreen` (`serviceDirty` while a service is being
@@ -227,8 +230,9 @@ typed password never appears in the markup. Login and Setup share `AuthCard`,
 stay outside the shell (mounted by `App` from the session state), title
 themselves, pass `?next=` through `safeNext`, and the session guard never
 carries `/setup` as `next`. Settings `Log out` keeps today's direct `logout()`
-(it lands on `/login?next=%2Fsettings`, as before; as the previous UI did). The four screens ride in the lazy `NetworkList` / `Settings` / `Login` /
-`Setup` chunks, and `bundle.test.ts` pins that nothing of theirs, nor
+(it lands on `/login?next=%2Fsettings`, as the previous UI did). The four
+screens ride in the lazy `NetworkList` / `Settings` / `Login` / `Setup`
+chunks, and `bundle.test.ts` pins that nothing of theirs, nor
 `AuthCard`, `PasswordForm`, `UpdateCard` or `CreateNetworkDialog`, is eager.
 Every screen is React; the previous UI was removed in the cutover.
 
