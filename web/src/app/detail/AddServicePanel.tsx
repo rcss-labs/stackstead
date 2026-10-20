@@ -13,7 +13,7 @@ import { useStore } from '../hooks/useStore';
 import { DiffView } from '../stacks/DiffView';
 import { FileBrowser } from '../stacks/FileBrowser';
 import { NetworkPicker } from '../stacks/NetworkPicker';
-import { ServiceForm, type ServiceFormHandle } from '../stacks/ServiceForm';
+import { BROWSE_TITLES, ServiceForm, type BrowsePurpose, type ServiceFormHandle } from '../stacks/ServiceForm';
 import styles from './AddServicePanel.module.css';
 
 export interface AddServicePanelProps {
@@ -79,7 +79,7 @@ export function AddServicePanel({ stack, onAdded, onCancel, onReload, onDirtyCha
   }, [add]);
 
   const [reloading, setReloading] = useState(false);
-  const [browse, setBrowse] = useState<{ mode: 'dir' | 'file'; cb: (path: string) => void } | undefined>();
+  const [browse, setBrowse] = useState<{ mode: 'dir' | 'file'; purpose: BrowsePurpose; cb: (path: string) => void } | undefined>();
   const root = useRef<HTMLDivElement>(null);
   const headingId = useId();
   const serviceForm = useRef<ServiceFormHandle>(null);
@@ -203,7 +203,7 @@ export function AddServicePanel({ stack, onAdded, onCancel, onReload, onDirtyCha
           onNameChange={(value) => add.name.set(value)}
           errors={errors}
           idPrefix="svc-add"
-          onBrowse={(mode, cb) => setBrowse({ mode, cb })}
+          onBrowse={(mode, cb, purpose) => setBrowse({ mode, purpose, cb })}
           networkPicker={(f, rowErrors) => (
             <NetworkPicker idPrefix="svc-add-networks" value={f.networks} onChange={(networks) => change({ ...get(add.form), networks })} errors={rowErrors} />
           )}
@@ -238,7 +238,7 @@ export function AddServicePanel({ stack, onAdded, onCancel, onReload, onDirtyCha
       <FileBrowser
         open={browse !== undefined}
         mode={browse?.mode ?? 'dir'}
-        title={browse?.mode === 'file' ? 'Choose a Dockerfile' : 'Choose a build context'}
+        title={BROWSE_TITLES[browse?.purpose ?? 'context']}
         onPick={(path) => {
           browse?.cb(path);
           setBrowse(undefined);

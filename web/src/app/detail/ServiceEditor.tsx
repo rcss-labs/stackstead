@@ -15,7 +15,7 @@ import { useStore } from '../hooks/useStore';
 import { DiffView } from '../stacks/DiffView';
 import { FileBrowser } from '../stacks/FileBrowser';
 import { NetworkPicker } from '../stacks/NetworkPicker';
-import { ServiceForm, type ServiceFormHandle } from '../stacks/ServiceForm';
+import { BROWSE_TITLES, ServiceForm, type BrowsePurpose, type ServiceFormHandle } from '../stacks/ServiceForm';
 import { OperationPanel } from './OperationPanel';
 import styles from './ServiceEditor.module.css';
 
@@ -102,7 +102,7 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
   const previewHeading = useRef<HTMLHeadingElement>(null);
   const conflictBox = useRef<HTMLDivElement>(null);
   const savedHeading = useRef<HTMLHeadingElement>(null);
-  const [browse, setBrowse] = useState<{ mode: 'dir' | 'file'; cb: (path: string) => void } | undefined>();
+  const [browse, setBrowse] = useState<{ mode: 'dir' | 'file'; purpose: BrowsePurpose; cb: (path: string) => void } | undefined>();
   const [operationId, setOperationId] = useState<string | undefined>();
   const [applying, setApplying] = useState(false);
   const [operationRunning, setOperationRunning] = useState(false);
@@ -291,7 +291,7 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
           onChange={change}
           errors={errors}
           idPrefix="svc"
-          onBrowse={(mode, cb) => setBrowse({ mode, cb })}
+          onBrowse={(mode, cb, purpose) => setBrowse({ mode, purpose, cb })}
           onRawEditor={onRawEditor}
           networkPicker={(f, rowErrors) => (
             <NetworkPicker idPrefix="svc-networks" value={f.networks} onChange={(networks) => change({ ...formRef.current, networks })} errors={rowErrors} />
@@ -353,7 +353,7 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
       <FileBrowser
         open={browse !== undefined}
         mode={browse?.mode ?? 'dir'}
-        title={browse?.mode === 'file' ? 'Choose a Dockerfile' : 'Choose a build context'}
+        title={BROWSE_TITLES[browse?.purpose ?? 'context']}
         onPick={(path) => {
           browse?.cb(path);
           setBrowse(undefined);

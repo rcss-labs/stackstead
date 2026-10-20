@@ -140,4 +140,40 @@ describe('react app build shape', () => {
       for (const file of eagerFiles) expect(read(file), `${file} must not contain ${chunk} code`).not.toContain(marker);
     }
   });
+
+  it.skipIf(!existsSync(manifestPath))('keeps the New stack and Import screens out of the eager entry', () => {
+    const sizes = measure(dist);
+    const lazyFiles = sizes.lazy.map((l: { file: string }) => l.file);
+    const eagerFiles = readdirSync(join(dist, 'assets'))
+      .filter((f) => f.endsWith('.js'))
+      .map((f) => `assets/${f}`)
+      .filter((f) => !lazyFiles.includes(f));
+    expect(eagerFiles.map(chunkName).some((name) => /StackCreate|StackImport|ServiceForm|FileBrowser|NetworkPicker|ComposePreview|portCheck|YamlEditor|^cm$/i.test(name))).toBe(false);
+    expect(lazyFiles.some((f: string) => chunkName(f) === 'cm'), 'cm stays a lazy chunk').toBe(true);
+    expect(sizes.entry).toBeLessThanOrEqual(106 * 1024);
+
+    // As above: eager code is one merged chunk, so unique strings are what reveal folded-in screens. ServiceForm,
+    // FileBrowser and NetworkPicker are shared with StackDetail and may sit in a shared lazy chunk, so only their
+    // absence from the eager files is asserted.
+    const read = (file: string) => readFileSync(join(dist, file), 'utf8');
+    const screens = [
+      { chunk: 'StackCreate', marker: 'the stack was not created' },
+      { chunk: 'StackImport', marker: 'the stack was not imported' },
+    ];
+    for (const { chunk, marker } of screens) {
+      const lazyChunk = lazyFiles.find((f: string) => chunkName(f) === chunk);
+      expect(lazyChunk, `${chunk} is a lazy chunk`).toBeDefined();
+      expect(read(lazyChunk as string), `${chunk} carries its screen`).toContain(marker);
+      for (const file of eagerFiles) expect(read(file), `${file} must not contain ${chunk} code`).not.toContain(marker);
+    }
+    const shared = [
+      { name: 'ServiceForm', marker: 'Open raw YAML editor for ' },
+      { name: 'FileBrowser', marker: 'This path is outside the allowed directories.' },
+      { name: 'NetworkPicker', marker: 'Static IPv4 (optional)' },
+    ];
+    for (const { name, marker } of shared) {
+      expect(lazyFiles.some((f: string) => read(f).includes(marker)), `${name} ships in a lazy chunk`).toBe(true);
+      for (const file of eagerFiles) expect(read(file), `${file} must not contain ${name} code`).not.toContain(marker);
+    }
+  });
 });

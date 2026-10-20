@@ -1,5 +1,6 @@
 import { useId, useLayoutEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
+import { PanelLabel } from './PanelLabel';
 import styles from './ListEditor.module.css';
 
 export interface ListEditorProps<T> {
@@ -8,7 +9,8 @@ export interface ListEditorProps<T> {
   addLabel: string;
   /** Value appended by the add button. */
   newItem: () => T;
-  row: (item: T, index: number, update: (value: T) => void) => ReactNode;
+  /** `errorId` is the id of the row's error message when it has one, for the control's aria-describedby. */
+  row: (item: T, index: number, update: (value: T) => void, errorId?: string) => ReactNode;
   readonly?: boolean;
   errors?: Record<number, string>;
   /** Group heading shown left of the add button. */
@@ -70,7 +72,7 @@ export function ListEditor<T>({ items, onChange, addLabel, newItem, row, readonl
     <div className={styles.editor}>
       {(title || !readonly) && (
         <div className={styles.head}>
-          {title && <span className={styles.title}>{title}</span>}
+          {title && <PanelLabel as="span">{title}</PanelLabel>}
           {hint && <span className={styles.hint}>{hint}</span>}
           {!readonly && (
             <button type="button" className={styles.add} aria-label={addLabel} ref={addButtonRef} onClick={add}>
@@ -84,7 +86,7 @@ export function ListEditor<T>({ items, onChange, addLabel, newItem, row, readonl
           // Rows are positional: there is no stable identity beyond the index.
           <li key={i}>
             <div className={styles.row} role="group" aria-label={`Item ${i + 1}`} aria-describedby={errors[i] ? `${uid}-err-${i}` : undefined}>
-              <div className={styles.cell}>{row(item, i, (value: T) => update(i, value))}</div>
+              <div className={styles.cell}>{row(item, i, (value: T) => update(i, value), errors[i] ? `${uid}-err-${i}` : undefined)}</div>
               {!readonly && (
                 <button type="button" className={styles.remove} data-remove aria-label={`Remove item ${i + 1}`} onClick={() => remove(i)}>
                   ×

@@ -1,10 +1,14 @@
 .editor { display: flex; flex-direction: column; gap: 8px; }
 .head { display: flex; align-items: baseline; gap: 10px; min-height: 24px; }
-.title { font-size: 12.5px; font-weight: 600; }
 .hint { color: var(--faint); font-size: 11.5px; font-family: var(--mono); }
 .rows { list-style: none; padding: 0; width: 100%; display: flex; flex-direction: column; gap: 8px; }
 .row { display: flex; gap: 8px; align-items: center; }
 .cell { flex: 1; min-width: 0; display: flex; gap: 8px; }
+
+@media (max-width: 759px) {
+  /* A note beside the input wraps below it so the input keeps its full width. */
+  .cell { flex-wrap: wrap; }
+}
 
 .cell > input {
   flex: 1;
@@ -19,6 +23,10 @@
   font-size: 12.5px;
 }
 
+.cell > input { transition: border-color 0.15s; }
+.cell > input[data-check='danger'] { border-color: var(--danger); }
+.cell > input[data-check='warning'] { border-color: var(--warning); }
+.cell > input[data-check='success'] { border-color: var(--success); }
 .cell > input[aria-invalid='true'] { border-color: var(--danger); }
 .cell > input:read-only { background: var(--raised); color: var(--muted); }
 .error { color: var(--danger); font-size: 0.875rem; overflow-wrap: anywhere; }

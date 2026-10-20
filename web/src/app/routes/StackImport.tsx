@@ -1,4 +1,5 @@
-/** Placeholder until Plan 18; App owns the main landmark. */
+import { StackImportScreen } from '../create/StackImportScreen';
+
 export default function StackImport() {
-  return <h1>Import</h1>;
+  return <StackImportScreen />;
 }

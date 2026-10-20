@@ -1,11 +1,11 @@
 import { useImperativeHandle, useRef, useState } from 'react';
 import type { Ref } from 'react';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Field } from '$lib/api/types';
 import { emptyForm, type FormErrors, type ServiceForm as Form } from '$lib/compose/form';
-import { ServiceForm, type ServiceFormHandle } from './ServiceForm';
+import { ServiceForm, type BrowsePurpose, type ServiceFormHandle, type ServiceFormProps } from './ServiceForm';
 
 afterEach(cleanup);
 
@@ -20,7 +20,9 @@ interface HostHandle extends ServiceFormHandle {
 interface HostProps {
   initial?: Partial<Form>;
   errors?: FormErrors;
-  onBrowse?: (mode: 'dir' | 'file', set: (path: string) => void) => void;
+  onBrowse?: (mode: 'dir' | 'file', set: (path: string) => void, purpose: BrowsePurpose) => void;
+  advanced?: { summary: string };
+  portNote?: ServiceFormProps['portNote'];
   onRawEditor?: () => void;
   withPicker?: boolean;
   showName?: boolean;
@@ -129,15 +131,153 @@ describe('ServiceForm', () => {
     });
     expect(screen.getByLabelText('Build context').getAttribute('aria-invalid')).toBe('true');
     await userEvent.setup().click(screen.getByRole('button', { name: 'Browse for build context' }));
-    expect(onBrowse).toHaveBeenCalledWith('dir', expect.any(Function));
+    expect(onBrowse).toHaveBeenCalledWith('dir', expect.any(Function), 'context');
     await waitFor(() => expect(handle.current.getForm().buildContext).toBe('/srv/app'));
     await userEvent.setup().click(screen.getByRole('button', { name: 'Browse for Dockerfile' }));
-    expect(onBrowse).toHaveBeenLastCalledWith('file', expect.any(Function));
+    expect(onBrowse).toHaveBeenLastCalledWith('file', expect.any(Function), 'dockerfile');
   });
 
   it('omits Browse buttons without onBrowse', () => {
     setup({ initial: { source: 'build' } });
     expect(screen.queryByRole('button', { name: /Browse/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Browse for volume/ })).toBeNull();
+  });
+
+  it('omits volume Browse when volumes are read-only', () => {
+    setup({ initial: { volumes: ['./a:/b'], readOnly: new Set<Field>(['volumes']) }, onBrowse: vi.fn() });
+    expect(screen.queryByRole('button', { name: /^Browse for volume/ })).toBeNull();
+  });
+
+  it('offers Browse for each volume and replaces the host side', async () => {
+    const user = userEvent.setup();
+    const calls: [string, (p: string) => void, string][] = [];
+    const { handle } = setup({ initial: { volumes: ['./old:/data:ro', ''] }, onBrowse: (m, set, purpose) => calls.push([m, set, purpose]) });
+    await user.click(screen.getByRole('button', { name: 'Browse for volume 1' }));
+    expect(calls[0][0]).toBe('dir');
+    expect(calls[0][2]).toBe('volume');
+    act(() => calls[0][1]('/srv/data'));
+    await waitFor(() => expect(handle.current.getForm().volumes).toEqual(['/srv/data:/data:ro', '']));
+    await user.click(screen.getByRole('button', { name: 'Browse for volume 2' }));
+    act(() => calls[1][1]('/srv/x'));
+    await waitFor(() => expect(handle.current.getForm().volumes).toEqual(['/srv/data:/data:ro', '/srv/x:']));
+  });
+
+  describe('advanced disclosure', () => {
+    const detailsOf = () => screen.getByText('More').closest('details') as HTMLDetailsElement;
+
+    it('wraps environment, networks, mode, healthcheck and limits in a closed disclosure and moves restart policy up', () => {
+      setup({ advanced: { summary: 'More' } });
+      const details = detailsOf();
+      expect(details.open).toBe(false);
+      within(details).getByText('Environment');
+      within(details).getByLabelText('Network mode');
+      within(details).getByLabelText('Enable healthcheck');
+      within(details).getByLabelText('CPUs');
+      const restart = screen.getByLabelText('Restart policy');
+      expect(details.contains(restart)).toBe(false);
+      const ports = screen.getByRole('group', { name: 'Ports' });
+      expect(restart.compareDocumentPosition(ports) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('without advanced the groups render as before', () => {
+      const { container } = render(<Host />);
+      expect(container.querySelector('details')).toBeNull();
+      const hc = screen.getByLabelText('Enable healthcheck');
+      expect(hc.compareDocumentPosition(screen.getByLabelText('Restart policy')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('opens itself while a hidden group holds an error and closes again after', () => {
+      const { rerender } = setup({ advanced: { summary: 'More' }, errors: { 'limits.cpus': 'bad' } });
+      expect(detailsOf().open).toBe(true);
+      expect(detailsOf().hasAttribute('data-forced-open')).toBe(true);
+      rerender({ advanced: { summary: 'More' }, errors: {} });
+      expect(detailsOf().open).toBe(false);
+      expect(detailsOf().hasAttribute('data-forced-open')).toBe(false);
+    });
+
+    it('focusFirstError reaches a control inside the disclosure', () => {
+      const { handle } = setup({
+        advanced: { summary: 'More' },
+        initial: { healthcheck: { ...emptyForm().healthcheck, enabled: true } },
+        errors: { 'healthcheck.interval': 'x' },
+      });
+      act(() => handle.current.focusFirstError());
+      expect(document.activeElement).toBe(screen.getByLabelText('Interval'));
+    });
+
+    it('the user can toggle the disclosure', async () => {
+      const user = userEvent.setup();
+      setup({ advanced: { summary: 'More' } });
+      await user.click(screen.getByText('More'));
+      expect(detailsOf().open).toBe(true);
+      await user.click(screen.getByText('More'));
+      expect(detailsOf().open).toBe(false);
+    });
+
+    it('keeps a user-opened disclosure open after an error comes and goes', async () => {
+      const user = userEvent.setup();
+      const { rerender } = setup({ advanced: { summary: 'More' } });
+      await user.click(screen.getByText('More'));
+      rerender({ advanced: { summary: 'More' }, errors: { 'limits.cpus': 'bad' } });
+      rerender({ advanced: { summary: 'More' }, errors: {} });
+      await waitFor(() => expect(detailsOf().open).toBe(true));
+    });
+
+    it('does not stay open after a forced-open error clears when the user never opened it', async () => {
+      const { rerender } = setup({ advanced: { summary: 'More' }, errors: { 'limits.cpus': 'bad' } });
+      await new Promise((r) => setTimeout(r, 20)); // let any toggle event from the forced open fire
+      rerender({ advanced: { summary: 'More' }, errors: {} });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(detailsOf().open).toBe(false);
+    });
+
+    it('focusFirstError re-opens a forced-open disclosure the user closed', async () => {
+      const user = userEvent.setup();
+      const { handle } = setup({
+        advanced: { summary: 'More' },
+        initial: { healthcheck: { ...emptyForm().healthcheck, enabled: true } },
+        errors: { 'healthcheck.interval': 'x' },
+      });
+      await user.click(screen.getByText('More'));
+      await waitFor(() => expect(detailsOf().open).toBe(false));
+      act(() => handle.current.focusFirstError());
+      expect(detailsOf().open).toBe(true);
+      expect(document.activeElement).toBe(screen.getByLabelText('Interval'));
+    });
+
+    it('lets the user close a forced-open disclosure', async () => {
+      const user = userEvent.setup();
+      setup({ advanced: { summary: 'More' }, errors: { 'limits.cpus': 'bad' } });
+      await user.click(screen.getByText('More'));
+      await waitFor(() => expect(detailsOf().open).toBe(false));
+    });
+  });
+
+  describe('port note', () => {
+    it('renders next to its row, links to the input and leaves aria-invalid alone', () => {
+      setup({ initial: { ports: ['8080:80'] }, portNote: () => ({ tone: 'danger', text: 'Port 8080 is used by ha' }) });
+      const note = screen.getByText('Port 8080 is used by ha');
+      const input = screen.getByLabelText('Port 1');
+      expect(input.getAttribute('data-check')).toBe('danger');
+      expect(input.getAttribute('aria-describedby')).toContain(note.id);
+      expect(input.getAttribute('aria-invalid')).toBeNull();
+    });
+
+    it('is omitted when portNote returns undefined', () => {
+      setup({ initial: { ports: ['8080:80'] }, portNote: () => undefined });
+      const input = screen.getByLabelText('Port 1');
+      expect(input.getAttribute('data-check')).toBeNull();
+      expect(input.getAttribute('aria-describedby')).toBeNull();
+    });
+
+    it('keeps the row error and the note both described', () => {
+      setup({ initial: { ports: ['8080:80'] }, errors: { 'ports[0]': 'bad' }, portNote: () => ({ tone: 'warning', text: 'careful' }) });
+      const input = screen.getByLabelText('Port 1');
+      const ids = (input.getAttribute('aria-describedby') ?? '').split(' ');
+      expect(ids).toContain(screen.getByText('careful').id);
+      expect(ids).toContain(screen.getByText('bad').id);
+      expect(input.getAttribute('aria-invalid')).toBe('true');
+    });
   });
 
   it('splits pasted KEY=VALUE lines into rows', async () => {

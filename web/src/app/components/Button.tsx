@@ -28,6 +28,7 @@ export function Button({
   onClick,
   children,
   title,
+  className,
   ...rest
 }: ButtonProps) {
   const uid = useId();
@@ -48,7 +49,7 @@ export function Button({
     <>
       <button
         {...rest}
-        className={styles.btn}
+        className={className ? `${styles.btn} ${className}` : styles.btn}
         data-variant={variant}
         data-size={size}
         data-icon={icon ? 'true' : undefined}
