@@ -2,7 +2,7 @@
 // vi.mock('$lib/stores/live', ...) exposing `__live` and `__changes` writables (vi.mock is hoisted per file).
 import { screen } from '@testing-library/react';
 import type { Network } from '$lib/api/types';
-import type { FakeResponse, Routes } from '../../vitest-setup';
+import type { FakeResponse, RouteHandler, Routes } from '../../vitest-setup';
 
 export { mountAt } from '../containers/containersTestKit';
 
@@ -24,7 +24,7 @@ export const row = (name: string, over: Partial<Network> = {}): Network => ({
   ...over,
 });
 
-export function routes(response: FakeResponse | (() => FakeResponse)): Routes {
+export function routes(response: FakeResponse | RouteHandler): Routes {
   return {
     'GET /api/networks': response,
     'GET /api/host/interfaces': { body: [] },

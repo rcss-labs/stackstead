@@ -1,7 +1,7 @@
 import { useId, useState } from 'react';
 import { Link } from 'react-router';
 import type { Network } from '$lib/api/types';
-import { networkOwner, removeDisabledReason } from '$lib/networks/networks';
+import { isLanDriver, networkOwner, removeDisabledReason } from '$lib/networks/networks';
 import { Button } from '../components/Button';
 import { Tag } from '../components/Tag';
 import styles from './NetworkCard.module.css';
@@ -51,7 +51,7 @@ export function NetworkCard({ network, removing, busy, onRemove }: NetworkCardPr
         <h2 id={nameId} className={styles.name}>
           {network.name}
         </h2>
-        <Tag tone={network.driver === 'macvlan' || network.driver === 'ipvlan' ? 'info' : 'muted'}>{network.driver}</Tag>
+        <Tag tone={isLanDriver(network.driver) ? 'info' : 'muted'}>{network.driver}</Tag>
         <span className={styles.owner}>
           <Owner network={network} />
         </span>

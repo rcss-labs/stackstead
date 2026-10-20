@@ -1,11 +1,11 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StrictMode } from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, expect, it, vi } from 'vitest';
 import { get } from '$lib/store';
 import { toasts } from '$lib/stores/toasts';
-import { installFakeFetch, type FakeFetch, type FakeResponse } from '../../vitest-setup';
+import { installFakeFetch, type FakeFetch, type FakeResponse, type RouteHandler } from '../../vitest-setup';
 import { findRoute } from '../routes';
 import { NetworksScreen } from './NetworksScreen';
 import { cards, mountAt, routes, row } from './networksTestKit';
@@ -25,7 +25,7 @@ vi.mock('$lib/stores/live', async (orig) => {
 });
 
 let fake: FakeFetch;
-function mount(response: FakeResponse | (() => FakeResponse)) {
+function mount(response: FakeResponse | RouteHandler) {
   fake = installFakeFetch(routes(response));
   return { ...mountAt('/networks'), user: userEvent.setup() };
 }
@@ -59,7 +59,7 @@ it('lists attached containers with encoded links and IP fallback', async () => {
   expect(card.getByRole('link', { name: 'my db' }).getAttribute('href')).toBe('/containers/my%20db');
   expect(card.getByRole('link', { name: '<web>' }).getAttribute('href')).toBe('/containers/%3Cweb%3E');
   expect(card.getByText('10.0.0.2')).toBeTruthy();
-  expect(card.getAllByText('—').length).toBeGreaterThanOrEqual(1);
+  expect(within(card.getByRole('link', { name: '<web>' }).parentElement!).getByText('—')).toBeTruthy();
   expect(card.queryByRole('button', { name: 'Show containers on lan' })).toBeNull();
 });
 
@@ -106,8 +106,11 @@ it.each([204, 409])('confirms and deletes once, then toasts and refreshes (%s)',
   const dialog = screen.getByRole('alertdialog', { name: 'Remove network `free`?' });
   expect(dialog.textContent).toContain('Docker deletes the network. Containers can only attach again once it is recreated.');
   const confirm = within(dialog).getByRole('button', { name: 'Remove' });
-  fireEvent.click(confirm);
-  fireEvent.click(confirm);
+  // Both clicks hit the same mounted button inside one act, before React can re-render the dialog away.
+  act(() => {
+    confirm.click();
+    confirm.click();
+  });
   expect(fake.calls.filter((c) => c.method === 'DELETE')).toHaveLength(1);
   release(status === 204 ? { status: 204 } : { status: 409, body: { error: 'has active endpoints <web>' } });
   await waitFor(() =>
@@ -132,9 +135,17 @@ it('opens creation and owns its notification and refresh', async () => {
 
 it('shows loading, error and Retry, then recovers', async () => {
   let fail = true;
-  const { user } = mount(() => (fail ? { status: 503, body: { error: 'Docker is unreachable' } } : { body: [row('recovered')] }));
-  // Scoped to the screen: the create dialog's own portal may still hold a spinner from the previous test.
-  expect(within(screen.getByRole('region', { name: 'Networks' })).getByRole('status')).toBeTruthy();
+  let open!: () => void;
+  const gate = new Promise<void>((resolve) => { open = resolve; });
+  const { user } = mount(async () => {
+    if (!fail) return { body: [row('recovered')] };
+    await gate; // hold the first response so the loading state stays observable
+    return { status: 503, body: { error: 'Docker is unreachable' } };
+  });
+  // Scoped to the screen: the router probe <output> also has the status role. The route is lazy, so wait for it.
+  const region = await screen.findByRole('region', { name: 'Networks' });
+  expect(within(region).getByRole('status')).toBeTruthy();
+  open();
   expect(await screen.findByText('Docker is unreachable')).toBeTruthy();
   fail = false;
   await user.click(screen.getByRole('button', { name: 'Retry' }));

@@ -28,6 +28,11 @@ export function sortNetworks(rows: Network[]): Network[] {
   return [...rows].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Drivers that attach to a host interface; Network.driver stays a string because Docker also reports overlay, host and others. */
+export function isLanDriver(driver: string): boolean {
+  return driver === 'macvlan' || driver === 'ipvlan';
+}
+
 export interface NetworkSummary {
   total: number;
   stacks: number;
@@ -39,7 +44,7 @@ export function networkSummary(rows: Network[]): NetworkSummary {
   return {
     total: rows.length,
     stacks: rows.filter((n) => n.stack).length,
-    lan: rows.filter((n) => n.driver === 'macvlan' || n.driver === 'ipvlan').length,
+    lan: rows.filter((n) => isLanDriver(n.driver)).length,
     builtin: rows.filter((n) => n.builtin).length,
   };
 }
