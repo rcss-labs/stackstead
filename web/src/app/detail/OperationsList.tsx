@@ -36,7 +36,7 @@ export function OperationsList({ operations, selected, href }: OperationsListPro
           <>
             <Led tone={look.tone} pulse={o.state === 'running'} size={7} label={look.label} />
             <span className={styles.action}>{o.action}</span>
-            <span className={styles.detail}>{o.stack ? `docker compose ${o.action}` : 'host'}</span>
+            <span className={styles.detail}>{o.stack ? `docker compose ${o.action}${o.service ? ` --build ${o.service}` : ''}` : 'host'}</span>
             <span className={styles.when}>
               <RelativeTime iso={o.startedAt} />
               <span className={styles.duration}>{ms === undefined ? '' : formatDuration(ms)}</span>

@@ -110,7 +110,7 @@ function OperationOutput({ stream, operationId, onCancel, onFinished, autoscroll
       <header className={styles.header}>
         {op && look ? (
           <>
-            <strong className={styles.cmd}>{op.stack ? `docker compose ${op.action}` : op.action}</strong>
+            <strong className={styles.cmd}>{op.stack ? `docker compose ${op.action}${op.service ? ` --build ${op.service}` : ''}` : op.action}</strong>
             <span className={styles.state} data-tone={look.tone}>
               {look.label}
             </span>

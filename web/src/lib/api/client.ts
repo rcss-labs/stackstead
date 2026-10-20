@@ -238,7 +238,7 @@ export function createApi(base: string) {
       call<HashResponse>('PUT', `/api/stacks/${seg(name)}/services/${seg(service)}/dockerfile`, {
         content,
         hash,
-      }).then((r) => r.data),
+      } satisfies DockerfileContent).then((r) => r.data),
     upService: (name: string, service: string) =>
       post<Operation>(`/api/stacks/${seg(name)}/services/${seg(service)}/actions/up`),
     previewAddService: (name: string, service: string, config: ServiceConfig, hash: string) =>
