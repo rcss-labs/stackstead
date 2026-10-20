@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -84,13 +86,12 @@ func TestInsertPeerAssignsUniqueSlug(t *testing.T) {
 	s := newTestStore(t, clock.now)
 	wantSlugs := []string{"mini", "mini-2", "mini-3"}
 	ids := []string{"id-a", "id-b", "id-c"}
-	for i, id := range ids {
+	for _, id := range ids {
 		clock.advance(time.Second)
 		p := Peer{InstanceID: id, Name: "mini", URL: "https://x", State: StatePending}
 		if err := s.InsertPeer(ctx, p, ""); err != nil {
 			t.Fatalf("InsertPeer %s: %v", id, err)
 		}
-		_ = i
 	}
 	got, err := s.Peers(ctx)
 	if err != nil {
@@ -152,5 +153,93 @@ func TestPeerLifecycle(t *testing.T) {
 	}
 	if err := s.DeletePeer(ctx, "p1"); !errors.Is(err, ErrPeerNotFound) {
 		t.Errorf("second delete = %v, want ErrPeerNotFound", err)
+	}
+}
+
+func TestConsumeTokenSucceededCallbackIsFinalEvenIfContextCancelled(t *testing.T) {
+	s := newTestStore(t, time.Now)
+	plain, _, err := s.CreateToken(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	err = s.ConsumeToken(ctx, plain, func() error {
+		cancel()
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ConsumeToken = %v, want nil", err)
+	}
+	if err := s.ConsumeToken(context.Background(), plain, func() error { return nil }); !errors.Is(err, ErrTokenInvalid) {
+		t.Errorf("reuse after cancelled-ctx success = %v, want ErrTokenInvalid", err)
+	}
+}
+
+func TestConsumeTokenConcurrentUseRunsCallbackOnce(t *testing.T) {
+	s := newTestStore(t, time.Now)
+	plain, _, err := s.CreateToken(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = s.ConsumeToken(context.Background(), plain, func() error {
+				calls.Add(1)
+				time.Sleep(50 * time.Millisecond)
+				return nil
+			})
+		}()
+	}
+	wg.Wait()
+	if calls.Load() != 1 {
+		t.Errorf("callback ran %d times, want 1", calls.Load())
+	}
+	ok, invalid := 0, 0
+	for _, e := range errs {
+		switch {
+		case e == nil:
+			ok++
+		case errors.Is(e, ErrTokenInvalid):
+			invalid++
+		}
+	}
+	if ok != 1 || invalid != 1 {
+		t.Errorf("results = %v, want one nil and one ErrTokenInvalid", errs)
+	}
+}
+
+func TestConsumeTokenBogusTokenIsNotBlockedBySlowCallback(t *testing.T) {
+	s := newTestStore(t, time.Now)
+	plain, _, _ := s.CreateToken(context.Background())
+	started, release := make(chan struct{}), make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- s.ConsumeToken(context.Background(), plain, func() error {
+			close(started)
+			<-release
+			return nil
+		})
+	}()
+	<-started
+	bogus := make(chan error, 1)
+	go func() {
+		bogus <- s.ConsumeToken(context.Background(), "ssc_bogus", func() error { return nil })
+	}()
+	select {
+	case err := <-bogus:
+		if !errors.Is(err, ErrTokenInvalid) {
+			t.Errorf("bogus = %v, want ErrTokenInvalid", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("bogus token blocked behind a slow callback")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Errorf("slow consume = %v", err)
 	}
 }

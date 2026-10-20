@@ -64,7 +64,10 @@ func TestIdentityIsCreatedOnceAndStable(t *testing.T) {
 		updated.AdvertisedURL != "https://example.test:8443" || updated.Slug != "renamed-host" {
 		t.Errorf("SetIdentity = %+v", updated)
 	}
-	again, _ := s.Identity(ctx, "x")
+	again, err := s.Identity(ctx, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if again != updated {
 		t.Errorf("Identity after SetIdentity = %+v, want %+v", again, updated)
 	}

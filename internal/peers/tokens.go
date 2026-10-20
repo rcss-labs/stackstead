@@ -49,11 +49,11 @@ func (s *Store) CreateToken(ctx context.Context) (string, time.Time, error) {
 		return "", time.Time{}, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM connection_tokens WHERE expires_at <= ?`, now.Unix()); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM connection_tokens WHERE expires_at < ?`, now.Unix()); err != nil {
 		return "", time.Time{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO connection_tokens (hash, created_at, expires_at) VALUES (?, ?, ?)`,
-		HashSecret(plain), now.UnixNano(), expires.Unix()); err != nil {
+		HashSecret(plain), now.Unix(), expires.Unix()); err != nil {
 		return "", time.Time{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM connection_tokens WHERE hash NOT IN
@@ -67,27 +67,34 @@ func (s *Store) CreateToken(ctx context.Context) (string, time.Time, error) {
 }
 
 // ConsumeToken validates the token and runs consume (the pairing attempt).
-// The token is deleted only when consume succeeds, so a failed attempt can be
-// retried; consume's error is returned unchanged. Calls are serialized so one
-// token can never complete two pairings, and consume may use the store.
+// The token is claimed (deleted) before consume runs, so concurrent callers
+// cannot both succeed and a crash loses the token instead of leaving it
+// reusable. It is restored only if consume returns an error, which is
+// returned unchanged. consume may use the store.
 func (s *Store) ConsumeToken(ctx context.Context, plain string, consume func() error) error {
-	s.consumeMu.Lock()
-	defer s.consumeMu.Unlock()
 	hash := HashSecret(plain)
-	var expires int64
-	err := s.db.QueryRowContext(ctx, `SELECT expires_at FROM connection_tokens WHERE hash = ?`, hash).Scan(&expires)
+	var createdAt, expires int64
+	err := s.db.QueryRowContext(ctx, `SELECT created_at, expires_at FROM connection_tokens WHERE hash = ?`, hash).Scan(&createdAt, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrTokenInvalid
 	}
 	if err != nil {
 		return err
 	}
-	if s.now().After(time.Unix(expires, 0)) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM connection_tokens WHERE hash = ? AND expires_at >= ?`, hash, s.now().Unix())
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
 		return ErrTokenInvalid
 	}
 	if err := consume(); err != nil {
+		// The caller's context may already be cancelled; the restore must still happen.
+		_, _ = s.db.ExecContext(context.WithoutCancel(ctx), `INSERT OR IGNORE INTO connection_tokens (hash, created_at, expires_at) VALUES (?, ?, ?)`,
+			hash, createdAt, expires)
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `DELETE FROM connection_tokens WHERE hash = ?`, hash)
-	return err
+	return nil
 }

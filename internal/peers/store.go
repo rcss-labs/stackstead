@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -52,9 +51,8 @@ type Peer struct {
 
 // Store persists identity, peers and connection tokens in the shared database.
 type Store struct {
-	db        *sql.DB
-	now       func() time.Time
-	consumeMu sync.Mutex
+	db  *sql.DB
+	now func() time.Time
 }
 
 func NewStore(db *sql.DB, now func() time.Time) *Store {
@@ -186,7 +184,9 @@ func (s *Store) InsertPeer(ctx context.Context, p Peer, inHash string) error {
 	return tx.Commit()
 }
 
-// UpdatePeer loads the peer, applies fn and writes the result back. Slug,
+// UpdatePeer loads the peer, applies fn and writes the result back. fn runs
+// inside a transaction on the single-connection database and must not call
+// the store. Slug,
 // instance ID and the inbound hash are not changed here.
 func (s *Store) UpdatePeer(ctx context.Context, id string, fn func(*Peer) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
