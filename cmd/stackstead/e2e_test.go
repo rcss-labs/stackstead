@@ -730,7 +730,7 @@ func dockerfileStack(t *testing.T, c *client, srv *e2eServer) {
 				"dockerfile": map[string]any{"content": original},
 				"extra":      map[string]any{"labels": map[string]string{"e2e": "1"}},
 			},
-			map[string]any{"service": "other", "config": map[string]any{"image": "nginx:alpine"}},
+			map[string]any{"service": "other", "config": map[string]any{"image": "busybox:1.36"}, "extra": map[string]any{"command": []string{"sleep", "3600"}}},
 		},
 	})
 	onDisk, err := os.ReadFile(filepath.Join(srv.stacksDir, name, "app", "Dockerfile"))
