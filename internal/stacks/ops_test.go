@@ -599,3 +599,25 @@ func TestHostOperationIndependentOfStack(t *testing.T) {
 		t.Fatal("cancellation failed")
 	}
 }
+
+func TestStartServiceRecordsServiceAndKeepsBusyRule(t *testing.T) {
+	o := NewOps(0, fixedNow)
+	started := make(chan struct{})
+	op, err := o.StartService("web", "up", "api", blockingFn(started))
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if op.Service != "api" {
+		t.Errorf("service = %q", op.Service)
+	}
+	if _, err := o.Start("web", "down", blockingFn(nil)); !errors.Is(err, ErrBusy) {
+		t.Errorf("err = %v", err)
+	}
+	if err := o.Cancel(op.ID); err != nil {
+		t.Fatal(err)
+	}
+	if fin := waitDone(t, o, op.ID); fin.Service != "api" {
+		t.Errorf("final service = %q", fin.Service)
+	}
+}

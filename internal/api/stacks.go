@@ -81,6 +81,7 @@ func (s *server) registerStackRoutes(mux *http.ServeMux) {
 	route("GET /api/operations/{id}/stream", s.handleStreamOperation)
 	route("POST /api/operations/{id}/cancel", s.handleCancelOperation)
 	route("GET /api/fs", s.handleFS)
+	s.registerDockerfileRoutes(mux)
 	route("GET /api/status", s.handleStatus)
 }
 

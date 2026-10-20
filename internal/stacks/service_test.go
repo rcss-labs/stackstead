@@ -578,6 +578,91 @@ func TestActBusyUnknownActionAndUnavailable(t *testing.T) {
 	}
 }
 
+func TestActServiceRunsScopedUp(t *testing.T) {
+	h := newHarness(t)
+	setupWeb(t, h)
+	op, err := h.svc.ActService(context.Background(), "web", "web", "up")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op.Action != "up" || op.Service != "web" {
+		t.Errorf("op = %+v", op)
+	}
+	if fin := wait(t, h.ops, op.ID); fin.State != stacks.OpSucceeded || fin.Service != "web" {
+		t.Fatalf("final = %+v", fin)
+	}
+	if got := strings.Join(h.compose.lastRun().Args, " "); got != "up -d --build --no-deps -- web" {
+		t.Errorf("args = %q", got)
+	}
+}
+
+func TestActServiceNameCannotBecomeFlag(t *testing.T) {
+	h := newHarness(t)
+	hash := setupWeb(t, h)
+	ctx := context.Background()
+	if _, err := h.svc.SaveRaw(ctx, "web", []byte("services:\n  -x:\n    image: nginx:1\n"), hash); err != nil {
+		t.Fatal(err)
+	}
+	op, err := h.svc.ActService(ctx, "web", "-x", "up")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wait(t, h.ops, op.ID)
+	args := h.compose.lastRun().Args
+	if n := len(args); n < 2 || args[n-2] != "--" || args[n-1] != "-x" {
+		t.Errorf("args = %v, want to end with -- -x", args)
+	}
+}
+
+func TestActUpUnchanged(t *testing.T) {
+	h := newHarness(t)
+	setupWeb(t, h)
+	op, err := h.svc.Act(context.Background(), "web", "up")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op.Service != "" {
+		t.Errorf("service = %q, want empty", op.Service)
+	}
+	wait(t, h.ops, op.ID)
+	if got := strings.Join(h.compose.lastRun().Args, " "); got != "up -d --build --remove-orphans" {
+		t.Errorf("args = %q", got)
+	}
+}
+
+func TestActServiceUnknownService(t *testing.T) {
+	h := newHarness(t)
+	setupWeb(t, h)
+	if _, err := h.svc.ActService(context.Background(), "web", "ghost", "up"); !errors.Is(err, composefile.ErrServiceNotFound) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestActServiceRejectsOtherActions(t *testing.T) {
+	h := newHarness(t)
+	setupWeb(t, h)
+	_, err := h.svc.ActService(context.Background(), "web", "web", "down")
+	if f := fieldsOf(t, err); len(f) != 1 || f[0].Field != "action" {
+		t.Errorf("fields = %+v", f)
+	}
+}
+
+func TestActServiceBusy(t *testing.T) {
+	h := newHarness(t)
+	setupWeb(t, h)
+	ctx := context.Background()
+	h.compose.runGate = make(chan struct{})
+	op, err := h.svc.Act(ctx, "web", "up")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.ActService(ctx, "web", "web", "up"); !errors.Is(err, stacks.ErrBusy) {
+		t.Errorf("err = %v", err)
+	}
+	close(h.compose.runGate)
+	wait(t, h.ops, op.ID)
+}
+
 func TestActEngineDownFailsFast(t *testing.T) {
 	h := newHarness(t)
 	setupWeb(t, h)
