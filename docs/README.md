@@ -39,6 +39,10 @@ The hub for everything under `docs/`. Back to the [project README](../README.md)
 | Run the tests | [Tests](development.md#tests) |
 | Cut a release | [`deploy/release/RELEASING.md`](../deploy/release/RELEASING.md) |
 
+## Codebase reviews
+
+- [Codebase review — 20 October 2026](codebase-review-2026-10-20.md): scored architecture, correctness, efficiency, and delivery audit.
+
 ## The documents
 
 ### [Installing](install.md)
