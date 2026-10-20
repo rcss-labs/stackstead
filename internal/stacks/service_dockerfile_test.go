@@ -242,3 +242,14 @@ func TestUpdateWithoutDockerfileUnchanged(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateServiceDockerfileOnImageServiceRefused(t *testing.T) {
+	h := newHarness(t)
+	dockerfileStack(t, h, "lab", imageOnlyCompose)
+	_, err := h.svc.UpdateService(context.Background(), "lab", "web", composefile.ServiceConfig{Image: "nginx:1"}, composeHash(t, h, "lab"),
+		&stacks.DockerfileWrite{Content: []byte("FROM x\n"), CheckHash: true})
+	fields := fieldsOf(t, err)
+	if len(fields) != 1 || fields[0].Field != "dockerfile" || fields[0].Message != "this service doesn't build an image, so it has no Dockerfile" {
+		t.Fatalf("fields = %+v", fields)
+	}
+}

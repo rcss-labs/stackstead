@@ -110,7 +110,7 @@ func dockerfilePreSave(e Entry, edited *composefile.File, service string, df *Do
 	stackDir := filepath.Dir(e.ComposePath)
 	path, inside, err := dockerfileTarget(stackDir, edited, service)
 	if errors.Is(err, ErrNoBuild) {
-		return nil, &ValidationError{Fields: []FieldError{{Field: "dockerfile", Message: "the service has no build to write a Dockerfile for"}}}
+		return nil, &ValidationError{Fields: []FieldError{{Field: "dockerfile", Message: "this service doesn't build an image, so it has no Dockerfile"}}}
 	}
 	if err != nil {
 		return nil, err

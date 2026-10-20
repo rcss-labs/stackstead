@@ -43,10 +43,12 @@ func (e *NotEditableError) Error() string { return "Dockerfile can't be edited h
 func ValidateDockerfile(field string, content []byte) error {
 	msg := ""
 	switch {
+	case len(bytes.TrimSpace(content)) == 0:
+		msg = "Dockerfile is required"
 	case len(content) > MaxDockerfileBytes:
 		msg = "Dockerfile is larger than 1 MiB"
 	case bytes.IndexByte(content, 0) >= 0:
-		msg = "Dockerfile contains a NUL byte"
+		msg = "Dockerfile must not contain NUL bytes"
 	}
 	if msg == "" {
 		return nil

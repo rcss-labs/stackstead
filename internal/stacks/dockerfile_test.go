@@ -304,7 +304,9 @@ func TestSaveDockerfileLimits(t *testing.T) {
 		msg     string
 	}{
 		{"too large", bytes.Repeat([]byte("a"), 1<<20+1), "Dockerfile is larger than 1 MiB"},
-		{"NUL", []byte("FROM x\x00"), "Dockerfile contains a NUL byte"},
+		{"NUL", []byte("FROM x\x00"), "Dockerfile must not contain NUL bytes"},
+		{"empty", nil, "Dockerfile is required"},
+		{"whitespace only", []byte(" \n\t\r\n"), "Dockerfile is required"},
 	} {
 		_, err := h.svc.SaveDockerfile(ctx, "app", "web", tc.content, "")
 		var ve *stacks.ValidationError
