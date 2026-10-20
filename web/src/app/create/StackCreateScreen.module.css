@@ -72,5 +72,8 @@
   .header h1 { font-size: 20px; }
   .actions > * { min-height: 40px; }
   .cancel, .create { flex: 1; }
+  .addButton { height: 40px; }
+  .stackName input { min-height: 40px; }
+  .check { min-height: 40px; }
   .side { position: static; max-height: none; }
 }

@@ -57,6 +57,17 @@ describe('Button', () => {
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the caller className next to its own variant styling', () => {
+    render(
+      <Button variant="primary" className="x">
+        Go
+      </Button>,
+    );
+    const btn = screen.getByRole('button', { name: 'Go' });
+    expect(btn.classList.contains('x')).toBe(true);
+    expect(btn.classList.length).toBeGreaterThan(1);
+  });
+
   it('exposes disabledReason to AT, stays focusable and does not fire', async () => {
     const user = userEvent.setup();
     const onClick = vi.fn();

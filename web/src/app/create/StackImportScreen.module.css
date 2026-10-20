@@ -56,10 +56,10 @@
   font-size: 13px;
   text-decoration: none;
 }
-.submit { height: 40px; box-sizing: border-box; }
+.submit, .browse { height: 40px; box-sizing: border-box; }
 
 @media (max-width: 759px) {
   .page h1 { font-size: 20px; }
-  .browse { min-height: 40px; }
+  .browse, .inline input { min-height: 40px; }
   .footer .cancel, .footer .submit { flex: 1; min-height: 40px; }
 }

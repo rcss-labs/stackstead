@@ -5,6 +5,11 @@
 .row { display: flex; gap: 8px; align-items: center; }
 .cell { flex: 1; min-width: 0; display: flex; gap: 8px; }
 
+@media (max-width: 759px) {
+  /* A note beside the input wraps below it so the input keeps its full width. */
+  .cell { flex-wrap: wrap; }
+}
+
 .cell > input {
   flex: 1;
   min-width: 0;

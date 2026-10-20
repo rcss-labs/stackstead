@@ -37,6 +37,9 @@
   .grid3 { grid-template-columns: 1fr; }
 }
 
+@media (max-width: 759px) {
+  .portNote { flex-basis: 100%; }
+}
 .portNote { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; min-width: 0; overflow-wrap: anywhere; }
 .portNote[data-tone='danger'] { color: var(--danger); }
 .portNote[data-tone='warning'] { color: var(--warning); }

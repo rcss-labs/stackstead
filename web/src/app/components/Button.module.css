@@ -22,6 +22,7 @@
 .btn[data-icon='true'][data-size='xs'] { width: 24px; }
 
 .btn:hover { background: var(--hover); }
+.btn:active:not(:disabled):not([aria-disabled='true']) { transform: translateY(1px); }
 
 .btn[data-variant='primary'] {
   background: var(--accent);
