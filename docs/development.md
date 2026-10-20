@@ -158,6 +158,24 @@ in file mode. Both screens ride in the lazy `StackCreate` / `StackImport`
 chunks, and `bundle.test.ts` pins that nothing of theirs, nor `ServiceForm`,
 `FileBrowser`, `NetworkPicker` or `cm`, is eager.
 
+The React storage screens live under `web/src/app/storage/`. The Storage screen
+reads today's `lib/storage/controller.ts` through `useStorageRefresh` (one
+controller per mounted screen, `useStore` for its stores) and the pure
+`lib/storage/usage.ts` (kind table, `?tab=` parsing with `layers` added and
+unknown values selecting Images, bar shares, the lead summary over
+`reclaimableTotal`, largest-first sort). The usage bar segments and the kind
+tiles both select the kind through the URL, and the table card announces the
+switch. Chips, search, 50-row paging and the protection rules are
+`lib/storage/storage.ts`, unchanged. Every delete and prune goes through the
+ported `CleanupDialog` (plan preview, typed phrase, inline `OperationPanel`),
+which emits the single end toast itself and is therefore the second exception
+to `trackOperation`. The image and volume pages are keyed on their param, share
+`DetailSections`, and keep the dialog outside their data branches so a refresh
+to 404 / 503 never unmounts a running cleanup. The three screens ride in the
+lazy `Storage` / `StorageImage` / `StorageVolume` chunks, and `bundle.test.ts`
+pins that nothing of theirs, nor the dialog, `usage.ts` or `OperationPanel`, is
+eager.
+
 ## Tests
 
 ```bash
