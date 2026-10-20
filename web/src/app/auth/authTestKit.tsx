@@ -26,7 +26,7 @@ export function mountAuth(path: string) {
   );
 }
 
-export const location = () => screen.getByTestId('location').textContent;
+export const currentPath = () => screen.getByTestId('location').textContent;
 
 export async function fill(user: string, pass: string) {
   const u = userEvent.setup();

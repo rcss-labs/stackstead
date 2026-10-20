@@ -103,7 +103,7 @@ describe('Settings metrics token', () => {
     expect(snippet).toContain(`credentials: ${TOKEN}`);
     expect(snippet).toContain(window.location.host);
     expect(snippet).toContain(`scheme: ${window.location.protocol.slice(0, -1)}`);
-    expect(document.activeElement).toBe(input);
+    await waitFor(() => expect(document.activeElement).toBe(input));
     expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy();
 
     await user.click(screen.getByRole('button', { name: 'I have saved it' }));
@@ -193,7 +193,7 @@ describe('Settings metrics token', () => {
     expect(fake.calls.filter((c) => c.method === 'POST')).toHaveLength(1);
   });
 
-  it('rotate and disable confirmations also send once', async () => {
+  it('a double click on the Disable confirmation sends one request', async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => (release = resolve));
     fake = installSettingsFetch({
@@ -214,6 +214,29 @@ describe('Settings metrics token', () => {
     release();
     expect(await screen.findByRole('button', { name: 'Create token' })).toBeTruthy();
     expect(fake.calls.filter((c) => c.method === 'DELETE')).toHaveLength(1);
+  });
+
+  it('a double click on the Rotate confirmation sends one request', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    fake = installSettingsFetch({
+      ...tokenStatus(true),
+      [`POST ${STATUS}`]: async () => {
+        await gate;
+        return { status: 200, body: { token: TOKEN } };
+      },
+    });
+    const user = userEvent.setup();
+    mountSettings();
+    await user.click(await screen.findByRole('button', { name: 'Rotate token' }));
+    const confirm = within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Rotate' });
+    act(() => {
+      fireEvent.click(confirm);
+      fireEvent.click(confirm);
+    });
+    release();
+    expect(await screen.findByLabelText('Metrics token')).toBeTruthy();
+    expect(fake.calls.filter((c) => c.method === 'POST')).toHaveLength(1);
   });
 
   it('loads the token status and update status once under StrictMode', async () => {

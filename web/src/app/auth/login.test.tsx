@@ -4,7 +4,7 @@ import { get } from '$lib/store';
 import { onUnauthorized } from '$lib/api/client';
 import { expireSession, session } from '$lib/api/session';
 import { installFakeFetch, type FakeFetch } from '../../vitest-setup';
-import { fill, location, mountAuth } from './authTestKit';
+import { currentPath, fill, mountAuth } from './authTestKit';
 
 let fake: FakeFetch;
 beforeEach(() => onUnauthorized(() => {}));
@@ -40,7 +40,7 @@ describe('Login', () => {
     mountAuth('/login?next=/stacks/web');
     const u = await fill('ann', 'secret-pass');
     await u.click(screen.getByRole('button', { name: 'Sign in' }));
-    await waitFor(() => expect(location()).toBe('/stacks/web'));
+    await waitFor(() => expect(currentPath()).toBe('/stacks/web'));
     expect(fake.calls.find((c) => c.path === '/api/login')?.body).toEqual({ username: 'ann', password: 'secret-pass' });
     expect(get(session).state).toBe('authenticated');
   });
@@ -50,7 +50,7 @@ describe('Login', () => {
     mountAuth('/login');
     const u = await fill('ann', 'pw');
     await u.keyboard('{Enter}');
-    await waitFor(() => expect(location()).toBe('/'));
+    await waitFor(() => expect(currentPath()).toBe('/'));
   });
 
   it.each(['//evil', 'https://evil.example/x', 'javascript:alert(1)', '/\\evil'])('rejects the external next %j', async (next) => {
@@ -58,7 +58,7 @@ describe('Login', () => {
     mountAuth(`/login?next=${encodeURIComponent(next)}`);
     const u = await fill('ann', 'pw');
     await u.click(screen.getByRole('button', { name: 'Sign in' }));
-    await waitFor(() => expect(location()).toBe('/'));
+    await waitFor(() => expect(currentPath()).toBe('/'));
   });
 
   it('401 shows an inline alert, keeps the username and drops the password from the DOM', async () => {
@@ -135,7 +135,7 @@ describe('Login', () => {
       fireEvent.click(button);
     });
     release();
-    await waitFor(() => expect(location()).toBe('/'));
+    await waitFor(() => expect(currentPath()).toBe('/'));
     expect(fake.calls.filter((c) => c.path === '/api/login')).toHaveLength(1);
   });
 
@@ -144,7 +144,7 @@ describe('Login', () => {
     mountAuth('/login');
     const u = await fill('ann', 'secret-pass');
     await u.click(screen.getByRole('button', { name: 'Sign in' }));
-    await waitFor(() => expect(location()).toBe('/'));
+    await waitFor(() => expect(currentPath()).toBe('/'));
     for (const store of [{ ...localStorage }, { ...sessionStorage }]) {
       const dump = JSON.stringify(store);
       expect(dump).not.toContain('ann');
@@ -152,7 +152,7 @@ describe('Login', () => {
     }
     const carrying = fake.calls.filter((c) => JSON.stringify(c.body ?? '').includes('secret-pass') || c.path.includes('secret-pass'));
     expect(carrying.map((c) => `${c.method} ${c.path}`)).toEqual(['POST /api/login']);
-    expect(location()).not.toContain('secret-pass');
+    expect(currentPath()).not.toContain('secret-pass');
   });
 
   it('the password field keeps its autocomplete and type', () => {

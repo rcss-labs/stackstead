@@ -5,7 +5,7 @@ import { onUnauthorized } from '$lib/api/client';
 import { expireSession, session } from '$lib/api/session';
 import { toasts } from '$lib/stores/toasts';
 import { installFakeFetch, type FakeFetch } from '../../vitest-setup';
-import { fillForm, location, mountAuth, needsSetup, PW, submit } from './authTestKit';
+import { currentPath, fillForm, mountAuth, needsSetup, PW, submit } from './authTestKit';
 
 let fake: FakeFetch;
 beforeEach(() => {
@@ -79,7 +79,7 @@ describe('Setup', () => {
     mountAuth('/setup');
     const u = await fillForm({ token: 'tok-123' });
     await submit(u);
-    await waitFor(() => expect(location()).toBe('/'));
+    await waitFor(() => expect(currentPath()).toBe('/'));
     expect(fake.calls.find((c) => c.path === '/api/setup')?.body).toEqual({ username: 'admin', password: PW, setupToken: 'tok-123' });
     expect(get(session).state).toBe('authenticated');
   });
@@ -93,7 +93,7 @@ describe('Setup', () => {
     mountAuth('/setup');
     const u = await fillForm();
     await submit(u);
-    await waitFor(() => expect(location()).toBe('/'));
+    await waitFor(() => expect(currentPath()).toBe('/'));
     const body = fake.calls.find((c) => c.path === '/api/setup')?.body as Record<string, unknown>;
     expect(body).toMatchObject({ username: 'admin', password: PW });
     expect('setupToken' in body).toBe(false);
@@ -103,7 +103,7 @@ describe('Setup', () => {
     fake = await needsSetup();
     mountAuth('/setup');
     act(() => expireSession());
-    await waitFor(() => expect(location()).toBe('/login'));
+    await waitFor(() => expect(currentPath()).toBe('/login'));
   });
 
   it('409 means setup is already complete: toast and go to /login', async () => {
@@ -111,7 +111,7 @@ describe('Setup', () => {
     mountAuth('/setup');
     const u = await fillForm();
     await submit(u);
-    await waitFor(() => expect(location()).toBe('/login'));
+    await waitFor(() => expect(currentPath()).toBe('/login'));
     expect(get(toasts).some((t) => /already complete/i.test(t.message))).toBe(true);
     expect(get(session).state).toBe('anonymous');
   });
@@ -124,7 +124,7 @@ describe('Setup', () => {
     mountAuth('/setup');
     const u = await fillForm();
     await submit(u);
-    await waitFor(() => expect(location()).toBe('/login'));
+    await waitFor(() => expect(currentPath()).toBe('/login'));
     expect(get(toasts).some((t) => /account was created/i.test(t.message))).toBe(true);
     expect(get(session).state).toBe('anonymous');
   });
@@ -185,7 +185,7 @@ describe('Setup', () => {
       fireEvent.click(button);
     });
     release();
-    await waitFor(() => expect(location()).toBe('/'));
+    await waitFor(() => expect(currentPath()).toBe('/'));
     expect(fake.calls.filter((c) => c.path === '/api/setup')).toHaveLength(1);
   });
 
