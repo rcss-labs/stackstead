@@ -36,7 +36,7 @@
 .wrap { position: relative; }
 
 .log {
-  max-height: 260px;
+  max-height: min(max(260px, 50dvh), calc(100dvh - 160px));
   overflow: auto;
   padding: 8px;
   border-radius: var(--radius);

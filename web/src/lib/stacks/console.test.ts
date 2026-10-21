@@ -73,8 +73,10 @@ describe('console derivations', () => {
           throw new Error('denied');
         },
       }),
-    ).toBe(240);
-    expect(readLogsHeight(undefined)).toBe(240);
+    ).toBeUndefined();
+    expect(readLogsHeight(undefined)).toBeUndefined();
+    expect(readLogsHeight({ getItem: () => '1200' })).toBe(1200);
+    expect(readLogsHeight({ getItem: () => 'invalid' })).toBeUndefined();
     expect(() =>
       writeLogsHeight(
         {

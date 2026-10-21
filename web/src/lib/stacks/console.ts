@@ -52,23 +52,37 @@ export const LOGS_HEIGHT_MAX = 560;
 export const LOGS_HEIGHT_DEFAULT = 240;
 export const LOGS_HEIGHT_MOBILE = 280;
 
-export function clampLogsHeight(value: unknown): number {
-  const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
-  if (!Number.isFinite(n)) return LOGS_HEIGHT_DEFAULT;
-  return Math.min(LOGS_HEIGHT_MAX, Math.max(LOGS_HEIGHT_MIN, n));
+/** Leave room for the shell and console controls, including on short landscape screens. */
+export function logsHeightBounds(viewportHeight?: number) {
+  if (viewportHeight === undefined || !Number.isFinite(viewportHeight) || viewportHeight <= 0) {
+    return { min: LOGS_HEIGHT_MIN, max: LOGS_HEIGHT_MAX, initial: LOGS_HEIGHT_DEFAULT };
+  }
+  const max = Math.max(0, Math.floor(Math.min(viewportHeight * 0.8, viewportHeight - 160)));
+  const min = Math.min(LOGS_HEIGHT_MIN, max);
+  return { min, max, initial: Math.min(max, Math.max(min, Math.round(viewportHeight * 0.4))) };
 }
 
-export function readLogsHeight(storage: Pick<Storage, 'getItem'> | undefined): number {
+export function clampLogsHeight(value: unknown, viewportHeight?: number): number {
+  const { min, max, initial } = logsHeightBounds(viewportHeight);
+  const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
+  if (!Number.isFinite(n)) return initial;
+  return Math.min(max, Math.max(min, n));
+}
+
+/** Read the preference without clamping it to this window, so it survives shrinking and reopening. */
+export function readLogsHeight(storage: Pick<Storage, 'getItem'> | undefined): number | undefined {
   try {
-    return clampLogsHeight(storage?.getItem(LOGS_HEIGHT_KEY));
+    const stored = storage?.getItem(LOGS_HEIGHT_KEY);
+    const height = stored?.trim() ? Number(stored) : NaN;
+    return Number.isFinite(height) && height >= 0 ? height : undefined;
   } catch {
-    return LOGS_HEIGHT_DEFAULT;
+    return undefined;
   }
 }
 
 export function writeLogsHeight(storage: Pick<Storage, 'setItem'> | undefined, height: number): void {
   try {
-    storage?.setItem(LOGS_HEIGHT_KEY, String(clampLogsHeight(height)));
+    if (Number.isFinite(height) && height >= 0) storage?.setItem(LOGS_HEIGHT_KEY, String(Math.round(height)));
   } catch {
     // Private mode or blocked storage: the height just does not persist.
   }

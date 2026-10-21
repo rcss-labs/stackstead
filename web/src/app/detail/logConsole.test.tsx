@@ -227,11 +227,20 @@ describe('LogConsole header', () => {
 });
 
 describe('LogConsole height', () => {
+  beforeEach(() => vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(800));
+  afterEach(() => vi.restoreAllMocks());
+
+  function resize(height: number) {
+    vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(height);
+    fireEvent(window, new Event('resize'));
+  }
+
   it.each([
     ['300', '300px'],
-    ['999', '560px'],
+    ['999', '640px'],
     ['5', '120px'],
-    [undefined, '240px'],
+    [undefined, '320px'],
+    ['invalid', '320px'],
   ])('initial height %s comes from storage, clamped to %s', (stored, expected) => {
     fake = installFakeStream({ [PATH]: [] });
     mount({ storage: storageStub(stored) });
@@ -250,10 +259,10 @@ describe('LogConsole height', () => {
     expect(handle.getAttribute('aria-valuenow')).toBe('340');
     expect(storage.setItem).not.toHaveBeenCalled();
     fireEvent.pointerMove(handle, { clientY: -500, pointerId: 1 });
-    expect(handle.getAttribute('aria-valuenow')).toBe('560');
+    expect(handle.getAttribute('aria-valuenow')).toBe('640');
     fireEvent.pointerUp(handle, { clientY: -500, pointerId: 1 });
     expect(storage.setItem).toHaveBeenCalledTimes(1);
-    expect(storage.setItem).toHaveBeenCalledWith('stackstead.logsHeight', '560');
+    expect(storage.setItem).toHaveBeenCalledWith('stackstead.logsHeight', '640');
     expect(body().hasAttribute('data-dragging')).toBe(false);
   });
 
@@ -278,8 +287,8 @@ describe('LogConsole height', () => {
     const handle = screen.getByRole('separator', { name: 'Resize logs' });
     expect(handle.getAttribute('aria-orientation')).toBe('horizontal');
     expect(handle.getAttribute('aria-valuemin')).toBe('120');
-    expect(handle.getAttribute('aria-valuemax')).toBe('560');
-    expect(handle.getAttribute('aria-valuenow')).toBe('240');
+    expect(handle.getAttribute('aria-valuemax')).toBe('640');
+    expect(handle.getAttribute('aria-valuenow')).toBe('320');
     expect(handle.getAttribute('tabindex')).toBe('0');
   });
 
@@ -308,10 +317,62 @@ describe('LogConsole height', () => {
       },
     } as unknown as Storage;
     mount({ storage });
-    expect(body().style.height).toBe('240px');
+    expect(body().style.height).toBe('320px');
     const handle = screen.getByRole('separator', { name: 'Resize logs' });
     fireEvent.keyDown(handle, { key: 'ArrowUp' });
-    expect(handle.getAttribute('aria-valuenow')).toBe('260');
+    expect(handle.getAttribute('aria-valuenow')).toBe('340');
+  });
+
+  it('automatic height follows tall and shrinking viewports without saving a preference', () => {
+    fake = installFakeStream({ [PATH]: [] });
+    const storage = storageStub();
+    mount({ storage });
+    resize(2160);
+    expect(body().style.height).toBe('864px');
+    expect(screen.getByRole('separator').getAttribute('aria-valuemax')).toBe('1728');
+    resize(600);
+    expect(body().style.height).toBe('240px');
+    expect(storage.setItem).not.toHaveBeenCalled();
+  });
+
+  it('preserves a large saved preference through shrinking, mobile and collapsed views', () => {
+    fake = installFakeStream({ [PATH]: [] });
+    resize(2160);
+    const storage = storageStub('1200');
+    const { props, rerender } = mount({ storage });
+    expect(body().style.height).toBe('1200px');
+    resize(600);
+    expect(body().style.height).toBe('440px');
+    rerender(<LogConsole {...props} mobile />);
+    expect(body().style.height).toBe('280px');
+    rerender(<LogConsole {...props} open={false} />);
+    expect(body().style.height).toBe('0px');
+    resize(2160);
+    rerender(<LogConsole {...props} />);
+    expect(body().style.height).toBe('1200px');
+    expect(storage.setItem).not.toHaveBeenCalled();
+  });
+
+  it('can resize and persist beyond the former 560px ceiling', () => {
+    fake = installFakeStream({ [PATH]: [] });
+    resize(2160);
+    const storage = storageStub();
+    mount({ storage });
+    fireEvent.keyDown(screen.getByRole('separator'), { key: 'ArrowUp' });
+    expect(body().style.height).toBe('884px');
+    expect(storage.setItem).toHaveBeenLastCalledWith('stackstead.logsHeight', '884');
+  });
+
+  it('keeps desktop and mobile logs inside a very short viewport', () => {
+    fake = installFakeStream({ [PATH]: [] });
+    resize(240);
+    const { props, rerender } = mount();
+    const handle = screen.getByRole('separator');
+    expect(handle.getAttribute('aria-valuemin')).toBe('80');
+    expect(handle.getAttribute('aria-valuemax')).toBe('80');
+    expect(body().style.height).toBe('80px');
+    rerender(<LogConsole {...props} mobile />);
+    expect(body().style.height).toBe('80px');
   });
 
   it('no handle while collapsed', () => {

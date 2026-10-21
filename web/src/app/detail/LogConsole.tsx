@@ -3,9 +3,6 @@ import type { LogLine } from '$lib/logs/buffer';
 import {
   consoleStatus,
   filterConsoleLines,
-  LOGS_HEIGHT_MAX,
-  LOGS_HEIGHT_MIN,
-  LOGS_HEIGHT_MOBILE,
   newLinesSince,
   type LogLevel,
 } from '$lib/stacks/console';
@@ -39,7 +36,7 @@ export function LogConsole({ source, services, service, onService, open, onOpenC
   // A service the stack does not have (a stale ?service=) shows every service rather than an empty console.
   const serverService = source.kind === 'stack' && service !== undefined && services.includes(service) ? service : undefined;
   const stream = useLogStream(source, { service: serverService, tail: 200, follow: true });
-  const { height, setHeight, commit } = useLogsHeight(storage);
+  const { height, min, max, mobileHeight, setHeight, commit } = useLogsHeight(storage);
   const [paused, setPaused] = useState(false);
   const [frozen, setFrozen] = useState<LogLine[]>([]);
   const [frozenSeq, setFrozenSeq] = useState(0);
@@ -132,7 +129,7 @@ export function LogConsole({ source, services, service, onService, open, onOpenC
     commit();
   }
 
-  const bodyHeight = open ? (mobile ? LOGS_HEIGHT_MOBILE : height) : 0;
+  const bodyHeight = open ? (mobile ? mobileHeight : height) : 0;
   return (
     <section className={styles.console} aria-label="Logs" data-open={open}>
       {open && !mobile && (
@@ -141,8 +138,8 @@ export function LogConsole({ source, services, service, onService, open, onOpenC
           role="separator"
           aria-orientation="horizontal"
           aria-label="Resize logs"
-          aria-valuemin={LOGS_HEIGHT_MIN}
-          aria-valuemax={LOGS_HEIGHT_MAX}
+          aria-valuemin={min}
+          aria-valuemax={max}
           aria-valuenow={height}
           tabIndex={0}
           title="Drag to resize"

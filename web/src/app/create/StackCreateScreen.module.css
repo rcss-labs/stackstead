@@ -3,7 +3,7 @@
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
   gap: 16px;
   align-items: start;
-  max-width: 1240px;
+  min-width: 0;
   animation: fadeUp 0.22s ease-out;
 }
 
