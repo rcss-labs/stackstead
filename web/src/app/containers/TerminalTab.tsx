@@ -102,6 +102,13 @@ export function TerminalTab({ containerId, containerName, running, onStart }: Te
   const [end, setEnd] = useState<ExecEnd | undefined>();
   const [idleSeconds, setIdleSeconds] = useState<number | undefined>();
   const [refusal, setRefusal] = useState<RefusalReason | undefined>();
+  // A refusal explains the container's state at the time it happened; a start or stop makes it stale.
+  // Clearing it during render (not in an effect) lets the connect effect see the terminal host in the same commit.
+  const [refusalRunning, setRefusalRunning] = useState(running);
+  if (refusalRunning !== running) {
+    setRefusalRunning(running);
+    setRefusal(undefined);
+  }
   const hostRef = useRef<HTMLDivElement>(null);
 
   function update(change: Partial<Prefs>) {

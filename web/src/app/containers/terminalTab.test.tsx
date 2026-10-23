@@ -269,6 +269,24 @@ describe('TerminalTab', () => {
     expect(await screen.findByText("Container isn't running")).toBeTruthy();
   });
 
+  it('refusal not_running clears when the container runs again', async () => {
+    refuse({ status: 409, body: { error: 'x', code: 'not_running' } });
+    const view = mount();
+    act(() => lastSocket().drop());
+    expect(await screen.findByText("Container isn't running")).toBeTruthy();
+    const tree = (running: boolean) => (
+      <MemoryRouter>
+        <ServerContext.Provider value={localScope}>
+          <TerminalTab containerId="abc123" containerName="redis" running={running} onStart={vi.fn()} />
+        </ServerContext.Provider>
+      </MemoryRouter>
+    );
+    view.rerender(tree(false));
+    view.rerender(tree(true));
+    expect(FakeSocket.all).toHaveLength(2);
+    expect(screen.queryByText("Container isn't running")).toBeNull();
+  });
+
   it('clears the idle warning when output arrives', () => {
     mount();
     act(() => {

@@ -929,3 +929,63 @@ func TestXNetConnWriteDeadline(t *testing.T) {
 		t.Fatal("write blocked past its deadline")
 	}
 }
+
+const ociLike = "exec failed: something\n"
+
+func TestSessionHeldOutputFlushedOnSecondChunk(t *testing.T) {
+	h := startSession(t, func(c *sessionConfig) { c.MissingExecutableMessage = "no shell" })
+	h.st.out(1, ociLike)
+	h.st.out(1, "more\n")
+	eventually(t, "both chunks forwarded before exit", func() bool { return len(h.ws.binaries()) == 2 })
+	b := h.ws.binaries()
+	if string(b[0][1:]) != ociLike || string(b[1][1:]) != "more\n" {
+		t.Fatalf("binaries = %q", b)
+	}
+	h.be.setInspect(engine.ExecInspect{Running: false, ExitCode: 0})
+	h.st.endOutput()
+	if r := h.waitResult(); r != "exit 0" {
+		t.Fatalf("result = %q", r)
+	}
+}
+
+func TestSessionHeldOutputFlushedOnStdin(t *testing.T) {
+	h := startSession(t, func(c *sessionConfig) { c.MissingExecutableMessage = "no shell" })
+	h.st.out(1, ociLike)
+	h.expectNoResult()
+	if n := len(h.ws.binaries()); n != 0 {
+		t.Fatalf("held chunk forwarded too early: %d", n)
+	}
+	h.ws.sendBinary(0, 'x')
+	eventually(t, "held chunk forwarded after stdin", func() bool { return len(h.ws.binaries()) == 1 })
+	if b := h.ws.binaries(); string(b[0][1:]) != ociLike {
+		t.Fatalf("binaries = %q", b)
+	}
+}
+
+func TestSessionHeldOutputFlushedOverCap(t *testing.T) {
+	h := startSession(t, func(c *sessionConfig) { c.MissingExecutableMessage = "no shell" })
+	h.st.out(1, ociLike+strings.Repeat("x", maxHeldOutput))
+	eventually(t, "oversized chunk forwarded", func() bool { return len(h.ws.binaries()) == 1 })
+}
+
+// A client blocked on output backpressure must still have its stdin and pongs
+// read; a false pong timeout would drop a live client.
+func TestSessionStdinAndPongReadWhileOutputIsBackpressured(t *testing.T) {
+	h := startSession(t, func(c *sessionConfig) {
+		c.MissingExecutableMessage = "no shell"
+		c.PongTimeout = 20 * time.Second
+	})
+	h.ws.blockBinary.Store(true)
+	h.st.out(1, "$ ")   // the writer blocks on this one
+	h.st.out(1, "more") // readStream blocks handing this to the writer
+	h.expectNoResult()
+	h.clk.Advance(time.Second)
+	h.ws.sendBinary(0, 'x')
+	h.ws.sendText(`{"type":"pong"}`)
+	time.Sleep(100 * time.Millisecond) // let readClient reach the pong
+	h.clk.Advance(19 * time.Second)    // ping tick at t=20: 19s since the pong, 20s since start
+	time.Sleep(100 * time.Millisecond)
+	if h.ws.isClosed() {
+		t.Fatal("session dropped a live client: the pong was never read")
+	}
+}
