@@ -38,7 +38,7 @@ function GitHubSource({ image }: { image: LibraryImageDetail }) {
       setHead(await api.githubHead(slug));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-      setNeedsToken(e instanceof ApiError && (e.status === 401 || e.status === 403 || /github|token|unconfigured/i.test(e.code ?? '')));
+      setNeedsToken(e instanceof ApiError && (e.code === 'github_unconfigured' || e.code === 'github_unauthorized'));
     } finally {
       setLoading(false);
     }

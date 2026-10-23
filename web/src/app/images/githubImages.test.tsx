@@ -97,15 +97,31 @@ describe('GitHub images', () => {
     expect((backend.calls('PUT', `${IMG}/push-targets/t1`)[0].body as { autoPush: boolean }).autoPush).toBe(true);
   });
 
-  it('points to Settings when GitHub refuses the token, and drops the stale Dockerfile', async () => {
+  it.each([
+    [401, 'github_unauthorized'],
+    [409, 'github_unconfigured'],
+  ])('points to Settings for %i %s, and drops the stale Dockerfile', async (status, code) => {
     backend = installImagesBackend({
       [`GET ${IMG}`]: { body: ghDetail() },
-      [`GET ${IMG}/github/head`]: { status: 401, body: { error: 'bad credentials' } },
+      [`GET ${IMG}/github/head`]: { status, body: { error: 'bad credentials', code } },
     });
     mountImages('/images/gh?tab=source');
     expect(await screen.findByText(/bad credentials/)).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Settings → GitHub' }).getAttribute('href')).toBe('/settings#settings-github');
     expect(screen.queryByLabelText('Dockerfile at branch head')).toBeNull();
+  });
+
+  it.each([
+    [429, 'github_rate_limited'],
+    [502, 'github_unreachable'],
+  ])('does not blame the token for %i %s', async (status, code) => {
+    backend = installImagesBackend({
+      [`GET ${IMG}`]: { body: ghDetail() },
+      [`GET ${IMG}/github/head`]: { status, body: { error: 'try later', code } },
+    });
+    mountImages('/images/gh?tab=source');
+    expect(await screen.findByText(/try later/)).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Settings → GitHub' })).toBeNull();
   });
 
   async function openBuild() {
