@@ -929,3 +929,41 @@ func TestXNetConnWriteDeadline(t *testing.T) {
 		t.Fatal("write blocked past its deadline")
 	}
 }
+
+const ociLike = "exec failed: something\n"
+
+func TestSessionHeldOutputFlushedOnSecondChunk(t *testing.T) {
+	h := startSession(t, func(c *sessionConfig) { c.MissingExecutableMessage = "no shell" })
+	h.st.out(1, ociLike)
+	h.st.out(1, "more\n")
+	eventually(t, "both chunks forwarded before exit", func() bool { return len(h.ws.binaries()) == 2 })
+	b := h.ws.binaries()
+	if string(b[0][1:]) != ociLike || string(b[1][1:]) != "more\n" {
+		t.Fatalf("binaries = %q", b)
+	}
+	h.be.setInspect(engine.ExecInspect{Running: false, ExitCode: 0})
+	h.st.endOutput()
+	if r := h.waitResult(); r != "exit 0" {
+		t.Fatalf("result = %q", r)
+	}
+}
+
+func TestSessionHeldOutputFlushedOnStdin(t *testing.T) {
+	h := startSession(t, func(c *sessionConfig) { c.MissingExecutableMessage = "no shell" })
+	h.st.out(1, ociLike)
+	h.expectNoResult()
+	if n := len(h.ws.binaries()); n != 0 {
+		t.Fatalf("held chunk forwarded too early: %d", n)
+	}
+	h.ws.sendBinary(0, 'x')
+	eventually(t, "held chunk forwarded after stdin", func() bool { return len(h.ws.binaries()) == 1 })
+	if b := h.ws.binaries(); string(b[0][1:]) != ociLike {
+		t.Fatalf("binaries = %q", b)
+	}
+}
+
+func TestSessionHeldOutputFlushedOverCap(t *testing.T) {
+	h := startSession(t, func(c *sessionConfig) { c.MissingExecutableMessage = "no shell" })
+	h.st.out(1, ociLike+strings.Repeat("x", maxHeldOutput))
+	eventually(t, "oversized chunk forwarded", func() bool { return len(h.ws.binaries()) == 1 })
+}

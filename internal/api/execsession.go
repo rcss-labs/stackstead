@@ -88,7 +88,9 @@ type session struct {
 	stdinSeen atomic.Bool // any client input reached the process
 	// heldOutput is the output withheld while it might be Docker's "could not
 	// start" text. Only readStream and, after it ends, finishExit touch it.
-	heldOutput []heldChunk
+	heldOutput  []heldChunk
+	holdMu      sync.Mutex // guards heldOutput and holdChecked
+	holdChecked bool       // the first output chunk has been classified
 }
 
 type heldChunk struct {
@@ -206,6 +208,7 @@ func (s *session) readClient() {
 		}
 		s.touchActivity()
 		s.stdinSeen.Store(true)
+		s.releaseHeldOutput()
 		_, _ = s.stream.Write(data[1:]) // a closed stdin is the process's business
 	}
 }
@@ -229,9 +232,11 @@ func (s *session) handleControl(raw []byte) {
 	}
 }
 
+// maxHeldOutput caps how much output is withheld while checking for a start failure.
+const maxHeldOutput = 4096
+
 // readStream pumps process output to the WebSocket.
 func (s *session) readStream() {
-	first, holding := true, false
 	for {
 		kind, p, err := s.stream.ReadFrame()
 		if err != nil {
@@ -242,19 +247,53 @@ func (s *session) readStream() {
 			continue
 		}
 		s.touchActivity()
-		if first {
-			first = false
-			holding = s.cfg.MissingExecutableMessage != "" && !s.stdinSeen.Load() && looksLikeStartFailure(p)
-		}
-		if holding {
-			// Withhold it: finishExit decides whether it was a start failure.
-			s.heldOutput = append(s.heldOutput, heldChunk{kind, append([]byte(nil), p...)})
-			continue
-		}
-		if !s.forward(kind, p) {
+		s.holdMu.Lock()
+		ok := s.routeOutput(kind, p)
+		s.holdMu.Unlock()
+		if !ok {
 			return
 		}
 	}
+}
+
+// routeOutput holds or forwards one chunk; holdMu must be held. Output is only
+// withheld while it might still be Docker's single short "could not start"
+// message: the first chunk, looking like one, before any stdin. A second
+// chunk means a real program is running, so everything held is released first.
+func (s *session) routeOutput(kind byte, p []byte) bool {
+	if !s.holdChecked {
+		s.holdChecked = true
+		if s.cfg.MissingExecutableMessage != "" && !s.stdinSeen.Load() && len(p) <= maxHeldOutput && looksLikeStartFailure(p) {
+			s.heldOutput = append(s.heldOutput, heldChunk{kind, append([]byte(nil), p...)})
+			return true // finishExit, stdin or the next chunk decides
+		}
+	}
+	if !s.flushHeldLocked() {
+		return false
+	}
+	return s.forward(kind, p)
+}
+
+// flushHeldLocked forwards the withheld chunks in order and stops holding for
+// good; holdMu must be held. It reports false when the writer is gone.
+func (s *session) flushHeldLocked() bool {
+	held := s.heldOutput
+	s.heldOutput = nil
+	for _, h := range held {
+		if !s.forward(h.kind, h.p) {
+			return false
+		}
+	}
+	return true
+}
+
+// releaseHeldOutput is called once client input arrives: the process is
+// clearly running, so output held back as a possible start failure is sent now.
+func (s *session) releaseHeldOutput() {
+	s.holdMu.Lock()
+	s.holdChecked = true
+	_ = s.flushHeldLocked()
+	s.holdMu.Unlock()
 }
 
 // looksLikeStartFailure reports whether the output is the text Docker writes
@@ -399,17 +438,18 @@ func (s *session) finishExit() string {
 		return "error"
 	}
 	code := info.ExitCode
-	if len(s.heldOutput) > 0 {
+	s.holdMu.Lock()
+	held := len(s.heldOutput) > 0
+	s.holdMu.Unlock()
+	if held {
 		if code == 126 || code == 127 {
 			s.sendTerminal(controlMsg{Type: "error", Message: s.cfg.MissingExecutableMessage})
 			s.shutdownConns()
 			return "error"
 		}
-		for _, h := range s.heldOutput { // it was ordinary output after all
-			if !s.forward(h.kind, h.p) {
-				break
-			}
-		}
+		s.holdMu.Lock() // it was ordinary output after all
+		_ = s.flushHeldLocked()
+		s.holdMu.Unlock()
 	}
 	s.sendTerminal(controlMsg{Type: "exit", Code: &code})
 	s.shutdownConns()
