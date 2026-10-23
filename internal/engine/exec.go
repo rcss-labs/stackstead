@@ -49,8 +49,11 @@ type ExecStream interface {
 
 // execMapError maps Docker's 404 and 409 answers to the package errors.
 func execMapError(err error) error {
-	err = actionResult(err)
 	var ae *ActionError
+	if errors.As(err, &ae) && ae.Status == http.StatusNotModified {
+		return err // actionResult would turn this into success
+	}
+	err = actionResult(err)
 	if errors.As(err, &ae) && ae.Status == http.StatusConflict {
 		return fmt.Errorf("%w: %w", ErrNotRunning, ae)
 	}

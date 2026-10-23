@@ -63,6 +63,21 @@ func TestCreateExecMapsErrors(t *testing.T) {
 	}
 }
 
+// A 304 must surface as an error: actionResult would turn it into success,
+// leaving CreateExec with an empty ID and StartExec with a nil stream.
+func TestExecNotModifiedIsAnError(t *testing.T) {
+	sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotModified)
+	}))
+	c := New(sock, time.Second)
+	if id, err := c.CreateExec(context.Background(), "abc", ExecSpec{Cmd: []string{"sh"}}); err == nil {
+		t.Errorf("CreateExec = %q, nil error", id)
+	}
+	if s, err := c.StartExec(context.Background(), "e1", true); err == nil {
+		t.Errorf("StartExec = %v, nil error", s)
+	}
+}
+
 // hijack answers 101 and hands the raw connection to fn, after checking the
 // upgrade request the client made.
 func hijack(t *testing.T, wantBody string, fn func(conn net.Conn, br *bufio.ReadWriter)) http.Handler {

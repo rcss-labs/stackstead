@@ -84,6 +84,16 @@ function mount(over: Partial<{ running: boolean; onStart: () => void; scope: Ser
   );
   return { ...view, onStart };
 }
+/** Makes the refusal-explaining GET answer with this status and JSON body; undefined makes it fail. */
+function refuse(answer?: { status: number; body?: unknown }) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => {
+      if (!answer) throw new TypeError('offline');
+      return new Response(answer.body === undefined ? '' : JSON.stringify(answer.body), { status: answer.status });
+    }),
+  );
+}
 const lastSocket = () => FakeSocket.all[FakeSocket.all.length - 1];
 const params = (s: FakeSocket) => new URL(s.url.replace(/^ws/, 'http')).searchParams;
 const lastTerm = () => term.instances[term.instances.length - 1];
@@ -98,6 +108,7 @@ beforeEach(() => {
     // storage may be unavailable
   }
   vi.stubGlobal('WebSocket', FakeSocket);
+  refuse(undefined); // by default the explanation request fails
 });
 afterEach(() => {
   cleanup();
@@ -225,17 +236,48 @@ describe('TerminalTab', () => {
     expect(lastTerm().disposed).toBe(true);
   });
 
-  it('says a peer may need a newer Stackstead when the socket drops before opening', () => {
+  it('says a peer may need a newer Stackstead when the socket drops before opening', async () => {
+    refuse({ status: 404 });
     mount({ scope: peerScope });
     act(() => lastSocket().drop());
-    expect(screen.getByText('Could not open a terminal. This server may need a newer Stackstead.')).toBeTruthy();
+    expect(await screen.findByText('Could not open a terminal. This server may need a newer Stackstead.')).toBeTruthy();
   });
 
-  it('says it could not open a terminal locally when the socket drops before opening', () => {
+  it('says it could not open a terminal locally when the socket drops before opening', async () => {
     mount();
     act(() => lastSocket().drop());
-    expect(screen.getByText('Could not open a terminal.')).toBeTruthy();
+    expect(await screen.findByText('Could not open a terminal.')).toBeTruthy();
     expect(screen.queryByText(/newer Stackstead/)).toBeNull();
+  });
+
+  it.each([
+    [{ status: 403, body: { error: 'x', code: 'exec_disabled' } }, 'Terminal is disabled on this server.'],
+    [{ status: 429, body: { error: 'x', code: 'exec_limit' } }, 'Too many open terminals on this server. Close one and try again.'],
+    [{ status: 403, body: { error: 'x', code: 'bad_origin' } }, "The server refused the connection's origin. Check the reverse proxy forwards the Host header with its port."],
+  ])('explains a refused upgrade: %j', async (answer, text) => {
+    refuse(answer);
+    mount();
+    act(() => lastSocket().drop());
+    expect(await screen.findByText(text)).toBeTruthy();
+    expect(screen.queryByText('Could not open a terminal.')).toBeNull();
+  });
+
+  it('shows the not-running state when the server says the container is not running', async () => {
+    refuse({ status: 409, body: { error: 'x', code: 'not_running' } });
+    mount();
+    act(() => lastSocket().drop());
+    expect(await screen.findByText("Container isn't running")).toBeTruthy();
+  });
+
+  it('clears the idle warning when output arrives', () => {
+    mount();
+    act(() => {
+      lastSocket().open();
+      lastSocket().text({ type: 'idle_warning', seconds: 60 });
+    });
+    expect(screen.getByText(/Closing idle session/)).toBeTruthy();
+    act(() => lastSocket().onmessage?.({ data: new Uint8Array([1, 104]).buffer }));
+    expect(screen.queryByText(/Closing idle session/)).toBeNull();
   });
 
   it('does not show the pre-open failure once the socket opened', () => {

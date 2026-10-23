@@ -319,6 +319,37 @@ func TestExecEndReasons(t *testing.T) {
 	}
 }
 
+func TestExecInterruptExits130(t *testing.T) {
+	connected := make(chan struct{})
+	release := make(chan struct{})
+	srv := newExecServer(t, execRunning, func(c *websocket.Conn) {
+		wsOut(c, 1, "hello")
+		close(connected)
+		<-release
+	})
+	defer close(release)
+	te := newTestEnv(t, nil)
+	t9Seed(t, te, srv.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- execRunCtx(ctx, te, "-T", "web", "app") }()
+	select {
+	case <-connected:
+	case <-time.After(5 * time.Second):
+		t.Fatal("never connected")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if codeFor(err) != ExitInterrupted {
+			t.Errorf("code = %d, err = %v", codeFor(err), err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("exec did not return after the context was cancelled")
+	}
+}
+
 func TestExecOldServer(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/containers", func(w http.ResponseWriter, r *http.Request) {

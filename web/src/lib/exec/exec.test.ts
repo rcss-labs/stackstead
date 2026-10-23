@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { execUrl, openExec, type ExecEnd } from './exec';
+import { execUrl, explainRefusal, openExec, type ExecEnd } from './exec';
 
 class FakeSocket {
   static last: FakeSocket;
@@ -96,6 +96,25 @@ describe('openExec', () => {
     expect([...(sock.sent[0] as Uint8Array)]).toEqual([0, 1, 2, 3]);
   });
 
+  it('splits a large paste into frames of at most 16 KiB, each with its own stdin byte', () => {
+    const { h, sock } = start();
+    const text = 'abcdefghij'.repeat(10 * 1024); // 100 KiB
+    h.send(text);
+    const frames = sock.sent as Uint8Array[];
+    expect(frames.length).toBeGreaterThan(1);
+    for (const f of frames) {
+      expect(f[0]).toBe(0);
+      expect(f.length).toBeLessThanOrEqual(16 * 1024 + 1);
+    }
+    const joined = new Uint8Array(frames.reduce((n, f) => n + f.length - 1, 0));
+    let at = 0;
+    for (const f of frames) {
+      joined.set(f.subarray(1), at);
+      at += f.length - 1;
+    }
+    expect(new TextDecoder().decode(joined)).toBe(text);
+  });
+
   it('holds frames written while connecting until the socket opens', () => {
     const { h, sock } = start();
     sock.readyState = 0;
@@ -184,5 +203,36 @@ describe('openExec', () => {
     h.send('x');
     h.resize(1, 1);
     expect(sock.sent).toEqual([]);
+  });
+});
+
+describe('explainRefusal', () => {
+  const answer = (status: number, body?: unknown) =>
+    vi.fn(async () => new Response(body === undefined ? '' : JSON.stringify(body), { status }));
+  const explain = (f: typeof fetch, peer = false) => explainRefusal('wss://example.com/api/containers/abc/exec?cols=80', peer, f);
+
+  it('asks the same URL over https with the session cookie', async () => {
+    const f = answer(403, { error: 'x', code: 'exec_disabled' });
+    await explain(f as unknown as typeof fetch);
+    expect(f).toHaveBeenCalledWith('https://example.com/api/containers/abc/exec?cols=80', { credentials: 'same-origin' });
+  });
+
+  it.each([
+    [403, 'exec_disabled', 'disabled'],
+    [429, 'exec_limit', 'limit'],
+    [409, 'not_running', 'not_running'],
+    [403, 'bad_origin', 'bad_origin'],
+  ])('maps %i %s to %s', async (status, code, want) => {
+    expect(await explain(answer(status, { error: 'x', code }) as unknown as typeof fetch)).toBe(want);
+  });
+
+  it('treats a bare 404 on a peer as a server that needs upgrading, and locally as unknown', async () => {
+    expect(await explain(answer(404) as unknown as typeof fetch, true)).toBe('peer_old');
+    expect(await explain(answer(404) as unknown as typeof fetch, false)).toBe('unknown');
+  });
+
+  it('is unknown for any other answer or a network failure', async () => {
+    expect(await explain(answer(400, { error: 'websocket upgrade required' }) as unknown as typeof fetch)).toBe('unknown');
+    expect(await explain(vi.fn(async () => { throw new TypeError('offline'); }) as unknown as typeof fetch)).toBe('unknown');
   });
 });
