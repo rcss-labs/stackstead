@@ -156,9 +156,10 @@ func build(base Registry, req Request) (Registry, error) {
 		if e.AccountID != "" && !accountIDPattern.MatchString(e.AccountID) {
 			return Registry{}, fmt.Errorf("%w: accountId must be 12 digits", ErrInvalid)
 		}
-		if e.AccountID == "" {
-			e.AccountID = r.ECR.AccountID // discovered by a test; keep it across edits
+		if e.AccountID == "" && !e.ClearAccountID {
+			e.AccountID = r.ECR.AccountID // discovered by a test; keep it unless the edit says to clear it
 		}
+		e.ClearAccountID = false
 		r.ECR = e
 		if e.AccountID != "" && e.Region != "" {
 			r.Host = e.AccountID + ".dkr.ecr." + e.Region + ".amazonaws.com"

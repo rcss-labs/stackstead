@@ -189,6 +189,28 @@ func TestECRBlankKeepsKeyAndSecrets(t *testing.T) {
 	}
 }
 
+func TestECRAccountIDKeptUnlessCleared(t *testing.T) {
+	svc, id := newECR(t) // stored account 123456789012
+	upd := func(e ECR) ECR {
+		t.Helper()
+		if _, err := svc.Update(context.Background(), "u", id, ecrReq(e)); err != nil {
+			t.Fatal(err)
+		}
+		return storedECR(t, svc, id)
+	}
+	if e := upd(ECR{Region: "eu-west-1", Mode: ECRStatic}); e.AccountID != "123456789012" {
+		t.Errorf("untouched update changed the account: %+v", e)
+	}
+	e := upd(ECR{Region: "eu-west-1", Mode: ECRStatic, ClearAccountID: true})
+	if e.AccountID != "" {
+		t.Errorf("account not cleared: %+v", e)
+	}
+	r, err := svc.store.Get(context.Background(), id)
+	if err != nil || r.Host != "" {
+		t.Errorf("host should go with the account: %q %v", r.Host, err)
+	}
+}
+
 func TestECRRedactedLiteralCountsAsBlank(t *testing.T) {
 	svc, id := newECR(t)
 	if _, err := svc.Update(context.Background(), "u", id, ecrReq(ECR{Region: "eu-west-1", Mode: ECRStatic, AccessKeyID: "AKIA1",

@@ -242,6 +242,8 @@ export interface RegistryECR {
   secretAccessKey: string;
   sessionToken: string;
   profile: string;
+  /** Omitted keeps the stored account ID, '' clears it, 12 digits set it. */
+  accountId?: string;
 }
 
 export interface RegistryRequest {

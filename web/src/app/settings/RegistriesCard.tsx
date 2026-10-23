@@ -38,6 +38,8 @@ function RegistryDialog({ registry, onSaved, onClose }: { registry?: RegistryVie
   const [secretAccessKey, setSecretAccessKey] = useState('');
   const [sessionToken, setSessionToken] = useState('');
   const [profile, setProfile] = useState(registry?.profile ?? '');
+  const storedAccountId = registry?.accountId ?? '';
+  const [accountId, setAccountId] = useState(storedAccountId);
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
   const keepHint = editing ? 'Leave blank to keep the stored value.' : undefined;
@@ -52,6 +54,8 @@ function RegistryDialog({ registry, onSaved, onClose }: { registry?: RegistryVie
       const ecr: RegistryECR = { region: region.trim(), mode, accessKeyId: '', secretAccessKey: '', sessionToken: '', profile: '' };
       if (mode === 'static') Object.assign(ecr, { accessKeyId: accessKeyId.trim(), secretAccessKey, sessionToken });
       if (mode === 'profile') ecr.profile = profile.trim();
+      // An untouched account ID is omitted so the server keeps it; "" clears it.
+      if (accountId.trim() !== storedAccountId) ecr.accountId = accountId.trim();
       request.ecr = ecr;
     }
     setPending(true);
@@ -91,6 +95,11 @@ function RegistryDialog({ registry, onSaved, onClose }: { registry?: RegistryVie
             <Field label="Region" id={`${uid}-region`} mono>
               {(c) => <input {...c} value={region} placeholder="eu-west-1" onChange={(e) => setRegion(e.target.value)} />}
             </Field>
+            {storedAccountId !== '' && (
+              <Field label="Account ID" id={`${uid}-account`} mono hint="Detected from AWS on the first test. Clear it to remove it; it is detected again on the next test.">
+                {(c) => <input {...c} value={accountId} inputMode="numeric" onChange={(e) => setAccountId(e.target.value)} />}
+              </Field>
+            )}
             <Segmented label="Credentials" options={MODES} value={mode} onChange={setMode} />
             {mode === 'static' && (
               <>

@@ -88,6 +88,10 @@ func toRegistryRequest(r apitypes.RegistryRequest) registry.Request {
 			SecretAccessKey: secret.Secret(r.ECR.SecretAccessKey), SessionToken: secret.Secret(r.ECR.SessionToken),
 			Profile: r.ECR.Profile,
 		}
+		if r.ECR.AccountID != nil {
+			req.ECR.AccountID = strings.TrimSpace(*r.ECR.AccountID)
+			req.ECR.ClearAccountID = req.ECR.AccountID == ""
+		}
 	}
 	return req
 }

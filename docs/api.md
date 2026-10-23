@@ -409,7 +409,7 @@ on the peer denylist (`/api/settings`); a peer sees only the list under
 | `POST /api/settings/registries/{id}/test` | check the connection: `{ok, host, message}` |
 
 `kind` is `dockerhub` (`hub: {username, token}`) or `ecr`
-(`ecr: {region, mode, accessKeyId, secretAccessKey, sessionToken, profile}`).
+(`ecr: {region, mode, accessKeyId, secretAccessKey, sessionToken, profile, accountId?}`).
 ECR `mode` is one of:
 
 - `static`: `accessKeyId` and `secretAccessKey` (and an optional `sessionToken`)
@@ -425,7 +425,9 @@ Secrets are write-only: a view carries `configured` and, for static ECR, the
 non-secret `accessKeyId`, never a token or secret key. On update a blank (or
 `[redacted]`) secret keeps the stored one. A fresh ECR registry needs no account
 or host: the host is discovered from AWS on its first test or push and saved
-without overwriting operator-set values. A failed test answers 200 with
+without overwriting operator-set values. On update, an omitted `accountId`
+keeps the stored one (including a discovered one), an empty string clears it
+(and the host derived from it), and 12 digits replace it. A failed test answers 200 with
 `ok: false` and a scrubbed `message`. Errors: 400 with `fields`, 404 unknown
 registry, 409 for a taken name, 409 `registry_unconfigured` when settings are
 missing.

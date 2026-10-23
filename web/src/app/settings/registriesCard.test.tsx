@@ -109,6 +109,24 @@ describe('RegistriesCard', () => {
     });
   });
 
+  it('keeps a detected account ID unless the field is cleared', async () => {
+    const detected: RegistryView = { ...ECR, accountId: '123456789012' };
+    mount({ 'PUT /api/settings/registries/r2': { body: detected } }, [HUB, detected]);
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit Prod ECR' }));
+    let dialog = await screen.findByRole('dialog');
+    expect((within(dialog).getByLabelText('Account ID') as HTMLInputElement).value).toBe('123456789012');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(calls('PUT', '/api/settings/registries/r2')).toHaveLength(1));
+    expect(calls('PUT', '/api/settings/registries/r2')[0].body).not.toHaveProperty('ecr.accountId');
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit Prod ECR' }));
+    dialog = await screen.findByRole('dialog');
+    await userEvent.clear(within(dialog).getByLabelText('Account ID'));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(calls('PUT', '/api/settings/registries/r2')).toHaveLength(2));
+    expect(calls('PUT', '/api/settings/registries/r2')[1].body).toHaveProperty('ecr.accountId', '');
+  });
+
   it('drops a stale test result after saving', async () => {
     mount({
       'POST /api/settings/registries/r1/test': { body: { ok: true, host: 'docker.io', message: 'login succeeded' } },

@@ -253,6 +253,9 @@ type RegistryECR struct {
 	SecretAccessKey string `json:"secretAccessKey"`
 	SessionToken    string `json:"sessionToken"`
 	Profile         string `json:"profile"`
+	// AccountID: omitted keeps the stored (usually discovered) account ID, ""
+	// clears it, 12 digits set it.
+	AccountID *string `json:"accountId,omitempty"`
 }
 
 type RegistryRequest struct {

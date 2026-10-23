@@ -105,6 +105,31 @@ func TestRegistryViewNeverContainsSecrets(t *testing.T) {
 	}
 }
 
+func TestRegistryECRAccountIDIntent(t *testing.T) {
+	env := newImagesEnv(t)
+	const ecrFields = `"region":"eu-west-1","mode":"role"`
+	v := env.createRegistry(t, `{"name":"aws","kind":"ecr","ecr":{`+ecrFields+`,"accountId":"123456789012"}}`)
+	if v.AccountID != "123456789012" {
+		t.Fatalf("created account = %q", v.AccountID)
+	}
+	put := func(ecrJSON string) apitypes.RegistryView {
+		t.Helper()
+		rec := env.req(t, "PUT", "/api/settings/registries/"+v.ID, `{"name":"aws","kind":"ecr","ecr":{`+ecrJSON+`}}`)
+		if rec.Code != 200 {
+			t.Fatalf("update = %d %s", rec.Code, rec.Body)
+		}
+		var out apitypes.RegistryView
+		decodeBody(t, rec, &out)
+		return out
+	}
+	if got := put(ecrFields); got.AccountID != "123456789012" {
+		t.Errorf("omitted accountId should keep, got %q", got.AccountID)
+	}
+	if got := put(ecrFields + `,"accountId":""`); got.AccountID != "" || got.Host != "" {
+		t.Errorf("empty accountId should clear, got %q host %q", got.AccountID, got.Host)
+	}
+}
+
 func TestRegistryErrorCodes(t *testing.T) {
 	env := newImagesEnv(t)
 	hub := env.createRegistry(t, hubBody)

@@ -55,6 +55,9 @@ type ECR struct {
 	SessionToken    secret.Secret
 	Profile         string
 	AccountID       string
+	// ClearAccountID, set on an update request, drops the stored account ID
+	// instead of keeping it. It is never stored.
+	ClearAccountID bool
 
 	SecretKeySet    bool
 	SessionTokenSet bool
