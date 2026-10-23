@@ -273,3 +273,29 @@ func githubFailure(err error) error {
 	}
 	return &mappedError{"GitHub request failed: " + strings.TrimPrefix(err.Error(), "github: "), ErrGitHubUnreachable}
 }
+
+// DefaultRetention returns the policy applied to images created without one.
+func (s *Service) DefaultRetention(ctx context.Context) (Retention, error) {
+	if s.settings == nil {
+		return Retention{}, nil
+	}
+	return s.settings.DefaultRetention(ctx)
+}
+
+// SetDefaultRetention validates and stores the default policy: both values
+// are integers from 0 (off) up to MaxDefaultKeepLast and MaxDefaultKeepDays.
+// It never rewrites existing images.
+func (s *Service) SetDefaultRetention(ctx context.Context, r Retention) error {
+	if s.settings == nil {
+		return errors.New("settings are not configured")
+	}
+	switch {
+	case r.KeepLast < 0 || r.KeepDays < 0:
+		return fieldError("retention", "retention values must not be negative")
+	case r.KeepLast > MaxDefaultKeepLast:
+		return fieldError("retention", fmt.Sprintf("keepLast must be at most %d", MaxDefaultKeepLast))
+	case r.KeepDays > MaxDefaultKeepDays:
+		return fieldError("retention", fmt.Sprintf("keepDays must be at most %d", MaxDefaultKeepDays))
+	}
+	return s.settings.SetDefaultRetention(ctx, r)
+}

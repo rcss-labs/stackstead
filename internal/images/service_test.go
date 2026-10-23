@@ -630,3 +630,47 @@ func TestRecoverInterruptedBuilds(t *testing.T) {
 	}
 	h.build(t, "app", "2", nil) // tag reusable after recovery
 }
+
+func TestDefaultRetentionAppliesToNewImagesOnly(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if got, err := h.svc.DefaultRetention(ctx); err != nil || got != (Retention{}) {
+		t.Fatalf("unset default = %+v, %v; want zero", got, err)
+	}
+	if err := h.svc.SetDefaultRetention(ctx, Retention{KeepLast: 5, KeepDays: 30}); err != nil {
+		t.Fatal(err)
+	}
+	a := h.create(t, "image a")
+	if a.Retention != (Retention{KeepLast: 5, KeepDays: 30}) {
+		t.Fatalf("A retention = %+v, want the default", a.Retention)
+	}
+	if err := h.svc.SetDefaultRetention(ctx, Retention{KeepLast: 2}); err != nil {
+		t.Fatal(err)
+	}
+	b := h.create(t, "image b")
+	if b.Retention != (Retention{KeepLast: 2}) {
+		t.Errorf("B retention = %+v, want the new default", b.Retention)
+	}
+	gotA, err := h.svc.Get(ctx, a.Slug)
+	if err != nil || gotA.Retention != (Retention{KeepLast: 5, KeepDays: 30}) {
+		t.Errorf("A after default change = %+v, %v; want unchanged", gotA.Retention, err)
+	}
+	explicit, err := h.svc.Create(ctx, "alice", CreateRequest{Name: "image c", Retention: &Retention{}})
+	if err != nil || explicit.Retention != (Retention{}) {
+		t.Errorf("explicit zero retention = %+v, %v; want kept as given", explicit.Retention, err)
+	}
+}
+
+func TestSetDefaultRetentionRejectsOutOfRange(t *testing.T) {
+	h := newHarness(t)
+	for _, r := range []Retention{{KeepLast: -1}, {KeepDays: -1}, {KeepLast: 1001}, {KeepDays: 3651}} {
+		err := h.svc.SetDefaultRetention(context.Background(), r)
+		var ve *ValidationError
+		if !errors.As(err, &ve) {
+			t.Errorf("SetDefaultRetention(%+v) = %v, want a validation error", r, err)
+		}
+	}
+	if err := h.svc.SetDefaultRetention(context.Background(), Retention{KeepLast: 1000, KeepDays: 3650}); err != nil {
+		t.Errorf("upper bounds rejected: %v", err)
+	}
+}

@@ -58,6 +58,8 @@ type ImagesAPI interface {
 	LocalServer(ctx context.Context) (images.ServerInfo, error)
 	NewUploadSpool(ctx context.Context, slug string) (string, error)
 	GitHubStatus(ctx context.Context) (images.GitHubStatus, error)
+	DefaultRetention(ctx context.Context) (images.Retention, error)
+	SetDefaultRetention(ctx context.Context, r images.Retention) error
 	SetGitHubToken(ctx context.Context, user string, token secret.Secret) error
 	TestGitHub(ctx context.Context) (string, error)
 	GitHubHead(ctx context.Context, slug string) (images.GitHubHead, error)
@@ -118,6 +120,8 @@ func (s *server) registerImageRoutes(mux *http.ServeMux) {
 	route("POST /api/images/{slug}/versions/{tag}/push", s.handlePushImageVersion)
 	route("POST /api/images/fetch", s.handleFetchImage)
 	route("GET /api/images/{slug}/github/head", s.handleGitHubHead)
+	route("GET /api/settings/images", s.handleImageDefaults)
+	route("PUT /api/settings/images", s.handleSetImageDefaults)
 	route("GET /api/settings/github", s.handleGitHubSettings)
 	route("PUT /api/settings/github", s.handleSetGitHubToken)
 	route("POST /api/settings/github/test", s.handleTestGitHub)

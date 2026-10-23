@@ -3,6 +3,7 @@ package images
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -13,6 +14,15 @@ import (
 const (
 	settingGitHubToken = "github_token"
 	settingGitHubLogin = "github_login"
+	// settingDefaultRetention holds JSON {"keepLast":n,"keepDays":n}; a missing
+	// key means {0,0}, which keeps every version.
+	settingDefaultRetention = "images_default_retention"
+)
+
+// Upper bounds for the default retention policy.
+const (
+	MaxDefaultKeepLast = 1000
+	MaxDefaultKeepDays = 3650
 )
 
 // SettingsStore reads and writes image-library settings in the shared
@@ -74,4 +84,34 @@ func (s *SettingsStore) GitHubLogin(ctx context.Context) (string, error) {
 // SetGitHubLogin records (or with "" clears) the login of the tested token.
 func (s *SettingsStore) SetGitHubLogin(ctx context.Context, login string) error {
 	return s.set(ctx, settingGitHubLogin, login)
+}
+
+// DefaultRetention returns the policy given to new images that do not name
+// one; {0,0} (keep everything) when none was saved.
+func (s *SettingsStore) DefaultRetention(ctx context.Context) (Retention, error) {
+	v, err := s.get(ctx, settingDefaultRetention)
+	if err != nil || v == "" {
+		return Retention{}, err
+	}
+	var stored struct {
+		KeepLast int `json:"keepLast"`
+		KeepDays int `json:"keepDays"`
+	}
+	if err := json.Unmarshal([]byte(v), &stored); err != nil {
+		return Retention{}, fmt.Errorf("read setting %s: %w", settingDefaultRetention, err)
+	}
+	return Retention{KeepLast: stored.KeepLast, KeepDays: stored.KeepDays}, nil
+}
+
+// SetDefaultRetention stores the default policy. It does not validate; the
+// Service does.
+func (s *SettingsStore) SetDefaultRetention(ctx context.Context, r Retention) error {
+	b, err := json.Marshal(struct {
+		KeepLast int `json:"keepLast"`
+		KeepDays int `json:"keepDays"`
+	}{r.KeepLast, r.KeepDays})
+	if err != nil {
+		return err
+	}
+	return s.set(ctx, settingDefaultRetention, string(b))
 }

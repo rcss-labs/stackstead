@@ -253,6 +253,10 @@ func (s *Service) Create(ctx context.Context, user string, req CreateRequest) (I
 	var retention Retention
 	if req.Retention != nil {
 		retention = *req.Retention
+	} else if s.settings != nil {
+		if retention, err = s.settings.DefaultRetention(ctx); err != nil {
+			return Image{}, err
+		}
 	}
 	if err := validateRetention(retention); err != nil {
 		return Image{}, err

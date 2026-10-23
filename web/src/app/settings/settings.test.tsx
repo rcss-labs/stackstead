@@ -365,9 +365,9 @@ describe('Settings layout', () => {
     mountSettings();
     const nav = await screen.findByRole('navigation', { name: 'Settings sections' });
     const links = within(nav).getAllByRole('link');
-    const ids = ['settings-system', 'settings-updates', 'settings-prometheus', 'settings-servers', 'settings-registries', 'settings-github', 'settings-appearance', 'settings-account'];
+    const ids = ['settings-system', 'settings-updates', 'settings-prometheus', 'settings-servers', 'settings-registries', 'settings-github', 'settings-images', 'settings-appearance', 'settings-account'];
     expect(links.map((a) => a.getAttribute('href'))).toEqual(ids.map((id) => `#${id}`));
-    expect(links.map((a) => a.textContent)).toEqual(['System', 'Updates', 'Prometheus', 'Connected servers', 'Registries', 'GitHub', 'Appearance', 'Account']);
+    expect(links.map((a) => a.textContent)).toEqual(['System', 'Updates', 'Prometheus', 'Connected servers', 'Registries', 'GitHub', 'Images', 'Appearance', 'Account']);
     for (const id of ids) expect(document.getElementById(id)).not.toBeNull();
     expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['Settings']);
   });

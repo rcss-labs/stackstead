@@ -445,6 +445,20 @@ Every build resolves the branch (or `ref`) to a commit and records the full
 40-hex commit on the version; building at a 40-hex `ref` makes no lookup. A
 GitHub image never auto-pushes: a push target is used only by an explicit push.
 
+### Default image retention
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/settings/images` | `{retention: {keepLast, keepDays}}`; `{0, 0}` (keep everything) until one is saved |
+| `PUT /api/settings/images` | set the default with the same body; answers the stored value |
+
+The default is given to an image created without its own `retention`; changing
+it never rewrites existing images. Both values are integers from 0 (rule off):
+`keepLast` at most 1000, `keepDays` at most 3650. Anything else answers 400 with
+the field `retention`. Retention never removes the newest successful version
+or a version in use, and only cleans up on the server that owns the image. The
+route is session-only and on the peer denylist (`/api/settings`).
+
 ### Limits
 
 | Setting | Default | Environment |
