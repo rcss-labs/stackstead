@@ -521,24 +521,30 @@ func (c *Collector) loadRestarts() (restartScan, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.RefreshTimeout)
 	defer cancel()
 	now := c.cfg.Now()
-	events, err := c.cfg.Docker.EventsWindow(ctx, now.Add(-restartWindow), now, []string{"start"})
+	events, err := c.cfg.Docker.EventsWindow(ctx, now.Add(-restartWindow), now, []string{"create", "start"})
 	if err != nil {
 		return restartScan{}, err
 	}
 	return countRestarts(events), nil
 }
 
-// countRestarts turns start events into per-container restart counts: the
-// first start of a container is not a restart, every further one is. Only
-// "start" actions count even if the engine returns others.
+// countRestarts turns start events into per-container restart counts. A
+// start is the initial one, not a restart, only when the container's "create"
+// event is also in the window; a container created before the window has only
+// restarts here. Only "start" and "create" actions are read.
 func countRestarts(events []engine.Event) restartScan {
 	type seen struct {
 		starts                 int
 		name, service, project string
 	}
 	byID := map[string]*seen{}
+	created := map[string]bool{}
 	for _, ev := range events {
-		if ev.Action != "start" {
+		if ev.Action != "start" && ev.Action != "create" {
+			continue
+		}
+		if ev.Action == "create" {
+			created[ev.ContainerID] = true
 			continue
 		}
 		e := byID[ev.ContainerID]
@@ -552,7 +558,10 @@ func countRestarts(events []engine.Event) restartScan {
 	scan := restartScan{byID: make(map[string]int, len(byID)), restarts: Restarts{Top: []RestartTop{}}}
 	var top []RestartTop
 	for id, e := range byID {
-		n := e.starts - 1
+		n := e.starts
+		if created[id] && n > 0 {
+			n-- // the first start after a create in the window is the initial one
+		}
 		scan.byID[id] = n
 		scan.restarts.Total += n
 		if n > 0 {

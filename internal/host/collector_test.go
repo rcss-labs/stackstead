@@ -544,9 +544,34 @@ func startEvent(id, name, service, project string) engine.Event {
 	return engine.Event{Type: "container", Action: "start", ContainerID: id, Name: name, Labels: labels}
 }
 
+func createEvent(id, name string) engine.Event {
+	return engine.Event{Type: "container", Action: "create", ContainerID: id, Name: name}
+}
+
+func TestCountRestartsDependsOnWhetherTheCreateIsInWindow(t *testing.T) {
+	events := []engine.Event{
+		// created two days ago (no create event in the window), restarted once today
+		startEvent("old", "old-1", "", ""),
+		// created inside the window, then restarted twice
+		createEvent("young", "young-1"),
+		startEvent("young", "young-1", "", ""), startEvent("young", "young-1", "", ""), startEvent("young", "young-1", "", ""),
+		// created but never started
+		createEvent("idle", "idle-1"),
+	}
+	scan := countRestarts(events)
+	if scan.byID["old"] != 1 || scan.byID["young"] != 2 || scan.byID["idle"] != 0 {
+		t.Fatalf("counts = %v, want old=1 young=2 idle=0", scan.byID)
+	}
+	if scan.restarts.Total != 3 {
+		t.Fatalf("total = %d, want 3", scan.restarts.Total)
+	}
+}
+
 func restartRig(t *testing.T) *rig {
 	r := newRig(t, "a")
 	var ev []engine.Event
+	ev = append(ev, createEvent("fresh", "web-1"), createEvent("loop", "monitoring-loki-1"),
+		createEvent("manual", "db-1"), createEvent("manual2", "cache-1"))
 	ev = append(ev, startEvent("fresh", "web-1", "web", "shop")) // 1 start -> 0
 	for i := 0; i < 3; i++ {                                     // 3 starts -> 2
 		ev = append(ev, startEvent("loop", "monitoring-loki-1", "loki", "monitoring"))
@@ -582,7 +607,7 @@ func TestRestartCounting(t *testing.T) {
 	if top[1].Count != 1 {
 		t.Fatalf("top[1] = %+v", top[1])
 	}
-	if want := []string{"start"}; len(r.docker.gotActions) != 1 || r.docker.gotActions[0] != want[0] {
+	if want := []string{"create", "start"}; len(r.docker.gotActions) != 2 || r.docker.gotActions[0] != want[0] || r.docker.gotActions[1] != want[1] {
 		t.Fatalf("actions = %v", r.docker.gotActions)
 	}
 	if d := r.docker.gotUntil.Sub(r.docker.gotSince); d != 24*time.Hour {
