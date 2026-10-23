@@ -86,10 +86,12 @@ type Service struct {
 	usageMu sync.RWMutex
 	usage   UsageSource
 
-	peers       PeerSource
-	peerTimeout time.Duration
-	libraryTTL  time.Duration
-	peerCache   peerCache
+	peers         PeerSource
+	peerTimeout   time.Duration
+	libraryTTL    time.Duration
+	peerCache     peerCache
+	fetchIdle     time.Duration // test seam: idle watchdog of a fetch
+	fetchProgress time.Duration // test seam: progress line interval
 
 	locks sync.Map // slug -> *sync.Mutex
 
@@ -122,7 +124,8 @@ func NewService(d Deps) *Service {
 	}
 	return &Service{store: d.Store, ops: d.Ops, eng: d.Engine, dir: d.Dir, limits: d.Limits, timeout: d.OpTimeout,
 		actions: d.Actions, self: d.Self, usage: d.Usage, registries: d.Registries, github: d.GitHub, settings: d.Settings, now: d.Now, log: d.Logger,
-		peers: d.Peers, peerTimeout: d.PeerTimeout, libraryTTL: libraryCacheTTL}
+		peers: d.Peers, peerTimeout: d.PeerTimeout, libraryTTL: libraryCacheTTL,
+		fetchIdle: fetchIdleTimeout, fetchProgress: fetchProgressEvery}
 }
 
 // SetUsage binds the usage source after construction (stacks needs the

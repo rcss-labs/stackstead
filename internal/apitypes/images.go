@@ -184,6 +184,11 @@ type BuildStarted struct {
 	Operation Operation      `json:"operation"`
 }
 
+// FetchImageRequest asks this server to copy a peer-owned library image locally.
+type FetchImageRequest struct {
+	Ref string `json:"ref"`
+}
+
 type PushRequest struct {
 	Target string `json:"target"`
 }

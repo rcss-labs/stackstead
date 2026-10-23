@@ -17,6 +17,7 @@ import (
 	"github.com/rcss-labs/stackstead/internal/engine"
 	"github.com/rcss-labs/stackstead/internal/imageref"
 	"github.com/rcss-labs/stackstead/internal/images"
+	"github.com/rcss-labs/stackstead/internal/peers"
 	"github.com/rcss-labs/stackstead/internal/registry"
 	"github.com/rcss-labs/stackstead/internal/secret"
 	"github.com/rcss-labs/stackstead/internal/stacks"
@@ -48,6 +49,7 @@ type ImagesAPI interface {
 	UpdatePushTarget(ctx context.Context, user, slug, id string, req images.PushTargetRequest) (images.PushTarget, error)
 	DeletePushTarget(ctx context.Context, user, slug, id string) error
 	Push(ctx context.Context, user, slug, tag, targetID string) (stacks.Operation, error)
+	Fetch(ctx context.Context, user string, ref imageref.Ref) (stacks.Operation, bool, error)
 	Resolve(ctx context.Context, refs []string) (map[string]images.ResolvedRef, error)
 	OwnImages(ctx context.Context) ([]images.LibraryEntry, error)
 	OwnUsage(ctx context.Context) ([]imageref.Usage, error)
@@ -70,6 +72,7 @@ const (
 	codeTagTaken           = "tag_taken"
 	codeRevisionConflict   = "revision_conflict"
 	codeImageNotBuilt      = "image_not_built"
+	codeArchMismatch       = "arch_mismatch"
 	codeImageTooLarge      = "image_too_large"
 	codeGitHubUnconfigured = "github_unconfigured"
 	codeGitHubUnauthorized = "github_unauthorized"
@@ -113,6 +116,7 @@ func (s *server) registerImageRoutes(mux *http.ServeMux) {
 	route("PUT /api/images/{slug}/push-targets/{id}", s.handleUpdatePushTarget)
 	route("DELETE /api/images/{slug}/push-targets/{id}", s.handleDeletePushTarget)
 	route("POST /api/images/{slug}/versions/{tag}/push", s.handlePushImageVersion)
+	route("POST /api/images/fetch", s.handleFetchImage)
 	route("GET /api/images/{slug}/github/head", s.handleGitHubHead)
 	route("GET /api/settings/github", s.handleGitHubSettings)
 	route("PUT /api/settings/github", s.handleSetGitHubToken)
@@ -127,6 +131,7 @@ func (s *server) writeImagesError(w http.ResponseWriter, r *http.Request, err er
 		inUse      *images.InUseError
 		tooBig     *http.MaxBytesError
 		badForm    *uploadFormatError
+		peerErr    *peers.PeerError
 	)
 	switch {
 	case errors.As(err, &validation):
@@ -157,8 +162,12 @@ func (s *server) writeImagesError(w http.ResponseWriter, r *http.Request, err er
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, images.ErrTagTaken):
 		writeCodedError(w, http.StatusConflict, err.Error(), codeTagTaken)
-	case errors.Is(err, images.ErrBuildRunning):
+	case errors.Is(err, images.ErrBuildRunning), errors.Is(err, images.ErrFetchRunning):
 		writeCodedError(w, http.StatusConflict, err.Error(), codeBuildRunning)
+	case errors.Is(err, images.ErrArchMismatch):
+		writeCodedError(w, http.StatusConflict, err.Error(), codeArchMismatch)
+	case errors.As(err, &peerErr):
+		writeCodedError(w, http.StatusBadGateway, peerErr.Msg, peerErr.Code)
 	case errors.Is(err, images.ErrRevisionConflict):
 		writeCodedError(w, http.StatusConflict, err.Error(), codeRevisionConflict)
 	case errors.Is(err, images.ErrImageNotBuilt):
@@ -748,6 +757,31 @@ func (s *server) handlePushImageVersion(w http.ResponseWriter, r *http.Request) 
 	op, err := s.opts.Images.Push(r.Context(), userFrom(r.Context()).Username, r.PathValue("slug"), r.PathValue("tag"), req.Target)
 	if err != nil {
 		s.writeImagesError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, toOperation(op))
+}
+
+// handleFetchImage copies a peer-owned version here. 204 means there is
+// nothing to do (this server owns it, or it is already present); 202 answers
+// the running operation.
+func (s *server) handleFetchImage(w http.ResponseWriter, r *http.Request) {
+	var req apitypes.FetchImageRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	ref, ok := imageref.Parse(req.Ref)
+	if !ok {
+		s.writeImagesError(w, r, &stacks.ValidationError{Fields: []stacks.FieldError{{Field: "ref", Message: "not a library image reference"}}})
+		return
+	}
+	op, started, err := s.opts.Images.Fetch(r.Context(), userFrom(r.Context()).Username, ref)
+	if err != nil {
+		s.writeImagesError(w, r, err)
+		return
+	}
+	if !started {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, toOperation(op))

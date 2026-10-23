@@ -299,17 +299,9 @@ func (s *Service) resolveLocal(ctx context.Context, ref imageref.Ref, r *Resolve
 	return nil
 }
 
-// EnsureLocal checks that the version is built and present in Docker here.
-// Fetching from peers arrives with a later milestone.
-func (s *Service) EnsureLocal(ctx context.Context, ref imageref.Ref, out func(string)) error {
-	_, owner, err := s.selfInfo(ctx)
-	if err != nil {
-		return err
-	}
+// ensureOwn checks that a version this server owns is built and present in Docker.
+func (s *Service) ensureOwn(ctx context.Context, ref imageref.Ref) error {
 	notBuilt := &NotBuiltError{Slug: ref.Slug, Tag: ref.Tag}
-	if ref.Owner != owner {
-		return notBuilt
-	}
 	img, err := s.store.Image(ctx, ref.Slug)
 	if errors.Is(err, ErrImageNotFound) {
 		return notBuilt

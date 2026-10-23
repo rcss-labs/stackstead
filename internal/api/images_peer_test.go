@@ -16,6 +16,7 @@ import (
 	"github.com/rcss-labs/stackstead/internal/api"
 	"github.com/rcss-labs/stackstead/internal/apitypes"
 	"github.com/rcss-labs/stackstead/internal/auth"
+	"github.com/rcss-labs/stackstead/internal/imageref"
 	"github.com/rcss-labs/stackstead/internal/images"
 	"github.com/rcss-labs/stackstead/internal/peers"
 	"github.com/rcss-labs/stackstead/internal/stacks"
@@ -32,7 +33,12 @@ type imagesPeerNode struct {
 	credential string
 }
 
-func newImagesPeerNode(t *testing.T) *imagesPeerNode {
+func newImagesPeerNode(t *testing.T) *imagesPeerNode { return newImagesNode(t, false) }
+
+// newImagesNode builds the node. With peerAware, the image service shares the
+// peers service (so it can reach paired servers) and takes its identity from
+// the peers store, as the real server does; it then has no plain partner.
+func newImagesNode(t *testing.T, peerAware bool) *imagesPeerNode {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "imgpeer.db"))
 	if err != nil {
@@ -52,15 +58,27 @@ func newImagesPeerNode(t *testing.T) *imagesPeerNode {
 		Hostname: func() (string, error) { return "host-a", nil },
 	})
 	n := &imagesPeerNode{eng: &imgEngine{present: map[string]bool{}}}
+	var peerSource images.PeerSource
+	if peerAware {
+		peerSource = psvc
+	}
 	n.ops = stacks.NewOps(time.Minute, time.Now)
 	t.Cleanup(func() { n.ops.Shutdown(context.Background()) })
 	n.svc = images.NewService(images.Deps{
 		Store: images.NewStore(db, time.Now), Ops: n.ops, Engine: n.eng, Dir: t.TempDir(),
 		Limits: images.Limits{MaxFileBytes: 1 << 20, MaxContextBytes: 2 << 20}, OpTimeout: time.Minute,
 		Usage: &imgUsage{}, Now: time.Now,
-		Self: func(context.Context) (images.Self, error) {
+		Self: func(ctx context.Context) (images.Self, error) {
+			if peerAware {
+				id, err := st.Identity(ctx, "host-a")
+				if err != nil {
+					return images.Self{}, err
+				}
+				return images.Self{InstanceID: id.InstanceID, Name: id.Name, Slug: "host-a"}, nil
+			}
 			return images.Self{InstanceID: imgInstanceID, Name: "Host A", Slug: "host-a"}, nil
 		},
+		Peers: peerSource,
 	})
 	handler := api.New(api.Options{
 		Auth: authSvc, Limiter: auth.NewLoginLimiter(5, time.Minute, time.Now), Peers: psvc, Images: n.svc,
@@ -71,6 +89,9 @@ func newImagesPeerNode(t *testing.T) *imagesPeerNode {
 	t.Cleanup(n.srv.Close)
 	n.login()
 
+	if peerAware {
+		return n
+	}
 	other := newPeerNode(t, "host-b")
 	other.login()
 	pair(t, other, n.peerNode)
@@ -192,5 +213,75 @@ func TestPeerTarStreamsAndHeader(t *testing.T) {
 		if resp, body := n.asPeer(path); resp.StatusCode != 404 {
 			t.Errorf("%s = %d %s", path, resp.StatusCode, body)
 		}
+	}
+}
+
+// fetchPair is an owner with app:1 built and a consumer paired with it.
+func fetchPair(t *testing.T) (consumer, owner *imagesPeerNode, ref string) {
+	t.Helper()
+	consumer, owner = newImagesNode(t, true), newImagesNode(t, true)
+	if _, err := owner.svc.Create(context.Background(), "admin", images.CreateRequest{Name: "app", Source: images.SourceUpload}); err != nil {
+		t.Fatal(err)
+	}
+	owner.build("app", "1")
+	owner.eng.saveData = "FAKE-TAR-BYTES"
+	pair(t, consumer.peerNode, owner.peerNode)
+	self, err := owner.svc.LocalServer(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return consumer, owner, "stackstead.invalid/" + imageref.OwnerID(self.ID) + "/app:"
+}
+
+func fetchBody(ref string) string {
+	raw, _ := json.Marshal(apitypes.FetchImageRequest{Ref: ref})
+	return string(raw)
+}
+
+func TestFetchRouteCodes(t *testing.T) {
+	consumer, _, base := fetchPair(t)
+
+	for _, ref := range []string{"nginx:latest", "", "stackstead.invalid/ffffffffffff/app:1"} {
+		status, body := consumer.do("POST", "/api/images/fetch", fetchBody(ref))
+		if status != 400 || !strings.Contains(body, `"ref"`) {
+			t.Errorf("ref %q = %d %s", ref, status, body)
+		}
+	}
+	if status, body := consumer.do("POST", "/api/images/fetch", fetchBody(base+"9")); status != 409 || !strings.Contains(body, `"image_not_built"`) {
+		t.Errorf("unbuilt = %d %s", status, body)
+	}
+	self, _ := consumer.svc.LocalServer(context.Background())
+	own := "stackstead.invalid/" + imageref.OwnerID(self.ID) + "/anything:1"
+	if status, body := consumer.do("POST", "/api/images/fetch", fetchBody(own)); status != 204 || body != "" {
+		t.Errorf("own = %d %q", status, body)
+	}
+
+	consumer.eng.arch = "arm64"
+	if status, body := consumer.do("POST", "/api/images/fetch", fetchBody(base+"1")); status != 409 || !strings.Contains(body, `"arch_mismatch"`) || !strings.Contains(body, "built for amd64; this server is arm64") {
+		t.Errorf("arch = %d %s", status, body)
+	}
+	consumer.eng.arch = "amd64"
+
+	consumer.eng.loadRef = base + "1"
+	status, body := consumer.do("POST", "/api/images/fetch", fetchBody(base+"1"))
+	if status != 202 {
+		t.Fatalf("fetch = %d %s", status, body)
+	}
+	var op apitypes.Operation
+	if err := json.Unmarshal([]byte(body), &op); err != nil || op.ID == "" || op.Action != "fetch" {
+		t.Fatalf("operation = %s err %v", body, err)
+	}
+	waitOp(t, consumer.ops, op.ID)
+	if status, body := consumer.do("POST", "/api/images/fetch", fetchBody(base+"1")); status != 204 {
+		t.Errorf("already present = %d %s", status, body)
+	}
+}
+
+func TestFetchRouteOwnerUnreachable(t *testing.T) {
+	consumer, owner, base := fetchPair(t)
+	owner.srv.Close()
+	status, body := consumer.do("POST", "/api/images/fetch", fetchBody(base+"1"))
+	if status != 502 || !strings.Contains(body, `"peer_`) {
+		t.Fatalf("unreachable = %d %s", status, body)
 	}
 }

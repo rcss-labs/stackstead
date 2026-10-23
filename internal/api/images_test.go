@@ -45,6 +45,8 @@ type imgEngine struct {
 
 	failBuild bool   // builds end in an error
 	saveData  string // bytes SaveImage streams; empty makes it fail
+	arch      string // Arch answer; default amd64
+	loadRef   string // ref LoadImage makes present
 }
 
 func (f *imgEngine) Build(ctx context.Context, in io.Reader, opts engine.BuildOptions, out func(string)) (engine.BuildResult, error) {
@@ -93,7 +95,17 @@ func (f *imgEngine) SaveImage(context.Context, string) (io.ReadCloser, error) {
 	}
 	return io.NopCloser(strings.NewReader(f.saveData)), nil
 }
-func (f *imgEngine) LoadImage(context.Context, io.Reader) error { return nil }
+func (f *imgEngine) LoadImage(_ context.Context, r io.Reader) error {
+	if _, err := io.Copy(io.Discard, r); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.loadRef != "" {
+		f.present[f.loadRef] = true
+	}
+	return nil
+}
 func (f *imgEngine) InspectImage(_ context.Context, ref string) (engine.ImageInspect, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -108,7 +120,14 @@ func (f *imgEngine) RemoveImage(_ context.Context, ref string) (engine.ImageDele
 	delete(f.present, ref)
 	return engine.ImageDeleteResult{}, nil
 }
-func (f *imgEngine) Arch(context.Context) (string, error) { return "amd64", nil }
+func (f *imgEngine) Arch(context.Context) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.arch != "" {
+		return f.arch, nil
+	}
+	return "amd64", nil
+}
 
 type imgLog struct {
 	mu      sync.Mutex

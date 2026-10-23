@@ -42,6 +42,12 @@ type fakeEngine struct {
 
 	saveData string   // bytes SaveImage streams; empty makes it fail
 	saved    []string // refs SaveImage was asked for
+
+	arch      string                                       // Arch answer; default arm64
+	inspectID map[string]string                            // ref -> ID InspectImage reports
+	loadRef   string                                       // ref LoadImage makes present
+	loadFn    func(ctx context.Context, r io.Reader) error // replaces the default read-all load
+	loaded    []byte                                       // bytes the default load received
 }
 
 func newFakeEngine() *fakeEngine {
@@ -120,14 +126,36 @@ func (f *fakeEngine) SaveImage(_ context.Context, ref string) (io.ReadCloser, er
 	f.saved = append(f.saved, ref)
 	return io.NopCloser(strings.NewReader(f.saveData)), nil
 }
-func (f *fakeEngine) LoadImage(context.Context, io.Reader) error { return nil }
+func (f *fakeEngine) LoadImage(ctx context.Context, r io.Reader) error {
+	f.mu.Lock()
+	fn, ref := f.loadFn, f.loadRef
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, r)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.loaded = data
+	if ref != "" {
+		f.present[ref] = true
+	}
+	return nil
+}
 func (f *fakeEngine) InspectImage(_ context.Context, ref string) (engine.ImageInspect, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if !f.present[ref] {
 		return engine.ImageInspect{}, engine.ErrImageNotFound
 	}
-	return engine.ImageInspect{Image: engine.Image{ID: "sha256:abc", Size: 4321}, Architecture: "arm64"}, nil
+	id := "sha256:abc"
+	if v, ok := f.inspectID[ref]; ok {
+		id = v
+	}
+	return engine.ImageInspect{Image: engine.Image{ID: id, Size: 4321}, Architecture: "arm64"}, nil
 }
 func (f *fakeEngine) RemoveImage(_ context.Context, ref string) (engine.ImageDeleteResult, error) {
 	f.mu.Lock()
@@ -140,7 +168,14 @@ func (f *fakeEngine) RemoveImage(_ context.Context, ref string) (engine.ImageDel
 	delete(f.present, ref)
 	return engine.ImageDeleteResult{}, nil
 }
-func (f *fakeEngine) Arch(context.Context) (string, error) { return "arm64", nil }
+func (f *fakeEngine) Arch(context.Context) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.arch != "" {
+		return f.arch, nil
+	}
+	return "arm64", nil
+}
 
 type recordingLog struct {
 	mu      sync.Mutex

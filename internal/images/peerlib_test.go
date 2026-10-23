@@ -32,6 +32,8 @@ type fakePeer struct {
 	release chan struct{}
 	calls   atomic.Int32
 	usageHi atomic.Int32
+	tar     http.HandlerFunc // serves the tar route when set
+	tarHits atomic.Int32
 }
 
 func newFakePeer(t *testing.T, id, name string) *fakePeer {
@@ -62,6 +64,11 @@ func newFakePeer(t *testing.T, id, name string) *fakePeer {
 				return
 			}
 			http.Error(w, "nope", p.status)
+			return
+		}
+		if p.tar != nil && strings.HasSuffix(r.URL.Path, "/tar") {
+			p.tarHits.Add(1)
+			p.tar(w, r)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
