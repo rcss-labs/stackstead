@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"time"
 
 	"golang.org/x/net/websocket"
 )
@@ -67,12 +68,31 @@ var frameCodec = websocket.Codec{
 	},
 }
 
-type xnetConn struct{ c *websocket.Conn }
+// defaultWriteTimeout bounds one write when the caller passes no timeout.
+const defaultWriteTimeout = 60 * time.Second
 
-// newWSConn adapts an x/net WebSocket and caps inbound frame size.
-func newWSConn(c *websocket.Conn) wsConn {
+type xnetConn struct {
+	c            *websocket.Conn
+	writeTimeout time.Duration
+}
+
+// newWSConn adapts an x/net WebSocket, caps inbound frame size and bounds each
+// write by writeTimeout (default 60s). Sessions are unbounded, but a write to
+// a client that vanished silently must not block forever; the deadline error
+// is treated as the client being gone.
+func newWSConn(c *websocket.Conn, writeTimeout time.Duration) wsConn {
 	c.MaxPayloadBytes = maxExecFramePayload
-	return &xnetConn{c: c}
+	if writeTimeout <= 0 {
+		writeTimeout = defaultWriteTimeout
+	}
+	return &xnetConn{c: c, writeTimeout: writeTimeout}
+}
+
+func (x *xnetConn) send(v any) error {
+	if err := x.c.SetWriteDeadline(time.Now().Add(x.writeTimeout)); err != nil {
+		return err
+	}
+	return frameCodec.Send(x.c, v)
 }
 
 func (x *xnetConn) ReadFrame() (bool, []byte, error) {
@@ -83,6 +103,6 @@ func (x *xnetConn) ReadFrame() (bool, []byte, error) {
 	return f.text, f.data, nil
 }
 
-func (x *xnetConn) WriteBinary(p []byte) error   { return frameCodec.Send(x.c, p) }
-func (x *xnetConn) WriteText(v controlMsg) error { return frameCodec.Send(x.c, v) }
+func (x *xnetConn) WriteBinary(p []byte) error   { return x.send(p) }
+func (x *xnetConn) WriteText(v controlMsg) error { return x.send(v) }
 func (x *xnetConn) Close() error                 { return x.c.Close() }
