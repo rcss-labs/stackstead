@@ -693,3 +693,113 @@ func TestFetchPanicStopsProgressAndLogsFailure(t *testing.T) {
 		t.Fatalf("progress goroutine still running after the panic: %d -> %d lines", before, after)
 	}
 }
+
+// lineCollector gathers progress lines and lets a test wait for one.
+type lineCollector struct {
+	mu    sync.Mutex
+	lines []string
+	seen  chan string
+}
+
+func newLineCollector() *lineCollector { return &lineCollector{seen: make(chan string, 64)} }
+
+func (c *lineCollector) add(l string) {
+	c.mu.Lock()
+	c.lines = append(c.lines, l)
+	c.mu.Unlock()
+	select {
+	case c.seen <- l:
+	default:
+	}
+}
+
+func (c *lineCollector) all() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.lines...)
+}
+
+func (c *lineCollector) has(line string) bool {
+	for _, l := range c.all() {
+		if l == line {
+			return true
+		}
+	}
+	return false
+}
+
+// gatedTransfer makes the peer's tar route announce its start and then wait
+// for release before it sends the archive.
+func (r *fetchRig) gatedTransfer() (started <-chan struct{}, release func()) {
+	in, gate := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	r.peer.tar = func(w http.ResponseWriter, req *http.Request) {
+		once.Do(func() { close(in) })
+		w.Header().Set("Content-Type", "application/x-tar")
+		w.Header().Set("X-Stackstead-Image-ID", "sha256:2")
+		<-gate
+		w.Write([]byte(tarPayload))
+	}
+	return in, func() { close(gate) }
+}
+
+// joinFlight starts a second EnsureLocal on the rig's ref and returns once it
+// has joined the running transfer.
+func (r *fetchRig) joinFlight(out *lineCollector) <-chan error {
+	errc := make(chan error, 1)
+	go func() { errc <- r.svc.EnsureLocal(context.Background(), r.ref, out.add) }()
+	waiting := "waiting for the transfer of " + r.ref.String() + " already in progress"
+	for l := range out.seen {
+		if l == waiting {
+			break
+		}
+	}
+	return errc
+}
+
+func TestFetchJoinersReceiveTheTransfersProgressLines(t *testing.T) {
+	r := newFetchRig(t)
+	started, release := r.gatedTransfer()
+	starter, joiner := newLineCollector(), newLineCollector()
+	starterErr := make(chan error, 1)
+	go func() { starterErr <- r.svc.EnsureLocal(context.Background(), r.ref, starter.add) }()
+	<-started
+	joinerErr := r.joinFlight(joiner)
+	release()
+	if err := <-starterErr; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-joinerErr; err != nil {
+		t.Fatal(err)
+	}
+	loaded := "loaded " + r.ref.String()
+	if !starter.has(loaded) || !joiner.has(loaded) {
+		t.Fatalf("starter lines %q, joiner lines %q; both want %q", starter.all(), joiner.all(), loaded)
+	}
+}
+
+func TestFetchWaiterThatLeftStopsReceivingLines(t *testing.T) {
+	r := newFetchRig(t)
+	started, release := r.gatedTransfer()
+	starter, joiner := newLineCollector(), newLineCollector()
+	starterCtx, cancelStarter := context.WithCancel(context.Background())
+	starterErr := make(chan error, 1)
+	go func() { starterErr <- r.svc.EnsureLocal(starterCtx, r.ref, starter.add) }()
+	<-started
+	joinerErr := r.joinFlight(joiner)
+	cancelStarter()
+	if err := <-starterErr; !errors.Is(err, context.Canceled) {
+		t.Fatalf("starter err = %v", err)
+	}
+	release()
+	if err := <-joinerErr; err != nil {
+		t.Fatalf("joiner err = %v; the transfer must survive the starter leaving", err)
+	}
+	loaded := "loaded " + r.ref.String()
+	if !joiner.has(loaded) {
+		t.Fatalf("joiner lines %q; want %q", joiner.all(), loaded)
+	}
+	if starter.has(loaded) {
+		t.Fatalf("starter lines %q; a waiter that left must not receive later lines", starter.all())
+	}
+}

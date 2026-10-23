@@ -371,6 +371,51 @@ type fetchFlight struct {
 	err     error
 	cancel  context.CancelFunc
 	waiters int
+
+	// sinks receive every progress line of the transfer: each waiter adds its
+	// output when it joins and removes it when it leaves.
+	sinkMu sync.Mutex
+	sinks  map[*fetchSink]struct{}
+}
+
+type fetchSink struct{ out func(string) }
+
+// addSink registers out for the lines that follow, after first (when set) has
+// been written to it, so the two never interleave. It returns nil for a nil out.
+func (f *fetchFlight) addSink(out func(string), first string) *fetchSink {
+	if out == nil {
+		return nil
+	}
+	f.sinkMu.Lock()
+	defer f.sinkMu.Unlock()
+	if first != "" {
+		out(first)
+	}
+	sink := &fetchSink{out: out}
+	if f.sinks == nil {
+		f.sinks = map[*fetchSink]struct{}{}
+	}
+	f.sinks[sink] = struct{}{}
+	return sink
+}
+
+// removeSink returns only after a line being delivered to the sink has been
+// written, so nothing reaches a waiter that has left.
+func (f *fetchFlight) removeSink(sink *fetchSink) {
+	if sink == nil {
+		return
+	}
+	f.sinkMu.Lock()
+	delete(f.sinks, sink)
+	f.sinkMu.Unlock()
+}
+
+func (f *fetchFlight) emit(line string) {
+	f.sinkMu.Lock()
+	defer f.sinkMu.Unlock()
+	for sink := range f.sinks {
+		sink.out(line)
+	}
 }
 
 // fetchShared runs one transfer per ref at a time. Every caller, the one that
@@ -381,6 +426,7 @@ func (s *Service) fetchShared(ctx context.Context, user string, ref imageref.Ref
 	key := ref.String()
 	var f *fetchFlight
 	var ok bool
+	var sink *fetchSink
 	s.fetchMu.Lock()
 	for {
 		f, ok = s.fetches[key]
@@ -407,20 +453,22 @@ func (s *Service) fetchShared(ctx context.Context, user string, ref imageref.Ref
 			cancel = func() { stop(); inner() }
 		}
 		f = &fetchFlight{done: make(chan struct{}), cancel: cancel, waiters: 1}
+		sink = f.addSink(out, "") // before the transfer starts, so the starter sees every line
 		if s.fetches == nil {
 			s.fetches = map[string]*fetchFlight{}
 		}
 		s.fetches[key] = f
-		go s.runFlight(runCtx, key, f, user, ref, owner, v, out)
+		go s.runFlight(runCtx, key, f, user, ref, owner, v)
 	}
 	s.fetchMu.Unlock()
-	if ok && out != nil {
-		out("waiting for the transfer of " + key + " already in progress")
+	if ok {
+		sink = f.addSink(out, "waiting for the transfer of "+key+" already in progress")
 	}
 	select {
 	case <-f.done:
 		return f.err
 	case <-ctx.Done():
+		f.removeSink(sink)
 		s.fetchMu.Lock()
 		f.waiters--
 		last := f.waiters == 0
@@ -432,7 +480,7 @@ func (s *Service) fetchShared(ctx context.Context, user string, ref imageref.Ref
 	}
 }
 
-func (s *Service) runFlight(ctx context.Context, key string, f *fetchFlight, user string, ref imageref.Ref, owner ServerInfo, v Version, out func(string)) {
+func (s *Service) runFlight(ctx context.Context, key string, f *fetchFlight, user string, ref imageref.Ref, owner ServerInfo, v Version) {
 	defer func() {
 		if r := recover(); r != nil {
 			f.err = fmt.Errorf("fetch panicked: %v", r)
@@ -449,5 +497,5 @@ func (s *Service) runFlight(ctx context.Context, key string, f *fetchFlight, use
 		f.err = err
 		return
 	}
-	f.err = s.fetchFrom(ctx, user, ref, owner, v, out)
+	f.err = s.fetchFrom(ctx, user, ref, owner, v, f.emit)
 }
