@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +27,9 @@ type Config struct {
 	DockerSocket     string        `yaml:"docker_socket"`
 	ShutdownGrace    time.Duration `yaml:"shutdown_grace"`
 	UpdateCheck      bool          `yaml:"update_check"`
+	ExecEnabled      bool          `yaml:"exec_enabled"`
+	ExecMaxSessions  int           `yaml:"exec_max_sessions"`
+	ExecIdleTimeout  time.Duration `yaml:"exec_idle_timeout"`
 }
 
 func Defaults() Config {
@@ -39,6 +43,9 @@ func Defaults() Config {
 		DockerSocket:     "/var/run/docker.sock",
 		ShutdownGrace:    30 * time.Second,
 		UpdateCheck:      true,
+		ExecEnabled:      true,
+		ExecMaxSessions:  8,
+		ExecIdleTimeout:  30 * time.Minute,
 	}
 }
 
@@ -77,7 +84,7 @@ func Load(path string, getenv func(string) string) (Config, error) {
 	return cfg, nil
 }
 
-var durationKeys = []string{"metrics_retention", "metrics_interval", "operation_timeout", "shutdown_grace"}
+var durationKeys = []string{"metrics_retention", "metrics_interval", "operation_timeout", "shutdown_grace", "exec_idle_timeout"}
 
 // rejectBareDurations gives a clear error for `operation_timeout: 900`, which
 // YAML would otherwise report without the key name (or read as 900ns).
@@ -110,6 +117,7 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 		"STACKSTEAD_METRICS_INTERVAL":  &cfg.MetricsInterval,
 		"STACKSTEAD_OPERATION_TIMEOUT": &cfg.OperationTimeout,
 		"STACKSTEAD_SHUTDOWN_GRACE":    &cfg.ShutdownGrace,
+		"STACKSTEAD_EXEC_IDLE_TIMEOUT": &cfg.ExecIdleTimeout,
 	} {
 		if v := getenv(key); v != "" {
 			d, err := time.ParseDuration(v)
@@ -125,6 +133,20 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 			return fmt.Errorf("STACKSTEAD_UPDATE_CHECK: %w", err)
 		}
 		cfg.UpdateCheck = enabled
+	}
+	if v := getenv("STACKSTEAD_EXEC_ENABLED"); v != "" {
+		enabled, err := parseSwitch(v)
+		if err != nil {
+			return fmt.Errorf("STACKSTEAD_EXEC_ENABLED: %w", err)
+		}
+		cfg.ExecEnabled = enabled
+	}
+	if v := getenv("STACKSTEAD_EXEC_MAX_SESSIONS"); v != "" {
+		maxSessions, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("STACKSTEAD_EXEC_MAX_SESSIONS: %w", err)
+		}
+		cfg.ExecMaxSessions = maxSessions
 	}
 	if v := getenv("STACKSTEAD_ALLOWED_ROOTS"); v != "" {
 		cfg.AllowedRoots = nil
@@ -172,6 +194,12 @@ func (c Config) validate() error {
 		if d < time.Second {
 			return fmt.Errorf("%s must be at least 1s (use units, e.g. 15m), got %s", name, d)
 		}
+	}
+	if c.ExecMaxSessions < 1 {
+		return fmt.Errorf("exec_max_sessions must be at least 1, got %d", c.ExecMaxSessions)
+	}
+	if c.ExecIdleTimeout < 0 {
+		return fmt.Errorf("exec_idle_timeout must not be negative, got %s", c.ExecIdleTimeout)
 	}
 	return nil
 }

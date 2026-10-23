@@ -19,6 +19,13 @@ metrics_retention: {{.MetricsRetention}}
 metrics_interval: {{.MetricsInterval}}
 operation_timeout: {{.OperationTimeout}}
 
+# Terminal access into containers. A terminal is root-equivalent on that container.
+exec_enabled: {{.ExecEnabled}}
+# Maximum concurrent exec terminal sessions (at least 1).
+exec_max_sessions: {{.ExecMaxSessions}}
+# Close an idle exec terminal after this long; 0s disables the timeout.
+exec_idle_timeout: {{.ExecIdleTimeout}}
+
 # Docker Engine API socket (must be an absolute path).
 {{.DockerSocketLine}}
 
