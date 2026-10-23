@@ -244,3 +244,18 @@ func TestStatusProbeFallsBackToPing(t *testing.T) {
 		})
 	}
 }
+
+func TestBackgroundAddRunnerIsStoppedWithTheRest(t *testing.T) {
+	var finished atomic.Int32
+	bg := startBackground(context.Background())
+	bg.add(func(ctx context.Context) {
+		<-ctx.Done()
+		finished.Add(1)
+	})
+	if !bg.stop(time.Second) {
+		t.Fatal("stop reported a timeout")
+	}
+	if finished.Load() != 1 {
+		t.Error("added runner was not stopped and awaited")
+	}
+}

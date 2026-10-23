@@ -117,6 +117,30 @@ func TestImagesBuildArgsParsed(t *testing.T) {
 	if codeFor(err) != ExitUsage {
 		t.Fatalf("code %d err %v", codeFor(err), err)
 	}
+
+	te = t8Setup(t, nil)
+	err = imagesRun(te, "images", "build", "web", "--tag", "v2", "--build-arg", "=V")
+	if codeFor(err) != ExitUsage {
+		t.Fatalf("empty key: code %d err %v", codeFor(err), err)
+	}
+}
+
+func TestBuildArgFlagParse(t *testing.T) {
+	args := buildArgFlag{}
+	for _, v := range []string{"K=", "A=1", "A=2"} {
+		if err := args.Set(v); err != nil {
+			t.Fatalf("Set(%q): %v", v, err)
+		}
+	}
+	if v, ok := args["K"]; !ok || v != "" {
+		t.Errorf("K= should be allowed with an empty value, got %q, %v", v, ok)
+	}
+	if args["A"] != "2" {
+		t.Errorf("repeated key = %q, want the last value", args["A"])
+	}
+	if err := args.Set("=V"); err == nil {
+		t.Error("=V must be rejected")
+	}
 }
 
 func TestImagesBuildConflictExit(t *testing.T) {

@@ -247,6 +247,7 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	if err := imagesSvc.Start(ctx); err != nil {
 		return fmt.Errorf("start image library: %w", err)
 	}
+	bg.add((&images.Sweeper{Service: imagesSvc}).Run)
 
 	// The collector and alerts engine do nothing until a request arrives:
 	// both cache for 5 s and start no goroutines.
@@ -365,19 +366,26 @@ func newUpdateChecker(cfg config.Config, logger *slog.Logger) (*update.Checker, 
 // background runs long-lived goroutines (status cache, metrics sampler)
 // under their own context so shutdown can stop them after HTTP and operations.
 type background struct {
+	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 }
 
+// add starts one more runner under the same context, for services that exist
+// only after the first runners were started.
+func (b *background) add(run func(context.Context)) {
+	b.wg.Add(1)
+	go func() {
+		defer b.wg.Done()
+		run(b.ctx)
+	}()
+}
+
 func startBackground(parent context.Context, runners ...func(context.Context)) *background {
 	ctx, cancel := context.WithCancel(parent)
-	b := &background{cancel: cancel}
+	b := &background{ctx: ctx, cancel: cancel}
 	for _, run := range runners {
-		b.wg.Add(1)
-		go func() {
-			defer b.wg.Done()
-			run(ctx)
-		}()
+		b.add(run)
 	}
 	return b
 }

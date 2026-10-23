@@ -221,8 +221,13 @@ func validateSettings(path string, args map[string]string) (string, error) {
 }
 
 func validateRetention(r Retention) error {
-	if r.KeepLast < 0 || r.KeepDays < 0 {
+	switch {
+	case r.KeepLast < 0 || r.KeepDays < 0:
 		return fieldError("retention", "retention values must not be negative")
+	case r.KeepLast > MaxDefaultKeepLast:
+		return fieldError("retention", fmt.Sprintf("keepLast must be at most %d", MaxDefaultKeepLast))
+	case r.KeepDays > MaxDefaultKeepDays:
+		return fieldError("retention", fmt.Sprintf("keepDays must be at most %d", MaxDefaultKeepDays))
 	}
 	return nil
 }

@@ -277,9 +277,6 @@ type Sweeper struct {
 	Service *Service
 	// After returns a channel that fires after d; nil means time.After.
 	After func(time.Duration) <-chan time.Time
-	// Logger is unused: the sweep logs through the Service's logger, like
-	// ApplyRetention, so all retention output goes to one place.
-	Logger *slog.Logger
 }
 
 // Run sweeps 5 minutes after it starts and every 6 hours after that, until

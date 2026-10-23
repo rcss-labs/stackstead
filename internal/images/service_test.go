@@ -684,3 +684,23 @@ func TestSetDefaultRetentionRejectsOutOfRange(t *testing.T) {
 		t.Errorf("upper bounds rejected: %v", err)
 	}
 }
+
+func TestImageRetentionRejectsOutOfRange(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if _, err := h.svc.Create(ctx, "alice", CreateRequest{Name: "base image"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []Retention{{KeepLast: -1}, {KeepDays: -1}, {KeepLast: 1001}, {KeepDays: 3651}} {
+		if _, err := h.svc.Create(ctx, "alice", CreateRequest{Name: "other image", Retention: &r}); err == nil {
+			t.Errorf("Create with %+v succeeded, want a validation error", r)
+		}
+		if _, err := h.svc.Update(ctx, "alice", "base-image", UpdateRequest{Name: "base image", Retention: r}); err == nil {
+			t.Errorf("Update with %+v succeeded, want a validation error", r)
+		}
+	}
+	max := Retention{KeepLast: 1000, KeepDays: 3650}
+	if _, err := h.svc.Update(ctx, "alice", "base-image", UpdateRequest{Name: "base image", Retention: max}); err != nil {
+		t.Errorf("Update at the cap: %v", err)
+	}
+}

@@ -115,3 +115,24 @@ func (s *SettingsStore) SetDefaultRetention(ctx context.Context, r Retention) er
 	}
 	return s.set(ctx, settingDefaultRetention, string(b))
 }
+
+// DefaultRetention returns the policy applied to images created without one.
+func (s *Service) DefaultRetention(ctx context.Context) (Retention, error) {
+	if s.settings == nil {
+		return Retention{}, nil
+	}
+	return s.settings.DefaultRetention(ctx)
+}
+
+// SetDefaultRetention validates and stores the default policy: both values
+// are integers from 0 (off) up to MaxDefaultKeepLast and MaxDefaultKeepDays.
+// It never rewrites existing images.
+func (s *Service) SetDefaultRetention(ctx context.Context, r Retention) error {
+	if s.settings == nil {
+		return errors.New("settings are not configured")
+	}
+	if err := validateRetention(r); err != nil {
+		return err
+	}
+	return s.settings.SetDefaultRetention(ctx, r)
+}
