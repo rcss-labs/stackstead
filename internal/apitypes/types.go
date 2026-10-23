@@ -698,6 +698,7 @@ type ContainerRow struct {
 	CreatedAt   time.Time         `json:"createdAt"`
 	Project     string            `json:"project"`
 	Service     string            `json:"service"`
+	Number      int               `json:"number,omitempty"` // compose replica number; 0 when unlabelled
 	Stack       string            `json:"stack"`
 	Managed     string            `json:"managed"`  // "stack" | "compose" | "none"
 	Ports       []string          `json:"ports"`    // published only, never null

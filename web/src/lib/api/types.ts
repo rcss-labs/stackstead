@@ -48,6 +48,8 @@ export interface ContainerRow {
   createdAt: string;
   project: string;
   service: string;
+  /** Compose replica number; absent when the container has no such label. */
+  number?: number;
   stack: string;
   managed: Managed;
   /** Published ports only. */

@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -113,7 +114,7 @@ func (s *server) computeContainerList(ctx context.Context) ([]apitypes.Container
 		row := apitypes.ContainerRow{
 			ID: shortID(c.ID), Name: c.Name, Image: c.Image, ImageID: c.ImageID, State: c.State, Status: c.Status,
 			Health: c.Health(), CreatedAt: c.Created.UTC(),
-			Project: c.Project(), Service: c.ComposeService(), Stack: stack, Managed: managed,
+			Project: c.Project(), Service: c.ComposeService(), Number: containerNumber(c.Labels), Stack: stack, Managed: managed,
 			Ports: formatPorts(c.Ports), Networks: map[string]string{}, Restarts24h: restarts[c.ID],
 		}
 		if code, ok := c.ExitCode(); ok && c.State == "exited" {
@@ -133,6 +134,15 @@ func (s *server) computeContainerList(ctx context.Context) ([]apitypes.Container
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 	return rows, nil
+}
+
+// containerNumber reads the compose replica number; 0 when the label is absent or not a number.
+func containerNumber(labels map[string]string) int {
+	number, err := strconv.Atoi(labels["com.docker.compose.container-number"])
+	if err != nil {
+		return 0
+	}
+	return number
 }
 
 func shortID(id string) string {
@@ -413,7 +423,7 @@ func (s *server) actionRow(ctx context.Context, insp engine.ContainerInspect) ap
 	row := apitypes.ContainerRow{
 		ID: shortID(insp.ID), Name: insp.Name, Image: insp.Image, ImageID: insp.ImageID, State: insp.State, Status: status,
 		Health: insp.Health, ExitCode: exitCodeOf(insp), CreatedAt: created.UTC(),
-		Project: owner.Project(), Service: owner.ComposeService(), Stack: stack, Managed: managed,
+		Project: owner.Project(), Service: owner.ComposeService(), Number: containerNumber(insp.Labels), Stack: stack, Managed: managed,
 		Ports: formatPorts(insp.Ports), Networks: map[string]string{},
 	}
 	for name, ip := range insp.Networks {
