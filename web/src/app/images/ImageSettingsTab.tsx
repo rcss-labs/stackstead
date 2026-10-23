@@ -11,6 +11,7 @@ import { useServer } from '../servers/ServerContext';
 import { argsToRows, BuildArgsEditor, rowsToArgs } from './buildArgs';
 import styles from './images.module.css';
 import { InUseBanner, inUseFrom } from './InUseBanner';
+import { PushTargetsCard } from './PushTargetsCard';
 
 const WHOLE = /^\d+$/;
 
@@ -121,6 +122,8 @@ export function ImageSettingsTab({ image, onChanged }: { image: LibraryImageDeta
           </div>
         </form>
       </div>
+
+      <PushTargetsCard image={image} onChanged={onChanged} />
 
       <div className={styles.card}>
         <div className={styles.pad}>

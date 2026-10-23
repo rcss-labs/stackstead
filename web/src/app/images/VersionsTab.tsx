@@ -1,10 +1,11 @@
 import { Fragment, useEffect, useState } from 'react';
-import type { LibraryImageDetail, LibraryUse, LibraryVersion, LibraryVersionDetail } from '$lib/api/imageTypes';
+import type { LibraryImageDetail, PushTarget, LibraryUse, LibraryVersion, LibraryVersionDetail } from '$lib/api/imageTypes';
 import { toasts } from '$lib/stores/toasts';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState } from '../components/EmptyState';
+import { OperationPanel } from '../detail/OperationPanel';
 import { useServer } from '../servers/ServerContext';
 import styles from './images.module.css';
 import { InUseBanner, inUseFrom } from './InUseBanner';
@@ -18,7 +19,7 @@ const argsText = (args: Record<string, string>) =>
 const sourceText = (v: LibraryVersion) => (v.commit ? v.commit.slice(0, 7) : `r${v.revision}`);
 
 export function VersionsTab({ image, onChanged }: { image: LibraryImageDetail; onChanged(): void }) {
-  const { api } = useServer();
+  const { api, trackOperation, refreshRunningOps } = useServer();
   const slug = image.slug;
   // Detail (the build log can be large, and it carries the used-by list) loads only when a row is opened.
   const [details, setDetails] = useState<Record<string, LibraryVersionDetail>>({});
@@ -26,6 +27,8 @@ export function VersionsTab({ image, onChanged }: { image: LibraryImageDetail; o
   const [open, setOpen] = useState<string>();
   const [deleting, setDeleting] = useState<LibraryVersion>();
   const [pending, setPending] = useState(false);
+  const [pushOperation, setPushOperation] = useState<string>();
+  const [pushing, setPushing] = useState<string>();
   const [inUse, setInUse] = useState<{ message: string; usedBy: LibraryUse[] }>();
 
   // Versions are keyed by id: failed attempts can share a tag with each other and with the live version.
@@ -63,6 +66,21 @@ export function VersionsTab({ image, onChanged }: { image: LibraryImageDetail; o
       setDeleting(undefined);
     } finally {
       setPending(false);
+    }
+  }
+
+  async function push(version: LibraryVersion, target: PushTarget) {
+    setPushing(`${version.id}/${target.id}`);
+    try {
+      const operation = await api.pushImageVersion(slug, version.tag, target.id);
+      setPushOperation(operation.id);
+      trackOperation(operation);
+      refreshRunningOps();
+      onChanged();
+    } catch (e) {
+      toasts.push({ kind: 'danger', message: `Could not start the push: ${e instanceof Error ? e.message : String(e)}` });
+    } finally {
+      setPushing(undefined);
     }
   }
 
@@ -105,8 +123,19 @@ export function VersionsTab({ image, onChanged }: { image: LibraryImageDetail; o
                     <td className={styles.mono}>{argsText(v.buildArgs)}</td>
                     <td>
                       <VersionStatus status={v.status} />
+                      {v.pushes.map((p) => (
+                        <span key={p.target} className={styles.pushChip} data-status={p.status} title={p.error || p.digest || undefined}>
+                          {`${p.registry}: ${p.status}`}
+                        </span>
+                      ))}
                     </td>
                     <td className={styles.actionsCell}>
+                      {v.status === 'succeeded' &&
+                        image.pushTargets.map((t) => (
+                          <Button key={t.id} variant="ghost" size="xs" loading={pushing === `${v.id}/${t.id}`} aria-label={`Push ${v.tag} to ${t.registryName} ${t.repository}`} onClick={() => void push(v, t)}>
+                            Push
+                          </Button>
+                        ))}
                       <Button variant="ghost" size="xs" aria-label={`Open ${v.tag} (${v.status}, started ${v.startedAt})`} aria-expanded={isOpen} onClick={() => setOpen(isOpen ? undefined : v.id)}>
                         Open
                       </Button>
@@ -161,6 +190,16 @@ export function VersionsTab({ image, onChanged }: { image: LibraryImageDetail; o
           </tbody>
         </table>
       </div>
+      {pushOperation && (
+        <OperationPanel
+          key={pushOperation}
+          operationId={pushOperation}
+          onCancel={async (id) => {
+            await api.cancel(id);
+          }}
+          onFinished={onChanged}
+        />
+      )}
       <p className={styles.muted}>Build args are stored and shown as plain text. They are not secrets.</p>
       <ConfirmDialog
         open={deleting !== undefined}
