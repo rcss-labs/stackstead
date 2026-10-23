@@ -33,6 +33,7 @@ type fakeGitHub struct {
 	headCalls  []string
 	tarballRef string
 	onHead     func()
+	onUser     func() // runs inside User, before it answers
 }
 
 func newFakeGitHub() *fakeGitHub {
@@ -41,6 +42,9 @@ func newFakeGitHub() *fakeGitHub {
 
 func (f *fakeGitHub) User(_ context.Context, t secret.Secret) (string, error) {
 	f.gotTokens = append(f.gotTokens, t)
+	if f.onUser != nil {
+		f.onUser()
+	}
 	return f.login, f.userErr
 }
 
@@ -382,6 +386,34 @@ func TestSetGitHubTokenLogsWithoutValue(t *testing.T) {
 	}
 	if _, err := h.svc.TestGitHub(ctx); !errors.Is(err, ErrGitHubUnconfigured) {
 		t.Fatalf("test without token err = %v", err)
+	}
+}
+
+func TestTestGitHubDoesNotStoreLoginOfReplacedToken(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.setToken(t)
+	inCall, release := make(chan struct{}), make(chan struct{})
+	h.gh.onUser = func() {
+		close(inCall)
+		<-release
+	}
+	errc := make(chan error, 1)
+	go func() {
+		_, err := h.svc.TestGitHub(ctx)
+		errc <- err
+	}()
+	<-inCall
+	if err := h.svc.SetGitHubToken(ctx, "alice", "ghp_replacement"); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	var ve *ValidationError
+	if err := <-errc; !errors.As(err, &ve) {
+		t.Fatalf("test of a replaced token err = %v; want a validation error asking to test again", err)
+	}
+	if st, _ := h.svc.GitHubStatus(ctx); !st.Configured || st.Login != "" {
+		t.Fatalf("status = %+v; want the new token configured with no login", st)
 	}
 }
 

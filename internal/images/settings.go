@@ -65,15 +65,27 @@ func (s *SettingsStore) GitHubToken(ctx context.Context) (secret.Secret, error) 
 	return secret.Secret(v), err
 }
 
-// SetGitHubToken stores the token; an empty token clears it and the stored login.
+// SetGitHubToken stores the token (an empty token removes it) and clears the
+// stored login, which belonged to the previous token, in one transaction.
 func (s *SettingsStore) SetGitHubToken(ctx context.Context, t secret.Secret) error {
-	if err := s.set(ctx, settingGitHubToken, t.Reveal()); err != nil {
-		return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("write setting %s: %w", settingGitHubToken, err)
 	}
+	defer tx.Rollback()
 	if t == "" {
-		return s.set(ctx, settingGitHubLogin, "")
+		_, err = tx.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, settingGitHubToken)
+	} else {
+		_, err = tx.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, settingGitHubToken, t.Reveal())
 	}
-	return nil
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, settingGitHubLogin)
+	}
+	if err != nil {
+		return fmt.Errorf("write setting %s: %w", settingGitHubToken, err)
+	}
+	return tx.Commit()
 }
 
 // GitHubLogin returns the login recorded by the last successful token test.
@@ -81,9 +93,19 @@ func (s *SettingsStore) GitHubLogin(ctx context.Context) (string, error) {
 	return s.get(ctx, settingGitHubLogin)
 }
 
-// SetGitHubLogin records (or with "" clears) the login of the tested token.
-func (s *SettingsStore) SetGitHubLogin(ctx context.Context, login string) error {
-	return s.set(ctx, settingGitHubLogin, login)
+// SetGitHubLoginFor records the login that GitHub reported for token. It
+// stores it only while token is still the stored token, in one statement, and
+// reports whether it did: a login of a replaced token is never kept.
+func (s *SettingsStore) SetGitHubLoginFor(ctx context.Context, token secret.Secret, login string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO settings(key, value)
+		SELECT ?, ? WHERE EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		settingGitHubLogin, login, settingGitHubToken, token.Reveal())
+	if err != nil {
+		return false, fmt.Errorf("write setting %s: %w", settingGitHubLogin, err)
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // DefaultRetention returns the policy given to new images that do not name

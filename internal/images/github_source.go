@@ -119,12 +119,6 @@ func (s *Service) SetGitHubToken(ctx context.Context, user string, token secret.
 	if err := s.settings.SetGitHubToken(ctx, token); err != nil {
 		return err
 	}
-	if token != "" {
-		// The stored login belonged to the previous token.
-		if err := s.settings.SetGitHubLogin(ctx, ""); err != nil {
-			return err
-		}
-	}
 	result, detail := "set", "GitHub token set"
 	if token == "" {
 		result, detail = "cleared", "GitHub token cleared"
@@ -143,8 +137,12 @@ func (s *Service) TestGitHub(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", githubFailure(err)
 	}
-	if err := s.settings.SetGitHubLogin(ctx, login); err != nil {
+	stored, err := s.settings.SetGitHubLoginFor(ctx, token, login)
+	if err != nil {
 		return "", err
+	}
+	if !stored {
+		return "", fieldError("token", "the GitHub token changed while it was being tested, test it again")
 	}
 	return login, nil
 }
