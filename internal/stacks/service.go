@@ -18,6 +18,7 @@ import (
 	"github.com/rcss-labs/stackstead/internal/composecli"
 	"github.com/rcss-labs/stackstead/internal/composefile"
 	"github.com/rcss-labs/stackstead/internal/engine"
+	"github.com/rcss-labs/stackstead/internal/imageref"
 )
 
 // Compile-time checks that the production types fit the interfaces.
@@ -58,6 +59,9 @@ type Deps struct {
 	AllowedRoots []string        // confines build contexts of new stacks
 	Now          func() time.Time
 	Logger       *slog.Logger // nil means slog.Default()
+	// Library makes library images present before up and pull; nil leaves
+	// library references to compose.
+	Library LibraryFetcher
 }
 
 // Status is the run state of a stack.
@@ -84,6 +88,9 @@ type Summary struct {
 	// ChecksPartial is set by Create when the engine was unreachable and only
 	// the ports declared by other stacks could be checked.
 	ChecksPartial bool
+	// LibraryRefs lists the library images the stack's services use, sorted
+	// and unique; filled by describe.
+	LibraryRefs []string
 }
 
 type ContainerInfo struct{ ID, Name, Service, State, Status, Health string }
@@ -120,6 +127,7 @@ type Service struct {
 	stacksDir string
 	roots     []string
 	log       *slog.Logger
+	library   LibraryFetcher
 
 	// Lock order: a stack's lock (lockStack) first, then projectMu; never the
 	// reverse. projectMu makes "is this compose project free?" and the write
@@ -143,7 +151,7 @@ func NewService(d Deps) *Service {
 		source = d.Engine
 	}
 	return &Service{reg: d.Registry, ops: d.Ops, compose: d.Compose, engine: d.Engine, source: source,
-		stacksDir: d.StacksDir, roots: d.AllowedRoots, log: logger}
+		stacksDir: d.StacksDir, roots: d.AllowedRoots, log: logger, library: d.Library}
 }
 
 // lockStack serializes read-modify-write cycles of one stack's file.
@@ -445,6 +453,7 @@ func fillServices(d *Detail, f *composefile.File, project string, containers []e
 		d.Services = append(d.Services, sd)
 	}
 	d.Summary.Services = len(names)
+	d.LibraryRefs = libraryRefStrings(d.Services)
 	return nil
 }
 
@@ -479,7 +488,12 @@ func (s *Service) Act(ctx context.Context, stack, action string) (Operation, err
 		return Operation{}, err
 	}
 	defer unlock()
-	if _, _, _, err := readFile(e); err != nil {
+	_, _, f, err := readFile(e)
+	if err != nil {
+		return Operation{}, err
+	}
+	refs, args, err := s.actPlan(f, action, args)
+	if err != nil {
 		return Operation{}, err
 	}
 	if err := refuseOverrides(e.ComposePath); err != nil {
@@ -492,6 +506,12 @@ func (s *Service) Act(ctx context.Context, stack, action string) (Operation, err
 		return Operation{}, err
 	}
 	return s.ops.Start(stack, action, func(ctx context.Context, out func(string)) error {
+		if err := s.ensureLibrary(ctx, refs, out); err != nil {
+			return err
+		}
+		if args == nil { // nothing left for compose to pull
+			return nil
+		}
 		return s.compose.Run(ctx, e.ComposePath, args, out)
 	})
 }
@@ -530,7 +550,18 @@ func (s *Service) ActService(ctx context.Context, stack, service, action string)
 		return Operation{}, err
 	}
 	args := []string{"up", "-d", "--build", "--no-deps", "--", service}
+	var refs []imageref.Ref
+	if s.library != nil {
+		if svc, err := f.Service(service); err == nil {
+			if ref, ok := imageref.Parse(svc.Config.Image); ok {
+				refs = append(refs, ref)
+			}
+		}
+	}
 	return s.ops.StartService(stack, action, service, func(ctx context.Context, out func(string)) error {
+		if err := s.ensureLibrary(ctx, refs, out); err != nil {
+			return err
+		}
 		return s.compose.Run(ctx, e.ComposePath, args, out)
 	})
 }
