@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,7 +29,9 @@ type fakeWS struct {
 	bins  [][]byte
 	texts []controlMsg
 
-	blockBinary bool // WriteBinary hangs until Close, like a dead client
+	blockBinary atomic.Bool  // WriteBinary hangs until Close, like a dead client
+	slowBinary  atomic.Int64 // nanoseconds each WriteBinary takes
+	order       []string     // every frame written, in order
 }
 
 type wsInbound struct {
@@ -53,10 +56,11 @@ func (f *fakeWS) ReadFrame() (bool, []byte, error) {
 }
 
 func (f *fakeWS) WriteBinary(p []byte) error {
-	if f.blockBinary {
+	if f.blockBinary.Load() {
 		<-f.closed
 		return io.ErrClosedPipe
 	}
+	time.Sleep(time.Duration(f.slowBinary.Load()))
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	select {
@@ -64,6 +68,7 @@ func (f *fakeWS) WriteBinary(p []byte) error {
 		return io.ErrClosedPipe
 	default:
 	}
+	f.order = append(f.order, "bin")
 	f.bins = append(f.bins, append([]byte(nil), p...))
 	return nil
 }
@@ -76,6 +81,7 @@ func (f *fakeWS) WriteText(v controlMsg) error {
 		return io.ErrClosedPipe
 	default:
 	}
+	f.order = append(f.order, v.Type)
 	f.texts = append(f.texts, v)
 	return nil
 }
@@ -247,6 +253,7 @@ type fakeClock struct {
 	mu     sync.Mutex
 	now    time.Time
 	timers []*fakeTimer
+	late   time.Duration // timers are observed this long after they were due
 }
 
 type fakeTimer struct {
@@ -291,7 +298,7 @@ func (c *fakeClock) Advance(d time.Duration) {
 		}
 		t := c.timers[idx]
 		c.timers = append(c.timers[:idx], c.timers[idx+1:]...)
-		c.now = t.at
+		c.now = t.at.Add(c.late)
 		armedBefore := len(c.timers)
 		c.mu.Unlock()
 		t.ch <- t.at
@@ -329,6 +336,7 @@ func startSession(t *testing.T, mutate func(*sessionConfig)) *harness {
 		Ping:            20 * time.Second,
 		PongTimeout:     1000 * time.Hour, // tests that don't care never time out
 		DetachCheck:     2 * time.Second,
+		WriteTimeout:    2 * time.Second,
 		Now:             h.clk.Now,
 		After:           h.clk.After,
 		StillAuthorized: func(context.Context) bool { return true },
@@ -514,7 +522,7 @@ func TestSessionPongTimeoutStillRunningIsDetached(t *testing.T) {
 // shutdown handling.
 func TestSessionStuckWriteDoesNotFreezeSession(t *testing.T) {
 	h := startSession(t, func(c *sessionConfig) { c.PongTimeout = 60 * time.Second })
-	h.ws.blockBinary = true
+	h.ws.blockBinary.Store(true)
 	go h.st.out(1, "stuck") // reader goroutine now hangs in WriteBinary
 	time.Sleep(20 * time.Millisecond)
 	h.clk.Advance(60 * time.Second) // pings skipped, pong timeout fires
@@ -525,8 +533,8 @@ func TestSessionStuckWriteDoesNotFreezeSession(t *testing.T) {
 }
 
 func TestSessionStuckWriteShutdownStillDelivers(t *testing.T) {
-	h := startSession(t, nil)
-	h.ws.blockBinary = true
+	h := startSession(t, func(c *sessionConfig) { c.WriteTimeout = 300 * time.Millisecond })
+	h.ws.blockBinary.Store(true)
 	go h.st.out(1, "stuck")
 	time.Sleep(20 * time.Millisecond)
 	close(h.closing)
@@ -536,11 +544,58 @@ func TestSessionStuckWriteShutdownStillDelivers(t *testing.T) {
 }
 
 func TestSessionIdleWarningRoundsUp(t *testing.T) {
-	h := startSession(t, func(c *sessionConfig) { c.IdleTimeout = 5*time.Minute + 500*time.Millisecond })
-	h.clk.Advance(4*time.Minute + 30*time.Second + 500*time.Millisecond)
+	h := startSession(t, func(c *sessionConfig) { c.IdleTimeout = 5 * time.Minute })
+	// The timer is handled 300 ms late, so 59.7 s remain; truncation says 59.
+	h.clk.late = 300 * time.Millisecond
+	h.clk.Advance(4*time.Minute + 300*time.Millisecond)
 	got := h.ws.textsExceptPing()
 	if len(got) != 1 || got[0].Seconds != 60 {
 		t.Fatalf("texts = %+v", got)
+	}
+}
+
+// slowOutput keeps output flowing until the test ends.
+func (h *harness) slowOutput() {
+	h.ws.slowBinary.Store(int64(300 * time.Millisecond))
+	stop := make(chan struct{})
+	h.t.Cleanup(func() { close(stop) })
+	go func() {
+		for {
+			select {
+			case h.st.frames <- outFrame{1, []byte("tail")}:
+			case <-stop:
+				return
+			case <-h.st.closed:
+				return
+			}
+		}
+	}()
+}
+
+func TestSessionSlowWriterStillGetsPings(t *testing.T) {
+	h := startSession(t, func(c *sessionConfig) { c.PongTimeout = 60 * time.Second })
+	h.slowOutput()
+	for i := 1; i <= 5; i++ {
+		h.clk.Advance(20 * time.Second)
+		want := i
+		eventually(t, "ping written", func() bool { return h.ws.pingCount() >= want })
+		h.ws.sendText(`{"type":"pong"}`)
+	}
+	h.expectNoResult()
+}
+
+func TestSessionSlowWriterShutdownDeliversClosed(t *testing.T) {
+	h := startSession(t, nil)
+	h.slowOutput()
+	eventually(t, "output flowing", func() bool { return len(h.ws.binaries()) >= 2 })
+	close(h.closing)
+	if r := h.waitResult(); r != "shutdown" {
+		t.Fatalf("result = %q", r)
+	}
+	h.ws.mu.Lock()
+	defer h.ws.mu.Unlock()
+	if n := len(h.ws.order); n == 0 || h.ws.order[n-1] != "closed" {
+		t.Fatalf("last frames = %v", h.ws.order)
 	}
 }
 
