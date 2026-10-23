@@ -56,6 +56,19 @@ func (s *Service) githubToken(ctx context.Context) (secret.Secret, error) {
 // checkGitHubSource validates a GitHub source and requires a token. It
 // returns the source with its path cleaned.
 func (s *Service) checkGitHubSource(ctx context.Context, gs GitHubSource) (GitHubSource, error) {
+	gs, err := validateGitHubSource(gs)
+	if err != nil {
+		return gs, err
+	}
+	if _, err := s.githubToken(ctx); err != nil {
+		return gs, err
+	}
+	return gs, nil
+}
+
+// validateGitHubSource checks the repository, branch and path without
+// needing a token. It returns the source with its path cleaned.
+func validateGitHubSource(gs GitHubSource) (GitHubSource, error) {
 	if gs.Repo == "" {
 		return gs, fieldError("github.repo", "repository is required")
 	}
@@ -71,9 +84,6 @@ func (s *Service) checkGitHubSource(ctx context.Context, gs GitHubSource) (GitHu
 			return gs, fieldError("github.path", err.Error())
 		}
 		gs.Path = clean
-	}
-	if _, err := s.githubToken(ctx); err != nil {
-		return gs, err
 	}
 	return gs, nil
 }

@@ -259,9 +259,44 @@ func TestGitHubImageNeedsToken(t *testing.T) {
 	if err := h.svc.SetGitHubToken(ctx, "alice", ""); err != nil {
 		t.Fatal(err)
 	}
-	_, err = h.svc.Update(ctx, "alice", img.Slug, UpdateRequest{Name: "gh app", GitHub: img.GitHub})
+	changed := img.GitHub
+	changed.Branch = "dev"
+	_, err = h.svc.Update(ctx, "alice", img.Slug, UpdateRequest{Name: "gh app", GitHub: changed})
 	if !errors.Is(err, ErrGitHubUnconfigured) {
 		t.Fatalf("update err = %v", err)
+	}
+}
+
+func TestUpdateGitHubImageWithoutToken(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.setToken(t)
+	img, err := h.svc.Create(ctx, "alice", CreateRequest{Name: "gh app", Source: SourceGitHub,
+		GitHub: GitHubSource{Repo: "octo/repo", Branch: "main", Path: "app"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.SetGitHubToken(ctx, "alice", ""); err != nil {
+		t.Fatal(err)
+	}
+	renamed := UpdateRequest{Name: "renamed", GitHub: img.GitHub, Retention: img.Retention}
+	if _, err := h.svc.Update(ctx, "alice", img.Slug, renamed); err != nil {
+		t.Fatalf("update without GitHub change: %v", err)
+	}
+	got, err := h.svc.Get(ctx, img.Slug)
+	if err != nil || got.Name != "renamed" {
+		t.Fatalf("image %+v err %v", got, err)
+	}
+	for field, mutate := range map[string]func(*GitHubSource){
+		"repo":   func(g *GitHubSource) { g.Repo = "octo/other" },
+		"branch": func(g *GitHubSource) { g.Branch = "dev" },
+		"path":   func(g *GitHubSource) { g.Path = "other" },
+	} {
+		gs := img.GitHub
+		mutate(&gs)
+		if _, err := h.svc.Update(ctx, "alice", img.Slug, UpdateRequest{Name: "renamed", GitHub: gs}); !errors.Is(err, ErrGitHubUnconfigured) {
+			t.Errorf("changing %s: err = %v", field, err)
+		}
 	}
 }
 

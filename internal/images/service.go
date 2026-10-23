@@ -336,8 +336,16 @@ func (s *Service) Update(ctx context.Context, user, slug string, req UpdateReque
 	}
 	img.Name, img.DockerfilePath, img.BuildArgs, img.Retention = req.Name, path, req.BuildArgs, req.Retention
 	if img.Source == SourceGitHub {
-		if img.GitHub, err = s.checkGitHubSource(ctx, req.GitHub); err != nil {
+		// A token is only needed to point the image at a different
+		// repository, branch or path; other edits work without one.
+		current := img.GitHub
+		if img.GitHub, err = validateGitHubSource(req.GitHub); err != nil {
 			return Image{}, err
+		}
+		if img.GitHub != current {
+			if _, err := s.githubToken(ctx); err != nil {
+				return Image{}, err
+			}
 		}
 	}
 	if err := s.store.UpdateImage(ctx, img); err != nil {
