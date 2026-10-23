@@ -243,6 +243,11 @@ func (s *Service) Create(ctx context.Context, user string, req CreateRequest) (I
 		return Image{}, fieldError("name", "name must contain at least one letter or digit")
 	}
 	if err := ValidateSlug(slug); err != nil {
+		// The slug is derived from the name, so the name is the field the client sent.
+		var ve *ValidationError
+		if errors.As(err, &ve) && len(ve.Fields) > 0 {
+			return Image{}, fieldError("name", ve.Fields[0].Message)
+		}
 		return Image{}, err
 	}
 	if req.Source == "" {

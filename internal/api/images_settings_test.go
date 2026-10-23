@@ -323,8 +323,8 @@ func TestReservedImageSlugs(t *testing.T) {
 	env := newImagesEnv(t)
 	for _, name := range []string{"Registries", "fetch"} {
 		rec := env.req(t, "POST", "/api/images", `{"name":"`+name+`","source":"upload","dockerfilePath":"","buildArgs":{}}`)
-		if rec.Code != 400 || !strings.Contains(rec.Body.String(), `"slug"`) || !strings.Contains(rec.Body.String(), "reserved") {
-			t.Errorf("create %q = %d %s, want 400 reserved on slug", name, rec.Code, rec.Body)
+		if rec.Code != 400 || !strings.Contains(rec.Body.String(), `"field":"name"`) || !strings.Contains(rec.Body.String(), "reserved") {
+			t.Errorf("create %q = %d %s, want 400 reserved on name", name, rec.Code, rec.Body)
 		}
 	}
 }

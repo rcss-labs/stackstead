@@ -266,6 +266,17 @@ func (h *harness) create(t *testing.T, name string) Image {
 	return img
 }
 
+func TestCreateReservedNameReportsNameField(t *testing.T) {
+	h := newHarness(t)
+	for _, name := range []string{"registries", "Fetch"} {
+		_, err := h.svc.Create(context.Background(), "alice", CreateRequest{Name: name, Source: SourceUpload})
+		var ve *ValidationError
+		if !errors.As(err, &ve) || len(ve.Fields) != 1 || ve.Fields[0].Field != "name" {
+			t.Errorf("Create(%q) = %v; want a field error on name", name, err)
+		}
+	}
+}
+
 func (h *harness) waitOp(t *testing.T, id string) stacks.Operation {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
