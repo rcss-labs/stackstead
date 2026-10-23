@@ -433,6 +433,15 @@ func fillServices(d *Detail, f *composefile.File, project string, containers []e
 	if err != nil {
 		return err
 	}
+	// One pass over the containers instead of one per service.
+	byService := map[string][]engine.Container{}
+	if project != "" {
+		for _, c := range containers {
+			if c.Project() == project {
+				byService[c.ComposeService()] = append(byService[c.ComposeService()], c)
+			}
+		}
+	}
 	for _, name := range names {
 		svc, err := f.Service(name)
 		if err != nil {
@@ -440,10 +449,7 @@ func fillServices(d *Detail, f *composefile.File, project string, containers []e
 		}
 		sd := ServiceDetail{Name: name, Config: svc.Config, ReadOnly: svc.ReadOnly}
 		running := false
-		for _, c := range containers {
-			if project == "" || c.Project() != project || c.ComposeService() != name {
-				continue
-			}
+		for _, c := range byService[name] {
 			sd.Containers = append(sd.Containers, ContainerInfo{ID: c.ID, Name: c.Name, Service: name, State: c.State, Status: c.Status, Health: c.Health()})
 			running = running || c.State == "running"
 		}
