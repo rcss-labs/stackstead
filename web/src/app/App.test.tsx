@@ -408,6 +408,54 @@ describe('App routing and session', () => {
   });
 });
 
+describe('App unsaved guard and browser history', () => {
+  const beforeUnload = () => {
+    const e = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(e);
+    return e.defaultPrevented;
+  };
+
+  it('sets a beforeunload prompt only while the shared dirty flag is set', async () => {
+    at('/stacks/new');
+    render(<App />);
+    const name = (await screen.findByRole('textbox', { name: /^Stack name/ })) as HTMLInputElement;
+    expect(beforeUnload()).toBe(false);
+    await user().type(name, 'blog');
+    expect(beforeUnload()).toBe(true);
+  });
+
+  it('asks before browser Back leaves a dirty New stack form, and Stay keeps the draft', async () => {
+    at('/');
+    render(<App />);
+    await screen.findByRole('heading', { level: 1 });
+    await user().click(within(mainNav()).getByRole('link', { name: 'New stack' }));
+    const name = (await screen.findByRole('textbox', { name: /^Stack name/ })) as HTMLInputElement;
+    await user().type(name, 'blog');
+    act(() => window.history.back());
+    const dlg = await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' });
+    await waitFor(() => expect(loc().path).toBe('/stacks/new'));
+    await user().click(within(dlg).getByRole('button', { name: 'Cancel' }));
+    expect((screen.getByRole('textbox', { name: /^Stack name/ }) as HTMLInputElement).value).toBe('blog');
+    expect(loc().path).toBe('/stacks/new');
+  });
+
+  it('Discard lets Back through, and a clean Back is never asked', async () => {
+    at('/');
+    render(<App />);
+    await screen.findByRole('heading', { level: 1 });
+    await user().click(within(mainNav()).getByRole('link', { name: 'New stack' }));
+    await user().type((await screen.findByRole('textbox', { name: /^Stack name/ })) as HTMLInputElement, 'blog');
+    act(() => window.history.back());
+    await user().click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Discard changes' }));
+    await waitFor(() => expect(loc().path).toBe('/'));
+    await user().click(within(mainNav()).getByRole('link', { name: 'Settings' }));
+    await screen.findByRole('heading', { level: 1, name: 'Settings' });
+    act(() => window.history.back());
+    await waitFor(() => expect(loc().path).toBe('/'));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+});
+
 describe('App across the 760px breakpoint', () => {
   it('keeps a half-filled New stack form and its unsaved-changes guard when the viewport flips to mobile and back', async () => {
     let onChange: ((e: { matches: boolean }) => void) | undefined;
