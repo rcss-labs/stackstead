@@ -18,12 +18,15 @@ import { SourceTab } from './SourceTab';
 import { useImageDetail } from './useImageDetail';
 import { VersionsTab } from './VersionsTab';
 
-const TABS = [
+const ALL_TABS = [
   { id: 'source', label: 'Source' },
   { id: 'revisions', label: 'Revisions' },
   { id: 'versions', label: 'Versions' },
   { id: 'settings', label: 'Settings' },
 ];
+
+/** GitHub images have no stored revisions: their source lives in the repository. */
+const tabsFor = (source: string) => (source === 'github' ? ALL_TABS.filter((t) => t.id !== 'revisions') : ALL_TABS);
 
 /** Keyed on the slug so /images/a to /images/b restarts every load. */
 export function ImageDetailScreen() {
@@ -36,7 +39,6 @@ function ImageDetail({ slug }: { slug: string }) {
   const { detail, error, notFound, reload } = useImageDetail(slug);
   const [query, setQuery] = useSearchParams();
   const requested = query.get('tab');
-  const tab = TABS.some((t) => t.id === requested) ? (requested as string) : 'source';
   const [building, setBuilding] = useState(false);
   const [buildOperation, setBuildOperation] = useState<string>();
 
@@ -74,6 +76,8 @@ function ImageDetail({ slug }: { slug: string }) {
     );
   }
 
+  const tabs = tabsFor(detail.source);
+  const tab = tabs.some((t) => t.id === requested) ? (requested as string) : 'source';
   const latest = detail.latestVersion;
   return (
     <section className={styles.page} aria-labelledby="image-heading">
@@ -110,7 +114,7 @@ function ImageDetail({ slug }: { slug: string }) {
         />
       )}
 
-      <Tabs tabs={TABS} selected={tab} ariaLabel="Image sections" onSelect={(id) => setQuery({ tab: id })}>
+      <Tabs tabs={tabs} selected={tab} ariaLabel="Image sections" onSelect={(id) => setQuery({ tab: id })}>
         {(selected) => (
           <>
             {selected === 'source' && <SourceTab image={detail} onChanged={reload} />}

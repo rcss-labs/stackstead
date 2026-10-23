@@ -8,6 +8,7 @@ import { PanelLabel } from '../components/PanelLabel';
 import { Segmented } from '../components/Segmented';
 import { useStore } from '../hooks/useStore';
 import { ConnectedServersCard } from './ConnectedServersCard';
+import { GitHubCard } from './GitHubCard';
 import { MetricsTokenCard } from './MetricsTokenCard';
 import { PasswordForm } from './PasswordForm';
 import { RegistriesCard } from './RegistriesCard';
@@ -22,6 +23,7 @@ export const SECTIONS: readonly { id: string; label: string }[] = [
   { id: 'settings-prometheus', label: 'Prometheus' },
   { id: 'settings-servers', label: 'Connected servers' },
   { id: 'settings-registries', label: 'Registries' },
+  { id: 'settings-github', label: 'GitHub' },
   { id: 'settings-appearance', label: 'Appearance' },
   { id: 'settings-account', label: 'Account' },
 ];
@@ -108,6 +110,9 @@ export function SettingsScreen() {
         </div>
         <div id="settings-registries">
           <RegistriesCard />
+        </div>
+        <div id="settings-github">
+          <GitHubCard />
         </div>
         <div id="settings-appearance">
           <SettingsCard id="appearance-h" title="Appearance">

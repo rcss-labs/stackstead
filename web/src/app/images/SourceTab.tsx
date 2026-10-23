@@ -22,32 +22,38 @@ function GitHubSource({ image }: { image: LibraryImageDetail }) {
   const { api } = useServer();
   const [head, setHead] = useState<GitHubHead>();
   const [error, setError] = useState<string>();
-  const [checking, setChecking] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const slug = image.slug;
 
-  async function check() {
-    setChecking(true);
+  const load = useCallback(async () => {
+    setLoading(true);
     setError(undefined);
     try {
-      setHead(await api.githubHead(image.slug));
+      setHead(await api.githubHead(slug));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setChecking(false);
+      setLoading(false);
     }
-  }
+  }, [api, slug]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
+  const gh = image.github;
   return (
     <div className={styles.card}>
       <div className={styles.pad}>
         <p>
-          Built from <span className={styles.mono}>{image.github?.repo}</span> on <span className={styles.mono}>{image.github?.branch}</span>
-          {image.github?.path ? <> in <span className={styles.mono}>{image.github.path}</span></> : null}. The Dockerfile is read from the repository at build time.
+          Built from <span className={styles.mono}>{gh?.repo}</span> on <span className={styles.mono}>{gh?.branch}</span>
+          {gh?.path ? (
+            <>
+              {' '}in <span className={styles.mono}>{gh.path}</span>
+            </>
+          ) : null}
+          , Dockerfile <span className={styles.mono}>{image.dockerfilePath}</span>. Edit the source in the repository; change where it is read from in Settings.
         </p>
-        <div>
-          <Button variant="secondary" size="sm" loading={checking} onClick={() => void check()}>
-            Check latest commit
-          </Button>
-        </div>
+        {loading && <p role="status">Loading Dockerfile from GitHub…</p>}
         {error && (
           <Banner kind="danger" title="Could not reach GitHub">
             {error}
@@ -55,12 +61,25 @@ function GitHubSource({ image }: { image: LibraryImageDetail }) {
         )}
         {head && (
           <>
-            <p>
-              Latest commit <span className={styles.mono}>{head.commit.slice(0, 7)}</span>, Dockerfile <span className={styles.mono}>{head.path}</span>
-            </p>
-            <pre className={styles.log}>{head.dockerfile}</pre>
+            <div className={styles.row}>
+              <span>
+                Branch head <span className={styles.mono}>{head.commit.slice(0, 7)}</span>
+              </span>
+              <span className={styles.spacer} />
+              <a href={`https://github.com/${gh?.repo ?? ''}/blob/${head.commit}/${head.path}`} target="_blank" rel="noreferrer noopener">
+                Open on GitHub
+              </a>
+            </div>
+            <pre className={styles.log} aria-label="Dockerfile at branch head">
+              {head.dockerfile}
+            </pre>
           </>
         )}
+        <div>
+          <Button variant="secondary" size="sm" loading={loading} onClick={() => void load()}>
+            Refresh
+          </Button>
+        </div>
       </div>
     </div>
   );

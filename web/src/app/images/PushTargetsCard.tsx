@@ -28,7 +28,8 @@ function TargetDialog(props: { image: LibraryImageDetail; target?: PushTarget; o
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (pending) return;
-    const request = { registryId, repository: repository.trim(), autoPush };
+    // GitHub images are pushed manually, so auto-push is always off for them.
+    const request = { registryId, repository: repository.trim(), autoPush: image.source !== 'github' && autoPush };
     setPending(true);
     setError(undefined);
     try {
@@ -60,10 +61,12 @@ function TargetDialog(props: { image: LibraryImageDetail; target?: PushTarget; o
         <Field label="Repository" id={`${uid}-repository`} mono hint="For example user/app (Docker Hub) or the ECR repository name.">
           {(c) => <input {...c} value={repository} onChange={(e) => setRepository(e.target.value)} />}
         </Field>
-        <label className={styles.checkbox}>
-          <input type="checkbox" checked={autoPush} onChange={(e) => setAutoPush(e.target.checked)} />
-          Push automatically after each successful build
-        </label>
+        {image.source !== 'github' && (
+          <label className={styles.checkbox}>
+            <input type="checkbox" checked={autoPush} onChange={(e) => setAutoPush(e.target.checked)} />
+            Push automatically after each successful build
+          </label>
+        )}
         {error && (
           <Banner kind="danger" title="Could not save">
             {error}
@@ -119,12 +122,13 @@ export function PushTargetsCard({ image, onChanged }: { image: LibraryImageDetai
             {error}
           </Banner>
         )}
+        {image.source === 'github' && <p className={styles.muted}>GitHub images are pushed manually</p>}
         {image.pushTargets.length === 0 && <p className={styles.muted}>No push targets yet.</p>}
         {image.pushTargets.map((t) => (
           <div key={t.id} className={styles.row}>
             <span>{t.registryName}</span>
             <span className={styles.mono}>{t.repository}</span>
-            <span className={styles.muted}>{t.autoPush ? 'Auto-push on' : 'Auto-push off'}</span>
+            {image.source !== 'github' && <span className={styles.muted}>{t.autoPush ? 'Auto-push on' : 'Auto-push off'}</span>}
             <span className={styles.spacer} />
             <Button variant="ghost" size="xs" aria-label={`Edit ${t.repository}`} onClick={() => setDialog({ target: t })}>
               Edit

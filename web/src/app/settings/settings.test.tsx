@@ -365,9 +365,9 @@ describe('Settings layout', () => {
     mountSettings();
     const nav = await screen.findByRole('navigation', { name: 'Settings sections' });
     const links = within(nav).getAllByRole('link');
-    const ids = ['settings-system', 'settings-updates', 'settings-prometheus', 'settings-servers', 'settings-registries', 'settings-appearance', 'settings-account'];
+    const ids = ['settings-system', 'settings-updates', 'settings-prometheus', 'settings-servers', 'settings-registries', 'settings-github', 'settings-appearance', 'settings-account'];
     expect(links.map((a) => a.getAttribute('href'))).toEqual(ids.map((id) => `#${id}`));
-    expect(links.map((a) => a.textContent)).toEqual(['System', 'Updates', 'Prometheus', 'Connected servers', 'Registries', 'Appearance', 'Account']);
+    expect(links.map((a) => a.textContent)).toEqual(['System', 'Updates', 'Prometheus', 'Connected servers', 'Registries', 'GitHub', 'Appearance', 'Account']);
     for (const id of ids) expect(document.getElementById(id)).not.toBeNull();
     expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['Settings']);
   });
@@ -397,6 +397,7 @@ describe('Settings section nav', () => {
     ['Prometheus', 'Prometheus token', 'settings-prometheus'],
     ['Connected servers', 'Connected servers', 'settings-servers'],
     ['Registries', 'Registries', 'settings-registries'],
+    ['GitHub', 'GitHub', 'settings-github'],
     ['Appearance', 'Appearance', 'settings-appearance'],
     ['Account', 'Account', 'settings-account'],
   ])('%s scrolls to its card, focuses the heading and sets the hash', async (link, heading, sectionId) => {
