@@ -1,6 +1,6 @@
 # Stackstead build entry point. Only `ui`, `build`, `release`, `ui-check`,
 # `ui-test` and `check` need Node; `test` and `e2e` do not build the UI.
-.PHONY: help ui ui-check ui-test build build-go binaries release dist verify-release dist-clean packages pkg pkg-skip package-lint lint-image print-lint-image installer-test test check e2e clean
+.PHONY: help check-go-version ui ui-check ui-test build build-go binaries release dist verify-release dist-clean packages pkg pkg-skip package-lint lint-image print-lint-image installer-test test check e2e clean
 
 BIN := bin
 
@@ -59,12 +59,23 @@ MKRELEASE_EXTRAS = \
 	-extra linux:stackstead.service=deploy/systemd/stackstead.service \
 	-extra darwin:launchagent.plist.in=deploy/macos/launchagent.plist.in
 
+# Release guard (issue #23): the binaries embed the Go standard library, so an older compiler
+# ships its known vulnerabilities whatever go.mod says. GO_RELEASE_MIN is the lowest patched
+# release; `binaries` (and so `release` and `dist`) refuse an older `go`. Raise it with go.mod's `go` line.
+GO_RELEASE_MIN ?= 1.26.10
+check-go-version: ## Refuse to build release artifacts with a Go older than GO_RELEASE_MIN
+	@have=$$(go env GOVERSION | sed -e 's/^go//' -e 's/[^0-9.].*//'); \
+	[ -n "$$have" ] || { echo "cannot determine the Go version (go env GOVERSION)"; exit 1; }; \
+	lowest=$$(printf '%s\n%s\n' "$(GO_RELEASE_MIN)" "$$have" | sort -V | head -n 1); \
+	[ "$$lowest" = "$(GO_RELEASE_MIN)" ] || { echo "Go $$have is older than the patched floor $(GO_RELEASE_MIN) (known standard-library vulnerabilities): install Go >= $(GO_RELEASE_MIN) before building release artifacts"; exit 1; }; \
+	echo "Go $$have (floor $(GO_RELEASE_MIN))"
+
 # One build of the release binaries, shared by the tarballs (release) and the packages
 # (packages). Recursive (=) so Plan 6's LDFLAGS is seen wherever it is defined. SKIP_UI=1
 # leaves out the Node-based UI build (used by the packaging tests; never for a real release).
 RELEASE_LDFLAGS = -s -w $(LDFLAGS)
 
-binaries: $(if $(filter 1,$(SKIP_UI)),,ui) ## Build every RELEASE_TARGETS binary into bin/ (shared by release and packages)
+binaries: check-go-version $(if $(filter 1,$(SKIP_UI)),,ui) ## Build every RELEASE_TARGETS binary into bin/ (shared by release and packages)
 	@mkdir -p $(BIN)
 	@for t in $(RELEASE_TARGETS); do \
 		os=$${t%/*}; arch=$${t#*/}; \

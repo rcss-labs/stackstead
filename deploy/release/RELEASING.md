@@ -9,7 +9,7 @@ needs a key, a certificate or a notarization profile.
 - A macOS host: `make dist` also builds the universal `.pkg` there (`pkgbuild`, `productbuild`,
   `lipo`, `codesign` from the Xcode command line tools). On Linux the `.pkg` step is skipped with a message,
   so a Linux-only release has no `.pkg`; do not publish one built that way as the official release.
-- Go (see `go.mod`) and Node >= 22 for the UI that is embedded in the binary.
+- Go at or above the patched floor (`GO_RELEASE_MIN` in the Makefile, the `go` line of `go.mod`; `make binaries` refuses an older compiler via `make check-go-version`) and Node >= 22 for the UI that is embedded in the binary.
   A release always builds the UI; `SKIP_UI=1` exists for tests only.
 - Docker, for `make package-lint` and the container tests.
 - `gh`, authenticated to the repository.
