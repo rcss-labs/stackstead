@@ -94,7 +94,7 @@ func metricsCommand() *Command {
 				if from != "" || to != "" || step != "" {
 					return exitf(ExitUsage, "--live cannot be combined with --from, --to or --step")
 				}
-				return metricsLive(ctx, env, g, args[0])
+				return metricsLive(ctx, env, g, args[0], service)
 			}
 			q := client.MetricsQuery{Service: service}
 			var err error
@@ -158,7 +158,7 @@ func liveRow(w io.Writer, cells ...string) {
 	fmt.Fprintln(w, b.String())
 }
 
-func metricsLive(ctx context.Context, env *Env, g *globalFlags, stack string) error {
+func metricsLive(ctx context.Context, env *Env, g *globalFlags, stack, service string) error {
 	p := newPrinter(env, g)
 	return withAPI(env, g, func(c *client.Client, _ string, _ Context) error {
 		headerDone := false
@@ -166,13 +166,19 @@ func metricsLive(ctx context.Context, env *Env, g *globalFlags, stack string) er
 			if ev.Name != "sample" {
 				return nil // "dropped": the client reconnects by itself
 			}
-			if p.JSON {
-				return p.NDJSON("sample", ev.ID, eventData(ev))
-			}
 			var s apitypes.Sample
 			if err := json.Unmarshal(ev.Data, &s); err != nil {
+				if p.JSON && service == "" {
+					return p.NDJSON("sample", ev.ID, eventData(ev))
+				}
 				fmt.Fprintf(env.Stderr, "warning: skipped a malformed sample: %v\n", err)
 				return nil
+			}
+			if service != "" && s.Service != service {
+				return nil
+			}
+			if p.JSON {
+				return p.NDJSON("sample", ev.ID, eventData(ev))
 			}
 			if !headerDone {
 				headerDone = true

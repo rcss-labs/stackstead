@@ -216,6 +216,40 @@ func TestMetricsLiveJSON(t *testing.T) {
 	}
 }
 
+func TestMetricsLiveServiceFilter(t *testing.T) {
+	for _, mode := range []string{"table", "json"} {
+		t.Run(mode, func(t *testing.T) {
+			s := func(svc, ctr string) string {
+				return t9Ev("sample", "", apitypes.Sample{Time: "2026-10-14T11:00:00Z", Service: svc, Container: ctr, CPU: 1})
+			}
+			srv := t9Serve(t, t9Conn{Frames: []string{s("web", "webcontainer1"), s("db", "dbcontainer01"), s("web", "webcontainer2")}, Hold: true})
+			te := newTestEnv(t, nil)
+			t9Seed(t, te, srv.URL)
+			args := []string{"metrics", "demo", "--live", "--service", "web"}
+			if mode == "json" {
+				args = append(args, "-o", "json")
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- t9Run(ctx, te, args...) }()
+			deadline := time.Now().Add(5 * time.Second)
+			for !strings.Contains(te.Out.String(), "webcontainer2") && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+			}
+			cancel()
+			<-done
+			out := te.Out.String()
+			if !strings.Contains(out, "webcontainer1") || !strings.Contains(out, "webcontainer2") {
+				t.Errorf("web samples missing: %q", out)
+			}
+			if strings.Contains(out, "dbcontainer01") {
+				t.Errorf("--service web leaked another service: %q", out)
+			}
+		})
+	}
+}
+
 func TestEventsLines(t *testing.T) {
 	srv := t9Serve(t, t9Conn{Frames: []string{
 		t9Ev("status", "", apitypes.StatusFlags{Events: "connected", MetricsDegraded: false}),
