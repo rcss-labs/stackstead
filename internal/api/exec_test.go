@@ -377,6 +377,9 @@ func TestExecValidation(t *testing.T) {
 		"NUL in user":    "user=ro%00ot",
 		"NUL in cmd":     "cmd=a%00b",
 		"too many bytes": "cmd=" + strings.Repeat("x", 4097),
+		"65 char user":   "user=" + strings.Repeat("u", 65),
+		"space in user":  "user=a%20b",
+		"newline user":   "user=a%0Ab",
 		"bad tty":        "tty=maybe",
 		"bad cols":       "cols=0&rows=10",
 	} {
@@ -552,5 +555,43 @@ func TestInspectContainer404HasCode(t *testing.T) {
 	status, body := f.get(t, "/api/containers/"+strings.Repeat("e", 12), nil, true)
 	if status != 404 || body["code"] != "container_not_found" || body["error"] != "container not found" {
 		t.Errorf("got %d %v", status, body)
+	}
+}
+
+func TestOriginAllowed(t *testing.T) {
+	f := newExecFixture(t, enabledExec(), nil, nil)
+	cases := map[string]struct {
+		host, origin string
+		want         int
+	}{
+		"port mismatch":    {"box:8443", "https://box", 403},
+		"port match":       {"box:8443", "https://box:8443", 400},
+		"null origin":      {"box:8443", "null", 403},
+		"origin with path": {"box:8443", "https://box:8443/some/path", 400},
+	}
+	for name, c := range cases {
+		req, _ := http.NewRequest("GET", f.srv.URL+execPath(idWeb, ""), nil)
+		req.Host = c.host
+		req.Header.Set("Origin", c.origin)
+		req.AddCookie(f.cookie)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != c.want {
+			t.Errorf("%s: status = %d, want %d", name, resp.StatusCode, c.want)
+		}
+	}
+}
+
+func TestExecAuditEscapesControlCharacters(t *testing.T) {
+	f := newExecFixture(t, enabledExec(), nil, nil)
+	ws := f.mustDial(t, execPath(idWeb, "cmd=echo&cmd=a%0Afake"))
+	sendStdin(t, ws, "x")
+	recvStdout(t, ws)
+	waitFor(t, "start entry", func() bool { return len(execEntries(t, f)) >= 1 })
+	if d := execEntries(t, f)[0].Detail; strings.ContainsRune(d, '\n') || !strings.Contains(d, `a\nfake`) {
+		t.Errorf("detail = %q", d)
 	}
 }

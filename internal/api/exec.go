@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/net/websocket"
@@ -36,14 +37,16 @@ const (
 	defaultExecSessions = 8
 	execMaxArgs         = 64
 	execMaxArgBytes     = 4096
-	execMaxUserBytes    = 256
+	execMaxUserChars    = 64
 	execDefaultCols     = 80
 	execDefaultRows     = 24
 	execAuditDetailMax  = 300
 
 	execPing        = 20 * time.Second
 	execPongTimeout = 60 * time.Second
-	execDetachCheck = 2 * time.Second
+	// execWriteTimeout bounds one write to the client; the conn and the session must agree.
+	execWriteTimeout = 60 * time.Second
+	execDetachCheck  = 2 * time.Second
 
 	autoShellScript = "if [ -x /bin/bash ]; then exec /bin/bash; else exec /bin/sh; fi"
 	noShellMessage  = "no shell found in this container; pass a command"
@@ -99,7 +102,7 @@ func parseExecRequest(q url.Values) (execRequest, error) {
 	if total > execMaxArgBytes {
 		return req, fmt.Errorf("cmd is limited to %d bytes in total", execMaxArgBytes)
 	}
-	if len(req.user) > execMaxUserBytes || strings.ContainsFunc(req.user, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+	if utf8.RuneCountInString(req.user) > execMaxUserChars || strings.ContainsFunc(req.user, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
 		return req, errors.New("invalid user")
 	}
 	switch q.Get("tty") {
@@ -171,6 +174,8 @@ func (s *server) handleContainerExec(w http.ResponseWriter, r *http.Request) {
 		writeCodedError(w, http.StatusTooManyRequests, "too many exec sessions", codeExecLimit)
 		return
 	}
+	// The cap counts sessions with a live client, not running execs: the slot
+	// is freed as soon as the client is gone, even if the process lingers.
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { <-s.execSlots }) }
 	defer release()
@@ -250,13 +255,13 @@ func (b execBackendAdapter) Inspect(ctx context.Context) (engine.ExecInspect, er
 func (e execSession) serve(ws *websocket.Conn) {
 	// The hijacked connection keeps the HTTP server's deadlines until cleared.
 	_ = ws.SetDeadline(time.Time{})
-	conn := slotConn{wsConn: newWSConn(ws, execPongTimeout), release: e.release}
+	conn := slotConn{wsConn: newWSConn(ws, execWriteTimeout), release: e.release}
 	ctx := ws.Request().Context()
 	eng := e.s.opts.ContainerEngine
 
 	commandLine := "auto shell"
 	if !e.req.autoShell {
-		commandLine = truncateUTF8(strings.Join(e.req.cmd, " "), execAuditDetailMax)
+		commandLine = truncateUTF8(auditCommandLine(e.req.cmd), execAuditDetailMax)
 	}
 	started := time.Now()
 	e.audit(ctx, "started", commandLine)
@@ -288,6 +293,7 @@ func (e execSession) serve(ws *websocket.Conn) {
 	result = runSession(ctx, conn, stream, execBackendAdapter{eng: eng, execID: execID}, sessionConfig{
 		Ping:            execPing,
 		PongTimeout:     execPongTimeout,
+		WriteTimeout:    execWriteTimeout,
 		IdleTimeout:     e.s.opts.Exec.IdleTimeout,
 		DetachCheck:     execDetachCheck,
 		Now:             time.Now,
@@ -345,4 +351,17 @@ func truncateUTF8(s string, max int) string {
 		s = s[:len(s)-1]
 	}
 	return s + "..."
+}
+
+// auditCommandLine joins the argv for the log; an argument holding control
+// characters is quoted so it cannot forge extra log lines.
+func auditCommandLine(args []string) string {
+	parts := make([]string, len(args))
+	for i, a := range args {
+		parts[i] = a
+		if strings.ContainsFunc(a, unicode.IsControl) {
+			parts[i] = strconv.Quote(a)
+		}
+	}
+	return strings.Join(parts, " ")
 }

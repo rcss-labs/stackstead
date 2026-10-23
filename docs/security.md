@@ -149,12 +149,17 @@ so treat it like the rest of the signed-in surface.
   forward `X-Forwarded-Proto`. This blocks cross-site WebSocket hijacking with
   the admin's cookie. A missing Origin is allowed: browsers always send one,
   and any other client still needs a valid credential.
+- **Reverse proxy.** The Origin check compares against the `Host` the server
+  receives, so the proxy must forward it with its port when not on 80/443
+  (nginx: `proxy_set_header Host $http_host;`, not `$host`). An Origin equal to
+  Host cannot stop DNS rebinding; the `SameSite=Strict` session cookie is the
+  defence there.
 - **Audit.** Every session writes a `container.exec` start entry and an end
   entry to the action log: who (the user, or the peer actor for a forwarded
   session), the container, the stack or `host`, the command line (`auto shell`
   for the default) and the user. End results are `exit <code>`,
   `disconnected`, `detached`, `idle`, `session_expired`, `shutdown` or
-  `error`. Keystrokes and output are never recorded. Refused attempts
+  `error`. Keystrokes and output are never recorded, but the command line, including its arguments, is stored: do not pass secrets as arguments. Refused attempts
   (403, 409, 429) are not logged.
 - **Turning it off.** Set `exec_enabled: false`; the route then answers 403
   `exec_disabled`. `exec_max_sessions` (default 8) caps concurrent sessions.

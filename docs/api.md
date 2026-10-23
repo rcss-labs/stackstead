@@ -588,7 +588,7 @@ Query parameters, all read before the upgrade:
 | param | meaning | default |
 |---|---|---|
 | `cmd` | repeated; the argv of the command (at most 64 args, 4 KiB in total, no NUL) | empty: auto shell |
-| `user` | `user[:group]` passed to Docker | the image default |
+| `user` | `user[:group]` passed to Docker (at most 64 characters, no whitespace, control or NUL characters) | the image default |
 | `tty` | `1` or `0` | `1` |
 | `cols`, `rows` | initial terminal size (tty only), 1 to 65535 | 80 x 24 |
 
