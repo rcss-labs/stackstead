@@ -1,0 +1,208 @@
+package images
+
+import (
+	"archive/tar"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+	"syscall"
+	"time"
+)
+
+const maxDockerignoreBytes = 1 << 20
+
+// Materialize writes the manifest's files under dir, which must be empty (it
+// is created if missing). Files of mode 0644 are hard links to the blobs
+// (copies when the filesystem refuses links); executable files are copies so
+// the blob keeps its own mode. All file operations after the manifest is
+// validated go through an os.Root on dir.
+func Materialize(dir string, m Manifest, b *Blobs) error {
+	for p := range m {
+		if clean, err := ValidatePath(p); err != nil || clean != p {
+			return badPath(p, "not a clean manifest path")
+		}
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	if len(entries) != 0 {
+		return fmt.Errorf("build directory %s is not empty", dir)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
+	paths := make([]string, 0, len(m))
+	for p := range m {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		e := m[p]
+		if parent := filepath.Dir(filepath.FromSlash(p)); parent != "." {
+			if err := root.MkdirAll(parent, 0o755); err != nil {
+				return fmt.Errorf("creating folder for %q: %w", p, err)
+			}
+		}
+		if err := materializeOne(root, dir, p, e, b); err != nil {
+			return fmt.Errorf("writing %q: %w", p, err)
+		}
+	}
+	return nil
+}
+
+func materializeOne(root *os.Root, dir, p string, e FileEntry, b *Blobs) error {
+	rel := filepath.FromSlash(p)
+	src, err := b.pathFor(e.Hash)
+	if err != nil {
+		return err
+	}
+	if e.Mode != 0o755 {
+		// os.Link resolves parents without the Root; the folders were just
+		// made through the Root in an empty directory, and the result is
+		// verified below.
+		err := os.Link(src, filepath.Join(dir, rel))
+		if err == nil {
+			return verifyLinked(root, rel, src)
+		}
+		if !errors.Is(err, syscall.EPERM) && !errors.Is(err, syscall.ENOTSUP) &&
+			!errors.Is(err, syscall.EXDEV) && !errors.Is(err, syscall.EOPNOTSUPP) {
+			return err
+		}
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	mode := fs.FileMode(0o644)
+	if e.Mode == 0o755 {
+		mode = 0o755
+	}
+	out, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return root.Chmod(rel, mode)
+}
+
+// verifyLinked confirms the link landed inside the root as the blob itself.
+func verifyLinked(root *os.Root, rel, blobPath string) error {
+	got, err := root.Lstat(rel)
+	if err != nil {
+		return fmt.Errorf("link did not land inside the build directory: %w", err)
+	}
+	want, err := os.Stat(blobPath)
+	if err != nil {
+		return err
+	}
+	if !got.Mode().IsRegular() || !os.SameFile(got, want) {
+		return errors.New("link did not land inside the build directory")
+	}
+	return nil
+}
+
+// WriteContext writes dir as a tar build context: regular files only, those
+// excluded by dir/.dockerignore left out, sorted by path, owner 0, mtime at
+// the epoch, mode 0755 for executables and 0644 otherwise.
+func WriteContext(w io.Writer, dir string) error {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
+	ignore := &Ignore{}
+	if f, err := root.Open(".dockerignore"); err == nil {
+		src, rerr := io.ReadAll(io.LimitReader(f, maxDockerignoreBytes+1))
+		f.Close()
+		if rerr != nil {
+			return rerr
+		}
+		if len(src) > maxDockerignoreBytes {
+			return errors.New(".dockerignore is larger than 1 MiB")
+		}
+		if ignore, err = ParseDockerignore(src); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+
+	var files []string
+	err = fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Type().IsRegular() && !ignore.Excluded(p) {
+			files = append(files, p)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	sort.Strings(files)
+
+	tw := tar.NewWriter(w)
+	for _, p := range files {
+		if err := writeContextFile(tw, root, p); err != nil {
+			return err
+		}
+	}
+	return tw.Close()
+}
+
+func writeContextFile(tw *tar.Writer, root *os.Root, p string) error {
+	f, err := root.Open(filepath.FromSlash(p))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return nil
+	}
+	mode := int64(0o644)
+	if info.Mode().Perm()&0o111 != 0 {
+		mode = 0o755
+	}
+	err = tw.WriteHeader(&tar.Header{
+		Typeflag: tar.TypeReg,
+		Name:     p,
+		Size:     info.Size(),
+		Mode:     mode,
+		ModTime:  time.Unix(0, 0),
+		Format:   tar.FormatPAX,
+	})
+	if err != nil {
+		return err
+	}
+	if n, err := io.Copy(tw, io.LimitReader(f, info.Size())); err != nil || n != info.Size() {
+		if err == nil {
+			err = io.ErrUnexpectedEOF
+		}
+		return fmt.Errorf("reading %q: %w", p, err)
+	}
+	return nil
+}
