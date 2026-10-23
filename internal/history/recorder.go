@@ -215,7 +215,8 @@ func (r *Recorder) project(ctx context.Context, project string) {
 	}
 }
 
-// event counts a die followed by a start as one restart.
+// event counts a die followed by a start as one restart. A destroyed
+// container can never restart, so its bookkeeping is dropped.
 func (r *Recorder) event(ctx context.Context, ev engine.Event) {
 	project := ev.Labels[labelComposeProject]
 	if project == "" {
@@ -224,6 +225,9 @@ func (r *Recorder) event(ctx context.Context, ev engine.Event) {
 	switch ev.Action {
 	case "die":
 		r.dying[ev.ContainerID] = true
+	case "destroy":
+		delete(r.dying, ev.ContainerID)
+		delete(r.lastRS, ev.ContainerID)
 	case "start":
 		if !r.dying[ev.ContainerID] {
 			return

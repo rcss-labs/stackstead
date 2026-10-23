@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -596,4 +597,37 @@ func TestRecorder_ComposeRestartCountsEachService(t *testing.T) {
 		t.Fatalf("restart services = %v, want [db app]", services)
 	}
 	h.noInsert(t)
+}
+
+// discardJournal accepts every insert without blocking, for tests that drive
+// the recorder synchronously.
+type discardJournal struct{}
+
+func (discardJournal) Insert(context.Context, []Row) error   { return nil }
+func (discardJournal) Latest(context.Context) ([]Row, error) { return nil, nil }
+
+// Containers that die and are destroyed without a following start (jobs,
+// `compose down`) and restarted containers that are later destroyed must not
+// leave bookkeeping behind.
+func TestRecorder_DestroyForgetsRestartBookkeeping(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1_700_000_000, 0)}
+	rec := NewRecorder(newFakeSource(), discardJournal{}, nil, clock.now)
+	ctx := context.Background()
+	labels := map[string]string{labelComposeProject: "app", labelComposeService: "web"}
+	send := func(id, action string, at time.Time) {
+		rec.event(ctx, engine.Event{Type: "container", Action: action, ContainerID: id, Labels: labels, Time: at})
+	}
+	for i := range 200 {
+		id := fmt.Sprintf("container-%d", i)
+		at := time.Unix(1_700_000_000+int64(i), 0)
+		send(id, "die", at)
+		if i%2 == 0 {
+			send(id, "start", at) // restarted once, then removed
+			send(id, "die", at)
+		}
+		send(id, "destroy", at)
+	}
+	if len(rec.dying) != 0 || len(rec.lastRS) != 0 {
+		t.Fatalf("after destroying every container: dying=%d lastRS=%d, want 0 and 0", len(rec.dying), len(rec.lastRS))
+	}
 }
