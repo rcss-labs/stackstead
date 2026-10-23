@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/rcss-labs/stackstead/internal/secret"
 )
 
 var (
@@ -17,9 +19,9 @@ var (
 	ErrPairingCancelled = errors.New("pairing was cancelled; this connection was removed while it was being set up")
 )
 
-// Secret is a credential that must not leak into logs or API output; its
-// methods (secret.go) redact it everywhere except Reveal.
-type Secret string
+// Secret is a credential that must not leak into logs or API output; see
+// internal/secret for its redaction rules.
+type Secret = secret.Secret
 
 type PeerState string
 
