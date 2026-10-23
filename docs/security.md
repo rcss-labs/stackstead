@@ -61,7 +61,10 @@ For access from other machines, put a TLS reverse proxy in front and make it
 forward the original Host and client address, for example with nginx:
 
 ```nginx
-proxy_set_header Host $host;
+proxy_http_version 1.1;
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection $connection_upgrade;   # map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+proxy_set_header Host $http_host;
 proxy_set_header X-Forwarded-For $remote_addr;
 ```
 
@@ -134,6 +137,46 @@ session at once, so a stolen cookie dies with the change. A wrong current
 password answers 403 (not 401, which the UI treats as "session gone") and
 counts against the same per-IP limiter as logins (429 when exceeded). The UI
 never echoes either password.
+
+## Container exec
+
+`GET /api/containers/{id}/exec` opens a shell or command inside any running
+container, from the web terminal and `stackstead exec`. Whoever is signed in
+can use it, and so can a connected server using its credential; there are no
+per-user permissions. A shell in a container is as powerful as Docker access,
+so treat it like the rest of the signed-in surface.
+
+- **Origin check.** The Origin header's host[:port] must equal the request's
+  `Host` (case-insensitive), otherwise the server answers 403 `bad_origin`.
+  The scheme is not compared, because the documented nginx setup does not
+  forward `X-Forwarded-Proto`. This blocks cross-site WebSocket hijacking with
+  the admin's cookie. A missing Origin is allowed: browsers always send one,
+  and any other client still needs a valid credential.
+- **Reverse proxy.** The Origin check compares against the `Host` the server
+  receives, so the proxy must forward it with its port when not on 80/443
+  (nginx: `proxy_set_header Host $http_host;`, not `$host`). It must also pass the WebSocket upgrade (HTTP/1.1 with `Upgrade` and `Connection` headers, as in the snippet above); without that every terminal fails with 400 "websocket upgrade required". An Origin equal to
+  Host cannot stop DNS rebinding; the `SameSite=Strict` session cookie is the
+  defence there.
+- **Audit.** Every session writes a `container.exec` start entry and an end
+  entry to the action log: who (the user, or the peer actor for a forwarded
+  session), the container, the stack or `host`, the command line (`auto shell`
+  for the default) and the user. End results are `exit <code>`,
+  `disconnected`, `detached`, `idle`, `session_expired`, `shutdown` or
+  `error`. Keystrokes and output are never recorded, but the command line, including its arguments, is stored: do not pass secrets as arguments. Refused attempts
+  (403, 409, 429) are not logged.
+- **Turning it off.** Set `exec_enabled: false`; the route then answers 403
+  `exec_disabled`. `exec_max_sessions` (default 8) caps concurrent sessions.
+- **Idle timeout.** `exec_idle_timeout` (default 30m, `0s` disables) closes a
+  session with no data in either direction, after a warning. Ping and resize
+  do not count as activity. The session is also re-checked every 20 s and ends
+  when the login is gone (logout, expiry, password change); for a session forwarded from another server, the remote re-checks the peer credential, not the browser's login.
+- **Best effort on disconnect.** Closing the connection sends EOF to stdin and
+  SIGHUP for a TTY, which ends interactive shells. Docker has no "kill exec",
+  and Stackstead cannot do more: the service runs unprivileged, and on macOS
+  the processes live inside the Docker VM. A non-TTY (`-T`) command that
+  ignores stdin EOF keeps running until it exits on its own; the audit end
+  entry records `detached` when the process is still running after the
+  disconnect.
 
 ## Storage cleanup
 

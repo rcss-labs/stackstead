@@ -98,6 +98,34 @@ func TestContainerListJoinsSources(t *testing.T) {
 	}
 }
 
+func TestContainerListNumber(t *testing.T) {
+	obs := containerObserve()
+	obs.containers[2].Labels["com.docker.compose.container-number"] = "2" // other-cron-1
+	_, get := containersEnv(t, obs, nil)
+	res := get("/api/containers")
+	if res.Code != 200 {
+		t.Fatalf("status = %d, body %s", res.Code, res.Body)
+	}
+	var raw []map[string]json.RawMessage
+	if err := json.Unmarshal(res.Body, &raw); err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]map[string]json.RawMessage{}
+	for _, row := range raw {
+		var name string
+		if err := json.Unmarshal(row["name"], &name); err != nil {
+			t.Fatal(err)
+		}
+		byName[name] = row
+	}
+	if got := string(byName["other-cron-1"]["number"]); got != "2" {
+		t.Errorf("labelled container number = %s, want 2", got)
+	}
+	if _, ok := byName["adhoc-db"]["number"]; ok {
+		t.Errorf("unlabelled container must omit number, body %s", res.Body)
+	}
+}
+
 func TestContainerListNilRestartsSourceIsZeros(t *testing.T) {
 	_, get := containersEnv(t, containerObserve(), func(o *api.Options) { o.Restarts = nil })
 	var rows []apitypes.ContainerRow
@@ -320,6 +348,7 @@ type fakeContainerEngine struct {
 	aliases    map[string]string // a name Docker would resolve -> full id
 	list       []engine.Container
 	listErr    error
+	exec       fakeExecState
 }
 
 func (f *fakeContainerEngine) Containers(context.Context) ([]engine.Container, error) {

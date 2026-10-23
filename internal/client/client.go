@@ -70,20 +70,9 @@ func New(cfg Config) (*Client, error) {
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = defaultTimeout
 	}
-	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
-	switch {
-	case cfg.Insecure:
-		tlsCfg.InsecureSkipVerify = true //nolint:gosec // explicit user opt-in (--insecure)
-	case cfg.CAFile != "":
-		pem, err := os.ReadFile(cfg.CAFile)
-		if err != nil {
-			return nil, fmt.Errorf("read CA file: %w", err)
-		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("CA file %s contains no PEM certificates", cfg.CAFile)
-		}
-		tlsCfg.RootCAs = pool
+	tlsCfg, err := TLSConfig(cfg)
+	if err != nil {
+		return nil, err
 	}
 	newTransport := func() *http.Transport {
 		t := http.DefaultTransport.(*http.Transport).Clone()
@@ -118,6 +107,30 @@ func New(cfg Config) (*Client, error) {
 	}, nil
 }
 
+// TLSConfig builds the TLS settings New uses for cfg (Insecure, else CAFile).
+// It is exported so the WebSocket dialer verifies certificates identically.
+func TLSConfig(cfg Config) (*tls.Config, error) {
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	switch {
+	case cfg.Insecure:
+		tlsCfg.InsecureSkipVerify = true //nolint:gosec // explicit user opt-in (--insecure)
+	case cfg.CAFile != "":
+		pem, err := os.ReadFile(cfg.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("read CA file: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("CA file %s contains no PEM certificates", cfg.CAFile)
+		}
+		tlsCfg.RootCAs = pool
+	}
+	return tlsCfg, nil
+}
+
+// Config returns the configuration the Client was built with.
+func (c *Client) Config() Config { return c.cfg }
+
 // newRequest builds a request for an already-escaped path (query included).
 func (c *Client) newRequest(ctx context.Context, method, path string, body []byte) (*http.Request, error) {
 	target := c.base.Scheme + "://" + c.base.Host + c.prefix + path
@@ -142,11 +155,19 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body []byt
 }
 
 func readError(resp *http.Response) *Error {
+	e, _ := ReadErrorBody(resp)
+	return e
+}
+
+// ReadErrorBody turns a non-2xx response into an *Error and also returns the
+// body's machine-readable code ("" when the body is not an API error).
+func ReadErrorBody(resp *http.Response) (*Error, string) {
 	e := &Error{Status: resp.StatusCode}
 	var body apitypes.ErrorBody
+	code := ""
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
 	if json.Unmarshal(data, &body) == nil && body.Error != "" {
-		e.Message, e.Fields = body.Error, body.Fields
+		e.Message, e.Fields, code = body.Error, body.Fields, body.Code
 	} else {
 		e.Message = "HTTP " + strconv.Itoa(resp.StatusCode)
 	}
@@ -155,7 +176,7 @@ func readError(resp *http.Response) *Error {
 			e.RetryAfter = time.Duration(secs) * time.Second
 		}
 	}
-	return e
+	return e, code
 }
 
 // do sends one unary request. POST and PUT always carry a JSON body ("{}"
@@ -336,6 +357,13 @@ func (c *Client) Operation(ctx context.Context, id string) (apitypes.OperationDe
 func (c *Client) Cancel(ctx context.Context, id string) (apitypes.Operation, error) {
 	var out apitypes.Operation
 	_, err := c.authed(ctx, http.MethodPost, "/api/operations/"+esc(id)+"/cancel", nil, &out)
+	return out, err
+}
+
+// Containers lists every container on the host, joined with its stack.
+func (c *Client) Containers(ctx context.Context) ([]apitypes.ContainerRow, error) {
+	var out []apitypes.ContainerRow
+	_, err := c.authed(ctx, http.MethodGet, "/api/containers", nil, &out)
 	return out, err
 }
 

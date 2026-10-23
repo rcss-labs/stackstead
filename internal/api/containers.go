@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +26,10 @@ type ContainerEngineAPI interface {
 	Containers(ctx context.Context) ([]engine.Container, error)
 	ContainerAction(ctx context.Context, id, action string, stopTimeout int) error
 	InspectContainer(ctx context.Context, id string) (engine.ContainerInspect, error)
+	CreateExec(ctx context.Context, containerID string, spec engine.ExecSpec) (string, error)
+	StartExec(ctx context.Context, execID string, tty bool) (engine.ExecStream, error)
+	ResizeExec(ctx context.Context, execID string, cols, rows uint16) error
+	InspectExec(ctx context.Context, execID string) (engine.ExecInspect, error)
 }
 
 const (
@@ -113,7 +118,7 @@ func (s *server) computeContainerList(ctx context.Context) ([]apitypes.Container
 		row := apitypes.ContainerRow{
 			ID: shortID(c.ID), Name: c.Name, Image: c.Image, ImageID: c.ImageID, State: c.State, Status: c.Status,
 			Health: c.Health(), CreatedAt: c.Created.UTC(),
-			Project: c.Project(), Service: c.ComposeService(), Stack: stack, Managed: managed,
+			Project: c.Project(), Service: c.ComposeService(), Number: containerNumber(c.Labels), Stack: stack, Managed: managed,
 			Ports: formatPorts(c.Ports), Networks: map[string]string{}, Restarts24h: restarts[c.ID],
 		}
 		if code, ok := c.ExitCode(); ok && c.State == "exited" {
@@ -133,6 +138,15 @@ func (s *server) computeContainerList(ctx context.Context) ([]apitypes.Container
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 	return rows, nil
+}
+
+// containerNumber reads the compose replica number; 0 when the label is absent or not a number.
+func containerNumber(labels map[string]string) int {
+	number, err := strconv.Atoi(labels["com.docker.compose.container-number"])
+	if err != nil {
+		return 0
+	}
+	return number
 }
 
 func shortID(id string) string {
@@ -210,6 +224,7 @@ var containerIDPattern = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
 func (s *server) registerContainerActionRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/containers/{id}", s.requireSession(s.handleContainerDetails))
 	mux.Handle("POST /api/containers/{id}/{action}", s.requireSession(s.handleContainerAction))
+	s.registerExecRoute(mux)
 }
 
 // projectStacks maps compose project -> registered stack name, read fresh
@@ -233,14 +248,14 @@ func (s *server) projectStacks(ctx context.Context) (map[string]string, error) {
 func (s *server) inspectContainer(w http.ResponseWriter, r *http.Request) (engine.ContainerInspect, bool) {
 	id := r.PathValue("id")
 	if !containerIDPattern.MatchString(id) {
-		writeError(w, http.StatusNotFound, "container not found")
+		writeCodedError(w, http.StatusNotFound, "container not found", codeContainerNotFound)
 		return engine.ContainerInspect{}, false
 	}
 	insp, err := s.opts.ContainerEngine.InspectContainer(r.Context(), id)
 	var actionErr *engine.ActionError
 	if errors.As(err, &actionErr) && actionErr.Status == http.StatusBadRequest {
 		// Docker's answer for an ambiguous id prefix: nothing is addressable by it.
-		writeError(w, http.StatusNotFound, "container not found")
+		writeCodedError(w, http.StatusNotFound, "container not found", codeContainerNotFound)
 		return engine.ContainerInspect{}, false
 	}
 	if err != nil {
@@ -249,7 +264,7 @@ func (s *server) inspectContainer(w http.ResponseWriter, r *http.Request) (engin
 	}
 	// Docker also resolves names; the API is only ever addressed by id.
 	if !strings.HasPrefix(insp.ID, id) {
-		writeError(w, http.StatusNotFound, "container not found")
+		writeCodedError(w, http.StatusNotFound, "container not found", codeContainerNotFound)
 		return engine.ContainerInspect{}, false
 	}
 	return insp, true
@@ -262,7 +277,7 @@ func (s *server) writeEngineError(w http.ResponseWriter, r *http.Request, err er
 	case r.Context().Err() != nil:
 		// The client went away; nobody is left to answer.
 	case errors.Is(err, engine.ErrNotFound):
-		writeError(w, http.StatusNotFound, "container not found")
+		writeCodedError(w, http.StatusNotFound, "container not found", codeContainerNotFound)
 	case errors.As(err, &actionErr):
 		writeError(w, http.StatusBadGateway, actionErr.Message)
 	case errors.Is(err, engine.ErrUnavailable):
@@ -413,7 +428,7 @@ func (s *server) actionRow(ctx context.Context, insp engine.ContainerInspect) ap
 	row := apitypes.ContainerRow{
 		ID: shortID(insp.ID), Name: insp.Name, Image: insp.Image, ImageID: insp.ImageID, State: insp.State, Status: status,
 		Health: insp.Health, ExitCode: exitCodeOf(insp), CreatedAt: created.UTC(),
-		Project: owner.Project(), Service: owner.ComposeService(), Stack: stack, Managed: managed,
+		Project: owner.Project(), Service: owner.ComposeService(), Number: containerNumber(insp.Labels), Stack: stack, Managed: managed,
 		Ports: formatPorts(insp.Ports), Networks: map[string]string{},
 	}
 	for name, ip := range insp.Networks {
@@ -443,7 +458,7 @@ func (s *server) actionRow(ctx context.Context, insp engine.ContainerInspect) ap
 func (s *server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !containerIDPattern.MatchString(id) {
-		writeError(w, http.StatusNotFound, "container not found")
+		writeCodedError(w, http.StatusNotFound, "container not found", codeContainerNotFound)
 		return
 	}
 	opts, ok := parseLogOptions(w, r)
@@ -468,7 +483,7 @@ func (s *server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(matches) != 1 {
-		writeError(w, http.StatusNotFound, "container not found")
+		writeCodedError(w, http.StatusNotFound, "container not found", codeContainerNotFound)
 		return
 	}
 	id = matches[0].ID

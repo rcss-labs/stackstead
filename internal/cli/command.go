@@ -27,6 +27,10 @@ type Env struct {
 	Getenv         func(string) string
 	Now            func() time.Time
 	IsTerminal     func(fd uintptr) bool // x/term in OSEnv; tests inject
+	// Terminal seam of `exec`; nil means no raw mode, no size, no resize events.
+	MakeRaw  func(fd uintptr) (restore func() error, err error)
+	TermSize func(fd uintptr) (cols, rows int, err error)
+	Resizes  func(ctx context.Context) <-chan struct{} // SIGWINCH; ends with ctx
 	// ConfigDir overrides the CLI's config directory; "" means
 	// $XDG_CONFIG_HOME/stackstead or ~/.config/stackstead.
 	ConfigDir string
@@ -39,7 +43,16 @@ func OSEnv() *Env {
 		Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr,
 		Getenv: os.Getenv, Now: time.Now,
 		IsTerminal: func(fd uintptr) bool { return term.IsTerminal(int(fd)) },
-		Args0:      "stackstead",
+		MakeRaw: func(fd uintptr) (func() error, error) {
+			old, err := term.MakeRaw(int(fd))
+			if err != nil {
+				return nil, err
+			}
+			return func() error { return term.Restore(int(fd), old) }, nil
+		},
+		TermSize: func(fd uintptr) (int, int, error) { return term.GetSize(int(fd)) },
+		Resizes:  osResizes,
+		Args0:    "stackstead",
 	}
 }
 

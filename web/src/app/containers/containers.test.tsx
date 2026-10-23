@@ -54,6 +54,13 @@ describe('Containers screen', () => {
     await screen.findByText('3 · 2 running');
   });
 
+  it('links running rows to their terminal and leaves stopped rows without one', async () => {
+    mount({ body: [row('run-a'), row('stopped', { state: 'exited', exitCode: 0 })] });
+    await screen.findByRole('link', { name: 'run-a' });
+    expect(screen.getByRole('link', { name: 'Open terminal for run-a' }).getAttribute('href')).toBe('/containers/run-a?tab=terminal');
+    expect(screen.queryByRole('link', { name: 'Open terminal for stopped' })).toBeNull();
+  });
+
   it('sorts problems first, then running, then stopped, by name', async () => {
     mount({ body: [row('stopped', { state: 'exited', exitCode: 0 }), row('run-b'), row('crash', { state: 'exited', exitCode: 2 }), row('run-a')] });
     await screen.findByRole('link', { name: 'crash' });

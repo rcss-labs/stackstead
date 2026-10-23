@@ -1,6 +1,6 @@
 .row {
   display: grid;
-  grid-template-columns: 8px minmax(160px, 1.6fr) 130px minmax(110px, 1.2fr) 150px 70px 64px 76px 50px 32px;
+  grid-template-columns: 8px minmax(160px, 1.6fr) 130px minmax(110px, 1.2fr) 150px 70px 64px 76px 50px 64px;
   align-items: center;
   gap: 12px;
   min-width: 986px;
@@ -64,7 +64,17 @@
 
 .mobileStats { display: flex; flex-direction: column; align-items: flex-end; font-family: var(--mono); font-size: 11px; color: var(--muted); }
 
-.toggle { display: flex; justify-content: flex-end; }
+.toggle { display: flex; justify-content: flex-end; align-items: center; gap: 4px; }
+.terminalLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-xs);
+  color: var(--muted);
+}
+.terminalLink:hover { background: var(--hover); color: var(--accent); }
 .chevron { transition: transform 0.2s; }
 .chevron[data-open='true'] { transform: rotate(180deg); }
 

@@ -239,6 +239,7 @@ func serve(ctx context.Context, env *Env, args []string) error {
 			MetricsRetention: cfg.MetricsRetention,
 			Closing:          closing,
 			Peers:            peersSvc,
+			Exec:             api.ExecOptions{Enabled: cfg.ExecEnabled, MaxSessions: cfg.ExecMaxSessions, IdleTimeout: cfg.ExecIdleTimeout},
 			Updates:          checker,
 			Version:          version.Get().Version,
 			Host:             collector,

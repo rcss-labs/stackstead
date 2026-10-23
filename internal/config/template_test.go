@@ -76,6 +76,31 @@ func TestTemplateOutputLoads(t *testing.T) {
 	}
 }
 
+func TestTemplateExecLinesRoundTrip(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.ExecEnabled = false
+	cfg.ExecMaxSessions = 3
+	cfg.ExecIdleTimeout = 0
+	out, err := config.Template(cfg)
+	if err != nil {
+		t.Fatalf("Template: %v", err)
+	}
+	text := string(out)
+	for _, want := range []string{"exec_enabled: false\n", "exec_max_sessions: 3\n", "exec_idle_timeout: 0s\n"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("output missing %q:\n%s", want, text)
+		}
+	}
+	cfg.AllowedRoots = []string{cfg.StacksDir}
+	loaded, err := config.Load(writeConfig(t, text), env(nil))
+	if err != nil {
+		t.Fatalf("Load of rendered template: %v\n%s", err, text)
+	}
+	if !reflect.DeepEqual(loaded, cfg) {
+		t.Errorf("round trip = %+v, want %+v", loaded, cfg)
+	}
+}
+
 func TestEffectiveReportsSources(t *testing.T) {
 	path := writeConfig(t, "listen: 127.0.0.1:7000\nmetrics_interval: 20s\n")
 	getenv := env(map[string]string{"STACKSTEAD_DATA_DIR": "/srv/data"})
@@ -98,6 +123,9 @@ func TestEffectiveReportsSources(t *testing.T) {
 		{Key: "docker_socket", Value: "/var/run/docker.sock", Source: "default"},
 		{Key: "shutdown_grace", Value: "30s", Source: "default"},
 		{Key: "update_check", Value: "true", Source: "default"},
+		{Key: "exec_enabled", Value: "true", Source: "default"},
+		{Key: "exec_max_sessions", Value: "8", Source: "default"},
+		{Key: "exec_idle_timeout", Value: "30m", Source: "default"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Effective =\n%+v\nwant\n%+v", got, want)

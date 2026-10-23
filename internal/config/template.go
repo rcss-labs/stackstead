@@ -52,6 +52,9 @@ func Template(cfg Config) ([]byte, error) {
 		"DockerSocketLine":  optional("docker_socket", yamlScalar(cfg.DockerSocket), yamlScalar(def.DockerSocket)),
 		"ShutdownGraceLine": optional("shutdown_grace", formatDuration(cfg.ShutdownGrace), formatDuration(def.ShutdownGrace)),
 		"UpdateCheckLine":   optional("update_check", strconv.FormatBool(cfg.UpdateCheck), strconv.FormatBool(def.UpdateCheck)),
+		"ExecEnabled":       strconv.FormatBool(cfg.ExecEnabled),
+		"ExecMaxSessions":   strconv.Itoa(cfg.ExecMaxSessions),
+		"ExecIdleTimeout":   formatDuration(cfg.ExecIdleTimeout),
 	}
 	var buf bytes.Buffer
 	if err := configTemplate.Execute(&buf, view); err != nil {
@@ -128,6 +131,9 @@ func Effective(cfg Config, path string, getenv func(string) string) ([]Setting, 
 		{"docker_socket", cfg.DockerSocket},
 		{"shutdown_grace", formatDuration(cfg.ShutdownGrace)},
 		{"update_check", strconv.FormatBool(cfg.UpdateCheck)},
+		{"exec_enabled", strconv.FormatBool(cfg.ExecEnabled)},
+		{"exec_max_sessions", strconv.Itoa(cfg.ExecMaxSessions)},
+		{"exec_idle_timeout", formatDuration(cfg.ExecIdleTimeout)},
 	}
 	settings := make([]Setting, len(values))
 	for i, v := range values {

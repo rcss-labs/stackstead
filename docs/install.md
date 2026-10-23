@@ -117,13 +117,22 @@ map $http_x_stackstead_peer $stackstead_auth {
     default off;
 }
 
+# Needed for the web terminal (WebSocket upgrade).
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
 server {
     # your existing TLS settings
     location / {
         auth_basic           $stackstead_auth;
         auth_basic_user_file /etc/nginx/stackstead.htpasswd;
         proxy_pass           http://127.0.0.1:8420;
-        proxy_set_header     Host $host;
+        proxy_http_version   1.1;
+        proxy_set_header     Upgrade $http_upgrade;
+        proxy_set_header     Connection $connection_upgrade;
+        proxy_set_header     Host $http_host;
         proxy_set_header     X-Forwarded-For $remote_addr;
         proxy_buffering      off;   # keeps event streams live
     }

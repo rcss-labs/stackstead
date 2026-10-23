@@ -27,6 +27,7 @@ stackstead stacks up web                          # streams the operation, exits
 stackstead stacks down web --detach               # start it and return at once
 stackstead stacks rm web --volumes --yes          # files stay on disk
 stackstead logs web -f --service app --tail 100
+stackstead exec web app                           # a shell in the running `app` container of stack `web`
 stackstead metrics web --from 2h --step 5m
 stackstead ops ls --running
 ```
@@ -43,6 +44,7 @@ stackstead ops ls --running
 | `stacks compose get\|edit\|put <name>` | read, edit (in `$VISUAL`/`$EDITOR`) or replace (`-f FILE --hash H`) the compose file |
 | `ops ls\|show\|stream\|cancel` | operations and their output |
 | `logs <stack> [-f] [--tail N\|all] [--since X] [--service S] [--timestamps] [--raw]` | container logs |
+| `exec (<stack> <service> \| --container <name\|id>) [--index N] [--user U] [-T] [-- cmd args...]` | run a command or a shell inside a running container |
 | `metrics <stack> [--from T] [--to T] [--step D] [--service S] [--live]` | resource history or a live feed |
 | `events` | follow container changes until interrupted |
 | `networks ls` | Docker networks |
@@ -54,6 +56,24 @@ Details worth knowing:
   container output, so a container cannot drive your terminal. `--raw` prints
   the text unchanged. With `-f`, a dropped connection resumes exactly where it
   stopped, with no gaps or repeats.
+- **`exec`** runs a command, or a shell when none is given, inside a running
+  container over a WebSocket. A terminal is allocated when both stdin and
+  stdout are terminals; `-T` turns that off. On a terminal your keystrokes,
+  Ctrl-C included, go to the remote program. The remote command's exit code
+  becomes the exit code of `stackstead`, even where it collides with the codes
+  in the table below (as with `docker compose exec`). A service with several
+  replicas needs `--index N` (the compose replica number, from 1). A command
+  with flags of its own needs `--` before it (`stackstead exec web app -- ls -la`),
+  otherwise `stackstead` tries to parse them.
+  A session with no input or output is closed after the server's idle timeout,
+  with a notice shortly before and exit code 7. Without a terminal, stdin is
+  sent as is and its end is forwarded, but there is no pseudo-terminal, so
+  interactive programs behave as they do under `docker exec` without `-t`.
+  ```bash
+  stackstead exec web app
+  stackstead exec --container web-app-1 --user root -- id
+  stackstead exec -T web db -- pg_dump -U app app > dump.sql
+  ```
 - **`metrics`** shows history. CPU and memory are averages across a service's
   replicas, and the network and block I/O rates are totals across them. With
   `--live` there is one row per container (a `CONTAINER` column, 28 wide; longer names end in `…`), and the

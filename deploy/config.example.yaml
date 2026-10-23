@@ -21,6 +21,13 @@ metrics_retention: 72h
 metrics_interval: 10s
 operation_timeout: 15m
 
+# Terminal access into containers. A terminal is root-equivalent on that container.
+exec_enabled: true
+# Maximum concurrent exec terminal sessions (at least 1).
+exec_max_sessions: 8
+# Close an idle exec terminal after this long; 0s disables the timeout.
+exec_idle_timeout: 30m
+
 # Docker Engine API socket (must be an absolute path).
 # docker_socket: /var/run/docker.sock
 
