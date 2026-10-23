@@ -124,7 +124,7 @@ func (s *Service) callStored(ctx context.Context, p Peer, path string, body any,
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return s.callPeer(ctx, base, p.TLS, p.OutCredential.Reveal(), http.MethodPost, path, body, nil, timeout)
+	return s.callPaired(ctx, base, p, http.MethodPost, path, body, nil, timeout)
 }
 
 // CreateConnectionToken issues a token for another server to pair with this one.
@@ -407,6 +407,25 @@ func (s *Service) callPeer(ctx context.Context, base *url.URL, trust TLSOptions,
 		return err
 	}
 	defer client.CloseIdleConnections()
+	return s.doPeer(ctx, client, base, credential, method, path, body, out)
+}
+
+// Client returns the shared client for an already paired peer; it keeps its
+// connections between calls.
+func (s *Service) Client(p Peer, base *url.URL, timeout time.Duration) (*http.Client, error) {
+	return s.clients.Get(p, base, timeout)
+}
+
+// callPaired is callPeer for an already paired peer, over its shared client.
+func (s *Service) callPaired(ctx context.Context, base *url.URL, p Peer, method, path string, body, out any, timeout time.Duration) error {
+	client, err := s.clients.Get(p, base, timeout)
+	if err != nil {
+		return err
+	}
+	return s.doPeer(ctx, client, base, p.OutCredential.Reveal(), method, path, body, out)
+}
+
+func (s *Service) doPeer(ctx context.Context, client *http.Client, base *url.URL, credential, method, path string, body, out any) error {
 	server := base.String()
 	var reader io.Reader
 	if body != nil {
@@ -464,6 +483,7 @@ func (s *Service) Remove(ctx context.Context, id string) error {
 		return err
 	}
 	s.forgetRuntime(id)
+	s.clients.Forget(id)
 	s.Kick()
 	if p.State == StateActive && p.OutCredential != "" {
 		s.sendUnpair(ctx, p)

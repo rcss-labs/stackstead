@@ -119,11 +119,10 @@ func (s *server) fetchPeerFleet(ctx context.Context, view apitypes.PeerView, use
 	if err != nil {
 		return fail("unreachable", err)
 	}
-	client, err := peers.NewHTTPClient(base, peer.TLS, fleetPeerTimeout)
+	client, err := s.opts.Peers.Client(peer, base, fleetPeerTimeout)
 	if err != nil {
 		return fail("unreachable", err)
 	}
-	defer client.CloseIdleConnections()
 	ctx, cancel := context.WithTimeout(ctx, fleetPeerTimeout)
 	defer cancel()
 

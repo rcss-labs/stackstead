@@ -7,7 +7,6 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/rcss-labs/stackstead/internal/peers"
@@ -24,47 +23,6 @@ func (s *server) registerForwardRoutes(mux *http.ServeMux) {
 // headers; stack actions on a busy host can take longer than the 30 s that
 // suits hello and fleet calls.
 const forwardHeaderTimeout = 60 * time.Second
-
-// forwardTransports keeps one transport per peer so connections are reused.
-// An entry is replaced (and its idle connections closed) when the peer's
-// address or trust settings change.
-type forwardTransports struct {
-	mu      sync.Mutex
-	entries map[string]forwardEntry
-}
-
-type forwardEntry struct {
-	key    string
-	client *http.Client
-}
-
-func (t *forwardTransports) get(p peers.Peer, base *url.URL) (*http.Client, error) {
-	key := strings.Join([]string{p.URL, p.TLS.CAPEM, p.TLS.PinSHA256, boolString(p.TLS.Plaintext)}, "\x00")
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if e, ok := t.entries[p.InstanceID]; ok && e.key == key {
-		return e.client, nil
-	}
-	client, err := peers.NewHTTPClient(base, p.TLS, forwardHeaderTimeout)
-	if err != nil {
-		return nil, err
-	}
-	if old, ok := t.entries[p.InstanceID]; ok {
-		old.client.CloseIdleConnections()
-	}
-	if t.entries == nil {
-		t.entries = map[string]forwardEntry{}
-	}
-	t.entries[p.InstanceID] = forwardEntry{key: key, client: client}
-	return client, nil
-}
-
-func boolString(b bool) string {
-	if b {
-		return "1"
-	}
-	return "0"
-}
 
 // deadlineWriter gives every write its own deadline, so a stalled browser
 // cuts a forwarded stream instead of holding it open.
@@ -140,7 +98,7 @@ func (s *server) handleForward(w http.ResponseWriter, r *http.Request) {
 		s.writePeersError(w, r, &peers.PeerError{Code: peers.CodeUnreachable, Server: peer.Name, Msg: peer.Name + " could not be reached"})
 		return
 	}
-	client, err := s.forwards.get(peer, base)
+	client, err := s.opts.Peers.Client(peer, base, forwardHeaderTimeout)
 	if err != nil {
 		s.opts.Logger.Warn("could not prepare a connection to a server", "peer", peer.Name)
 		s.writePeersError(w, r, &peers.PeerError{Code: peers.CodeUnreachable, Server: peer.Name, Msg: peer.Name + " could not be reached"})

@@ -61,6 +61,7 @@ type Service struct {
 	kick         chan struct{}
 	runtimeMu    sync.RWMutex
 	runtime      map[string]peerRuntime
+	clients      ClientCache
 }
 
 func NewService(cfg ServiceConfig) *Service {
@@ -311,6 +312,7 @@ func (s *Service) ApplyUpdate(ctx context.Context, from Peer, u apitypes.PeerUpd
 func (s *Service) AcceptUnpair(ctx context.Context, from Peer) error {
 	err := s.cfg.Store.DeletePeer(ctx, from.InstanceID)
 	s.forgetRuntime(from.InstanceID)
+	s.clients.Forget(from.InstanceID)
 	s.Kick()
 	if errors.Is(err, ErrPeerNotFound) {
 		return nil

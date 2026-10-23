@@ -171,7 +171,7 @@ func (s *Service) check(ctx context.Context, p Peer) {
 	callCtx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 	defer cancel()
 	var hello apitypes.PeerHello
-	err = s.callPeer(callCtx, base, p.TLS, p.OutCredential.Reveal(), http.MethodGet, "/api/peer/hello", nil, &hello, s.cfg.Timeout)
+	err = s.callPaired(callCtx, base, p, http.MethodGet, "/api/peer/hello", nil, &hello, s.cfg.Timeout)
 	if ctx.Err() != nil {
 		return // shutting down or the caller left; say nothing about the peer
 	}

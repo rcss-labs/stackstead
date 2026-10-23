@@ -95,9 +95,6 @@ type Options struct {
 type server struct {
 	opts Options
 
-	// forwards holds the per-peer transports used by handleForward.
-	forwards forwardTransports
-
 	// tokenCache is the /metrics token hash, loaded lazily (see tokenHash).
 	tokenMu     sync.Mutex
 	tokenCache  string
