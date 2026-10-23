@@ -84,6 +84,7 @@ export function StacksList({ items, alerts, summary, usageOf, query, onQuery, ru
                     onAct={(name, action) => onAct(name, action, s)}
                     serverName={serverOf?.(s).name}
                     href={hrefOf?.(s)}
+                    portsOnThisHost={serverOf ? serverOf(s).slug === null : undefined}
                   />
                 );
               })}

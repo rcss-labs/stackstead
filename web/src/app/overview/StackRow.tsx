@@ -31,6 +31,8 @@ export interface StackRowProps {
   serverName?: string;
   /** Overrides the link to the stack (a connected server's stack from the All stacks list). */
   href?: string;
+  /** Whether the ports are on the machine serving this page; defaults to the viewed server being this one. */
+  portsOnThisHost?: boolean;
 }
 
 function ledFor(s: StackSummary): { tone: LedProps['tone']; pulse: boolean } {
@@ -40,9 +42,9 @@ function ledFor(s: StackSummary): { tone: LedProps['tone']; pulse: boolean } {
   return { tone: s.status === 'stopped' ? 'faint' : 'muted', pulse: false };
 }
 
-export function StackRow({ stack: s, failing, usage, running, reason, acting, onAct, serverName, href: hrefOverride }: StackRowProps) {
+export function StackRow({ stack: s, failing, usage, running, reason, acting, onAct, serverName, href: hrefOverride, portsOnThisHost }: StackRowProps) {
   const navigate = useNavigate();
-  const { href: toServerHref } = useServer();
+  const { href: toServerHref, local } = useServer();
   const href = hrefOverride ?? toServerHref(`/stacks/${encodeURIComponent(s.name)}`);
   const health = healthCell(s.health);
   const primary = rowPrimaryAction(s);
@@ -95,7 +97,7 @@ export function StackRow({ stack: s, failing, usage, running, reason, acting, on
         </span>
       </div>
       <div role="cell" data-desktop="true">
-        <PortLinks ports={s.ports} />
+        <PortLinks ports={s.ports} host={portsOnThisHost ?? local ? window.location.hostname : undefined} />
       </div>
       <div role="cell" className={styles.metric} data-desktop="true">
         <Sparkline values={usage?.cpu ?? []} tone="accent" width={52} height={16} />
