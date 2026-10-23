@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -666,5 +667,29 @@ func TestFetchSharedPanicBecomesError(t *testing.T) {
 		if err := <-errs; err == nil || !strings.Contains(err.Error(), "panicked") {
 			t.Fatalf("err = %v", err)
 		}
+	}
+}
+
+func TestFetchPanicStopsProgressAndLogsFailure(t *testing.T) {
+	r := newFetchRig(t)
+	r.svc.fetchProgress = 5 * time.Millisecond
+	r.eng.loadFn = func(context.Context, io.Reader) error {
+		time.Sleep(40 * time.Millisecond) // long enough for progress lines
+		panic("boom")
+	}
+	var mu sync.Mutex
+	var lines []string
+	count := func() int { mu.Lock(); defer mu.Unlock(); return len(lines) }
+	err := r.svc.EnsureLocal(context.Background(), r.ref, func(l string) { mu.Lock(); lines = append(lines, l); mu.Unlock() })
+	if err == nil || !strings.Contains(err.Error(), "panicked") {
+		t.Fatalf("err = %v", err)
+	}
+	if e, ok := r.log.last("image.fetch"); !ok || e.Result != "failed" {
+		t.Fatalf("image.fetch log = %+v ok=%v", e, ok)
+	}
+	before := count()
+	time.Sleep(60 * time.Millisecond)
+	if after := count(); after != before {
+		t.Fatalf("progress goroutine still running after the panic: %d -> %d lines", before, after)
 	}
 }

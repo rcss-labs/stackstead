@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from 'react';
-import type { LibraryImageDetail, PushTarget, LibraryUse, LibraryVersion, LibraryVersionDetail } from '$lib/api/imageTypes';
+import type { LibraryImageDetail, PushTarget, LibraryVersion, LibraryVersionDetail } from '$lib/api/imageTypes';
 import { Link } from 'react-router';
 import { ApiError } from '$lib/api/client';
 import { toasts } from '$lib/stores/toasts';
@@ -10,7 +10,7 @@ import { EmptyState } from '../components/EmptyState';
 import { OperationPanel } from '../detail/OperationPanel';
 import { useServer } from '../servers/ServerContext';
 import styles from './images.module.css';
-import { InUseBanner, inUseFrom } from './InUseBanner';
+import { InUseBanner, inUseFrom, type InUse } from './InUseBanner';
 import { VersionStatus } from './VersionStatus';
 
 const argsText = (args: Record<string, string>) =>
@@ -32,7 +32,7 @@ export function VersionsTab({ image, onChanged }: { image: LibraryImageDetail; o
   const [pushOperation, setPushOperation] = useState<string>();
   const [unconfigured, setUnconfigured] = useState<Record<string, string>>({});
   const [pushing, setPushing] = useState<string>();
-  const [inUse, setInUse] = useState<{ message: string; usedBy: LibraryUse[] }>();
+  const [inUse, setInUse] = useState<InUse>();
 
   // Versions are keyed by id: failed attempts can share a tag with each other and with the live version.
   useEffect(() => {
@@ -102,7 +102,7 @@ export function VersionsTab({ image, onChanged }: { image: LibraryImageDetail; o
 
   return (
     <div className={styles.page}>
-      {inUse && <InUseBanner title="Version in use" message={inUse.message} usedBy={inUse.usedBy} />}
+      {inUse && <InUseBanner title="Version in use" inUse={inUse} localId={image.owner.id} />}
       <div className={`${styles.card} ${styles.scroll}`}>
         <table className={styles.table}>
           <thead>

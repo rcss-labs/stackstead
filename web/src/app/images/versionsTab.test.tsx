@@ -8,8 +8,8 @@ afterEach(() => backend.restore());
 
 const IMG = '/api/images/web';
 const USED = [
-  { server: 'local', serverName: 'Here', stack: 'web', service: 'app' },
-  { server: 'local', serverName: 'Here', stack: 'blog', service: 'site' },
+  { server: 'abcdef012345ffff', serverName: 'Here', stack: 'web', service: 'app' },
+  { server: 'abcdef012345ffff', serverName: 'Here', stack: 'blog', service: 'site' },
 ];
 const v3 = version({ tag: '3', buildArgs: { VERSION: '1' }, revision: 4 });
 const v2 = version({ id: 'v-2', tag: '2', status: 'failed', commit: 'abcdef1234567', revision: 3, arch: 'arm64', buildArgs: {} });
@@ -95,5 +95,20 @@ describe('Versions tab', () => {
     expect(banner.textContent).toContain('image is in use');
     expect(within(banner).getByText('web / app')).toBeTruthy();
     expect(within(banner).getByText('blog / site')).toBeTruthy();
+  });
+
+  it('names the other server for a remote use and the servers that could not be asked', async () => {
+    const remote = { server: 'peer-1', serverName: 'Mini 02', stack: 'shop', service: 'api' };
+    const down = { id: 'peer-9', name: 'Mini 09', slug: 'mini-09', local: false, status: 'unreachable' };
+    install({
+      [`DELETE ${IMG}/versions/v-3`]: { status: 409, body: { error: 'image is in use', code: 'image_in_use', usedBy: [USED[0], remote], unreachable: [down] } },
+    });
+    mountImages('/images/web?tab=versions');
+    await userEvent.click(await screen.findByRole('button', { name: /^Delete 3 / }));
+    await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Delete version' }));
+    const banner = await screen.findByRole('alert');
+    expect(within(banner).getByText('web / app')).toBeTruthy();
+    expect(within(banner).getByText('shop / api on Mini 02')).toBeTruthy();
+    expect(within(banner).getByText('could not ask Mini 09')).toBeTruthy();
   });
 });

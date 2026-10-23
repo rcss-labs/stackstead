@@ -214,6 +214,34 @@ and delete images here through forwarding, exactly as it can manage stacks.
 That matches stacks and is not a security boundary; see the caveat there.
 See [Image library](api.md#image-library).
 
+### Sharing images with connected servers
+
+The peer image surface is read-only: `GET /api/peer/images`, `GET
+/api/peer/images/usage` and `GET /api/peer/images/{slug}/versions/{tag}/tar`.
+They accept only the peer credential (a session cookie does not reach them),
+answer 401 `peer_not_paired` otherwise, and expose no build logs, build
+output, push targets or registry credentials; failed versions are not served.
+Sharing reaches directly paired servers only.
+
+What a peer credential can do with images: read the owner's library and
+usage, download any succeeded version's archive (so a paired server can read
+every image's contents, including files baked into it), and, through
+forwarding to `/api/images/...`, create, build, push and delete images as an
+operator would (see above). It cannot read registry or GitHub settings
+(`/api/settings/...` stays denied) and cannot write anything through the peer
+image routes.
+
+A fetched archive cannot create other tags. The archive is inspected as it
+streams into the local engine and is refused if its `manifest.json`,
+`repositories` or `index.json` names any tag other than the requested
+reference, if metadata files are hidden (not at the archive root, symlinks,
+oversized) or the tar is malformed, so a compromised peer cannot plant
+`nginx:latest` or another tag on this server. The loaded image's ID must also
+match the one the owner recorded. A nested OCI index blob that names another
+tag is not parsed; a real Docker (containerd store) does not tag from it, and
+`TestIntegrationLoadNeverCreatesForeignTags` (integration build tag) guards
+that assumption. A stalled transfer is cut after 60 seconds.
+
 ## Storage cleanup
 
 Signed-in users can delete unused images, volumes and build cache. Deleting a

@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
 import { useNavigate } from 'react-router';
-import type { LibraryImageDetail, LibraryUse, UpdateImageRequest } from '$lib/api/imageTypes';
+import type { LibraryImageDetail, UpdateImageRequest } from '$lib/api/imageTypes';
 import { retentionText } from '$lib/images/retention';
 import { toasts } from '$lib/stores/toasts';
 import { Banner } from '../components/Banner';
@@ -10,7 +10,7 @@ import { Field } from '../components/Field';
 import { useServer } from '../servers/ServerContext';
 import { argsToRows, BuildArgsEditor, rowsToArgs } from './buildArgs';
 import styles from './images.module.css';
-import { InUseBanner, inUseFrom } from './InUseBanner';
+import { InUseBanner, inUseFrom, type InUse } from './InUseBanner';
 import { PushTargetsCard } from './PushTargetsCard';
 
 const WHOLE = /^\d+$/;
@@ -31,7 +31,7 @@ export function ImageSettingsTab({ image, onChanged }: { image: LibraryImageDeta
   const [saveError, setSaveError] = useState<string>();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [inUse, setInUse] = useState<{ message: string; usedBy: LibraryUse[] }>();
+  const [inUse, setInUse] = useState<InUse>();
 
   const lastError = WHOLE.test(keepLast) ? undefined : 'Enter a whole number, 0 or more';
   const daysError = WHOLE.test(keepDays) ? undefined : 'Enter a whole number, 0 or more';
@@ -129,7 +129,7 @@ export function ImageSettingsTab({ image, onChanged }: { image: LibraryImageDeta
         <div className={styles.pad}>
           <strong>Delete image</strong>
           <p className={styles.muted}>Removes the image, its files and every built version. Stacks using a version block the delete.</p>
-          {inUse && <InUseBanner title="Image in use" message={inUse.message} usedBy={inUse.usedBy} />}
+          {inUse && <InUseBanner title="Image in use" inUse={inUse} localId={image.owner.id} />}
           <div>
             <Button variant="danger" onClick={() => setConfirmDelete(true)}>
               Delete image

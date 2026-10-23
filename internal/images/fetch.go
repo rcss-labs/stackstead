@@ -161,8 +161,16 @@ func (s *Service) fetchFrom(ctx context.Context, user string, ref imageref.Ref, 
 		out = func(string) {}
 	}
 	var received atomic.Int64
-	err := s.transfer(ctx, user, ref, owner, v, &received, out)
 	bg := context.WithoutCancel(ctx)
+	// A panic in the engine still leaves a failed entry; the caller recovers it.
+	defer func() {
+		if p := recover(); p != nil {
+			detail := fmt.Sprintf("%s %d: panic", owner.Name, received.Load())
+			s.record(bg, user, "image.fetch", ref.Slug, ref.Tag, detail, "failed", "")
+			panic(p)
+		}
+	}()
+	err := s.transfer(ctx, user, ref, owner, v, &received, out)
 	detail := fmt.Sprintf("%s %d", owner.Name, received.Load())
 	if err != nil {
 		msg := err.Error()
@@ -231,6 +239,9 @@ func (s *Service) transfer(ctx context.Context, user string, ref imageref.Ref, o
 
 	done := make(chan struct{})
 	var wg sync.WaitGroup
+	var stopOnce sync.Once
+	stopProgress := func() { stopOnce.Do(func() { close(done); wg.Wait() }) }
+	defer stopProgress() // a panic in LoadImage must not leak the progress goroutine
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -249,8 +260,7 @@ func (s *Service) transfer(ctx context.Context, user string, ref imageref.Ref, o
 	if verr := insp.violation(); verr != nil {
 		cancel(verr) // a consumer that ignored the read error must not finish the load
 	}
-	close(done)
-	wg.Wait()
+	stopProgress()
 	if verr := insp.violation(); verr != nil {
 		return verr
 	}

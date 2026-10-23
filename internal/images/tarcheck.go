@@ -128,9 +128,9 @@ func isMetadataName(n string) bool {
 }
 
 // checkEntry refuses entries that could hide or redirect the tag metadata:
-// metadata names that are not plain files at the archive root, and links that
-// point at the root or outside the archive (so no link can stand in for a
-// directory that later entries write through).
+// metadata names that are not plain files at the archive root, and links whose
+// target is empty, absolute, the archive root or outside it. It does not
+// restrict links to other places inside the archive.
 func checkEntry(name string, h *tar.Header) error {
 	if isMetadataName(path.Base(name)) {
 		if name != path.Base(name) || h.Typeflag != tar.TypeReg {

@@ -312,6 +312,77 @@ unknown image, tag (a failed version has none) or target; 409
 `build_running` while a build or push of the image runs; 400 `fields` for a bad
 repository or a version still building.
 
+### Sharing between connected servers
+
+A server lists, and can use, images owned by the servers it is paired with
+(directly paired only; sharing does not reach a peer's peers). `GET
+/api/images` merges this server's images with every active peer's: each entry
+carries its `owner`, and `servers` reports each peer as `reachable`,
+`unreachable` (with an `error`) or `old`. Peer answers are cached for 10
+seconds and fetched in parallel, so a hanging peer never holds the list.
+
+Peer routes are authenticated with the peer credential (`X-Stackstead-Peer`),
+not a session, and are read-only:
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/peer/images` | this server's images with their succeeded versions (newest first); no logs, build output, push targets or registry data |
+| `GET /api/peer/images/usage` | the library references this server's stacks use: `[{ref, stack, service}]` |
+| `GET /api/peer/images/{slug}/versions/{tag}/tar` | the image as a `docker save` archive (`Content-Type: application/x-tar`); the version's image ID is in `X-Stackstead-Image-ID`; 404 for an unknown or failed version |
+
+Fetching copies a peer's version into this server's engine:
+
+| Method and path | Purpose |
+| --- | --- |
+| `POST /api/images/fetch` | body `{ref}`; **204** when nothing is to do (this server owns the reference, or the image is already present with the owner's recorded ID), **202** with an Operation (action `fetch`) when a transfer started |
+
+Errors: 400 `fields` for a reference that is not a library reference or whose
+owner is not a connected server; 409 `image_not_built` when the owner has no
+succeeded version with that tag; 409 `arch_mismatch` (see below); 409
+`build_running` when a fetch of the same image is already running (the
+operation key is shared with builds); 502 `peer_unreachable` / `peer_old` /
+`peer_proxy` and the other `peer_*` codes when the owner cannot be reached or
+answers wrongly.
+
+Transfer behaviour:
+
+- The archive is streamed from the owner into the local engine; it is never
+  spooled to disk.
+- After loading, the local image ID must equal the ID the owner recorded (and
+  sent in `X-Stackstead-Image-ID`); otherwise the image is removed again and
+  the fetch fails with "fetched image does not match the owner's record".
+- A 60 second idle watchdog cancels a transfer when no data arrives for that
+  long ("transfer from X stalled"). The whole fetch is also bounded by
+  `image_operation_timeout`.
+- The archive is inspected while it streams: it may only name the requested
+  reference. An archive whose `manifest.json`, `repositories` or `index.json`
+  names any other tag, hides metadata (not at the archive root, not a regular
+  file, over 1 MiB), or is not a valid tar is refused before the engine tags
+  anything.
+- Concurrent fetches of the same reference (a stack `up` and a manual fetch)
+  share one transfer. A caller that gives up does not stop it while another
+  still waits.
+- `up` and `pull` fetch a missing peer-owned image themselves and print the
+  progress in the operation log. Each fetch writes an `image.fetch` action-log
+  entry (owner name and bytes; a failure adds the reason).
+
+Architecture rule: a version records the architecture it was built for. A
+fetch (or an `up`) on a server with a different engine architecture is
+refused with 409 `arch_mismatch` ("built for amd64; this server is arm64")
+before any data moves; images are never converted.
+
+Old-peer rule: a paired server that predates image sharing answers the image
+routes with a Stackstead JSON 404. It is shown as `old`, cannot own images
+that are fetched, and counts as using nothing, so it never blocks a delete.
+Any other failure (no answer, a proxy or login page, a plain-text 404) counts
+as `unreachable`.
+
+Deleting an owned image or version asks every active peer whether it uses it.
+If a peer cannot be asked, the delete is refused with 409 `image_in_use`
+rather than guessed: the body lists `usedBy` (each use with `server`,
+`serverName`, `stack`, `service`) and `unreachable`, the servers that could not
+be asked (`id`, `name`, ...). Delete again once they answer or are unpaired.
+
 ### Registries
 
 Registries hold the credentials used to push. The routes are session-only and
@@ -395,11 +466,12 @@ afterwards; content blobs live under `DataDir/images/<slug>/blobs/`.
 
 | Status and `code` | Meaning |
 | --- | --- |
-| 409 `image_in_use` | the image or version is used by a container; the body also carries `usedBy` |
+| 409 `image_in_use` | the image or version is used by a stack service here or on a connected server, or a connected server could not be asked; the body carries `usedBy` and `unreachable` |
 | 409 `build_running` | a build of this image is already running |
 | 409 `tag_taken` | the tag exists on a non-failed version |
 | 409 `revision_conflict` | the file set or Dockerfile changed since the `revision` you sent |
 | 409 `image_not_built` | the referenced tag has no built version |
+| 409 `arch_mismatch` | the owner built the version for another architecture than this server's engine |
 | 409 `registry_unconfigured` | the push target's registry is missing credentials |
 | 409 `github_unconfigured` | no GitHub token is stored |
 | 409 `github_unauthorized` | GitHub rejected the stored token (never 401, which would end the web session) |

@@ -82,6 +82,66 @@ func minimalArchive(t *testing.T, name string, extra ...archiveFile) []byte {
 	return out.Bytes()
 }
 
+// nestedIndexArchive builds an OCI layout whose root index.json names only own
+// but references a nested index blob whose manifest descriptor carries the
+// foreign name in both annotations. Blobs come before index.json.
+func nestedIndexArchive(t *testing.T, own, foreign string) []byte {
+	t.Helper()
+	blobs := map[string][]byte{}
+	var order []string
+	add := func(data []byte) (string, int) {
+		sum := sha256.Sum256(data)
+		digest := "sha256:" + hex.EncodeToString(sum[:])
+		blobs[digest] = data
+		order = append(order, digest)
+		return digest, len(data)
+	}
+	var layer bytes.Buffer
+	lw := tar.NewWriter(&layer)
+	lw.WriteHeader(&tar.Header{Name: "hello", Mode: 0o644, Size: 2, Typeflag: tar.TypeReg})
+	lw.Write([]byte("hi"))
+	lw.Close()
+	diff := sha256.Sum256(layer.Bytes())
+	layerDigest, layerSize := add(layer.Bytes())
+	config, _ := json.Marshal(map[string]any{
+		"architecture": runtime.GOARCH, "os": "linux", "config": map[string]any{},
+		"rootfs": map[string]any{"type": "layers", "diff_ids": []string{"sha256:" + hex.EncodeToString(diff[:])}},
+	})
+	cfgDigest, cfgSize := add(config)
+	manifest, _ := json.Marshal(map[string]any{
+		"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
+		"config": map[string]any{"mediaType": "application/vnd.oci.image.config.v1+json", "digest": cfgDigest, "size": cfgSize},
+		"layers": []map[string]any{{"mediaType": "application/vnd.oci.image.layer.v1.tar", "digest": layerDigest, "size": layerSize}},
+	})
+	mDigest, mSize := add(manifest)
+	nested, _ := json.Marshal(map[string]any{
+		"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json",
+		"manifests": []map[string]any{{
+			"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": mDigest, "size": mSize,
+			"annotations": map[string]string{
+				"io.containerd.image.name":          foreign,
+				"org.opencontainers.image.ref.name": foreign,
+			},
+		}},
+	})
+	nDigest, nSize := add(nested)
+	root, _ := json.Marshal(map[string]any{
+		"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json",
+		"manifests": []map[string]any{{
+			"mediaType": "application/vnd.oci.image.index.v1+json", "digest": nDigest, "size": nSize,
+			"annotations": map[string]string{"io.containerd.image.name": own},
+		}},
+	})
+	files := []archiveFile{}
+	for _, d := range order {
+		files = append(files, archiveFile{name: "blobs/sha256/" + strings.TrimPrefix(d, "sha256:"), content: string(blobs[d])})
+	}
+	files = append(files,
+		archiveFile{name: "oci-layout", content: `{"imageLayoutVersion":"1.0.0"}`},
+		archiveFile{name: "index.json", content: string(root)})
+	return buildArchive(files...)
+}
+
 // TestIntegrationLoadNeverCreatesForeignTags loads crafted archives into a
 // real Docker through the inspector. Archives that name another tag must be
 // refused before Docker tags anything; a clean archive must load.
@@ -119,7 +179,7 @@ func TestIntegrationLoadNeverCreatesForeignTags(t *testing.T) {
 	docker("rmi", foreign)
 
 	crafted := map[string][]byte{
-		"extra tag in manifest and index": minimalArchive(t, foreign),
+		"foreign tag in manifest.json": minimalArchive(t, foreign),
 		"absolute-name metadata appended": minimalArchive(t, own,
 			archiveFile{name: "/manifest.json", content: manifestJSON(own, foreign)}),
 	}
@@ -141,6 +201,29 @@ func TestIntegrationLoadNeverCreatesForeignTags(t *testing.T) {
 			}
 		}
 	}
+
+	// A nested index blob under blobs/ that names another tag is not read by
+	// the inspector. Docker (containerd store) must not tag it either; this is
+	// the regression guard for that assumption. The load succeeds and only the
+	// root index's own name appears.
+	nested := newTarInspector(bytes.NewReader(nestedIndexArchive(t, own, foreign)), own)
+	nctx, ncancel := context.WithTimeout(ctx, 30*time.Second)
+	nerr := eng.LoadImage(nctx, nested)
+	ncancel()
+	nested.close()
+	if nerr != nil {
+		t.Fatalf("nested-index archive refused: %v", nerr)
+	}
+	if _, err := docker("image", "inspect", foreign); err == nil {
+		t.Errorf("docker tagged %s from a nested index: the inspector must parse nested index blobs", foreign)
+	}
+	if listed, _ := docker("images", "--format", "{{.Repository}}:{{.Tag}}"); strings.Contains(listed, "stackstead-probe-"+id) {
+		t.Errorf("docker listed a foreign probe image after the nested-index load:\n%s", listed)
+	}
+	if _, err := docker("image", "inspect", own); err != nil {
+		t.Errorf("nested-index archive did not create %s", own)
+	}
+	docker("rmi", own)
 
 	clean := newTarInspector(bytes.NewReader(minimalArchive(t, own)), own)
 	defer clean.close()

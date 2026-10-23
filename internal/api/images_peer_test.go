@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -32,15 +33,23 @@ type imagesPeerNode struct {
 	svc        *images.Service
 	eng        *imgEngine
 	ops        *stacks.Ops
+	usage      *imgUsage
 	credential string
+	// override, when set, answers a request instead of the real handler (it
+	// returns true when it did), so a test can make this server look old or broken.
+	override atomic.Pointer[func(http.ResponseWriter, *http.Request) bool]
 }
 
 func newImagesPeerNode(t *testing.T) *imagesPeerNode { return newImagesNode(t, false) }
 
+func newImagesNode(t *testing.T, peerAware bool) *imagesPeerNode {
+	return newImagesNodeWith(t, peerAware, nil)
+}
+
 // newImagesNode builds the node. With peerAware, the image service shares the
 // peers service (so it can reach paired servers) and takes its identity from
 // the peers store, as the real server does; it then has no plain partner.
-func newImagesNode(t *testing.T, peerAware bool) *imagesPeerNode {
+func newImagesNodeWith(t *testing.T, peerAware bool, tweak func(*api.Options)) *imagesPeerNode {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "imgpeer.db"))
 	if err != nil {
@@ -59,7 +68,7 @@ func newImagesNode(t *testing.T, peerAware bool) *imagesPeerNode {
 		Store: st, Version: "9.9.9", Logger: slog.New(slog.DiscardHandler), Timeout: 3 * time.Second,
 		Hostname: func() (string, error) { return "host-a", nil },
 	})
-	n := &imagesPeerNode{eng: &imgEngine{present: map[string]bool{}}}
+	n := &imagesPeerNode{eng: &imgEngine{present: map[string]bool{}}, usage: &imgUsage{}}
 	var peerSource images.PeerSource
 	if peerAware {
 		peerSource = psvc
@@ -69,7 +78,7 @@ func newImagesNode(t *testing.T, peerAware bool) *imagesPeerNode {
 	n.svc = images.NewService(images.Deps{
 		Store: images.NewStore(db, time.Now), Ops: n.ops, Engine: n.eng, Dir: t.TempDir(),
 		Limits: images.Limits{MaxFileBytes: 1 << 20, MaxContextBytes: 2 << 20}, OpTimeout: time.Minute,
-		Usage: &imgUsage{}, Now: time.Now,
+		Usage: n.usage, Now: time.Now,
 		Self: func(ctx context.Context) (images.Self, error) {
 			if peerAware {
 				id, err := st.Identity(ctx, "host-a")
@@ -82,12 +91,21 @@ func newImagesNode(t *testing.T, peerAware bool) *imagesPeerNode {
 		},
 		Peers: peerSource,
 	})
-	handler := api.New(api.Options{
+	opts := api.Options{
 		Auth: authSvc, Limiter: auth.NewLoginLimiter(5, time.Minute, time.Now), Peers: psvc, Images: n.svc,
 		Static: fstest.MapFS{"index.html": {Data: []byte("<html></html>")}}, Logger: slog.New(slog.DiscardHandler),
-	})
+	}
+	if tweak != nil {
+		tweak(&opts)
+	}
+	handler := api.New(opts)
 	n.peerNode = &peerNode{t: t, name: "host-a", svc: psvc, store: st}
-	n.srv = httptest.NewServer(handler)
+	n.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if o := n.override.Load(); o != nil && (*o)(w, r) {
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
 	t.Cleanup(n.srv.Close)
 	n.login()
 
