@@ -78,6 +78,8 @@ type Options struct {
 	// Peers enables the connected-servers protocol routes and peer-credential
 	// authentication; nil keeps both off.
 	Peers *peers.Service
+	// Exec configures the container exec WebSocket route.
+	Exec ExecOptions
 }
 
 type server struct {
@@ -95,6 +97,9 @@ type server struct {
 	// summaryCache holds one entry per summary window (see summaryEntry).
 	summaryMu    sync.Mutex
 	summaryCache map[time.Duration]*summaryEntry
+
+	// execSlots is the semaphore behind the exec session cap.
+	execSlots chan struct{}
 
 	// containerCache is the 2 s cache of /api/containers.
 	containerCache flightCache[[]apitypes.ContainerRow]

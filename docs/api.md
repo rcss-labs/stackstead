@@ -39,6 +39,7 @@ from connected servers also carry a `"code"`; see [Connected servers](#connected
 | `GET /api/containers`, `GET /api/containers/{id}` | every container on the host (all states) and one container's details; see [Containers](#containers) |
 | `GET /api/containers/{id}/logs` | one container's logs (SSE), the same contract as the stack logs |
 | `POST /api/containers/{id}/{start\|stop\|restart}` | act on a container outside the registered stacks; returns its row (200) |
+| `GET /api/containers/{id}/exec` | WebSocket: a shell or command inside a running container; see [Container exec](#container-exec) |
 | `GET /api/networks`, `POST /api/networks` | list Docker networks; create a bridge, macvlan or ipvlan network (201); see [Networks](#networks) |
 | `DELETE /api/networks/{id}` | remove an unused, unmanaged network (204), by ID or name |
 | `GET /api/host/interfaces` | IPv4 host interfaces for LAN network setup; see [Networks](#networks) |
@@ -574,6 +575,60 @@ characters; it is never a name (look the id up in the list). Errors: `404`
 for an unknown or ambiguous id, `409` for an action on a stack container,
 `502` when Docker refuses the action (its message is passed on), and `503`
 when Docker is unavailable.
+
+### Container exec
+
+`GET /api/containers/{id}/exec` upgrades to a WebSocket and runs a command
+inside a running container, on any container (managed or not). `{id}` is a
+container id, never a name. Exec is on by default and is turned off with
+`exec_enabled: false`.
+
+Query parameters, all read before the upgrade:
+
+| param | meaning | default |
+|---|---|---|
+| `cmd` | repeated; the argv of the command (at most 64 args, 4 KiB in total, no NUL) | empty: auto shell |
+| `user` | `user[:group]` passed to Docker | the image default |
+| `tty` | `1` or `0` | `1` |
+| `cols`, `rows` | initial terminal size (tty only), 1 to 65535 | 80 x 24 |
+
+With no `cmd` the server runs
+`/bin/sh -c 'if [ -x /bin/bash ]; then exec /bin/bash; else exec /bin/sh; fi'`.
+
+All checks run for any GET, upgrade or not, in this order: credential (401),
+`exec_disabled`, `bad_origin`, container id and existence, running state,
+query validation (400), session cap. A request that passes every check but is
+not a WebSocket upgrade gets `400 {"error":"websocket upgrade required"}`;
+clients use a plain GET to read the reason for a refused handshake. Refused
+attempts are not logged.
+
+| status | `code` | meaning |
+|---|---|---|
+| 401 | | no or invalid session or server credential |
+| 403 | `exec_disabled` | `exec_enabled` is false on this server |
+| 403 | `bad_origin` | the Origin header's host[:port] is not this server's `Host` (scheme is not compared; a missing Origin is allowed) |
+| 404 | `container_not_found` | unknown or ambiguous id; a bare 404 without the code means the server has no exec route (older version) |
+| 409 | `not_running` | the container is not running |
+| 429 | `exec_limit` | `exec_max_sessions` concurrent sessions are open |
+
+Wire protocol. Binary frames carry data: the first byte is the stream id, the
+rest is payload. `0` is stdin (client to server), `1` stdout and `2` stderr
+(server to client); with a TTY everything comes back as `1`. Text frames are
+JSON control messages:
+
+| direction | message |
+|---|---|
+| client to server | `{"type":"resize","cols":N,"rows":N}`, `{"type":"eof"}` (half-close stdin), `{"type":"pong"}` |
+| server to client | `{"type":"ping"}` every 20 s; the client answers with `pong`, and the server closes if none arrives within 60 s |
+| server to client | `{"type":"exit","code":N}` once, when the process ends |
+| server to client | `{"type":"error","message":"..."}` for failures after the upgrade, for example `no shell found in this container; pass a command` |
+| server to client | `{"type":"idle_warning","seconds":N}`, then `{"type":"closed","reason":"idle"\|"session_expired"\|"shutdown"}` before a close the process did not cause |
+
+Activity for the idle timeout (`exec_idle_timeout`, default 30m, `0s`
+disables) is any data frame in either direction. On every ping tick the
+server re-validates the credential and closes with `session_expired` if it is
+gone. Each session writes a `container.exec` start and end entry to the action
+log (see [Security](security.md#container-exec)).
 
 ### Networks
 
