@@ -62,6 +62,10 @@ type Deps struct {
 	// Library makes library images present before up and pull; nil leaves
 	// library references to compose.
 	Library LibraryFetcher
+	// LibraryTimeout bounds a stack operation whose plan has library
+	// references, when it is longer than the manager's timeout: fetching an
+	// image from another server can take much longer than the stack's own work.
+	LibraryTimeout time.Duration
 }
 
 // Status is the run state of a stack.
@@ -119,15 +123,16 @@ type Detail struct {
 // Service orchestrates stacks: registry, compose files, compose CLI, engine
 // and the operations manager.
 type Service struct {
-	reg       *Registry
-	ops       *Ops
-	compose   Compose
-	engine    Engine
-	source    ContainerSource // status reads; validation that needs fresh data uses engine
-	stacksDir string
-	roots     []string
-	log       *slog.Logger
-	library   LibraryFetcher
+	reg        *Registry
+	ops        *Ops
+	compose    Compose
+	engine     Engine
+	source     ContainerSource // status reads; validation that needs fresh data uses engine
+	stacksDir  string
+	roots      []string
+	log        *slog.Logger
+	library    LibraryFetcher
+	libTimeout time.Duration
 
 	// Lock order: a stack's lock (lockStack) first, then projectMu; never the
 	// reverse. projectMu makes "is this compose project free?" and the write
@@ -151,7 +156,7 @@ func NewService(d Deps) *Service {
 		source = d.Engine
 	}
 	return &Service{reg: d.Registry, ops: d.Ops, compose: d.Compose, engine: d.Engine, source: source,
-		stacksDir: d.StacksDir, roots: d.AllowedRoots, log: logger, library: d.Library}
+		stacksDir: d.StacksDir, roots: d.AllowedRoots, log: logger, library: d.Library, libTimeout: d.LibraryTimeout}
 }
 
 // lockStack serializes read-modify-write cycles of one stack's file.
@@ -511,7 +516,7 @@ func (s *Service) Act(ctx context.Context, stack, action string) (Operation, err
 	if e, err = s.refreshProject(ctx, e); err != nil {
 		return Operation{}, err
 	}
-	return s.ops.Start(stack, action, func(ctx context.Context, out func(string)) error {
+	return s.ops.StartServiceTimeout(stack, action, "", s.opTimeout(refs), func(ctx context.Context, out func(string)) error {
 		if err := s.ensureLibrary(ctx, refs, out); err != nil {
 			return err
 		}
@@ -567,7 +572,7 @@ func (s *Service) ActService(ctx context.Context, stack, service, action string)
 			}
 		}
 	}
-	return s.ops.StartService(stack, action, service, func(ctx context.Context, out func(string)) error {
+	return s.ops.StartServiceTimeout(stack, action, service, s.opTimeout(refs), func(ctx context.Context, out func(string)) error {
 		if err := s.ensureLibrary(ctx, refs, out); err != nil {
 			return err
 		}

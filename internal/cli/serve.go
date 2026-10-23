@@ -228,16 +228,19 @@ func serve(ctx context.Context, env *Env, args []string) error {
 		Logger: logger,
 	})
 	stackSvc := stacks.NewService(stacks.Deps{
-		Library:      imagesSvc,
-		Registry:     stackRegistry,
-		Ops:          ops,
-		Compose:      runner,
-		Engine:       dockerEngine,
-		Containers:   cache,
-		StacksDir:    cfg.StacksDir,
-		AllowedRoots: cfg.AllowedRoots,
-		Logger:       logger,
-		Now:          time.Now,
+		Library: imagesSvc,
+		// A fetch runs inside the stack operation, so the operation gets the
+		// longer image timeout when it has library images to ensure.
+		LibraryTimeout: cfg.ImageOperationTimeout,
+		Registry:       stackRegistry,
+		Ops:            ops,
+		Compose:        runner,
+		Engine:         dockerEngine,
+		Containers:     cache,
+		StacksDir:      cfg.StacksDir,
+		AllowedRoots:   cfg.AllowedRoots,
+		Logger:         logger,
+		Now:            time.Now,
 	})
 	imagesSvc.SetUsage(stackSvc)
 	// Sync returns joined per-folder warnings; none of them stop startup.

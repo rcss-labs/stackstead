@@ -137,6 +137,15 @@ func (o *Ops) StartTimeout(key, action string, timeout time.Duration, fn OpFunc)
 	return o.startOp(key, action, "", timeout, fn)
 }
 
+// StartServiceTimeout is StartService for an operation bounded by timeout
+// instead of the manager's default.
+func (o *Ops) StartServiceTimeout(stack, action, service string, timeout time.Duration, fn OpFunc) (Operation, error) {
+	return o.startOp(stack, action, service, timeout, fn)
+}
+
+// Timeout is the manager's default operation timeout; <= 0 means none.
+func (o *Ops) Timeout() time.Duration { return o.timeout }
+
 func (o *Ops) startOp(stack, action, service string, timeout time.Duration, fn OpFunc) (Operation, error) {
 	id, err := newOpID()
 	if err != nil {

@@ -364,6 +364,8 @@ Transfer behaviour:
   the fetch fails with "fetched image does not match the owner's record".
 - A 60 second idle watchdog cancels a transfer when no data arrives for that
   long ("transfer from X stalled"). The whole fetch is also bounded by
+  `image_operation_timeout`; a fetch started by a stack `up` runs inside that
+  operation, which then gets the longer of `operation_timeout` and
   `image_operation_timeout`.
 - The archive is inspected while it streams: it may only name the requested
   reference. An archive whose `manifest.json`, `repositories` or `index.json`
@@ -513,7 +515,10 @@ that owns the image.
 
 The byte limits are integers of at least 1048576; an upload over either limit
 answers 413 `image_too_large`. `image_operation_timeout` bounds image builds,
-pushes and fetches; stack operations keep `operation_timeout`. Paths are
+pushes and fetches. Stack operations keep `operation_timeout`, except a stack
+or service `up` or a stack `pull` of a stack that uses library images: its
+operation, which fetches missing images first, is bounded by the longer of
+`operation_timeout` and `image_operation_timeout`. Paths are
 cleaned and relative, with no `..`, leading `/`, backslash or NUL byte,
 segments of at most 255 bytes and 4096 in total. A Dockerfile is non-empty, at
 most 1 MiB and has no NUL byte. Uploads are staged under

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/rcss-labs/stackstead/internal/composefile"
 	"github.com/rcss-labs/stackstead/internal/imageref"
@@ -48,6 +49,23 @@ func uniqueRefs(usages []imageref.Usage) []imageref.Ref {
 		}
 	}
 	return out
+}
+
+// opTimeout is the timeout of a stack operation that must first ensure refs:
+// the longer of the manager's timeout and the library timeout, since the
+// fetch runs inside the operation and is bounded by its context. An operation
+// without library references keeps the manager's timeout, and so does one
+// when no timeout is set (<= 0 means none).
+//
+// Any library reference counts, including one this server owns, which only
+// needs a local check: telling them apart would need the server's identity
+// here, and a longer deadline is harmless for an operation that ends sooner.
+func (s *Service) opTimeout(refs []imageref.Ref) time.Duration {
+	base := s.ops.Timeout()
+	if len(refs) == 0 || base <= 0 || s.libTimeout <= base {
+		return base
+	}
+	return s.libTimeout
 }
 
 // ensureLibrary makes every ref present locally, reporting progress to out.
