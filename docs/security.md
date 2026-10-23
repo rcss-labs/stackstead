@@ -238,9 +238,16 @@ reference, if metadata files are hidden (not at the archive root, symlinks,
 oversized) or the tar is malformed, so a compromised peer cannot plant
 `nginx:latest` or another tag on this server. The loaded image's ID must also
 match the one the owner recorded. A nested OCI index blob that names another
-tag is not parsed; a real Docker (containerd store) does not tag from it, and
-`TestIntegrationLoadNeverCreatesForeignTags` (integration build tag) guards
-that assumption. A stalled transfer is cut after 60 seconds.
+tag is not parsed. This was verified on Docker 29.3.1 with the containerd image
+store, where a nested index does not create tags; re-verify it when Docker is
+upgraded. The check (`TestIntegrationLoadNeverCreatesForeignTags`) needs a
+Docker socket and runs only with `-tags integration`. The classic image store's
+loader reads only `manifest.json` and `repositories`, and both are checked, so
+nothing else can name a tag there. A stalled transfer is cut after 60 seconds.
+
+Image retention only ever removes versions from this server's local Docker and
+database. It never deletes anything in a registry, and it holds no registry
+credentials of its own, so a pushed version outlives its local copy.
 
 ## Storage cleanup
 

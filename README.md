@@ -91,6 +91,10 @@ without a platform to maintain.
   from a registry. Pick folders and files with a built-in file browser.
   Write a service's Dockerfile in Stackstead, and Save & rebuild it from the
   stack page.
+- **Image library.** Build images from uploaded files or a GitHub repository,
+  keep tagged versions with retention rules, push them to Docker Hub or ECR,
+  and share them with directly connected servers. Services pick an image and
+  version, and get told when a newer one exists.
 - **Bring your existing stacks.** Import a compose file you already have,
   where it already lives. Nothing is moved, and nothing changes until you
   edit it.

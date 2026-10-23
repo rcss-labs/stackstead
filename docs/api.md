@@ -455,9 +455,40 @@ GitHub image never auto-pushes: a push target is used only by an explicit push.
 The default is given to an image created without its own `retention`; changing
 it never rewrites existing images. Both values are integers from 0 (rule off):
 `keepLast` at most 1000, `keepDays` at most 3650. Anything else answers 400 with
-the field `retention`. Retention never removes the newest successful version
-or a version in use, and only cleans up on the server that owns the image. The
-route is session-only and on the peer denylist (`/api/settings`).
+the field `retention`. The same bounds apply to an image's own `retention` on
+create and update (400 `retention`); a stored value above a bound still loads.
+The route is session-only and on the peer denylist (`/api/settings`).
+
+### Image retention
+
+Each image has `retention: {keepLast, keepDays}`; 0 turns a rule off, and both
+0 keeps everything. Keepers are decided as follows:
+
+- `keepLast` ranks succeeded versions only, newest first; the newest
+  `keepLast` are kept.
+- `keepDays` keeps any version, succeeded or failed, that started within that
+  many days.
+- A failed version is also kept when it is newer than the oldest succeeded
+  version `keepLast` keeps, so a burst of failed builds never pushes good
+  versions out.
+- The newest succeeded version is always kept, and so is a version that is
+  still building.
+
+A version in use is never removed. "In use" covers the owner (containers of
+stacks on this server) and its direct peers; a peer running an old Stackstead
+without the usage route counts as zero. If any peer cannot be reached, that
+image's run is skipped and nothing is removed, so a version a peer needs is
+never lost to an outage.
+
+Retention runs after each successful build of the image, and a background sweep
+runs 5 minutes after the server starts and then every 6 hours, over every image
+with a non-zero policy. A sweep that finds the image busy (a build, push or
+fetch) retries on the next run. Each removed version is logged as `image.retain`.
+
+Removal is local only: it untags the version on this server's Docker, deletes
+its row and build log, and never touches a registry, so versions already pushed
+stay there. Revisions are never removed. Retention only cleans up on the server
+that owns the image.
 
 ### Limits
 

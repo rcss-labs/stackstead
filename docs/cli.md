@@ -134,7 +134,8 @@ stackstead images push web v2 --target hub        # --target is the registry nam
 `images build` uses the server's suggested tag unless `--tag` is given. When
 there is no suggestion (the latest tag is not numeric or semver-like) it exits
 2 and prints the latest tag; pass `--tag`. `--build-arg` repeats and needs
-`KEY=VALUE` (a bare `KEY` is exit 2). `--ref` builds a GitHub image at a
+`KEY=VALUE` (a bare `KEY` or `=VALUE` is exit 2; `KEY=` sets an empty value; a
+repeated `--build-arg` key keeps the last value). `--ref` builds a GitHub image at a
 branch, tag or commit; the server refuses it for upload images (exit 6).
 
 `images push` needs `--target` (the push target's registry name) when the image
