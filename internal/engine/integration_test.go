@@ -3,9 +3,12 @@
 package engine_test
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -275,4 +278,53 @@ func TestBuildCachePruneByID(t *testing.T) {
 		t.Skipf("Docker %s does not demonstrate exact ID filtering; capability correctly remains disabled", version)
 	}
 	t.Logf("Docker %s honored ID filter in this isolated test; enabling capability requires a separate verified commit", version)
+}
+
+func TestImageOpsIntegration(t *testing.T) {
+	run, eng := itDocker(t)
+	name := itName(t, run)
+	ref := name + ":1"
+	t.Cleanup(func() { run("rmi", "-f", ref) })
+
+	dockerfile := []byte("FROM busybox\nLABEL stackstead.it=1\n")
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.WriteHeader(&tar.Header{Name: "Dockerfile", Mode: 0o644, Size: int64(len(dockerfile))}); err != nil {
+		t.Fatal(err)
+	}
+	tw.Write(dockerfile)
+	tw.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	res, err := eng.Build(ctx, &buf, engine.BuildOptions{Tags: []string{ref}, Labels: map[string]string{"stackstead.it2": "1"}}, func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	arch, err := eng.Arch(ctx)
+	if err != nil || arch == "" {
+		t.Fatalf("arch %q %v", arch, err)
+	}
+	rc, err := eng.SaveImage(ctx, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := io.ReadAll(rc)
+	rc.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run("rmi", "-f", ref); err != nil {
+		t.Fatalf("rmi: %v: %s", err, out)
+	}
+	if err := eng.LoadImage(ctx, bytes.NewReader(saved)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := eng.InspectImage(ctx, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != res.ImageID {
+		t.Errorf("loaded id %q, built %q", got.ID, res.ImageID)
+	}
 }
