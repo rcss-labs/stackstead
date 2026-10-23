@@ -70,6 +70,7 @@ export function StackRow({ stack: s, failing, usage, running, reason, acting, on
             {s.name}
           </Link>
           {s.origin === 'external' && <Tag>imported</Tag>}
+          {s.libraryUpdates > 0 && <Tag tone="info">{`${s.libraryUpdates} ${s.libraryUpdates === 1 ? 'update' : 'updates'}`}</Tag>}
           {running && <Spinner label={`Operation running on ${s.name}`} />}
         </div>
         {failing.length > 0 ? (

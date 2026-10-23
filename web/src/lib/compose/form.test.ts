@@ -33,6 +33,21 @@ function form(patch: Partial<ServiceForm> = {}): ServiceForm {
 const hc = (patch: Partial<ServiceForm['healthcheck']>) => ({ ...emptyForm().healthcheck, enabled: true, test: 'true', ...patch });
 
 describe('toForm / fromForm', () => {
+  it('reads a library reference as the library source and writes it back without a build', () => {
+    const cfg: ServiceConfig = { image: 'stackstead.invalid/0123456789ab/web:1', limits: {} };
+    const f = toForm(cfg, []);
+    expect(f.source).toBe('library');
+    expect(f.library).toEqual({ ref: cfg.image });
+    const out = fromForm(f, cfg);
+    expect(out.image).toBe(cfg.image);
+    expect(out.build).toBeUndefined();
+  });
+
+  it('writes the chosen library reference for the library source', () => {
+    const f = form({ source: 'library', image: '', library: { ref: 'stackstead.invalid/0123456789ab/web:2' } });
+    expect(fromForm(f, null).image).toBe('stackstead.invalid/0123456789ab/web:2');
+  });
+
   it('round-trips a full config', () => {
     expect(fromForm(toForm(full, []), full)).toEqual(full);
   });
@@ -140,6 +155,11 @@ describe('toForm / fromForm', () => {
 describe('validateForm', () => {
   const ok = (f: ServiceForm, opts = {}) => expect(validateForm(f, { original: null, ...opts })).toEqual({});
   const bad = (f: ServiceForm, path: string, opts = {}) => expect(validateForm(f, { original: null, ...opts })).toHaveProperty([path]);
+
+  it('requires a chosen reference for the library source', () => {
+    bad(form({ source: 'library', image: '', library: null }), 'image');
+    ok(form({ source: 'library', library: { ref: 'stackstead.invalid/0123456789ab/web:1' } }));
+  });
 
   it('accepts a valid form', () => ok(toForm(full, []), { name: 'web', requireName: true, original: full }));
 

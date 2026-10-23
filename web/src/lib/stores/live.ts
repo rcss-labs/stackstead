@@ -16,6 +16,8 @@ export interface LiveState {
   dockerVersion: string;
   metricsIntervalSeconds?: number;
   metricsRetentionSeconds?: number;
+  /** This server's Docker architecture (amd64, arm64); absent while unknown. */
+  arch?: string;
 }
 
 export interface LiveChange {
@@ -173,6 +175,7 @@ export function createLiveStore() {
         dockerVersion: s.dockerVersion ?? '',
         metricsIntervalSeconds: s.metricsIntervalSeconds,
         metricsRetentionSeconds: s.metricsRetentionSeconds,
+        arch: s.arch,
       }));
     } catch {
       // Keep the last known flags; the next open or flip tries again.

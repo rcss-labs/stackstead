@@ -42,6 +42,31 @@ describe('service pane', () => {
     expect(volumes.textContent).toBe('—');
   });
 
+  const library = (over: Partial<NonNullable<ServiceDetail['library']>> = {}) => ({
+    ref: 'stackstead.invalid/0123456789ab/web:1',
+    owner: '0123456789ab',
+    ownerName: 'home',
+    image: 'web',
+    tag: '1',
+    latestTag: '1',
+    arch: 'amd64',
+    newer: false,
+    known: true,
+    ...over,
+  });
+
+  it('shows a library image as name:tag (owner) and flags a newer version', () => {
+    renderPane(appService({ config: { image: 'stackstead.invalid/0123456789ab/web:1', limits: {} }, library: library({ latestTag: '2', newer: true }) }));
+    expect(screen.getByText('web:1 (home)')).toBeTruthy();
+    expect(screen.getByText('new version available: 2')).toBeTruthy();
+  });
+
+  it('shows no badge when the library image is current', () => {
+    renderPane(appService({ config: { image: 'stackstead.invalid/0123456789ab/web:1', limits: {} }, library: library() }));
+    expect(screen.getByText('web:1 (home)')).toBeTruthy();
+    expect(screen.queryByText(/new version available/)).toBeNull();
+  });
+
   it('shows a build context when there is no image', () => {
     renderPane(appService({ config: { build: { context: './api' }, limits: {} } }));
     expect(screen.getByText('build: ./api')).toBeTruthy();

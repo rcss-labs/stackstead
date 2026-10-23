@@ -61,3 +61,4 @@
 }
 .editor { display: flex; flex-direction: column; gap: var(--space-2); }
 .fieldError { margin: 0; color: var(--danger); font-size: 0.875rem; }
+.library { display: flex; flex-direction: column; gap: 8px; min-width: 0; }

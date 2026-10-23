@@ -2,9 +2,11 @@ import { useImperativeHandle, useRef, useState } from 'react';
 import type { Ref } from 'react';
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Field } from '$lib/api/types';
 import { DOCKERFILE_TEMPLATE, emptyForm, type FormErrors, type ServiceForm as Form } from '$lib/compose/form';
+import { installFakeFetch } from '../../vitest-setup';
 import { fieldLabel, ServiceForm, type BrowsePurpose, type ServiceFormHandle, type ServiceFormProps } from './ServiceForm';
 
 afterEach(cleanup);
@@ -78,12 +80,61 @@ function Host({ initial, errors = {}, withPicker, handle, ...rest }: HostProps) 
 
 function setup(props: HostProps = {}) {
   const handle = { current: null } as { current: HostHandle | null };
-  const utils = render(<Host {...props} handle={handle as Ref<HostHandle>} />);
+  const utils = render(
+    <MemoryRouter>
+      <Host {...props} handle={handle as Ref<HostHandle>} />
+    </MemoryRouter>,
+  );
   return {
     handle: handle as { current: HostHandle },
-    rerender: (next: HostProps) => utils.rerender(<Host {...props} {...next} handle={handle as Ref<HostHandle>} />),
+    rerender: (next: HostProps) =>
+      utils.rerender(
+        <MemoryRouter>
+          <Host {...props} {...next} handle={handle as Ref<HostHandle>} />
+        </MemoryRouter>,
+      ),
   };
 }
+
+describe('ServiceForm library source', () => {
+  const REF = 'stackstead.invalid/0123456789ab/web:1';
+
+  it('renders the library picker for the From library source and keeps the ref as the image text when switching back', async () => {
+    const lib = {
+      images: [
+        {
+          slug: 'web',
+          name: 'web',
+          owner: { id: '0123456789abcdef', name: 'home', slug: '', local: true, status: 'reachable' },
+          latestVersion: { id: 'v1', tag: '1', status: 'succeeded', arch: 'amd64' },
+        },
+      ],
+      servers: [],
+    };
+    const fake = installFakeFetch({ 'GET /api/images': { body: lib }, 'GET /api/status': { body: { docker: 'ok', compose: '2', arch: 'amd64' } } });
+    try {
+      const user = userEvent.setup();
+      const { handle } = setup();
+      await user.click(screen.getByRole('radio', { name: /From library/ }));
+      await user.click(await screen.findByRole('radio', { name: /web:1/ }));
+      expect(handle.current.getForm().library).toEqual({ ref: REF });
+      await user.click(screen.getByRole('radio', { name: /From Image/ }));
+      expect((screen.getByLabelText('Image') as HTMLInputElement).value).toBe(REF);
+    } finally {
+      fake.restore();
+    }
+  });
+
+  it('keeps the chosen reference when the form is opened on a library image', async () => {
+    const fake = installFakeFetch({ 'GET /api/images': { body: { images: [], servers: [] } } });
+    try {
+      setup({ initial: { source: 'library', image: REF, library: { ref: REF } } });
+      expect(await screen.findByText('No images yet')).toBeTruthy();
+    } finally {
+      fake.restore();
+    }
+  });
+});
 
 describe('ServiceForm', () => {
   it('renders a read-only group uneditable with the reason and a raw-editor button', async () => {
@@ -459,13 +510,14 @@ describe('ServiceForm', () => {
   });
 
   describe('Dockerfile source', () => {
-    it('offers three sources', () => {
+    it('offers four sources', () => {
       setup();
       const names = screen.getAllByRole('radio').map((r) => r.getAttribute('aria-label') ?? r.closest('label')?.textContent?.replace(/\s+/g, ' ').trim());
       expect(screen.getByRole('radio', { name: 'From Image' })).toBeTruthy();
       expect(screen.getByRole('radio', { name: 'From Existing build' })).toBeTruthy();
       expect(screen.getByRole('radio', { name: 'Write a Dockerfile' })).toBeTruthy();
-      expect(names).toHaveLength(3);
+      expect(screen.getByRole('radio', { name: 'From library' })).toBeTruthy();
+      expect(names).toHaveLength(4);
     });
 
     it('Write a Dockerfile shows the editor prefilled with the template', async () => {

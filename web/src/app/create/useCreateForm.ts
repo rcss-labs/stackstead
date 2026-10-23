@@ -225,7 +225,7 @@ export function useCreateForm(): CreateForm {
       const stale = (key: string) => {
         if (key === 'dockerfileText') return form.source !== 'dockerfile';
         if (key.startsWith('build.')) return form.source !== 'build';
-        return key === 'image' && card.form.source === 'image';
+        return key === 'image' && (card.form.source === 'image' || card.form.source === 'library');
       };
       const errors = Object.fromEntries(Object.entries(card.errors).filter(([key]) => !stale(key)));
       return { form, errors };
