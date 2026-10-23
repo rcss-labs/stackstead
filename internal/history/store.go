@@ -135,12 +135,25 @@ WHERE c2.state != 'restart'
 GROUP BY c2.container`
 
 // Prune deletes rows older than olderThan and reports how many were removed.
-// Each container's state in force survives however old it is, so a container
-// that never changes keeps its baseline; a removed container's last row goes
-// once it ages out, so dead containers do not accumulate.
+// Each container keeps its predecessor: the latest non-marker row before the
+// cutoff, which is the state in force when the retained window opens, so
+// timelines starting at the cutoff know their baseline. A container that never
+// changes therefore keeps its single row however old it is. A removed
+// container's predecessor goes once it ages out, so dead containers do not
+// accumulate.
 func (s *Store) Prune(ctx context.Context, olderThan time.Time) (int64, error) {
+	cutoff := olderThan.Unix()
 	res, err := s.db.ExecContext(ctx, `DELETE FROM container_transitions
-WHERE ts < ? AND (state = 'removed' OR rowid NOT IN (`+latestRowIDs+`))`, olderThan.Unix())
+WHERE ts < ? AND (state = 'removed' OR rowid NOT IN (
+	SELECT MAX(c2.rowid) FROM container_transitions c2
+	JOIN (
+		SELECT container, MAX(ts) AS mts FROM container_transitions
+		WHERE ts < ? AND state != 'restart'
+		GROUP BY container
+	) m ON m.container = c2.container AND m.mts = c2.ts
+	WHERE c2.state != 'restart'
+	GROUP BY c2.container
+))`, cutoff, cutoff)
 	if err != nil {
 		return 0, err
 	}

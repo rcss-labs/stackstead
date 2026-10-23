@@ -126,7 +126,7 @@ func TestStore_PruneRemovesOlderRows(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	n, err := s.Prune(context.Background(), at(150))
+	n, err := s.Prune(context.Background(), at(250))
 	if err != nil || n != 1 {
 		t.Fatalf("Prune = %d, %v; want 1", n, err)
 	}
@@ -181,6 +181,38 @@ func TestStore_PruneKeepsStateInForce(t *testing.T) {
 	if len(tl.Services) != 2 || tl.Services[0].Service != "a" ||
 		len(tl.Services[0].Runs) != 1 || tl.Services[0].Runs[0].State != history.StateHealthy {
 		t.Fatalf("timeline after prune = %+v, want a healthy across the window", tl.Services)
+	}
+}
+
+// Healthy at 100, exited at 300, cutoff 200: the healthy row is the state in
+// force when the retained window opens, so it must survive and the timeline
+// for [200,400] must read healthy until 300 rather than nodata.
+func TestStore_PruneKeepsPredecessorBeforeCutoff(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	if err := s.Insert(ctx, []history.Row{
+		svc(50, "a", history.StateStarting),
+		svc(60, "a", history.StateRestart),
+		svc(100, "a", history.StateHealthy),
+		svc(150, "a", history.StateRestart),
+		svc(300, "a", history.StateExited),
+		svc(40, "gone", history.StateRunning),
+		svc(80, "gone", history.StateRemoved),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.Prune(ctx, at(200))
+	if err != nil || n != 5 {
+		t.Fatalf("Prune = %d, %v; want 5 (older states, markers, expired removed container)", n, err)
+	}
+	tl, err := s.Timeline(ctx, "p", at(200), at(400))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tl.Services) != 1 || len(tl.Services[0].Runs) != 2 ||
+		tl.Services[0].Runs[0].State != history.StateHealthy || tl.Services[0].Runs[0].From.Unix() != 200 ||
+		tl.Services[0].Runs[1].State != history.StateExited {
+		t.Fatalf("timeline = %+v, want healthy from 200 then exited from 300", tl.Services)
 	}
 }
 
