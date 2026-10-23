@@ -9,13 +9,13 @@ import (
 	"path"
 	"sort"
 	"strings"
+
+	"github.com/rcss-labs/stackstead/internal/stacks"
 )
 
 const (
 	maxPathBytes    = 4096
 	maxSegmentBytes = 255
-	// maxDockerfileBytes matches the Dockerfile limit used for stacks.
-	maxDockerfileBytes = 1 << 20
 
 	// DefaultDockerfile is the starting Dockerfile of a new image.
 	DefaultDockerfile = "FROM alpine:3.20\n# Add build steps below, for example:\n# RUN apk add --no-cache curl\n"
@@ -231,19 +231,14 @@ func ApplyDockerfile(m Manifest, b *Blobs, p string, content []byte) (Manifest, 
 	if err != nil {
 		return nil, "", err
 	}
-	switch {
-	case len(bytes.TrimSpace(content)) == 0:
-		return nil, "", fmt.Errorf("%w: Dockerfile is required", ErrBadDockerfile)
-	case len(content) > maxDockerfileBytes:
-		return nil, "", fmt.Errorf("%w: Dockerfile is larger than 1 MiB", ErrBadDockerfile)
-	case bytes.IndexByte(content, 0) >= 0:
-		return nil, "", fmt.Errorf("%w: Dockerfile must not contain NUL bytes", ErrBadDockerfile)
+	if err := stacks.ValidateDockerfile("Dockerfile", content); err != nil {
+		return nil, "", fmt.Errorf("%w: %w", ErrBadDockerfile, err)
 	}
 	old, replacing := m[clean]
 	if !replacing && m.pathConflict(clean) {
 		return nil, "", badPath(p, "conflicts with an existing file or folder")
 	}
-	hash, size, err := b.Put(bytes.NewReader(content), maxDockerfileBytes)
+	hash, size, err := b.Put(bytes.NewReader(content), stacks.MaxDockerfileBytes)
 	if err != nil {
 		return nil, "", err
 	}

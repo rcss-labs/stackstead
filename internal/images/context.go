@@ -9,17 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"syscall"
 	"time"
 )
 
 const maxDockerignoreBytes = 1 << 20
 
 // Materialize writes the manifest's files under dir, which must be empty (it
-// is created if missing). Files of mode 0644 are hard links to the blobs
-// (copies when the filesystem refuses links); executable files are copies so
-// the blob keeps its own mode. All file operations after the manifest is
-// validated go through an os.Root on dir.
+// is created if missing). Every file is a copy written through an os.Root on
+// dir, so nothing can land outside it; blobs keep their own 0600 mode.
 func Materialize(dir string, m Manifest, b *Blobs) error {
 	for p := range m {
 		if clean, err := ValidatePath(p); err != nil || clean != p {
@@ -54,31 +51,18 @@ func Materialize(dir string, m Manifest, b *Blobs) error {
 				return fmt.Errorf("creating folder for %q: %w", p, err)
 			}
 		}
-		if err := materializeOne(root, dir, p, e, b); err != nil {
+		if err := materializeOne(root, p, e, b); err != nil {
 			return fmt.Errorf("writing %q: %w", p, err)
 		}
 	}
 	return nil
 }
 
-func materializeOne(root *os.Root, dir, p string, e FileEntry, b *Blobs) error {
+func materializeOne(root *os.Root, p string, e FileEntry, b *Blobs) error {
 	rel := filepath.FromSlash(p)
 	src, err := b.pathFor(e.Hash)
 	if err != nil {
 		return err
-	}
-	if e.Mode != 0o755 {
-		// os.Link resolves parents without the Root; the folders were just
-		// made through the Root in an empty directory, and the result is
-		// verified below.
-		err := os.Link(src, filepath.Join(dir, rel))
-		if err == nil {
-			return verifyLinked(root, rel, src)
-		}
-		if !errors.Is(err, syscall.EPERM) && !errors.Is(err, syscall.ENOTSUP) &&
-			!errors.Is(err, syscall.EXDEV) && !errors.Is(err, syscall.EOPNOTSUPP) {
-			return err
-		}
 	}
 	in, err := os.Open(src)
 	if err != nil {
@@ -101,22 +85,6 @@ func materializeOne(root *os.Root, dir, p string, e FileEntry, b *Blobs) error {
 		return err
 	}
 	return root.Chmod(rel, mode)
-}
-
-// verifyLinked confirms the link landed inside the root as the blob itself.
-func verifyLinked(root *os.Root, rel, blobPath string) error {
-	got, err := root.Lstat(rel)
-	if err != nil {
-		return fmt.Errorf("link did not land inside the build directory: %w", err)
-	}
-	want, err := os.Stat(blobPath)
-	if err != nil {
-		return err
-	}
-	if !got.Mode().IsRegular() || !os.SameFile(got, want) {
-		return errors.New("link did not land inside the build directory")
-	}
-	return nil
 }
 
 // WriteContext writes dir as a tar build context: regular files only, those
