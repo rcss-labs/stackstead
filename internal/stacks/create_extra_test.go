@@ -296,6 +296,34 @@ func TestCreateRejectsSymlinkedExtraBuildContext(t *testing.T) {
 	}
 }
 
+func TestCreateRejectsRelativeExtraBuildContextThroughSymlink(t *testing.T) {
+	h := newHarness(t)
+	root := filepath.Dir(h.dir)
+	real := filepath.Join(root, "real")
+	if err := os.Mkdir(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	// The stack folder is <root>/stacks/web, so ../../ is the allowed root.
+	for name, raw := range map[string]string{
+		"context":    `{"build":{"context":"../../link"}}`,
+		"additional": `{"build":{"context":".","additional_contexts":{"x":"../../link"}}}`,
+	} {
+		_, err := h.svc.Create(context.Background(), multiRequest(composefile.NamedService{Name: "web", Extra: mustExtra(t, raw)}))
+		fs := fieldsOf(t, err)
+		if len(fs) != 1 || fs[0].Field != "services[0].build.context" || fs[0].Message != "build context must not be a symlink; use the real path" {
+			t.Fatalf("%s: fields = %+v", name, fs)
+		}
+	}
+	// the real path, spelled relatively, is fine
+	req := multiRequest(composefile.NamedService{Name: "web", Extra: mustExtra(t, `{"build":{"context":"../../real"}}`)})
+	if _, err := h.svc.Create(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCreateDockerfileForServiceWithoutBuildSaysSo(t *testing.T) {
 	h := newHarness(t)
 	req := multiRequest(composefile.NamedService{Name: "ok", Config: webCfg()}, composefile.NamedService{Name: "web", Config: composefile.ServiceConfig{Image: "nginx:1"}})

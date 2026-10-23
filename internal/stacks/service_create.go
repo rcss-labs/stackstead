@@ -530,7 +530,8 @@ func (s *Service) effectiveWithExtra(parsed *composefile.File, stackDir string, 
 		}
 		// The extra is written as typed, so a link that is repointed later
 		// would escape the check; require the real path.
-		if filepath.IsAbs(b.Context) && confined.Context != filepath.Clean(b.Context) {
+		if (filepath.IsAbs(b.Context) && confined.Context != filepath.Clean(b.Context)) ||
+			(!filepath.IsAbs(b.Context) && s.relativeContextUsesLink(stackDir, b.Context)) {
 			fields = append(fields, FieldError{Field: "build.context", Message: "build context must not be a symlink; use the real path"})
 			return false
 		}
@@ -561,6 +562,29 @@ func (s *Service) effectiveWithExtra(parsed *composefile.File, stackDir string, 
 		}
 	}
 	return effective, fields, nil
+}
+
+// relativeContextUsesLink reports whether a relative context that leaves the
+// stack folder reaches its target through a symlink (its resolved path differs
+// from the lexical one). Contexts inside the folder are not checked, like in
+// confineBuild.
+func (s *Service) relativeContextUsesLink(stackDir, context string) bool {
+	if context == "" || hasVariable(context) {
+		return false
+	}
+	target := filepath.Join(stackDir, context)
+	if rel, err := filepath.Rel(stackDir, target); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	resolved, err := fsguard.Resolve(s.roots, target)
+	if err != nil {
+		return false // confineBuild reports unresolvable paths
+	}
+	realStack, err := resolveExisting(stackDir)
+	if err != nil {
+		return true
+	}
+	return resolved != filepath.Join(realStack, context)
 }
 
 // hasNonPathScheme reports additional-context values that name an image,
