@@ -35,24 +35,33 @@ func (s *Service) Build(ctx context.Context, user, slug string, req BuildRequest
 	if err := ValidateBuildArgs(req.BuildArgs); err != nil {
 		return Version{}, stacks.Operation{}, err
 	}
-	img, err := s.store.Image(ctx, slug)
-	if err != nil {
-		return Version{}, stacks.Operation{}, err
-	}
-	if img.Source != SourceUpload {
-		return Version{}, stacks.Operation{}, fieldError("source", "building from this source is not supported yet")
-	}
 	_, owner, err := s.selfInfo(ctx)
 	if err != nil {
 		return Version{}, stacks.Operation{}, err
 	}
+	if s.beforeBuildLock != nil {
+		s.beforeBuildLock()
+	}
+
+	// The image is read under the lock so a concurrent update or delete is
+	// seen, and a saved-defaults write never overwrites other fields.
+	unlock := s.lockImage(slug)
+	img, err := s.store.Image(ctx, slug)
+	if err != nil {
+		unlock()
+		return Version{}, stacks.Operation{}, err
+	}
+	if img.Source != SourceUpload {
+		unlock()
+		return Version{}, stacks.Operation{}, fieldError("source", "building from this source is not supported yet")
+	}
+	previous := maps.Clone(img.BuildArgs)
 	args := maps.Clone(img.BuildArgs)
 	if args == nil {
 		args = map[string]string{}
 	}
 	maps.Copy(args, req.BuildArgs)
 
-	unlock := s.lockImage(slug)
 	rev, ok, err := s.store.LatestRevision(ctx, img.ID)
 	if err == nil && !ok {
 		err = errors.New("image has no source revision")
@@ -63,8 +72,9 @@ func (s *Service) Build(ctx context.Context, user, slug string, req BuildRequest
 	}
 	if err == nil && req.SaveArgs {
 		img.BuildArgs = args
-		if uerr := s.store.UpdateImage(ctx, img); uerr != nil {
-			s.log.Warn("save build defaults failed", "image", slug, "err", uerr)
+		if err = s.store.UpdateImage(ctx, img); err != nil {
+			err = fmt.Errorf("save build defaults: %w", err)
+			s.store.DeleteVersion(context.WithoutCancel(ctx), v.ID)
 		}
 	}
 	unlock()
@@ -79,7 +89,13 @@ func (s *Service) Build(ctx context.Context, user, slug string, req BuildRequest
 		return s.runBuild(opCtx, user, img, v, owner, opID, args, out)
 	})
 	if err != nil {
-		s.store.DeleteVersion(context.WithoutCancel(ctx), v.ID)
+		bg := context.WithoutCancel(ctx)
+		if derr := s.store.DeleteVersion(bg, v.ID); derr != nil {
+			s.log.Error("remove version after failed build start", "image", slug, "version", v.ID, "err", derr)
+		}
+		if req.SaveArgs {
+			s.restoreDefaults(bg, slug, previous)
+		}
 		if errors.Is(err, stacks.ErrBusy) {
 			return Version{}, stacks.Operation{}, ErrBuildRunning
 		}
@@ -293,4 +309,18 @@ func (s *Service) DeleteVersion(ctx context.Context, user, slug, id string) erro
 	os.Remove(s.logPath(img.Slug, v.ID))
 	s.record(ctx, user, "image.version", slug, v.Tag, "deleted version "+v.Tag, "succeeded", "")
 	return nil
+}
+
+// restoreDefaults puts back the build defaults a build that never started had saved.
+func (s *Service) restoreDefaults(ctx context.Context, slug string, args map[string]string) {
+	unlock := s.lockImage(slug)
+	defer unlock()
+	img, err := s.store.Image(ctx, slug)
+	if err == nil {
+		img.BuildArgs = args
+		err = s.store.UpdateImage(ctx, img)
+	}
+	if err != nil {
+		s.log.Error("restore build defaults failed", "image", slug, "err", err)
+	}
 }

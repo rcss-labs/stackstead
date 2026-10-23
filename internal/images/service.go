@@ -73,6 +73,8 @@ type Service struct {
 	usage   UsageSource
 
 	locks sync.Map // slug -> *sync.Mutex
+
+	beforeBuildLock func() // test hook: runs in Build before the image lock
 }
 
 var _ stacks.LibraryFetcher = (*Service)(nil)

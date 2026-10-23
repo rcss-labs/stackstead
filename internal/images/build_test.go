@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rcss-labs/stackstead/internal/engine"
 )
@@ -125,6 +126,79 @@ func TestBuildRejectsBadTagAndUnknownImage(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	if _, _, err := h.svc.Build(context.Background(), "alice", "nope", BuildRequest{Tag: "1"}); !errors.Is(err, ErrImageNotFound) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestBuildSaveArgsKeepsConcurrentUpdate(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.create(t, "app")
+	h.svc.beforeBuildLock = func() {
+		if _, err := h.svc.Update(ctx, "bob", "app", UpdateRequest{Name: "Renamed", BuildArgs: map[string]string{"A": "1", "Z": "26"}}); err != nil {
+			t.Error(err)
+		}
+	}
+	_, op, err := h.svc.Build(ctx, "alice", "app", BuildRequest{Tag: "1", BuildArgs: map[string]string{"B": "9"}, SaveArgs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.waitOp(t, op.ID)
+	img, _ := h.svc.Get(ctx, "app")
+	if img.Name != "Renamed" || img.BuildArgs["Z"] != "26" || img.BuildArgs["B"] != "9" {
+		t.Fatalf("image = %+v", img)
+	}
+}
+
+func TestBuildSaveArgsFailureIsReturned(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	img := h.create(t, "app")
+	if _, err := h.svc.store.db.Exec(`CREATE TRIGGER block_image_update BEFORE UPDATE ON images BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := h.svc.Build(ctx, "alice", "app", BuildRequest{Tag: "1", BuildArgs: map[string]string{"B": "9"}, SaveArgs: true})
+	if err == nil || !strings.Contains(err.Error(), "save build defaults") {
+		t.Fatalf("err = %v", err)
+	}
+	if got, _ := h.svc.store.Versions(ctx, img.ID); len(got) != 0 {
+		t.Fatalf("version rows left: %d", len(got))
+	}
+}
+
+func TestBuildOpsBusyLeavesNoVersionAndRestoresDefaults(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	img := h.create(t, "app")
+	release := make(chan struct{})
+	if _, err := h.ops.StartTimeout(OpKey(testOwner, "app"), "push", time.Minute, func(ctx context.Context, _ func(string)) error {
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer close(release)
+	_, _, err := h.svc.Build(ctx, "alice", "app", BuildRequest{Tag: "1", BuildArgs: map[string]string{"B": "9"}, SaveArgs: true})
+	if !errors.Is(err, ErrBuildRunning) {
+		t.Fatalf("err = %v", err)
+	}
+	if got, _ := h.svc.store.Versions(ctx, img.ID); len(got) != 0 {
+		t.Fatalf("version rows left: %d", len(got))
+	}
+	if got, _ := h.svc.Get(ctx, "app"); got.BuildArgs["B"] != "2" {
+		t.Fatalf("defaults not restored: %v", got.BuildArgs)
+	}
+}
+
+func TestBuildDeletedImageDuringStart(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.create(t, "app")
+	h.svc.beforeBuildLock = func() { h.svc.Delete(ctx, "alice", "app") }
+	if _, _, err := h.svc.Build(ctx, "alice", "app", BuildRequest{Tag: "1"}); !errors.Is(err, ErrImageNotFound) {
 		t.Fatalf("err = %v", err)
 	}
 }

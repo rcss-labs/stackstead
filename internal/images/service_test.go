@@ -283,6 +283,9 @@ func TestLibraryLocalOnly(t *testing.T) {
 	if e.Versions == nil || e.PushTargets == nil || e.Pushes == nil {
 		t.Fatal("nil list or map in library entry")
 	}
+	if lib.Servers[0].ID != testInstanceID || e.Owner.ID != testInstanceID {
+		t.Fatalf("server ids = %q / %q, want the full instance id", lib.Servers[0].ID, e.Owner.ID)
+	}
 	if len(lib.Servers) != 1 || lib.Servers[0].Name != "Host A" || lib.Servers[0].Status != "reachable" {
 		t.Fatalf("servers = %+v", lib.Servers)
 	}
@@ -441,7 +444,7 @@ func TestDeleteVersionInUse(t *testing.T) {
 	if !errors.As(err, &in) || len(in.UsedBy) != 1 || in.UsedBy[0].Stack != "web" || in.UsedBy[0].Service != "api" {
 		t.Fatalf("err = %v", err)
 	}
-	if !strings.Contains(err.Error(), "web/api") {
+	if in.UsedBy[0].Server != testInstanceID || !strings.Contains(err.Error(), "web/api") {
 		t.Fatalf("message = %q", err)
 	}
 	if !h.eng.present["stackstead.invalid/"+testOwner+"/app:1"] {

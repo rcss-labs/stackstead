@@ -18,7 +18,7 @@ type UsageSource interface {
 
 var _ UsageSource = (*stacks.Service)(nil)
 
-// UsedBy names one stack service running a version.
+// UsedBy names one stack service running a version. Server is the full instance ID.
 type UsedBy struct{ Server, ServerName, Stack, Service string }
 
 // InUseError says why a version or image cannot be deleted.
@@ -77,7 +77,7 @@ func (s *Service) usedBy(ctx context.Context, owner, slug, tag string) ([]UsedBy
 	}
 	for _, u := range usages {
 		if u.Ref.Owner == owner && u.Ref.Slug == slug && (tag == "" || u.Ref.Tag == tag) {
-			out = append(out, UsedBy{Server: owner, ServerName: me.Name, Stack: u.Stack, Service: u.Service})
+			out = append(out, UsedBy{Server: me.InstanceID, ServerName: me.Name, Stack: u.Stack, Service: u.Service})
 		}
 	}
 	return out, nil
@@ -97,7 +97,7 @@ func (s *Service) checkUnused(ctx context.Context, owner, slug, tag string) erro
 // ---- library views ----
 
 // ServerInfo describes a server whose images the library shows. ID is the
-// owner id used in references (first 12 characters of the instance ID).
+// full instance ID; derive the reference owner with imageref.OwnerID.
 type ServerInfo struct {
 	ID, Name, Slug string
 	Local          bool
@@ -124,7 +124,7 @@ func (s *Service) localServer(ctx context.Context) (ServerInfo, string, error) {
 	if err != nil {
 		return ServerInfo{}, "", err
 	}
-	return ServerInfo{ID: owner, Name: me.Name, Slug: me.Slug, Local: true, Status: "reachable"}, owner, nil
+	return ServerInfo{ID: me.InstanceID, Name: me.Name, Slug: me.Slug, Local: true, Status: "reachable"}, owner, nil
 }
 
 func (s *Service) entryOf(ctx context.Context, img Image, owner ServerInfo) (LibraryEntry, error) {
