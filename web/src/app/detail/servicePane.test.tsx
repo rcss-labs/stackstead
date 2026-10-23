@@ -52,6 +52,19 @@ describe('service pane', () => {
     expect(screen.getByRole('link', { name: 'web-app-1' }).getAttribute('href')).toBe('/containers/web-app-1');
   });
 
+  it('links each running replica to its terminal and skips stopped ones', () => {
+    renderPane(
+      appService({
+        containers: [
+          { id: 'a', name: 'web-app-1', service: 'app', state: 'running', status: 'Up', health: 'none' },
+          { id: 'b', name: 'web-app-2', service: 'app', state: 'exited', status: 'Exited (0)', health: 'none' },
+        ],
+      }),
+    );
+    expect(screen.getByRole('link', { name: 'Open terminal for web-app-1' }).getAttribute('href')).toBe('/containers/web-app-1?tab=terminal');
+    expect(screen.queryByRole('link', { name: 'Open terminal for web-app-2' })).toBeNull();
+  });
+
   it('the container card shows the name on one line and the status alone on the next', () => {
     renderPane(appService());
     const item = screen.getByRole('link', { name: 'web-app-1' }).closest('li')!;

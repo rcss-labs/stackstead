@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import type { ContainerDetail } from '$lib/api/types';
 import { containerLed } from '$lib/containers/list';
@@ -24,9 +24,13 @@ import styles from './ContainerDetailScreen.module.css';
 import { useContainerAction } from './useContainerAction';
 import { useContainerList } from './useContainerList';
 
+// xterm is large, so it loads only when the Terminal tab opens.
+const TerminalTab = lazy(() => import('./TerminalTab'));
+
 const TABS = [
   { id: 'details', label: 'Details' },
   { id: 'logs', label: 'Logs' },
+  { id: 'terminal', label: 'Terminal' },
 ];
 
 const composeFirst = (labels: Record<string, string>) =>
@@ -209,6 +213,11 @@ export function ContainerDetailScreen({ name }: { name: string }) {
             )}
           </p>
           <div className={styles.actions} role="group" aria-label="Container actions">
+            {row.state === 'running' && (
+              <Link to={href(`/containers/${encodeURIComponent(name)}?tab=terminal`)} className={styles.openStack}>
+                Terminal
+              </Link>
+            )}
             {row.managed === 'stack' ? (
               <>
                 <Link to={stackUrl} className={styles.openStack}>
@@ -238,7 +247,17 @@ export function ContainerDetailScreen({ name }: { name: string }) {
         }}
       >
         {(selected) =>
-          selected === 'logs' ? (
+          selected === 'terminal' ? (
+            <Suspense fallback={<Spinner />}>
+              <TerminalTab
+                key={row.id}
+                containerId={row.id}
+                containerName={row.name}
+                running={row.state === 'running'}
+                onStart={() => (row.managed === 'stack' ? navigate(stackUrl) : actions.request(row, 'start'))}
+              />
+            </Suspense>
+          ) : selected === 'logs' ? (
             <LogConsole
               key={row.id}
               source={{ kind: 'container', id: row.id }}

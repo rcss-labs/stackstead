@@ -395,3 +395,19 @@ describe('ContainerDetail', () => {
     expect(led?.getAttribute('data-tone')).toBe('danger');
   });
 });
+
+describe('ContainerDetail terminal entry points', () => {
+  it('has a Terminal tab and a Terminal link in the actions group', async () => {
+    mountAt('/containers/redis');
+    await heading('redis');
+    expect(screen.getByRole('tab', { name: 'Terminal' })).toBeTruthy();
+    const group = screen.getByRole('group', { name: 'Container actions' });
+    expect(within(group).getByRole('link', { name: 'Terminal' }).getAttribute('href')).toBe('/containers/redis?tab=terminal');
+  });
+
+  it('shows the not-running state on the Terminal tab of a stopped container', async () => {
+    listRes = { body: [row({ state: 'exited', exitCode: 0 })] };
+    mountAt('/containers/redis?tab=terminal');
+    expect(await screen.findByText("Container isn't running")).toBeTruthy();
+  });
+});

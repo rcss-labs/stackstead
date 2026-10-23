@@ -161,6 +161,14 @@ describe('openExec', () => {
     expect(ends).toEqual([{ kind: 'lost' }]);
   });
 
+  it('calls the optional onOpen handler when the socket opens', () => {
+    const onOpen = vi.fn();
+    openExec('ws://x/exec', { onData: () => {}, onIdleWarning: () => {}, onEnd: () => {}, onOpen }, FakeSocket as unknown as typeof WebSocket);
+    expect(onOpen).not.toHaveBeenCalled();
+    FakeSocket.last.open();
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
   it('close() closes the socket, sends nothing and fires no onEnd', () => {
     const { h, sock, ends } = start();
     h.close();

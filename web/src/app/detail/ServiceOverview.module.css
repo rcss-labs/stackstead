@@ -77,6 +77,8 @@
 .containerName:hover { color: var(--accent); }
 
 .containerStatus { grid-column: 2; color: var(--muted); font-size: 12px; }
+.terminalLink { grid-column: 2; justify-self: start; color: var(--muted); font-size: 12px; text-decoration: none; }
+.terminalLink:hover { color: var(--accent); }
 .empty { margin: 0; color: var(--muted); font-size: 12.5px; }
 
 .head { display: flex; align-items: baseline; justify-content: space-between; }
