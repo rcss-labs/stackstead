@@ -69,6 +69,9 @@ const (
 	codeImageNotBuilt      = "image_not_built"
 	codeImageTooLarge      = "image_too_large"
 	codeGitHubUnconfigured = "github_unconfigured"
+	codeGitHubUnauthorized = "github_unauthorized"
+	codeGitHubRateLimited  = "github_rate_limited"
+	codeGitHubUnreachable  = "github_unreachable"
 	maxUploadFiles         = 10000
 	uploadEnvelopeBytes    = 1 << 20 // multipart framing allowed on top of the context cap
 	dockerfileBodyMaxJSON  = dockerfileBodyBytes
@@ -139,6 +142,12 @@ func (s *server) writeImagesError(w http.ResponseWriter, r *http.Request, err er
 		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, images.ErrGitHubUnconfigured):
 		writeCodedError(w, http.StatusConflict, err.Error(), codeGitHubUnconfigured)
+	case errors.Is(err, images.ErrGitHubUnauthorized):
+		writeCodedError(w, http.StatusConflict, err.Error(), codeGitHubUnauthorized)
+	case errors.Is(err, images.ErrGitHubRateLimited):
+		writeCodedError(w, http.StatusTooManyRequests, err.Error(), codeGitHubRateLimited)
+	case errors.Is(err, images.ErrGitHubUnreachable):
+		writeCodedError(w, http.StatusBadGateway, err.Error(), codeGitHubUnreachable)
 	case errors.Is(err, images.ErrImageExists):
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, images.ErrTagTaken):

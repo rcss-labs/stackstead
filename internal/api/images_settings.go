@@ -10,6 +10,7 @@ import (
 	"github.com/rcss-labs/stackstead/internal/apitypes"
 	"github.com/rcss-labs/stackstead/internal/registry"
 	"github.com/rcss-labs/stackstead/internal/secret"
+	"github.com/rcss-labs/stackstead/internal/stacks"
 )
 
 // RegistriesAPI is the registry store the settings routes need;
@@ -253,7 +254,16 @@ func (s *server) handleTestGitHub(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, apitypes.GitHubTest{OK: true, Login: login, Message: "token accepted"})
 	case errors.Is(err, images.ErrGitHubUnconfigured):
 		s.writeImagesError(w, r, err)
-	default:
+	case isGitHubFailure(err):
 		writeJSON(w, http.StatusOK, apitypes.GitHubTest{OK: false, Message: err.Error()})
+	default:
+		s.writeImagesError(w, r, err)
 	}
+}
+
+// isGitHubFailure reports errors that describe the GitHub side of a check.
+func isGitHubFailure(err error) bool {
+	var validation *stacks.ValidationError
+	return errors.Is(err, images.ErrGitHubUnauthorized) || errors.Is(err, images.ErrGitHubRateLimited) ||
+		errors.Is(err, images.ErrGitHubUnreachable) || errors.As(err, &validation)
 }

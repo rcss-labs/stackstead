@@ -27,6 +27,13 @@ var _ GitHubAPI = (*github.Client)(nil)
 // ErrGitHubUnconfigured means no GitHub token is stored.
 var ErrGitHubUnconfigured = errors.New("no GitHub token is configured")
 
+// Sentinels for GitHub failures; the messages stay token-free.
+var (
+	ErrGitHubUnauthorized = errors.New("GitHub rejected the token")
+	ErrGitHubRateLimited  = errors.New("GitHub rate limit reached, try again later")
+	ErrGitHubUnreachable  = errors.New("GitHub is unreachable")
+)
+
 var commitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 func errGitHubReadOnly() error { return fieldError("source", "GitHub images are read-only") }
@@ -254,15 +261,15 @@ func githubFailure(err error) error {
 	case errors.Is(err, github.ErrArchiveTooLarge):
 		return errors.New("repository archive is too large")
 	case errors.Is(err, github.ErrStalled):
-		return errors.New("GitHub download stalled")
+		return &mappedError{"GitHub download stalled", ErrGitHubUnreachable}
 	case errors.Is(err, github.ErrRateLimited):
-		return errors.New("GitHub rate limit reached, try again later")
+		return &mappedError{ErrGitHubRateLimited.Error(), ErrGitHubRateLimited}
 	case errors.Is(err, github.ErrUnauthorized):
-		return errors.New("GitHub rejected the token")
+		return &mappedError{ErrGitHubUnauthorized.Error(), ErrGitHubUnauthorized}
 	case errors.Is(err, github.ErrNotFound):
 		return errors.New("GitHub repository or ref not found")
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return err
 	}
-	return fmt.Errorf("GitHub request failed: %s", strings.TrimPrefix(err.Error(), "github: "))
+	return &mappedError{"GitHub request failed: " + strings.TrimPrefix(err.Error(), "github: "), ErrGitHubUnreachable}
 }

@@ -3,15 +3,16 @@ package api_test
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/rcss-labs/stackstead/internal/api"
 	"github.com/rcss-labs/stackstead/internal/apitypes"
+	"github.com/rcss-labs/stackstead/internal/images/github"
 	"github.com/rcss-labs/stackstead/internal/peers"
 	"github.com/rcss-labs/stackstead/internal/secret"
-	"io"
 )
 
 // fakeGitHub stands in for the GitHub API: no network is used.
@@ -22,6 +23,7 @@ type fakeGitHub struct {
 	headErr    error
 	dockerfile string
 	gotTokens  []secret.Secret
+	headBranch string
 }
 
 func (f *fakeGitHub) User(_ context.Context, t secret.Secret) (string, error) {
@@ -29,7 +31,8 @@ func (f *fakeGitHub) User(_ context.Context, t secret.Secret) (string, error) {
 	return f.login, f.userErr
 }
 
-func (f *fakeGitHub) Head(_ context.Context, t secret.Secret, _, _ string) (string, error) {
+func (f *fakeGitHub) Head(_ context.Context, t secret.Secret, _, branch string) (string, error) {
+	f.headBranch = branch
 	f.gotTokens = append(f.gotTokens, t)
 	return f.head, f.headErr
 }
@@ -187,7 +190,7 @@ func TestGitHubImageIsReadOnlyOverAPI(t *testing.T) {
 	}
 }
 
-func TestBuildPassesRefThrough(t *testing.T) {
+func TestBuildRefRefusedForUploadImage(t *testing.T) {
 	env := newImagesEnv(t)
 	env.createImage(t, "plain")
 	rec := env.req(t, "POST", "/api/images/plain/builds", `{"tag":"1","ref":"main"}`)
@@ -195,3 +198,62 @@ func TestBuildPassesRefThrough(t *testing.T) {
 		t.Errorf("ref on upload image = %d %s", rec.Code, rec.Body)
 	}
 }
+
+func TestGitHubBuildPassesRefToService(t *testing.T) {
+	env := newImagesEnv(t)
+	env.setGitHubToken(t, "ghp_SECRETTOKENVALUE")
+	if rec := env.req(t, "POST", "/api/images", ghImageBody); rec.Code != 201 {
+		t.Fatalf("create = %d %s", rec.Code, rec.Body)
+	}
+	env.gh.headErr = nil
+	// An unknown tag name is resolved through Head, which the fake answers
+	// with a failure; the failure proves the ref reached the service.
+	env.gh.headErr = github.ErrRateLimited
+	rec := env.req(t, "POST", "/api/images/app/builds", `{"tag":"1","ref":"v1"}`)
+	if rec.Code != 429 || env.gh.headBranch != "v1" {
+		t.Errorf("build with ref = %d %s (head asked for %q)", rec.Code, rec.Body, env.gh.headBranch)
+	}
+}
+
+func TestGitHubFailuresMapToCodes(t *testing.T) {
+	env := newImagesEnv(t)
+	env.setGitHubToken(t, "ghp_SECRETTOKENVALUE")
+	if rec := env.req(t, "POST", "/api/images", ghImageBody); rec.Code != 201 {
+		t.Fatalf("create = %d %s", rec.Code, rec.Body)
+	}
+	for _, c := range []struct {
+		err    error
+		status int
+		code   string
+	}{
+		{github.ErrUnauthorized, 409, "github_unauthorized"},
+		{github.ErrRateLimited, 429, "github_rate_limited"},
+		{github.ErrStalled, 502, "github_unreachable"},
+		{errors.New("github: dial tcp refused"), 502, "github_unreachable"},
+	} {
+		env.gh.headErr = c.err
+		for _, path := range []string{"/api/images/app/github/head"} {
+			rec := env.req(t, "GET", path, "")
+			if rec.Code != c.status || !strings.Contains(rec.Body.String(), `"`+c.code+`"`) || strings.Contains(rec.Body.String(), "ghp_") {
+				t.Errorf("%v: %s = %d %s, want %d %s", c.err, path, rec.Code, rec.Body, c.status, c.code)
+			}
+		}
+		rec := env.req(t, "POST", "/api/images/app/builds", `{"tag":"1"}`)
+		if rec.Code != c.status || !strings.Contains(rec.Body.String(), `"`+c.code+`"`) {
+			t.Errorf("%v: build = %d %s, want %d %s", c.err, rec.Code, rec.Body, c.status, c.code)
+		}
+	}
+	// A failed token test still answers 200 ok:false.
+	env.gh.userErr = github.ErrRateLimited
+	rec := env.req(t, "POST", "/api/settings/github/test", "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"ok":false`) {
+		t.Errorf("test = %d %s", rec.Code, rec.Body)
+	}
+	// Creating and updating still work with a healthy client.
+	env.gh.headErr = nil
+	if rec := env.req(t, "PUT", "/api/images/app", ghUpdateBody); rec.Code != 200 {
+		t.Errorf("update = %d %s", rec.Code, rec.Body)
+	}
+}
+
+const ghUpdateBody = `{"name":"app","dockerfilePath":"Dockerfile","buildArgs":{},"github":{"repo":"acme/app","branch":"dev","path":"svc"},"retention":{}}`

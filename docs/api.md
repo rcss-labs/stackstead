@@ -402,6 +402,9 @@ afterwards; content blobs live under `DataDir/images/<slug>/blobs/`.
 | 409 `image_not_built` | the referenced tag has no built version |
 | 409 `registry_unconfigured` | the push target's registry is missing credentials |
 | 409 `github_unconfigured` | no GitHub token is stored |
+| 409 `github_unauthorized` | GitHub rejected the stored token (never 401, which would end the web session) |
+| 429 `github_rate_limited` | GitHub's rate limit was reached; try again later |
+| 502 `github_unreachable` | GitHub could not be reached or the download stalled |
 | 413 `image_too_large` | a file or the context is over its limit |
 
 ### Operations
