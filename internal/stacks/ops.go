@@ -29,6 +29,17 @@ const (
 	maxRetainedLines  = 20000
 	maxRecentPerStack = 20
 	maxLineBytes      = 8 << 10
+	// maxRetainedBytes caps the output kept for one operation. The newest
+	// lines are kept; older ones count as dropped.
+	maxRetainedBytes = 4 << 20
+	// completedTTL is how long a finished operation (and its output) stays
+	// available, whatever happens to its stack.
+	completedTTL = time.Hour
+	// maxCompletedOps and maxCompletedBytes bound all finished operations
+	// together; the oldest finished ones go first. Running operations are
+	// never evicted.
+	maxCompletedOps   = 200
+	maxCompletedBytes = 64 << 20
 	// subscriberBuffer is how many live lines a subscriber may lag behind
 	// before it is dropped.
 	subscriberBuffer = 256
@@ -58,8 +69,10 @@ type OpFunc func(ctx context.Context, out func(line string)) error
 // is guarded by Ops.mu; finished is closed (once) when the op ends.
 type op struct {
 	info    Operation
-	lines   []string // newest maxRetainedLines lines
+	lines   []string // newest lines within maxRetainedLines and maxRetainedBytes
+	bytes   int      // total length of lines
 	dropped int      // lines discarded from the front of lines
+	seq     uint64   // start order, breaks ties between equal end times
 	subs    map[*subscriber]struct{}
 	cancel  context.CancelFunc
 	// finished is closed after info reaches its final state.
@@ -87,6 +100,7 @@ type Ops struct {
 	byID     map[string]*op
 	byStack  map[string][]*op // oldest first, at most maxRecentPerStack
 	shutdown bool
+	nextSeq  uint64
 }
 
 // NewOps creates a manager. A timeout <= 0 disables the per-operation timeout.
@@ -134,6 +148,7 @@ func (o *Ops) startOp(stack, action, service string, timeout time.Duration, fn O
 		o.mu.Unlock()
 		return Operation{}, ErrShutdown
 	}
+	o.pruneLocked()
 	if hist := o.byStack[stack]; len(hist) > 0 && hist[len(hist)-1].info.State == OpRunning {
 		o.mu.Unlock()
 		return Operation{}, ErrBusy
@@ -148,10 +163,12 @@ func (o *Ops) startOp(stack, action, service string, timeout time.Duration, fn O
 	rec := &op{
 		info: Operation{ID: id, Stack: stack, Service: service, Action: action, State: OpRunning,
 			StartedAt: o.now(), ExitCode: -1},
+		seq:      o.nextSeq,
 		subs:     map[*subscriber]struct{}{},
 		cancel:   cancel,
 		finished: make(chan struct{}),
 	}
+	o.nextSeq++
 	o.byID[id] = rec
 	hist := append(o.byStack[stack], rec)
 	if len(hist) > maxRecentPerStack {
@@ -218,6 +235,7 @@ func (o *Ops) finish(rec *op, err, ctxErr error) {
 	}
 	rec.subs = nil
 	close(rec.finished)
+	o.pruneLocked()
 }
 
 func (o *Ops) emit(rec *op, line string) {
@@ -228,7 +246,11 @@ func (o *Ops) emit(rec *op, line string) {
 		return
 	}
 	rec.lines = append(rec.lines, line)
-	if len(rec.lines) > maxRetainedLines {
+	rec.bytes += len(line)
+	// Keep at least the newest line, however long.
+	for (len(rec.lines) > maxRetainedLines || rec.bytes > maxRetainedBytes) && len(rec.lines) > 1 {
+		rec.bytes -= len(rec.lines[0])
+		rec.lines[0] = "" // do not keep the evicted text reachable through the backing array
 		rec.lines = rec.lines[1:]
 		rec.dropped++
 	}
@@ -256,7 +278,62 @@ func (rec *op) retained() []string {
 	return out
 }
 
+// pruneLocked drops finished operations that outlived completedTTL, then the
+// oldest finished ones while they exceed maxCompletedOps or maxCompletedBytes.
+// Running operations stay. Caller holds o.mu.
+func (o *Ops) pruneLocked() {
+	now := o.now()
+	var done []*op
+	total := 0
+	for _, rec := range o.byID {
+		if rec.info.State == OpRunning {
+			continue
+		}
+		if now.Sub(rec.info.EndedAt) > completedTTL {
+			o.evictLocked(rec)
+			continue
+		}
+		done = append(done, rec)
+		total += rec.bytes
+	}
+	if len(done) <= maxCompletedOps && total <= maxCompletedBytes {
+		return
+	}
+	sort.Slice(done, func(i, j int) bool {
+		if !done[i].info.EndedAt.Equal(done[j].info.EndedAt) {
+			return done[i].info.EndedAt.Before(done[j].info.EndedAt)
+		}
+		return done[i].seq < done[j].seq
+	})
+	for _, rec := range done {
+		if len(done) <= maxCompletedOps && total <= maxCompletedBytes {
+			return
+		}
+		o.evictLocked(rec)
+		total -= rec.bytes
+		done = done[1:]
+	}
+}
+
+// evictLocked forgets a finished operation. Caller holds o.mu.
+func (o *Ops) evictLocked(rec *op) {
+	delete(o.byID, rec.info.ID)
+	hist := o.byStack[rec.info.Stack]
+	for i, h := range hist {
+		if h == rec {
+			hist = append(hist[:i], hist[i+1:]...)
+			break
+		}
+	}
+	if len(hist) == 0 {
+		delete(o.byStack, rec.info.Stack)
+	} else {
+		o.byStack[rec.info.Stack] = hist
+	}
+}
+
 func (o *Ops) lookup(id string) (*op, error) {
+	o.pruneLocked()
 	rec, ok := o.byID[id]
 	if !ok {
 		return nil, ErrOperationNotFound
@@ -345,6 +422,7 @@ func (o *Ops) Cancel(id string) error {
 func (o *Ops) Recent(stack string) []Operation {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	o.pruneLocked()
 	hist := o.byStack[stack]
 	out := make([]Operation, 0, len(hist))
 	for i := len(hist) - 1; i >= 0; i-- {
@@ -357,6 +435,7 @@ func (o *Ops) Recent(stack string) []Operation {
 func (o *Ops) All() []Operation {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	o.pruneLocked()
 	var out []Operation
 	for _, hist := range o.byStack {
 		for _, rec := range hist {
