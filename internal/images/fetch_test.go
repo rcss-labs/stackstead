@@ -1,8 +1,13 @@
 package images
 
 import (
+	"archive/tar"
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -14,7 +19,34 @@ import (
 	"github.com/rcss-labs/stackstead/internal/stacks"
 )
 
-const tarPayload = "0123456789abcdefghij-tar-bytes"
+// tarPayload is a valid docker-save style archive naming exactly the rig's ref.
+var tarPayload = string(archiveFor(rigRef, rigRef))
+
+const rigRef = "stackstead.invalid/bbbbbbbbbbbb/shared:2"
+
+type archiveFile struct{ name, content string }
+
+// archiveFor builds a tar with a layer, then manifest.json naming tags last,
+// as docker save orders it.
+func archiveFor(_ string, tags ...string) []byte {
+	return buildArchive(archiveFile{"layer.tar", strings.Repeat("L", 4096)}, archiveFile{"manifest.json", manifestJSON(tags...)})
+}
+
+func manifestJSON(tags ...string) string {
+	b, _ := json.Marshal([]map[string]any{{"Config": "c.json", "RepoTags": tags, "Layers": []string{"layer.tar"}}})
+	return string(b)
+}
+
+func buildArchive(files ...archiveFile) []byte {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	for _, f := range files {
+		tw.WriteHeader(&tar.Header{Name: f.name, Mode: 0o644, Size: int64(len(f.content)), Typeflag: tar.TypeReg})
+		tw.Write([]byte(f.content))
+	}
+	tw.Close()
+	return buf.Bytes()
+}
 
 type fetchRig struct {
 	*harness
@@ -37,7 +69,7 @@ func newFetchRig(t *testing.T) *fetchRig {
 	peer.tar = func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-tar")
 		w.Header().Set("X-Stackstead-Image-ID", "sha256:2")
-		io.WriteString(w, tarPayload)
+		w.Write([]byte(tarPayload))
 	}
 	return &fetchRig{harness: h, peer: peer, ref: ref}
 }
@@ -49,7 +81,7 @@ func TestFetchLoadsAndVerifies(t *testing.T) {
 		gotUser, gotCred = req.Header.Get("X-Stackstead-Peer-User"), req.Header.Get("X-Stackstead-Peer")
 		w.Header().Set("Content-Type", "application/x-tar")
 		w.Header().Set("X-Stackstead-Image-ID", "sha256:2")
-		io.WriteString(w, tarPayload)
+		w.Write([]byte(tarPayload))
 	}
 	op, started, err := r.svc.Fetch(context.Background(), "alice", r.ref)
 	if err != nil || !started {
@@ -68,7 +100,7 @@ func TestFetchLoadsAndVerifies(t *testing.T) {
 		t.Errorf("user %q credential-present %v", gotUser, gotCred != "")
 	}
 	e, ok := r.log.last("image.fetch")
-	if !ok || e.Scope != "shared" || e.Detail != "Host B 30" {
+	if !ok || e.Scope != "shared" || e.Detail != fmt.Sprintf("Host B %d", len(tarPayload)) {
 		t.Fatalf("log = %+v ok=%v", e, ok)
 	}
 	if strings.Contains(e.Detail, peerCredential) {
@@ -188,10 +220,10 @@ func TestEnsureLocalFetchesFromOwner(t *testing.T) {
 	r.peer.tar = func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/x-tar")
 		w.Header().Set("X-Stackstead-Image-ID", "sha256:2")
-		io.WriteString(w, tarPayload[:10])
+		w.Write([]byte(tarPayload[:10]))
 		w.(http.Flusher).Flush()
 		time.Sleep(80 * time.Millisecond)
-		io.WriteString(w, tarPayload[10:])
+		w.Write([]byte(tarPayload[10:]))
 	}
 	// The caller holds the image's operations key, as a stack `up` would hold its own.
 	release := make(chan struct{})
@@ -217,7 +249,7 @@ func TestEnsureLocalFetchesFromOwner(t *testing.T) {
 	if !progress || lines[len(lines)-1] != "loaded "+r.ref.String() {
 		t.Fatalf("lines = %q", lines)
 	}
-	if e, ok := r.log.last("image.fetch"); !ok || e.Detail != "Host B 30" {
+	if e, ok := r.log.last("image.fetch"); !ok || e.Detail != fmt.Sprintf("Host B %d", len(tarPayload)) {
 		t.Fatalf("log = %+v", e)
 	}
 }
@@ -242,8 +274,9 @@ func TestFetchIdleWatchdogAllowsSteadyProgress(t *testing.T) {
 	r.peer.tar = func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/x-tar")
 		w.Header().Set("X-Stackstead-Image-ID", "sha256:2")
-		for i := 0; i < 6; i++ {
-			io.WriteString(w, "chunk")
+		step := len(tarPayload)/6 + 1
+		for off := 0; off < len(tarPayload); off += step {
+			w.Write([]byte(tarPayload[off:min(off+step, len(tarPayload))]))
 			w.(http.Flusher).Flush()
 			time.Sleep(40 * time.Millisecond)
 		}
@@ -254,5 +287,230 @@ func TestFetchIdleWatchdogAllowsSteadyProgress(t *testing.T) {
 	}
 	if done := r.waitOp(t, op.ID); done.State != stacks.OpSucceeded {
 		t.Fatalf("op = %+v", done)
+	}
+}
+
+// dockerLikeLoad reads like docker does: tar entries until the end-of-archive
+// blocks, never the stream's own EOF, then tags the image.
+func (r *fetchRig) dockerLikeLoad(result *error) {
+	r.eng.loadFn = func(ctx context.Context, in io.Reader) error {
+		tr := tar.NewReader(bufio.NewReaderSize(in, 64<<10)) // real docker reads in large chunks
+		for {
+			_, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				*result = err
+				return err
+			}
+			if _, err := io.Copy(io.Discard, tr); err != nil {
+				*result = err
+				return err
+			}
+		}
+		r.eng.mu.Lock()
+		r.eng.present[r.ref.String()] = true // tagging happens here
+		r.eng.mu.Unlock()
+		return nil
+	}
+}
+
+func (r *fetchRig) serve(archive []byte) {
+	r.peer.tar = func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/x-tar")
+		w.Header().Set("X-Stackstead-Image-ID", "sha256:2")
+		w.Write(archive)
+		w.(http.Flusher).Flush()
+		time.Sleep(80 * time.Millisecond) // the stream's EOF comes well after the archive's last block
+	}
+}
+
+func TestFetchRejectsForeignTags(t *testing.T) {
+	own := rigRef
+	index := func(ann map[string]string) string {
+		b, _ := json.Marshal(map[string]any{"manifests": []map[string]any{{"annotations": ann}}})
+		return string(b)
+	}
+	layer := archiveFile{"layer.tar", strings.Repeat("L", 4096)}
+	cases := map[string][]byte{
+		"manifest extra tag":    buildArchive(layer, archiveFile{"manifest.json", manifestJSON(own, "nginx:latest")}),
+		"manifest only foreign": buildArchive(layer, archiveFile{"manifest.json", manifestJSON("nginx:latest")}),
+		"repositories": buildArchive(layer, archiveFile{"manifest.json", manifestJSON(own)},
+			archiveFile{"repositories", `{"nginx":{"latest":"abc"}}`}),
+		"index containerd name": buildArchive(layer, archiveFile{"index.json", index(map[string]string{"io.containerd.image.name": "docker.io/library/nginx:latest"})}),
+		"index ref name":        buildArchive(layer, archiveFile{"index.json", index(map[string]string{"org.opencontainers.image.ref.name": "docker.io/library/nginx:latest"})}),
+		"metadata too large":    buildArchive(layer, archiveFile{"manifest.json", manifestJSON(own) + strings.Repeat(" ", 2<<20)}),
+		"not a tar":             []byte(strings.Repeat("\x1f\x8b not a tar ", 200)),
+	}
+	// A slow check proves the chunk carrying the entry's end is withheld until judged.
+	tarCheckHook = func() { time.Sleep(30 * time.Millisecond) }
+	t.Cleanup(func() { tarCheckHook = nil })
+	for name, archive := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := newFetchRig(t)
+			var loadErr error
+			r.dockerLikeLoad(&loadErr)
+			r.serve(archive)
+			op, _, err := r.svc.Fetch(context.Background(), "alice", r.ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			done := r.waitOp(t, op.ID)
+			if done.State != stacks.OpFailed {
+				t.Fatalf("op = %+v", done)
+			}
+			if name != "not a tar" && name != "metadata too large" && done.Error != "image archive names other tags" {
+				t.Errorf("error = %q", done.Error)
+			}
+			if loadErr == nil {
+				t.Error("load saw a clean archive and may have tagged it")
+			}
+			if r.eng.present[r.ref.String()] {
+				t.Error("image was tagged")
+			}
+		})
+	}
+}
+
+func TestFetchAcceptsOwnTagInEveryMetadataFile(t *testing.T) {
+	r := newFetchRig(t)
+	idx, _ := json.Marshal(map[string]any{"manifests": []map[string]any{{"annotations": map[string]string{
+		"io.containerd.image.name": rigRef, "org.opencontainers.image.ref.name": "2"}}}})
+	r.serve(buildArchive(archiveFile{"layer.tar", "L"}, archiveFile{"index.json", string(idx)},
+		archiveFile{"manifest.json", manifestJSON(rigRef)}, archiveFile{"repositories", `{"stackstead.invalid/bbbbbbbbbbbb/shared":{"2":"abc"}}`}))
+	var loadErr error
+	r.dockerLikeLoad(&loadErr)
+	op, _, err := r.svc.Fetch(context.Background(), "alice", r.ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done := r.waitOp(t, op.ID); done.State != stacks.OpSucceeded {
+		t.Fatalf("op = %+v", done)
+	}
+}
+
+func TestFetchWatchdogStopsAfterEOF(t *testing.T) {
+	r := newFetchRig(t)
+	r.svc.fetchIdle = 50 * time.Millisecond
+	r.eng.loadFn = func(ctx context.Context, in io.Reader) error {
+		if _, err := io.Copy(io.Discard, in); err != nil {
+			return err
+		}
+		select { // docker unpacking after the body ended; the request dies with ctx
+		case <-time.After(200 * time.Millisecond):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		r.eng.mu.Lock()
+		r.eng.present[r.ref.String()] = true
+		r.eng.mu.Unlock()
+		return nil
+	}
+	op, _, err := r.svc.Fetch(context.Background(), "alice", r.ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done := r.waitOp(t, op.ID); done.State != stacks.OpSucceeded {
+		t.Fatalf("op = %+v", done)
+	}
+}
+
+func TestFetchSharesOneTransferPerRef(t *testing.T) {
+	r := newFetchRig(t)
+	r.peer.tar = func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/x-tar")
+		w.Header().Set("X-Stackstead-Image-ID", "sha256:2")
+		w.Write([]byte(tarPayload[:10]))
+		w.(http.Flusher).Flush()
+		time.Sleep(150 * time.Millisecond)
+		w.Write([]byte(tarPayload[10:]))
+	}
+	errs := make(chan error, 3)
+	for i := 0; i < 3; i++ {
+		go func() { errs <- r.svc.EnsureLocal(context.Background(), r.ref, func(string) {}) }()
+	}
+	for i := 0; i < 3; i++ {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := r.peer.tarHits.Load(); n != 1 {
+		t.Fatalf("tar requests = %d, want 1 shared transfer", n)
+	}
+}
+
+func TestFetchRefusesBadTransferHeaders(t *testing.T) {
+	type tc struct {
+		name   string
+		serve  func(w http.ResponseWriter)
+		errMsg string
+	}
+	cases := []tc{
+		{"wrong content type", func(w http.ResponseWriter) {
+			w.Header().Set("Content-Type", "text/html")
+			w.Header().Set("X-Stackstead-Image-ID", "sha256:2")
+			w.Write([]byte(tarPayload))
+		}, "did not send an image"},
+		{"missing image id", func(w http.ResponseWriter) {
+			w.Header().Set("Content-Type", "application/x-tar")
+			w.Write([]byte(tarPayload))
+		}, "fetched image does not match the owner's record"},
+		{"id differs from the library record", func(w http.ResponseWriter) {
+			w.Header().Set("Content-Type", "application/x-tar")
+			w.Header().Set("X-Stackstead-Image-ID", "sha256:else")
+			w.Write([]byte(tarPayload))
+		}, "fetched image does not match the owner's record"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := newFetchRig(t)
+			r.peer.tar = func(w http.ResponseWriter, _ *http.Request) { c.serve(w) }
+			op, _, err := r.svc.Fetch(context.Background(), "alice", r.ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			done := r.waitOp(t, op.ID)
+			if done.State != stacks.OpFailed || !strings.Contains(done.Error, c.errMsg) {
+				t.Fatalf("op = %+v", done)
+			}
+			if len(r.eng.loaded) != 0 || r.eng.present[r.ref.String()] {
+				t.Fatal("image was loaded")
+			}
+		})
+	}
+}
+
+func TestFetchRefusesVersionWithoutArch(t *testing.T) {
+	r := newFetchRig(t)
+	r.peer.images[0].Versions[0].Arch = ""
+	_, _, err := r.svc.Fetch(context.Background(), "alice", r.ref)
+	if err == nil || !strings.Contains(err.Error(), "did not record an architecture") || r.peer.tarHits.Load() != 0 {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// The chunk that completes a metadata entry is judged before docker sees it:
+// docker stops at the archive's end blocks and never needs the stream's EOF.
+func TestTarInspectorWithholdsChunkWithForeignTag(t *testing.T) {
+	tarCheckHook = func() { time.Sleep(30 * time.Millisecond) }
+	defer func() { tarCheckHook = nil }()
+	// The manifest is exactly one block, so a chunk can end where its content ends.
+	manifest := manifestJSON(rigRef, "nginx:latest")
+	manifest += strings.Repeat(" ", 512-len(manifest))
+	archive := buildArchive(archiveFile{"layer.tar", "L"}, archiveFile{"manifest.json", manifest})
+	cut := len(archive) - 1024 // the two end-of-archive blocks arrive later
+	insp := newTarInspector(io.MultiReader(bytes.NewReader(archive[:cut]), bytes.NewReader(archive[cut:])), rigRef)
+	defer insp.close()
+	n, err := insp.Read(make([]byte, 64<<10))
+	if n != 0 || !errors.Is(err, errForeignTags) {
+		t.Fatalf("first read = %d, %v", n, err)
+	}
+
+	own := newTarInspector(bytes.NewReader(buildArchive(archiveFile{"manifest.json", manifestJSON(rigRef)})), rigRef)
+	defer own.close()
+	got, err := io.ReadAll(own)
+	if err != nil || len(got) == 0 {
+		t.Fatalf("own archive: %d bytes, %v", len(got), err)
 	}
 }

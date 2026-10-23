@@ -1,0 +1,228 @@
+package images
+
+import (
+	"archive/tar"
+	"encoding/json"
+	"errors"
+	"io"
+	"path"
+	"strings"
+	"sync"
+)
+
+// maxArchiveMetadataBytes caps each tag-bearing entry the inspector parses.
+const maxArchiveMetadataBytes = 1 << 20
+
+// tarCheckHook is a test seam that runs before each metadata check.
+var tarCheckHook func()
+
+var (
+	errForeignTags      = errors.New("image archive names other tags")
+	errArchiveMalformed = errors.New("image archive is not a valid tar")
+	errMetadataTooLarge = errors.New("image archive metadata is too large")
+)
+
+// tarInspector is a pass-through reader that parses the tar it carries and
+// refuses an archive that names any tag other than want, so docker load can
+// never retag an unrelated local image.
+//
+// Docker applies tags only after it has read the whole archive (a tar reader
+// stops at the end-of-archive blocks, not at stream EOF), so the inspector
+// never hands a chunk to the consumer before its parser has fully processed
+// that chunk. A violation is therefore reported on the Read that would have
+// delivered the entry's final bytes, before any trailer reaches docker.
+type tarInspector struct {
+	src  io.Reader
+	want string
+
+	pw   *io.PipeWriter
+	done chan struct{}
+
+	mu       sync.Mutex
+	cond     *sync.Cond
+	consumed int64 // bytes the parser has read
+	waitAt   int64 // value of consumed when the parser last asked for more
+	finished bool
+	aborted  bool  // the source failed or the consumer stopped: parse errors are no verdict
+	err      error // first violation
+
+	sent int64
+}
+
+func newTarInspector(src io.Reader, want string) *tarInspector {
+	pr, pw := io.Pipe()
+	t := &tarInspector{src: src, want: want, pw: pw, done: make(chan struct{}), waitAt: -1}
+	t.cond = sync.NewCond(&t.mu)
+	go t.parse(pr)
+	return t
+}
+
+// parserReader tells the inspector when the parser is waiting for more bytes.
+type parserReader struct {
+	t  *tarInspector
+	pr *io.PipeReader
+}
+
+func (p parserReader) Read(b []byte) (int, error) {
+	p.t.mu.Lock()
+	p.t.waitAt = p.t.consumed
+	p.t.cond.Broadcast()
+	p.t.mu.Unlock()
+	n, err := p.pr.Read(b)
+	p.t.mu.Lock()
+	p.t.consumed += int64(n)
+	p.t.mu.Unlock()
+	return n, err
+}
+
+func (t *tarInspector) fail(err error) {
+	t.mu.Lock()
+	if t.err == nil && !t.aborted {
+		t.err = err
+	}
+	t.mu.Unlock()
+}
+
+func (t *tarInspector) parse(pr *io.PipeReader) {
+	defer close(t.done)
+	tr := tar.NewReader(parserReader{t: t, pr: pr})
+	for {
+		h, err := tr.Next()
+		if err != nil {
+			if err != io.EOF {
+				t.fail(errArchiveMalformed)
+			}
+			break
+		}
+		name := strings.TrimPrefix(path.Clean(h.Name), "./")
+		if h.Typeflag != tar.TypeReg || (name != "manifest.json" && name != "repositories" && name != "index.json") {
+			continue
+		}
+		if h.Size > maxArchiveMetadataBytes {
+			t.fail(errMetadataTooLarge)
+			break
+		}
+		data, err := io.ReadAll(io.LimitReader(tr, maxArchiveMetadataBytes+1))
+		if err != nil {
+			t.fail(errArchiveMalformed)
+			break
+		}
+		if err := t.checkMetadata(name, data); err != nil {
+			t.fail(err)
+			break
+		}
+	}
+	t.mu.Lock()
+	t.finished = true
+	t.cond.Broadcast()
+	t.mu.Unlock()
+	_, _ = io.Copy(io.Discard, pr) // keep the writer unblocked after the parser is done
+}
+
+func (t *tarInspector) checkMetadata(name string, data []byte) error {
+	if tarCheckHook != nil {
+		tarCheckHook()
+	}
+	var names []string
+	switch name {
+	case "manifest.json":
+		var m []struct{ RepoTags []string }
+		if err := json.Unmarshal(data, &m); err != nil {
+			return errArchiveMalformed
+		}
+		for _, e := range m {
+			names = append(names, e.RepoTags...)
+		}
+	case "repositories":
+		var r map[string]map[string]string
+		if err := json.Unmarshal(data, &r); err != nil {
+			return errArchiveMalformed
+		}
+		for repo, tags := range r {
+			for tag := range tags {
+				names = append(names, repo+":"+tag)
+			}
+		}
+	case "index.json":
+		var idx struct {
+			Manifests []struct{ Annotations map[string]string }
+		}
+		if err := json.Unmarshal(data, &idx); err != nil {
+			return errArchiveMalformed
+		}
+		for _, m := range idx.Manifests {
+			if v, ok := m.Annotations["io.containerd.image.name"]; ok {
+				names = append(names, v)
+			}
+			// ref.name is a bare tag in OCI layouts; the tag of want is acceptable.
+			if v, ok := m.Annotations["org.opencontainers.image.ref.name"]; ok && v != t.wantTag() {
+				names = append(names, v)
+			}
+		}
+	}
+	for _, n := range names {
+		if n != t.want {
+			return errForeignTags
+		}
+	}
+	return nil
+}
+
+func (t *tarInspector) wantTag() string {
+	if i := strings.LastIndex(t.want, ":"); i >= 0 {
+		return t.want[i+1:]
+	}
+	return t.want
+}
+
+// Read passes bytes on only after the parser has processed them.
+func (t *tarInspector) Read(p []byte) (int, error) {
+	if err := t.violation(); err != nil {
+		return 0, err
+	}
+	n, rerr := t.src.Read(p)
+	if n > 0 {
+		if _, err := t.pw.Write(p[:n]); err != nil {
+			return 0, err
+		}
+		t.sent += int64(n)
+		t.mu.Lock()
+		for !t.finished && t.waitAt != t.sent {
+			t.cond.Wait()
+		}
+		t.mu.Unlock()
+		if err := t.violation(); err != nil {
+			return 0, err
+		}
+	}
+	if rerr != nil {
+		if rerr != io.EOF {
+			t.abort()
+		}
+		t.pw.Close()
+		<-t.done
+		if err := t.violation(); err != nil {
+			return 0, err
+		}
+	}
+	return n, rerr
+}
+
+func (t *tarInspector) violation() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.err
+}
+
+// close stops the parser; call it when the consumer is done reading.
+func (t *tarInspector) close() {
+	t.abort()
+	t.pw.Close()
+	<-t.done
+}
+
+func (t *tarInspector) abort() {
+	t.mu.Lock()
+	t.aborted = true
+	t.mu.Unlock()
+}

@@ -90,6 +90,8 @@ type Service struct {
 	peerTimeout   time.Duration
 	libraryTTL    time.Duration
 	peerCache     peerCache
+	fetchMu       sync.Mutex
+	fetches       map[string]*fetchFlight
 	fetchIdle     time.Duration // test seam: idle watchdog of a fetch
 	fetchProgress time.Duration // test seam: progress line interval
 

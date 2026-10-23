@@ -38,6 +38,8 @@ var (
 	ErrFetchRunning = errors.New("a fetch is already running for this image")
 
 	errStalled = errors.New("transfer stalled")
+
+	mismatchMessage = "fetched image does not match the owner's record"
 )
 
 // ArchMismatchError says the owner's version was built for another architecture.
@@ -111,6 +113,9 @@ func (s *Service) checkArch(ctx context.Context, v Version) error {
 	if err != nil {
 		return fmt.Errorf("read engine architecture: %w", err)
 	}
+	if v.Arch == "" {
+		return &peers.PeerError{Code: peers.CodeVersion, Msg: "the owner did not record an architecture"}
+	}
 	if v.Arch != local {
 		return &ArchMismatchError{Built: v.Arch, Local: local}
 	}
@@ -139,7 +144,7 @@ func (s *Service) Fetch(ctx context.Context, user string, ref imageref.Ref) (op 
 		return stacks.Operation{}, false, err
 	}
 	op, err = s.ops.StartTimeout(OpKey(ref.Owner, ref.Slug), "fetch", s.timeout, func(opCtx context.Context, out func(string)) error {
-		return s.fetchFrom(opCtx, user, ref, owner, out)
+		return s.fetchShared(opCtx, user, ref, owner, v, out)
 	})
 	if errors.Is(err, stacks.ErrBusy) {
 		return stacks.Operation{}, false, ErrFetchRunning
@@ -151,12 +156,12 @@ func (s *Service) Fetch(ctx context.Context, user string, ref imageref.Ref) (op 
 }
 
 // fetchFrom transfers ref from owner, verifies it and records the outcome.
-func (s *Service) fetchFrom(ctx context.Context, user string, ref imageref.Ref, owner ServerInfo, out func(string)) error {
+func (s *Service) fetchFrom(ctx context.Context, user string, ref imageref.Ref, owner ServerInfo, v Version, out func(string)) error {
 	if out == nil {
 		out = func(string) {}
 	}
 	var received atomic.Int64
-	err := s.transfer(ctx, user, ref, owner, &received, out)
+	err := s.transfer(ctx, user, ref, owner, v, &received, out)
 	bg := context.WithoutCancel(ctx)
 	detail := fmt.Sprintf("%s %d", owner.Name, received.Load())
 	if err != nil {
@@ -177,7 +182,7 @@ func (s *Service) fetchFrom(ctx context.Context, user string, ref imageref.Ref, 
 	return nil
 }
 
-func (s *Service) transfer(ctx context.Context, user string, ref imageref.Ref, owner ServerInfo, received *atomic.Int64, out func(string)) error {
+func (s *Service) transfer(ctx context.Context, user string, ref imageref.Ref, owner ServerInfo, v Version, received *atomic.Int64, out func(string)) error {
 	p, err := s.peers.Usable(owner.ID)
 	if err != nil {
 		return err
@@ -215,10 +220,14 @@ func (s *Service) transfer(ctx context.Context, user string, ref imageref.Ref, o
 		return &peers.PeerError{Code: peers.CodeProxy, Server: p.Name, Msg: p.Name + " did not send an image"}
 	}
 	wantID := resp.Header.Get(imageIDHeader)
+	if wantID == "" || wantID != v.ImageDigest {
+		return errors.New(mismatchMessage)
+	}
 
 	timer := time.AfterFunc(s.fetchIdle, func() { cancel(errStalled) })
 	defer timer.Stop()
-	body := &idleReader{r: resp.Body, timer: timer, idle: s.fetchIdle, n: received}
+	insp := newTarInspector(&idleReader{r: resp.Body, timer: timer, idle: s.fetchIdle, n: received}, ref.String())
+	defer insp.close()
 
 	done := make(chan struct{})
 	var wg sync.WaitGroup
@@ -236,9 +245,15 @@ func (s *Service) transfer(ctx context.Context, user string, ref imageref.Ref, o
 			}
 		}
 	}()
-	loadErr := s.eng.LoadImage(fctx, body)
+	loadErr := s.eng.LoadImage(fctx, insp)
+	if verr := insp.violation(); verr != nil {
+		cancel(verr) // a consumer that ignored the read error must not finish the load
+	}
 	close(done)
 	wg.Wait()
+	if verr := insp.violation(); verr != nil {
+		return verr
+	}
 	if loadErr != nil {
 		if errors.Is(context.Cause(fctx), errStalled) {
 			return fmt.Errorf("transfer from %s stalled", owner.Name)
@@ -250,11 +265,11 @@ func (s *Service) transfer(ctx context.Context, user string, ref imageref.Ref, o
 	if err != nil {
 		return fmt.Errorf("inspect fetched image: %w", err)
 	}
-	if wantID == "" || in.ID != wantID {
+	if in.ID != wantID {
 		if _, rerr := s.eng.RemoveImage(context.WithoutCancel(ctx), ref.String()); rerr != nil {
 			s.log.Warn("remove mismatched fetched image failed", "ref", ref.String(), "err", rerr)
 		}
-		return errors.New("fetched image does not match the owner's record")
+		return errors.New(mismatchMessage)
 	}
 	out("loaded " + ref.String())
 	return nil
@@ -287,7 +302,11 @@ type idleReader struct {
 func (i *idleReader) Read(p []byte) (int, error) {
 	n, err := i.r.Read(p)
 	i.n.Add(int64(n))
-	i.timer.Reset(i.idle)
+	if err != nil {
+		i.timer.Stop() // the watchdog covers the transfer only, not what docker does after EOF
+	} else {
+		i.timer.Reset(i.idle)
+	}
 	return n, err
 }
 
@@ -333,5 +352,50 @@ func (s *Service) EnsureLocal(ctx context.Context, ref imageref.Ref, out func(st
 	if err := s.checkArch(ctx, v); err != nil {
 		return err
 	}
-	return s.fetchFrom(ctx, fetchActor, ref, owner, out)
+	return s.fetchShared(ctx, fetchActor, ref, owner, v, out)
+}
+
+// fetchFlight is one transfer shared by every caller that wants the same ref.
+type fetchFlight struct {
+	done chan struct{}
+	err  error
+}
+
+// fetchShared runs one transfer per ref at a time. A concurrent caller waits
+// for it and shares its outcome, so a failed verification's untag can never
+// remove an image a sibling transfer has just loaded.
+func (s *Service) fetchShared(ctx context.Context, user string, ref imageref.Ref, owner ServerInfo, v Version, out func(string)) error {
+	key := ref.String()
+	s.fetchMu.Lock()
+	if f, ok := s.fetches[key]; ok {
+		s.fetchMu.Unlock()
+		if out != nil {
+			out("waiting for the transfer of " + key + " already in progress")
+		}
+		select {
+		case <-f.done:
+			return f.err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	f := &fetchFlight{done: make(chan struct{})}
+	if s.fetches == nil {
+		s.fetches = map[string]*fetchFlight{}
+	}
+	s.fetches[key] = f
+	s.fetchMu.Unlock()
+	defer func() {
+		s.fetchMu.Lock()
+		delete(s.fetches, key)
+		s.fetchMu.Unlock()
+		close(f.done)
+	}()
+	// A sibling may have finished between the caller's check and this flight.
+	if present, err := s.presentWithID(ctx, ref, v.ImageDigest); err != nil || present {
+		f.err = err
+		return err
+	}
+	f.err = s.fetchFrom(ctx, user, ref, owner, v, out)
+	return f.err
 }

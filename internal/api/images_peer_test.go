@@ -1,6 +1,8 @@
 package api_test
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -224,13 +226,20 @@ func fetchPair(t *testing.T) (consumer, owner *imagesPeerNode, ref string) {
 		t.Fatal(err)
 	}
 	owner.build("app", "1")
-	owner.eng.saveData = "FAKE-TAR-BYTES"
 	pair(t, consumer.peerNode, owner.peerNode)
 	self, err := owner.svc.LocalServer(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	return consumer, owner, "stackstead.invalid/" + imageref.OwnerID(self.ID) + "/app:"
+	base := "stackstead.invalid/" + imageref.OwnerID(self.ID) + "/app:"
+	manifest, _ := json.Marshal([]map[string]any{{"RepoTags": []string{base + "1"}}})
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	tw.WriteHeader(&tar.Header{Name: "manifest.json", Mode: 0o644, Size: int64(len(manifest)), Typeflag: tar.TypeReg})
+	tw.Write(manifest)
+	tw.Close()
+	owner.eng.saveData = buf.String()
+	return consumer, owner, base
 }
 
 func fetchBody(ref string) string {
