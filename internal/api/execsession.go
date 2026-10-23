@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rcss-labs/stackstead/internal/engine"
@@ -38,6 +39,7 @@ const (
 	idleWarningLead  = time.Minute
 	exitInspectTries = 20
 	exitInspectWait  = 50 * time.Millisecond
+	controlWriteWait = 250 * time.Millisecond // real time, not the injected clock
 )
 
 type sessionEnd int
@@ -54,8 +56,8 @@ type session struct {
 	be     execBackend
 	cfg    sessionConfig
 
-	writeMu sync.Mutex // serialises every ws write
-	sealed  bool       // a terminal frame was sent or the client is gone
+	writeMu sync.Mutex  // serialises every ws write
+	sealed  atomic.Bool // a terminal frame was sent or the client is gone
 
 	stateMu      sync.Mutex
 	lastActivity time.Time
@@ -100,9 +102,7 @@ func runSession(ctx context.Context, ws wsConn, stream engine.ExecStream, be exe
 			sincePong := cfg.Now().Sub(s.lastPong)
 			s.stateMu.Unlock()
 			if sincePong >= cfg.PongTimeout {
-				s.seal()
-				s.shutdownConns()
-				return "disconnected"
+				return s.finishClientGone()
 			}
 			if err := s.writeText(controlMsg{Type: "ping"}); err != nil {
 				return s.finishClientGone()
@@ -119,7 +119,8 @@ func runSession(ctx context.Context, ws wsConn, stream engine.ExecStream, be exe
 			case elapsed >= warnAt:
 				if !warned {
 					warned = true
-					remaining := int((cfg.IdleTimeout - elapsed) / time.Second)
+					// Round up so the client never sees 0 or a figure a second short.
+					remaining := max(1, int((cfg.IdleTimeout-elapsed+time.Second-1)/time.Second))
 					if err := s.writeText(controlMsg{Type: "idle_warning", Seconds: remaining}); err != nil {
 						return s.finishClientGone()
 					}
@@ -134,9 +135,7 @@ func runSession(ctx context.Context, ws wsConn, stream engine.ExecStream, be exe
 			return s.finishClosed("shutdown")
 
 		case <-ctx.Done():
-			s.seal()
-			s.shutdownConns()
-			return "disconnected"
+			return s.finishClientGone()
 		}
 	}
 }
@@ -225,41 +224,57 @@ var errSealed = fmt.Errorf("exec session: no more frames")
 func (s *session) writeBinary(p []byte) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	if s.sealed {
+	if s.sealed.Load() {
 		return errSealed
 	}
 	return s.ws.WriteBinary(p)
 }
 
+// lockWriteWithin takes the write mutex, giving up after d of real time. A
+// write stuck on a dead client holds the mutex; the control loop must not
+// freeze behind it.
+func (s *session) lockWriteWithin(d time.Duration) bool {
+	for deadline := time.Now().Add(d); ; time.Sleep(time.Millisecond) {
+		if s.writeMu.TryLock() {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+	}
+}
+
+// writeText sends a control frame. If a stuck write holds the connection, the
+// frame is skipped and the pong timeout decides the client's fate.
 func (s *session) writeText(m controlMsg) error {
-	s.writeMu.Lock()
+	if !s.lockWriteWithin(controlWriteWait) {
+		return nil
+	}
 	defer s.writeMu.Unlock()
-	if s.sealed {
+	if s.sealed.Load() {
 		return errSealed
 	}
 	return s.ws.WriteText(m)
 }
 
-// sendTerminal sends the single final frame and forbids any later write.
+// sendTerminal seals the session, then sends the single final frame if the
+// connection is writable.
 func (s *session) sendTerminal(m controlMsg) {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if s.sealed {
+	if !s.sealed.CompareAndSwap(false, true) {
 		return
 	}
-	s.sealed = true
+	if !s.lockWriteWithin(controlWriteWait) {
+		return
+	}
+	defer s.writeMu.Unlock()
 	_ = s.ws.WriteText(m)
 }
 
-func (s *session) seal() {
-	s.writeMu.Lock()
-	s.sealed = true
-	s.writeMu.Unlock()
-}
+func (s *session) seal() { s.sealed.Store(true) }
 
 func (s *session) shutdownConns() {
-	_ = s.ws.Close()
 	_ = s.stream.Close()
+	_ = s.ws.Close() // last: x/net Close waits for an in-flight write
 }
 
 // finishClosed ends a session the process did not cause.

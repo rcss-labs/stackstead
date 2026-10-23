@@ -27,6 +27,8 @@ type fakeWS struct {
 	mu    sync.Mutex
 	bins  [][]byte
 	texts []controlMsg
+
+	blockBinary bool // WriteBinary hangs until Close, like a dead client
 }
 
 type wsInbound struct {
@@ -51,6 +53,10 @@ func (f *fakeWS) ReadFrame() (bool, []byte, error) {
 }
 
 func (f *fakeWS) WriteBinary(p []byte) error {
+	if f.blockBinary {
+		<-f.closed
+		return io.ErrClosedPipe
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	select {
@@ -281,15 +287,20 @@ func (c *fakeClock) Advance(d time.Duration) {
 		if idx < 0 {
 			c.now = target
 			c.mu.Unlock()
-			time.Sleep(5 * time.Millisecond)
 			return
 		}
 		t := c.timers[idx]
 		c.timers = append(c.timers[:idx], c.timers[idx+1:]...)
 		c.now = t.at
+		armedBefore := len(c.timers)
 		c.mu.Unlock()
 		t.ch <- t.at
-		time.Sleep(3 * time.Millisecond)
+		// The loop handles the tick and then re-arms; wait for that so the
+		// next timer is created at the right fake time. A tick that ends the
+		// session never re-arms, so give up after a bound.
+		for end := time.Now().Add(400 * time.Millisecond); c.pending() <= armedBefore && time.Now().Before(end); {
+			time.Sleep(100 * time.Microsecond)
+		}
 	}
 }
 
@@ -480,11 +491,56 @@ func TestSessionClientGoneDetached(t *testing.T) {
 func TestSessionPingPongTimeout(t *testing.T) {
 	h := startSession(t, func(c *sessionConfig) { c.PongTimeout = 60 * time.Second })
 	h.clk.Advance(60 * time.Second)
+	h.clk.Advance(2 * time.Second) // detach check
 	if r := h.waitResult(); r != "disconnected" {
 		t.Fatalf("result = %q", r)
 	}
 	if !h.ws.isClosed() {
 		t.Fatal("ws not closed")
+	}
+}
+
+func TestSessionPongTimeoutStillRunningIsDetached(t *testing.T) {
+	h := startSession(t, func(c *sessionConfig) { c.PongTimeout = 60 * time.Second })
+	h.be.setInspect(engine.ExecInspect{Running: true})
+	h.clk.Advance(60 * time.Second)
+	h.clk.Advance(2 * time.Second)
+	if r := h.waitResult(); r != "detached" {
+		t.Fatalf("result = %q", r)
+	}
+}
+
+// A write stuck on a vanished client must not freeze ping, pong timeout or
+// shutdown handling.
+func TestSessionStuckWriteDoesNotFreezeSession(t *testing.T) {
+	h := startSession(t, func(c *sessionConfig) { c.PongTimeout = 60 * time.Second })
+	h.ws.blockBinary = true
+	go h.st.out(1, "stuck") // reader goroutine now hangs in WriteBinary
+	time.Sleep(20 * time.Millisecond)
+	h.clk.Advance(60 * time.Second) // pings skipped, pong timeout fires
+	h.clk.Advance(2 * time.Second)
+	if r := h.waitResult(); r != "disconnected" {
+		t.Fatalf("result = %q", r)
+	}
+}
+
+func TestSessionStuckWriteShutdownStillDelivers(t *testing.T) {
+	h := startSession(t, nil)
+	h.ws.blockBinary = true
+	go h.st.out(1, "stuck")
+	time.Sleep(20 * time.Millisecond)
+	close(h.closing)
+	if r := h.waitResult(); r != "shutdown" {
+		t.Fatalf("result = %q", r)
+	}
+}
+
+func TestSessionIdleWarningRoundsUp(t *testing.T) {
+	h := startSession(t, func(c *sessionConfig) { c.IdleTimeout = 5*time.Minute + 500*time.Millisecond })
+	h.clk.Advance(4*time.Minute + 30*time.Second + 500*time.Millisecond)
+	got := h.ws.textsExceptPing()
+	if len(got) != 1 || got[0].Seconds != 60 {
+		t.Fatalf("texts = %+v", got)
 	}
 }
 
@@ -686,7 +742,7 @@ func TestSessionInspectFailureReportsError(t *testing.T) {
 func TestFrameCodecRoundTripOverWebSocket(t *testing.T) {
 	got := make(chan string, 2)
 	srv := httptest.NewServer(websocket.Handler(func(c *websocket.Conn) {
-		conn := newWSConn(c)
+		conn := newWSConn(c, 0)
 		for i := 0; i < 2; i++ {
 			text, data, err := conn.ReadFrame()
 			if err != nil {
@@ -720,5 +776,41 @@ func TestFrameCodecRoundTripOverWebSocket(t *testing.T) {
 	}
 	if err := frameCodec.Receive(c, &f); err != nil || f.text || !bytes.Equal(f.data, []byte{1, 'x'}) {
 		t.Fatalf("binary frame = %+v, %v", f, err)
+	}
+}
+
+// A write to a client that stopped reading must fail at the deadline instead
+// of blocking forever.
+func TestXNetConnWriteDeadline(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(websocket.Handler(func(c *websocket.Conn) { <-release }))
+	defer srv.Close()
+	defer close(release)
+
+	c, err := websocket.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), "", srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	conn := newWSConn(c, 100*time.Millisecond)
+
+	done := make(chan error, 1)
+	go func() {
+		chunk := make([]byte, 1<<20)
+		for i := 0; i < 1024; i++ {
+			if err := conn.WriteBinary(chunk); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected a write deadline error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("write blocked past its deadline")
 	}
 }
