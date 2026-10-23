@@ -57,6 +57,11 @@ func installScript(t *testing.T) string {
 	return filepath.Join(repoRoot(t), "install.sh")
 }
 
+func fileExists(p string) bool {
+	_, err := os.Lstat(p)
+	return err == nil
+}
+
 func readFile(t *testing.T, path string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(path)

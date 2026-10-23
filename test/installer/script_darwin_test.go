@@ -704,11 +704,6 @@ esac`
 	return f
 }
 
-func fileExists(p string) bool {
-	_, err := os.Lstat(p)
-	return err == nil
-}
-
 func assertWellFormedXML(t *testing.T, s string) {
 	t.Helper()
 	dec := xml.NewDecoder(strings.NewReader(s))
