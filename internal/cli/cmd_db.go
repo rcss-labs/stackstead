@@ -326,8 +326,7 @@ func checkpointCurrent(ctx context.Context, env *Env, current string) error {
 		return nil
 	}
 	// Plain read-write open: no schema gate, no migration, never creates.
-	escaped := strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(current)
-	db, err := sql.Open("sqlite", "file:"+escaped+"?mode=rw&_pragma=busy_timeout(5000)")
+	db, err := sql.Open("sqlite", store.FileURI(current)+"?mode=rw&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return warn(err)
 	}

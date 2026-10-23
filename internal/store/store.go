@@ -217,9 +217,15 @@ func checkUniqueProjects(tx *sql.Tx) error {
 	return nil
 }
 
+// FileURI returns the SQLite "file:" URI prefix for a filesystem path, escaping
+// the characters that would otherwise be read as URI syntax.
+func FileURI(path string) string {
+	return "file:" + strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(path)
+}
+
 // Open opens (or creates) the database at path and migrates it to the latest schema.
 func Open(path string) (*sql.DB, error) {
-	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	dsn := FileURI(path) + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
@@ -313,8 +319,7 @@ func OpenExisting(path string, opts OpenOptions) (*sql.DB, error) {
 		mode = "ro"
 		pragmas = "" // switching journal mode needs write access
 	}
-	escaped := strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(path)
-	dsn := "file:" + escaped + "?mode=" + mode + pragmas + "&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
+	dsn := FileURI(path) + "?mode=" + mode + pragmas + "&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)

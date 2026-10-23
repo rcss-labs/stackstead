@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -36,6 +37,27 @@ func TestOpenCreatesSchema(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ('t', 1, 0)`); err != nil {
 		t.Fatalf("insert session: %v", err)
 	}
+}
+
+func TestOpenPlacesDatabaseInDirectoryWithURICharacters(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "100%25 a?b#c")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "stackstead.db")
+	db, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	db.Close()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("database not at the literal path: %v", err)
+	}
+	db, err = store.OpenExisting(path, store.OpenOptions{})
+	if err != nil {
+		t.Fatalf("OpenExisting: %v", err)
+	}
+	db.Close()
 }
 
 func TestSessionRequiresTokenHash(t *testing.T) {
