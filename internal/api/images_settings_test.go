@@ -18,6 +18,7 @@ import (
 // fakeRegistryProvider stands in for Docker Hub and AWS: no network is used.
 type fakeRegistryProvider struct {
 	testErr error
+	credErr error
 	onTest  func()
 	result  registry.TestResult
 }
@@ -36,6 +37,9 @@ func (f *fakeRegistryProvider) Test(_ context.Context, r registry.Registry) (reg
 }
 
 func (f *fakeRegistryProvider) Credentials(_ context.Context, r registry.Registry) (engine.RegistryAuth, error) {
+	if f.credErr != nil {
+		return engine.RegistryAuth{}, f.credErr
+	}
 	return engine.RegistryAuth{Username: "alice", Password: "tok", ServerAddress: r.Host}, nil
 }
 
@@ -350,5 +354,24 @@ func TestPushStateCarriesRegistryName(t *testing.T) {
 	decodeBody(t, env.req(t, "GET", "/api/images", ""), &lib)
 	if len(lib.Images) != 1 || lib.Images[0].LatestVersion == nil || lib.Images[0].LatestVersion.Pushes[0].Registry != "hub" {
 		t.Errorf("list pushes = %+v", lib.Images)
+	}
+}
+
+func TestPushCredentialFailureIs502WithoutSecrets(t *testing.T) {
+	env := newImagesEnv(t)
+	hub := env.createRegistry(t, hubBody)
+	env.createImage(t, "web")
+	env.buildDone(t, "web", "1")
+	rec := env.req(t, "POST", "/api/images/web/push-targets", `{"registryId":"`+hub.ID+`","repository":"alice/web","autoPush":false}`)
+	var tg apitypes.PushTarget
+	decodeBody(t, rec, &tg)
+	env.prov.credErr = errors.New("token service rejected dckr_pat_SECRETVALUE")
+
+	rec = env.req(t, "POST", "/api/images/web/versions/1/push", `{"target":"`+tg.ID+`"}`)
+	if rec.Code != 502 || !strings.Contains(rec.Body.String(), `"registry_auth_failed"`) || !strings.Contains(rec.Body.String(), "token service rejected") {
+		t.Fatalf("push = %d %s, want 502 registry_auth_failed with the message", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "dckr_pat_SECRETVALUE") {
+		t.Errorf("body contains the token: %s", rec.Body)
 	}
 }

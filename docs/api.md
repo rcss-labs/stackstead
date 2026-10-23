@@ -306,10 +306,13 @@ All routes need a session. Errors use the shape from [API overview](#api-overvie
 | `POST /api/images/{slug}/versions/{tag}/push` | push the succeeded version with this tag (by tag, unlike the version routes) with `{target}`; 202 Operation (action `push`) |
 
 A target with `autoPush` is pushed after every successful build, inside the
-build's operation; a failed push never fails the build. Push errors: 404 for an
+build's operation; a failed push never fails the build. An auto-push to a
+registry that is not configured is recorded as a failed push ("registry not
+configured") with a line in the build output. Push errors: 404 for an
 unknown image, tag (a failed version has none) or target; 409
 `registry_unconfigured` when the registry lacks credentials; 409
-`build_running` while a build or push of the image runs; 400 `fields` for a bad
+`build_running` while another operation on the image runs; 502
+`registry_auth_failed` when the registry credentials cannot be obtained; 400 `fields` for a bad
 repository or a version still building.
 
 ### Sharing between connected servers
@@ -339,8 +342,8 @@ Fetching copies a peer's version into this server's engine:
 Errors: 400 `fields` for a reference that is not a library reference or whose
 owner is not a connected server; 409 `image_not_built` when the owner has no
 succeeded version with that tag; 409 `arch_mismatch` (see below); 409
-`build_running` when a fetch of the same image is already running (the
-operation key is shared with builds); 502 `peer_unreachable` / `peer_old` /
+`build_running` when another operation on the same image is running (the
+operation key is shared with builds, pushes and retention); 502 `peer_unreachable` / `peer_old` /
 `peer_proxy` and the other `peer_*` codes when the owner cannot be reached or
 answers wrongly.
 
@@ -512,12 +515,13 @@ afterwards; content blobs live under `DataDir/images/<slug>/blobs/`.
 | Status and `code` | Meaning |
 | --- | --- |
 | 409 `image_in_use` | the image or version is used by a stack service here or on a connected server, or a connected server could not be asked; the body carries `usedBy` and `unreachable` |
-| 409 `build_running` | a build of this image is already running |
+| 409 `build_running` | another operation (build, push, fetch or retention) is running for this image; try again shortly |
 | 409 `tag_taken` | the tag exists on a non-failed version |
 | 409 `revision_conflict` | the file set or Dockerfile changed since the `revision` you sent |
 | 409 `image_not_built` | the referenced tag has no built version |
 | 409 `arch_mismatch` | the owner built the version for another architecture than this server's engine |
 | 409 `registry_unconfigured` | the push target's registry is missing credentials |
+| 502 `registry_auth_failed` | the registry's credentials could not be obtained (unreachable, keys rejected, no role); the message is scrubbed of secrets |
 | 409 `github_unconfigured` | no GitHub token is stored |
 | 409 `github_unauthorized` | GitHub rejected the stored token (never 401, which would end the web session) |
 | 429 `github_rate_limited` | GitHub's rate limit was reached; try again later |

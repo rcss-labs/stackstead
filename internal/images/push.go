@@ -157,7 +157,7 @@ func findTarget(targets []PushTarget, id string) (PushTarget, bool) {
 
 // Push starts an operation that pushes the live succeeded version with the
 // tag to the target. A running build or push of the image answers
-// ErrBuildRunning; an unconfigured registry answers ErrRegistryUnconfigured.
+// ErrImageBusy; an unconfigured registry answers ErrRegistryUnconfigured.
 func (s *Service) Push(ctx context.Context, user, slug, tag, targetID string) (stacks.Operation, error) {
 	if s.registries == nil {
 		return stacks.Operation{}, ErrRegistryUnconfigured
@@ -212,7 +212,7 @@ func (s *Service) Push(ctx context.Context, user, slug, tag, targetID string) (s
 	})
 	if err != nil {
 		if errors.Is(err, stacks.ErrBusy) {
-			return stacks.Operation{}, ErrBuildRunning
+			return stacks.Operation{}, ErrImageBusy
 		}
 		return stacks.Operation{}, err
 	}
@@ -344,7 +344,12 @@ func (s *Service) autoPush(ctx context.Context, user string, img Image, v Versio
 		}
 		auth, host, err := s.registries.Credentials(ctx, t.RegistryID)
 		if err != nil {
-			if !errors.Is(err, registry.ErrUnconfigured) && !errors.Is(err, registry.ErrNotFound) {
+			if errors.Is(err, registry.ErrUnconfigured) {
+				bg := context.WithoutCancel(ctx)
+				out("skipping push to " + reg.Name + ": not configured")
+				s.finishPush(bg, Push{VersionID: v.ID, TargetID: t.ID, Status: PushFailed, Error: "registry not configured"})
+				s.record(bg, user, "image.push", img.Slug, v.Tag, reg.Name+" "+t.Repository+":"+v.Tag+": registry not configured", "failed", opID)
+			} else if !errors.Is(err, registry.ErrNotFound) {
 				// registry.Service already scrubs its own errors of stored secrets.
 				msg := err.Error()
 				bg := context.WithoutCancel(ctx)

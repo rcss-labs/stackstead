@@ -126,7 +126,7 @@ func (s *Service) Build(ctx context.Context, user, slug string, req BuildRequest
 			s.restoreDefaults(bg, slug, previous)
 		}
 		if errors.Is(err, stacks.ErrBusy) {
-			return Version{}, stacks.Operation{}, ErrBuildRunning
+			return Version{}, stacks.Operation{}, ErrImageBusy
 		}
 		return Version{}, stacks.Operation{}, err
 	}

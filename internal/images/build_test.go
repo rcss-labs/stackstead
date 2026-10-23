@@ -182,7 +182,7 @@ func TestBuildOpsBusyLeavesNoVersionAndRestoresDefaults(t *testing.T) {
 	}
 	defer close(release)
 	_, _, err := h.svc.Build(ctx, "alice", "app", BuildRequest{Tag: "1", BuildArgs: map[string]string{"B": "9"}, SaveArgs: true})
-	if !errors.Is(err, ErrBuildRunning) {
+	if !errors.Is(err, ErrImageBusy) {
 		t.Fatalf("err = %v", err)
 	}
 	if got, _ := h.svc.store.Versions(ctx, img.ID); len(got) != 0 {

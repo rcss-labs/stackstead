@@ -27,7 +27,10 @@ type RegistriesAPI interface {
 
 var _ RegistriesAPI = (*registry.Service)(nil)
 
-const codeRegistryUnconfigured = "registry_unconfigured"
+const (
+	codeRegistryUnconfigured = "registry_unconfigured"
+	codeRegistryAuthFailed   = "registry_auth_failed"
+)
 
 func (s *server) registerRegistryRoutes(mux *http.ServeMux) {
 	route := func(pattern string, h http.HandlerFunc) { mux.Handle(pattern, s.requireSession(h)) }

@@ -34,8 +34,6 @@ const (
 var (
 	// ErrArchMismatch is matched by *ArchMismatchError.
 	ErrArchMismatch = errors.New("image architecture does not match this server")
-	// ErrFetchRunning means a fetch of this image is already in progress.
-	ErrFetchRunning = errors.New("a fetch is already running for this image")
 
 	errStalled = errors.New("transfer stalled")
 
@@ -147,7 +145,7 @@ func (s *Service) Fetch(ctx context.Context, user string, ref imageref.Ref) (op 
 		return s.fetchShared(opCtx, user, ref, owner, v, out)
 	})
 	if errors.Is(err, stacks.ErrBusy) {
-		return stacks.Operation{}, false, ErrFetchRunning
+		return stacks.Operation{}, false, ErrImageBusy
 	}
 	if err != nil {
 		return stacks.Operation{}, false, err

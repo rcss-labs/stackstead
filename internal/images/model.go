@@ -102,11 +102,13 @@ type Push struct {
 }
 
 var (
-	ErrImageExists      = errors.New("an image with this slug already exists")
-	ErrImageNotFound    = errors.New("image not found")
-	ErrVersionNotFound  = errors.New("version not found")
-	ErrTagTaken         = errors.New("this tag is already used by another version")
-	ErrBuildRunning     = errors.New("a build is already running for this image")
+	ErrImageExists     = errors.New("an image with this slug already exists")
+	ErrImageNotFound   = errors.New("image not found")
+	ErrVersionNotFound = errors.New("version not found")
+	ErrTagTaken        = errors.New("this tag is already used by another version")
+	ErrBuildRunning    = errors.New("a build is already running for this image")
+	// ErrImageBusy means another operation (build, push, fetch or retention) holds the image.
+	ErrImageBusy        = errors.New("another operation is running for this image; try again shortly")
 	ErrRevisionNotFound = errors.New("revision not found")
 	ErrTargetNotFound   = errors.New("push target not found")
 )

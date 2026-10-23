@@ -136,6 +136,7 @@ func (s *server) writeImagesError(w http.ResponseWriter, r *http.Request, err er
 		tooBig     *http.MaxBytesError
 		badForm    *uploadFormatError
 		peerErr    *peers.PeerError
+		authErr    *registry.AuthError
 	)
 	switch {
 	case errors.As(err, &validation):
@@ -149,6 +150,8 @@ func (s *server) writeImagesError(w http.ResponseWriter, r *http.Request, err er
 	case errors.Is(err, registry.ErrInvalid), errors.Is(err, registry.ErrNameTaken), errors.Is(err, registry.ErrNotFound),
 		errors.Is(err, registry.ErrUnconfigured):
 		s.writeRegistryError(w, r, err)
+	case errors.As(err, &authErr):
+		writeCodedError(w, http.StatusBadGateway, authErr.Msg, codeRegistryAuthFailed)
 	case errors.Is(err, images.ErrTargetNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, images.ErrImageNotFound), errors.Is(err, images.ErrVersionNotFound),
@@ -166,7 +169,7 @@ func (s *server) writeImagesError(w http.ResponseWriter, r *http.Request, err er
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, images.ErrTagTaken):
 		writeCodedError(w, http.StatusConflict, err.Error(), codeTagTaken)
-	case errors.Is(err, images.ErrBuildRunning), errors.Is(err, images.ErrFetchRunning):
+	case errors.Is(err, images.ErrBuildRunning), errors.Is(err, images.ErrImageBusy):
 		writeCodedError(w, http.StatusConflict, err.Error(), codeBuildRunning)
 	case errors.Is(err, images.ErrArchMismatch):
 		writeCodedError(w, http.StatusConflict, err.Error(), codeArchMismatch)

@@ -131,3 +131,10 @@ func (r Registry) ecrCredentialsConfigured() bool {
 }
 
 func secretOf(s string) secret.Secret { return secret.Secret(s) }
+
+// AuthError is a provider failure while obtaining push credentials (registry
+// unreachable, keys rejected, no role available). Msg is already scrubbed of
+// the registry's stored secrets, so it is safe to show to the operator.
+type AuthError struct{ Msg string }
+
+func (e *AuthError) Error() string { return e.Msg }

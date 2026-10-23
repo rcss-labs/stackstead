@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/rcss-labs/stackstead/internal/engine"
@@ -229,11 +230,63 @@ func TestPushBusyWhileBuilding(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-h.eng.started
-	if _, err := h.svc.Push(ctx, "alice", "app", "1", tg.ID); !errors.Is(err, ErrBuildRunning) {
+	if _, err := h.svc.Push(ctx, "alice", "app", "1", tg.ID); !errors.Is(err, ErrImageBusy) {
 		t.Fatalf("err = %v", err)
 	}
 	close(h.eng.block)
 	h.waitOp(t, op.ID)
+}
+
+func TestBuildBusyWhilePushing(t *testing.T) {
+	h, _ := newPushHarness(t)
+	ctx := context.Background()
+	h.create(t, "app")
+	h.build(t, "app", "1", nil)
+	tg := h.addTarget(t, "app", "hub", "u/app", false)
+	release := make(chan struct{})
+	var once sync.Once
+	free := func() { once.Do(func() { close(release) }) }
+	defer free()
+	started := make(chan struct{})
+	h.eng.pushHook = func() {
+		close(started)
+		<-release
+	}
+	op, err := h.svc.Push(ctx, "alice", "app", "1", tg.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if _, _, err := h.svc.Build(ctx, "alice", "app", BuildRequest{Tag: "2"}); !errors.Is(err, ErrImageBusy) {
+		t.Fatalf("err = %v, want ErrImageBusy", err)
+	}
+	if strings.Contains(ErrImageBusy.Error(), "build is already") {
+		t.Errorf("message names a build: %q", ErrImageBusy)
+	}
+	free()
+	h.waitOp(t, op.ID)
+}
+
+func TestAutoPushUnconfiguredRegistryRecordedAsFailed(t *testing.T) {
+	h, _ := newPushHarness(t)
+	h.create(t, "app")
+	tg := h.addTarget(t, "app", "bare", "u/app", true)
+	v, bop, err := h.svc.Build(context.Background(), "alice", "app", BuildRequest{Tag: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.waitOp(t, bop.ID)
+	lines, err := h.ops.Lines(bop.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := h.pushOf(t, v, tg.ID)
+	if !ok || p.Status != PushFailed || p.Error != "registry not configured" {
+		t.Fatalf("push = %+v, want failed 'registry not configured'", p)
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "skipping push to Bare: not configured") {
+		t.Errorf("build output lacks skip line: %q", lines)
+	}
 }
 
 func TestAutoPushAfterBuild(t *testing.T) {
@@ -253,8 +306,8 @@ func TestAutoPushAfterBuild(t *testing.T) {
 	if _, ok := h.pushOf(t, v, manual.ID); ok {
 		t.Error("manual target was pushed")
 	}
-	if _, ok := h.pushOf(t, v, skipped.ID); ok {
-		t.Error("unconfigured registry was pushed")
+	if p, ok := h.pushOf(t, v, skipped.ID); !ok || p.Status != PushFailed {
+		t.Errorf("unconfigured registry push = %+v, want failed", p)
 	}
 	pushes := 0
 	for _, c := range h.engineCalls() {

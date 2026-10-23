@@ -163,7 +163,7 @@ func (s *Service) applyRetention(ctx context.Context, user, slug string, inOp bo
 			return result, err
 		}
 	} else if err := s.runExclusive(ctx, slug, owner, remove); err != nil {
-		if errors.Is(err, errImageBusy) {
+		if errors.Is(err, ErrImageBusy) {
 			s.log.Debug("image retention deferred: an operation is running", "image", slug)
 			return result, nil
 		}
@@ -173,8 +173,6 @@ func (s *Service) applyRetention(ctx context.Context, user, slug string, inOp bo
 	result.Kept = len(versions) - len(result.Removed)
 	return result, nil
 }
-
-var errImageBusy = errors.New("image has a running operation")
 
 // runExclusive runs fn as an operation on the image, so no build, push or
 // fetch of it runs meanwhile, and waits for it to finish. fn gets the
@@ -194,7 +192,7 @@ func (s *Service) runExclusive(ctx context.Context, slug, owner string, fn func(
 		return nil
 	})
 	if errors.Is(err, stacks.ErrBusy) {
-		return errImageBusy
+		return ErrImageBusy
 	}
 	if err != nil {
 		return err
