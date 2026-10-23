@@ -165,6 +165,9 @@ func runExec(ctx context.Context, env *Env, c *client.Client, target apitypes.Co
 		if errors.Is(err, execws.ErrOldServer) {
 			return &ExitError{Code: ExitUnavailable, Err: err}
 		}
+		if ctx.Err() != nil {
+			return &ExitError{Code: ExitInterrupted}
+		}
 		return err
 	}
 	defer sess.Close()
@@ -190,7 +193,12 @@ func runExec(ctx context.Context, env *Env, c *client.Client, target apitypes.Co
 		fmt.Fprintf(env.Stderr, "\r\n[stackstead: idle session closes in %ds]\r\n", seconds)
 	})
 	if err != nil {
-		return interrupted(ctx, err)
+		// Ctrl-C or SIGTERM closes the connection under Run, so its error
+		// does not wrap the context's.
+		if ctx.Err() != nil {
+			return &ExitError{Code: ExitInterrupted}
+		}
+		return err
 	}
 	return endError(end)
 }
