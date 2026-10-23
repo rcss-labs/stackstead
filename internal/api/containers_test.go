@@ -348,6 +348,7 @@ type fakeContainerEngine struct {
 	aliases    map[string]string // a name Docker would resolve -> full id
 	list       []engine.Container
 	listErr    error
+	exec       fakeExecState
 }
 
 func (f *fakeContainerEngine) Containers(context.Context) ([]engine.Container, error) {

@@ -26,6 +26,10 @@ type ContainerEngineAPI interface {
 	Containers(ctx context.Context) ([]engine.Container, error)
 	ContainerAction(ctx context.Context, id, action string, stopTimeout int) error
 	InspectContainer(ctx context.Context, id string) (engine.ContainerInspect, error)
+	CreateExec(ctx context.Context, containerID string, spec engine.ExecSpec) (string, error)
+	StartExec(ctx context.Context, execID string, tty bool) (engine.ExecStream, error)
+	ResizeExec(ctx context.Context, execID string, cols, rows uint16) error
+	InspectExec(ctx context.Context, execID string) (engine.ExecInspect, error)
 }
 
 const (
@@ -220,6 +224,7 @@ var containerIDPattern = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
 func (s *server) registerContainerActionRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/containers/{id}", s.requireSession(s.handleContainerDetails))
 	mux.Handle("POST /api/containers/{id}/{action}", s.requireSession(s.handleContainerAction))
+	s.registerExecRoute(mux)
 }
 
 // projectStacks maps compose project -> registered stack name, read fresh
@@ -243,14 +248,14 @@ func (s *server) projectStacks(ctx context.Context) (map[string]string, error) {
 func (s *server) inspectContainer(w http.ResponseWriter, r *http.Request) (engine.ContainerInspect, bool) {
 	id := r.PathValue("id")
 	if !containerIDPattern.MatchString(id) {
-		writeError(w, http.StatusNotFound, "container not found")
+		writeCodedError(w, http.StatusNotFound, "container not found", codeContainerNotFound)
 		return engine.ContainerInspect{}, false
 	}
 	insp, err := s.opts.ContainerEngine.InspectContainer(r.Context(), id)
 	var actionErr *engine.ActionError
 	if errors.As(err, &actionErr) && actionErr.Status == http.StatusBadRequest {
 		// Docker's answer for an ambiguous id prefix: nothing is addressable by it.
-		writeError(w, http.StatusNotFound, "container not found")
+		writeCodedError(w, http.StatusNotFound, "container not found", codeContainerNotFound)
 		return engine.ContainerInspect{}, false
 	}
 	if err != nil {
@@ -259,7 +264,7 @@ func (s *server) inspectContainer(w http.ResponseWriter, r *http.Request) (engin
 	}
 	// Docker also resolves names; the API is only ever addressed by id.
 	if !strings.HasPrefix(insp.ID, id) {
-		writeError(w, http.StatusNotFound, "container not found")
+		writeCodedError(w, http.StatusNotFound, "container not found", codeContainerNotFound)
 		return engine.ContainerInspect{}, false
 	}
 	return insp, true
@@ -272,7 +277,7 @@ func (s *server) writeEngineError(w http.ResponseWriter, r *http.Request, err er
 	case r.Context().Err() != nil:
 		// The client went away; nobody is left to answer.
 	case errors.Is(err, engine.ErrNotFound):
-		writeError(w, http.StatusNotFound, "container not found")
+		writeCodedError(w, http.StatusNotFound, "container not found", codeContainerNotFound)
 	case errors.As(err, &actionErr):
 		writeError(w, http.StatusBadGateway, actionErr.Message)
 	case errors.Is(err, engine.ErrUnavailable):
@@ -453,7 +458,7 @@ func (s *server) actionRow(ctx context.Context, insp engine.ContainerInspect) ap
 func (s *server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !containerIDPattern.MatchString(id) {
-		writeError(w, http.StatusNotFound, "container not found")
+		writeCodedError(w, http.StatusNotFound, "container not found", codeContainerNotFound)
 		return
 	}
 	opts, ok := parseLogOptions(w, r)
@@ -478,7 +483,7 @@ func (s *server) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(matches) != 1 {
-		writeError(w, http.StatusNotFound, "container not found")
+		writeCodedError(w, http.StatusNotFound, "container not found", codeContainerNotFound)
 		return
 	}
 	id = matches[0].ID
