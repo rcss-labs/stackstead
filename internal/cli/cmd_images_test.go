@@ -249,3 +249,58 @@ func TestImagesPushStreams(t *testing.T) {
 		t.Errorf("stdout %q", te.Out.String())
 	}
 }
+
+func TestImagesPushTargetSelectedByRegistryAndRepository(t *testing.T) {
+	app := apitypes.PushTarget{ID: "t_app", RegistryName: "hub", Repository: "me/app"}
+	debug := apitypes.PushTarget{ID: "t_debug", RegistryName: "hub", Repository: "me/app-debug"}
+	var pushed apitypes.PushRequest
+	routes := map[string]http.HandlerFunc{
+		"GET /api/images/web": func(w http.ResponseWriter, r *http.Request) { t8JSON(w, 200, imageDetail("4", "", app, debug)) },
+		"POST /api/images/web/versions/3/push": func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&pushed)
+			op := t8Op("running")
+			op.Action = "push"
+			t8JSON(w, 202, op)
+		},
+	}
+
+	te := t8Setup(t, routes)
+	if err := imagesRun(te, "images", "push", "web", "3", "--target", "hub/me/app-debug", "--detach"); err != nil || pushed.Target != "t_debug" {
+		t.Fatalf("by registry/repository: err %v pushed %+v", err, pushed)
+	}
+
+	te = t8Setup(t, routes)
+	if err := imagesRun(te, "images", "push", "web", "3", "--target", "t_app", "--detach"); err != nil || pushed.Target != "t_app" {
+		t.Fatalf("by id: err %v pushed %+v", err, pushed)
+	}
+
+	pushed = apitypes.PushRequest{}
+	te = t8Setup(t, routes)
+	err := imagesRun(te, "images", "push", "web", "3", "--target", "hub", "--detach")
+	if codeFor(err) != ExitUsage || pushed.Target != "" {
+		t.Fatalf("ambiguous registry: code %d err %v pushed %+v", codeFor(err), err, pushed)
+	}
+	for _, want := range []string{"hub/me/app", "hub/me/app-debug", "t_app", "t_debug"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not list %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("error %q still blames duplicates", err)
+	}
+}
+
+func TestImagesBuildEmptyTagIsUsageError(t *testing.T) {
+	built := false
+	te := t8Setup(t, map[string]http.HandlerFunc{
+		"GET /api/images/web":         func(w http.ResponseWriter, r *http.Request) { t8JSON(w, 200, imageDetail("4", "")) },
+		"POST /api/images/web/builds": func(w http.ResponseWriter, r *http.Request) { built = true },
+	})
+	err := imagesRun(te, "images", "build", "web", "--tag", "")
+	if codeFor(err) != ExitUsage || !strings.Contains(err.Error(), "tag") {
+		t.Fatalf("code %d err %v", codeFor(err), err)
+	}
+	if built {
+		t.Error("build was requested")
+	}
+}

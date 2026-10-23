@@ -44,7 +44,7 @@ stackstead ops ls --running
 | `stacks compose get\|edit\|put <name>` | read, edit (in `$VISUAL`/`$EDITOR`) or replace (`-f FILE --hash H`) the compose file |
 | `images ls` | the image library: NAME, SOURCE, OWNER, LATEST, LAST BUILD and PUSH TARGETS, including images owned by paired servers |
 | `images build <image> [--tag T] [--build-arg K=V]... [--ref REF] [--detach]` | build a new version; the tag defaults to the suggested next tag |
-| `images push <image> <tag> [--target NAME] [--detach]` | push a built version to a registry push target |
+| `images push <image> <tag> [--target REGISTRY/REPOSITORY] [--detach]` | push a built version to a registry push target |
 | `ops ls\|show\|stream\|cancel` | operations and their output |
 | `logs <stack> [-f] [--tail N\|all] [--since X] [--service S] [--timestamps] [--raw]` | container logs |
 | `exec (<stack> <service> \| --container <name\|id>) [--index N] [--user U] [-T] [-- cmd args...]` | run a command or a shell inside a running container |
@@ -128,7 +128,7 @@ stackstead images ls
 stackstead images build web                       # tag = the suggested next tag, streams the build
 stackstead images build web --tag v2 --build-arg VERSION=2 --detach
 stackstead images build app --ref release/1.4     # GitHub images only
-stackstead images push web v2 --target hub        # --target is the registry name
+stackstead images push web v2 --target hub/me/web   # REGISTRY/REPOSITORY, or the target ID
 ```
 
 `images build` uses the server's suggested tag unless `--tag` is given. When
@@ -136,9 +136,10 @@ there is no suggestion (the latest tag is not numeric or semver-like) it exits
 2 and prints the latest tag; pass `--tag`. `--build-arg` repeats and needs
 `KEY=VALUE` (a bare `KEY` or `=VALUE` is exit 2; `KEY=` sets an empty value; a
 repeated `--build-arg` key keeps the last value). `--ref` builds a GitHub image at a
-branch, tag or commit; the server refuses it for upload images (exit 6).
+branch, tag or commit; the server refuses it for upload images (exit 6). An explicit empty `--tag ""` is exit 2.
 
-`images push` needs `--target` (the push target's registry name) when the image
+`images push` needs `--target` (`REGISTRY/REPOSITORY` or the target ID; a bare registry
+name works when it matches one target) when the image
 has more than one push target; with one it is used, with none the command exits
 2. Both commands stream the operation like `stacks up` (exit 9 if it fails), or
 print its ID with `--detach`.

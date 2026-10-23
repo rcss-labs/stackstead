@@ -69,11 +69,13 @@ func imagesListCommand() *Command {
 func imagesBuildCommand() *Command {
 	var tag, ref string
 	var detach bool
+	var flags *flag.FlagSet
 	args := buildArgFlag{}
 	return &Command{Name: "build", Short: "Build a new version of a library image and follow the operation",
 		Usage: "images build <image> [--tag T] [--build-arg K=V]... [--ref REF] [--detach]", MinArgs: 1, MaxArgs: 1,
 		Long: "The tag defaults to the server's suggestion (the latest tag plus one). --ref builds a GitHub image at a branch, tag or commit; the server refuses it for upload images.",
 		Flags: func(fs *flag.FlagSet) {
+			flags = fs
 			fs.StringVar(&tag, "tag", "", "version tag (default: the suggested next tag)")
 			fs.Var(args, "build-arg", "build argument KEY=VALUE (repeatable)")
 			fs.StringVar(&ref, "ref", "", "GitHub branch, tag or commit to build")
@@ -81,6 +83,11 @@ func imagesBuildCommand() *Command {
 		},
 		Run: func(ctx context.Context, env *Env, g *globalFlags, pos []string) error {
 			slug := pos[0]
+			tagGiven := false
+			flags.Visit(func(f *flag.Flag) { tagGiven = tagGiven || f.Name == "tag" })
+			if tagGiven && tag == "" {
+				return exitf(ExitUsage, "--tag is empty: pass a tag or omit --tag to use the suggested one")
+			}
 			return withAPI(env, g, func(c *client.Client, _ string, _ Context) error {
 				if tag == "" {
 					detail, err := c.Image(ctx, slug)
@@ -113,10 +120,10 @@ func imagesPushCommand() *Command {
 	var target string
 	var detach bool
 	return &Command{Name: "push", Short: "Push a built image version to a registry and follow the operation",
-		Usage: "images push <image> <tag> [--target NAME] [--detach]", MinArgs: 2, MaxArgs: 2,
-		Long: "--target is the registry name of one of the image's push targets; it is required when the image has more than one.",
+		Usage: "images push <image> <tag> [--target REGISTRY/REPOSITORY|ID] [--detach]", MinArgs: 2, MaxArgs: 2,
+		Long: "--target selects one of the image's push targets by REGISTRY/REPOSITORY or by target ID; a bare registry name works when it matches one target. It is required when the image has more than one target.",
 		Flags: func(fs *flag.FlagSet) {
-			fs.StringVar(&target, "target", "", "registry name of the push target")
+			fs.StringVar(&target, "target", "", "push target: REGISTRY/REPOSITORY, target ID, or a registry name with a single target")
 			fs.BoolVar(&detach, "detach", false, "print the operation id and return without waiting")
 		},
 		Run: func(ctx context.Context, env *Env, g *globalFlags, pos []string) error {
@@ -139,29 +146,43 @@ func imagesPushCommand() *Command {
 		}}
 }
 
-// pickPushTarget resolves --target (a registry name) to a push target ID.
+// pickPushTarget resolves --target to a push target ID. It accepts
+// REGISTRY/REPOSITORY, the target ID, or a bare registry name that matches
+// exactly one target (one registry can hold several repositories).
 func pickPushTarget(targets []apitypes.PushTarget, name, slug string) (string, error) {
-	names := make([]string, 0, len(targets))
-	var match []apitypes.PushTarget
+	options := make([]string, 0, len(targets))
+	var exact, byRegistry []apitypes.PushTarget
 	for _, t := range targets {
-		names = append(names, oneLine(t.RegistryName))
-		if name != "" && (t.RegistryName == name || t.ID == name) {
-			match = append(match, t)
+		full := t.RegistryName + "/" + t.Repository
+		options = append(options, oneLine(full)+" ("+oneLine(t.ID)+")")
+		if name == "" {
+			continue
+		}
+		if t.ID == name || full == name {
+			exact = append(exact, t)
+		}
+		if t.RegistryName == name {
+			byRegistry = append(byRegistry, t)
 		}
 	}
+	list := strings.Join(options, ", ")
 	switch {
 	case len(targets) == 0:
 		return "", exitf(ExitUsage, "image %s has no push targets", oneLine(slug))
 	case name == "" && len(targets) == 1:
 		return targets[0].ID, nil
 	case name == "":
-		return "", exitf(ExitUsage, "image %s has several push targets: pass --target one of %s", oneLine(slug), strings.Join(names, ", "))
-	case len(match) == 1:
-		return match[0].ID, nil
-	case len(match) == 0:
-		return "", exitf(ExitUsage, "image %s has no push target %q: use one of %s", oneLine(slug), oneLine(name), strings.Join(names, ", "))
+		return "", exitf(ExitUsage, "image %s has several push targets: pass --target one of %s", oneLine(slug), list)
+	case len(exact) == 1:
+		return exact[0].ID, nil
+	case len(exact) == 0 && len(byRegistry) == 1:
+		return byRegistry[0].ID, nil
+	case len(exact) == 0 && len(byRegistry) > 1:
+		return "", exitf(ExitUsage, "image %s has several push targets in registry %q: pass --target one of %s", oneLine(slug), oneLine(name), list)
+	case len(exact) == 0:
+		return "", exitf(ExitUsage, "image %s has no push target %q: use one of %s", oneLine(slug), oneLine(name), list)
 	}
-	return "", exitf(ExitUsage, "image %s has several push targets in registry %q: remove the duplicates in the web UI", oneLine(slug), oneLine(name))
+	return "", exitf(ExitUsage, "image %s has several push targets matching %q: pass --target one of %s", oneLine(slug), oneLine(name), list)
 }
 
 // imagesError gives image-library failures their exit codes, with the
