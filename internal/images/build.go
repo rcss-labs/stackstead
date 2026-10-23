@@ -40,20 +40,23 @@ func (s *Service) Build(ctx context.Context, user, slug string, req BuildRequest
 	if err != nil {
 		return Version{}, stacks.Operation{}, err
 	}
-	if s.beforeBuildLock != nil {
-		s.beforeBuildLock()
-	}
-
 	// A GitHub commit is resolved over the network, so before the image lock.
 	pre, err := s.store.Image(ctx, slug)
 	if err != nil {
 		return Version{}, stacks.Operation{}, err
+	}
+	if pre.Source != SourceGitHub && req.Ref != "" {
+		return Version{}, stacks.Operation{}, fieldError("ref", "only GitHub images can be built at a ref")
 	}
 	var commit string
 	if pre.Source == SourceGitHub {
 		if commit, err = s.resolveCommit(ctx, pre.GitHub, req.Ref); err != nil {
 			return Version{}, stacks.Operation{}, err
 		}
+	}
+
+	if s.beforeBuildLock != nil {
+		s.beforeBuildLock()
 	}
 
 	// The image is read under the lock so a concurrent update or delete is

@@ -32,6 +32,7 @@ type fakeGitHub struct {
 	gotTokens  []secret.Secret
 	headCalls  []string
 	tarballRef string
+	onHead     func()
 }
 
 func newFakeGitHub() *fakeGitHub {
@@ -46,6 +47,9 @@ func (f *fakeGitHub) User(_ context.Context, t secret.Secret) (string, error) {
 func (f *fakeGitHub) Head(_ context.Context, t secret.Secret, _, branch string) (string, error) {
 	f.gotTokens = append(f.gotTokens, t)
 	f.headCalls = append(f.headCalls, branch)
+	if f.onHead != nil {
+		f.onHead()
+	}
 	sha, ok := f.heads[branch]
 	if !ok {
 		return "", github.ErrNotFound
@@ -288,9 +292,13 @@ func TestGitHubImageHasNoRevisions(t *testing.T) {
 			_, err := h.svc.Upload(ctx, "a", "gh-app", []UploadFile{upload("x", "y")})
 			return err
 		},
-		"rename":  func() error { _, err := h.svc.Rename(ctx, "a", "gh-app", "a", "b"); return err },
-		"delete":  func() error { _, err := h.svc.DeleteFile(ctx, "a", "gh-app", "a"); return err },
-		"restore": func() error { _, err := h.svc.Restore(ctx, "a", "gh-app", 1); return err },
+		"rename":        func() error { _, err := h.svc.Rename(ctx, "a", "gh-app", "a", "b"); return err },
+		"delete":        func() error { _, err := h.svc.DeleteFile(ctx, "a", "gh-app", "a"); return err },
+		"restore":       func() error { _, err := h.svc.Restore(ctx, "a", "gh-app", 1); return err },
+		"readfile":      func() error { _, err := h.svc.ReadFile(ctx, "gh-app", "Dockerfile"); return err },
+		"dockerfile":    func() error { _, _, err := h.svc.Dockerfile(ctx, "gh-app"); return err },
+		"revdockerfile": func() error { _, err := h.svc.RevisionDockerfile(ctx, "gh-app", 1); return err },
+		"revisions":     func() error { _, err := h.svc.Revisions(ctx, "gh-app"); return err },
 	}
 	for name, f := range checks {
 		err := f()
@@ -352,5 +360,70 @@ func TestTestGitHubFailureKeepsNoLogin(t *testing.T) {
 	}
 	if st, _ := h.svc.GitHubStatus(context.Background()); st.Login != "" {
 		t.Fatalf("status = %+v", st)
+	}
+}
+
+func TestGitHubBuildRepoChangedUnderLock(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.setToken(t)
+	img := h.createGitHub(t, "gh app")
+	h.svc.beforeBuildLock = func() {
+		img.GitHub.Branch = "dev"
+		if err := h.svc.store.UpdateImage(ctx, img); err != nil {
+			t.Error(err)
+		}
+	}
+	_, _, err := h.svc.Build(ctx, "alice", "gh-app", BuildRequest{Tag: "1"})
+	if !isFieldError(err, "github") {
+		t.Fatalf("err = %v", err)
+	}
+	if vs, _ := h.svc.store.Versions(ctx, img.ID); len(vs) != 0 {
+		t.Fatalf("versions = %d", len(vs))
+	}
+}
+
+func TestGitHubBuildUnknownRef(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.setToken(t)
+	img := h.createGitHub(t, "gh app")
+	if _, _, err := h.svc.Build(ctx, "alice", "gh-app", BuildRequest{Tag: "1", Ref: "nope"}); !isFieldError(err, "ref") {
+		t.Fatalf("err = %v", err)
+	}
+	delete(h.gh.heads, "main")
+	if _, _, err := h.svc.Build(ctx, "alice", "gh-app", BuildRequest{Tag: "1"}); !isFieldError(err, "github.branch") ||
+		!strings.Contains(err.Error(), "repository or branch not found") {
+		t.Fatalf("err = %v", err)
+	}
+	if vs, _ := h.svc.store.Versions(ctx, img.ID); len(vs) != 0 {
+		t.Fatalf("versions = %d", len(vs))
+	}
+}
+
+func TestBuildRefRefusedForUploadImage(t *testing.T) {
+	h := newHarness(t)
+	h.create(t, "app")
+	_, _, err := h.svc.Build(context.Background(), "alice", "app", BuildRequest{Tag: "1", Ref: "main"})
+	if !isFieldError(err, "ref") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestGitHubTokenClearedMidBuild(t *testing.T) {
+	h := newHarness(t)
+	h.setToken(t)
+	h.createGitHub(t, "gh app")
+	h.gh.onHead = func() {
+		if err := h.svc.SetGitHubToken(context.Background(), "alice", ""); err != nil {
+			t.Error(err)
+		}
+	}
+	v := h.buildRef(t, "gh-app", "1", "")
+	if v.Status != VersionFailed || !strings.Contains(v.Error, "no GitHub token") {
+		t.Fatalf("version = %+v", v)
+	}
+	if m, _ := filepath.Glob(filepath.Join(h.dir, "gh-app", "tmp-*")); len(m) != 0 {
+		t.Fatalf("temp dirs left: %v", m)
 	}
 }

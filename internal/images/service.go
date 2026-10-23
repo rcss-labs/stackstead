@@ -427,6 +427,9 @@ func (s *Service) ReadFile(ctx context.Context, slug, p string) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
+	if img.Source == SourceGitHub {
+		return nil, errGitHubReadOnly()
+	}
 	m, _, err := s.manifestOf(ctx, img)
 	if err != nil {
 		return nil, err
@@ -439,6 +442,9 @@ func (s *Service) Dockerfile(ctx context.Context, slug string) ([]byte, int, err
 	img, err := s.store.Image(ctx, slug)
 	if err != nil {
 		return nil, 0, err
+	}
+	if img.Source == SourceGitHub {
+		return nil, 0, errGitHubReadOnly()
 	}
 	m, n, err := s.manifestOf(ctx, img)
 	if err != nil {
@@ -453,6 +459,9 @@ func (s *Service) RevisionDockerfile(ctx context.Context, slug string, n int) ([
 	img, err := s.store.Image(ctx, slug)
 	if err != nil {
 		return nil, err
+	}
+	if img.Source == SourceGitHub {
+		return nil, errGitHubReadOnly()
 	}
 	rev, err := s.store.Revision(ctx, img.ID, n)
 	if err != nil {
@@ -470,6 +479,9 @@ func (s *Service) Revisions(ctx context.Context, slug string) ([]Revision, error
 	img, err := s.store.Image(ctx, slug)
 	if err != nil {
 		return nil, err
+	}
+	if img.Source == SourceGitHub {
+		return nil, errGitHubReadOnly()
 	}
 	return s.store.Revisions(ctx, img.ID)
 }

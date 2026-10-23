@@ -153,7 +153,7 @@ func (s *Service) GitHubHead(ctx context.Context, slug string) (GitHubHead, erro
 	commit, err := s.github.Head(ctx, token, img.GitHub.Repo, img.GitHub.Branch)
 	if err != nil {
 		if errors.Is(err, github.ErrNotFound) {
-			return GitHubHead{}, fieldError("github.branch", "branch not found")
+			return GitHubHead{}, fieldError("github.branch", "repository or branch not found")
 		}
 		return GitHubHead{}, githubFailure(err)
 	}
@@ -187,7 +187,14 @@ func (s *Service) resolveCommit(ctx context.Context, gs GitHubSource, ref string
 	case commitPattern.MatchString(ref):
 		return ref, nil
 	case ref == "":
-		ref = gs.Branch
+		sha, err := s.github.Head(ctx, token, gs.Repo, gs.Branch)
+		if errors.Is(err, github.ErrNotFound) {
+			return "", fieldError("github.branch", "repository or branch not found")
+		}
+		if err != nil {
+			return "", githubFailure(err)
+		}
+		return sha, nil
 	default:
 		if err := github.ValidateBranch(ref); err != nil {
 			return "", fieldError("ref", err.Error())
