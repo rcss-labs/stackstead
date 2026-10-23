@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/rcss-labs/stackstead/internal/secret"
@@ -76,7 +77,12 @@ func LoadProfile(name, credentialsPath, configPath string) (Credentials, string,
 	for k, v := range cSec {
 		merged[k] = v
 	}
+	keys := make([]string, 0, len(merged))
 	for k := range merged {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // deterministic error when several unsupported keys are set
+	for _, k := range keys {
 		if k == "role_arn" || k == "credential_process" || k == "source_profile" || strings.HasPrefix(k, "sso_") {
 			return Credentials{}, "", fmt.Errorf("%w: profile %q uses %s; only static access keys are supported", ErrProfileUnsupported, name, k)
 		}
