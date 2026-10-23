@@ -136,6 +136,58 @@ func TestLogsStream(t *testing.T) {
 	}
 }
 
+// TestExecIntegration runs real execs against a busybox container and checks
+// the demuxed output and the exit codes Docker reports.
+func TestExecIntegration(t *testing.T) {
+	run, eng := itDocker(t)
+	name := itName(t, run)
+	if out, err := run("run", "-d", "--name", name, "busybox", "sleep", "60"); err != nil {
+		t.Fatalf("docker run: %v: %s", err, out)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	exec := func(cmd ...string) (stdout string, inspect engine.ExecInspect) {
+		t.Helper()
+		id, err := eng.CreateExec(ctx, name, engine.ExecSpec{Cmd: cmd})
+		if err != nil {
+			t.Fatalf("CreateExec: %v", err)
+		}
+		s, err := eng.StartExec(ctx, id, false)
+		if err != nil {
+			t.Fatalf("StartExec: %v", err)
+		}
+		defer s.Close()
+		for {
+			stream, p, err := s.ReadFrame()
+			if err != nil {
+				break
+			}
+			if stream == 1 {
+				stdout += string(p)
+			}
+		}
+		for i := 0; i < 50; i++ { // the exit code lands just after the stream closes
+			if inspect, err = eng.InspectExec(ctx, id); err != nil {
+				t.Fatalf("InspectExec: %v", err)
+			}
+			if !inspect.Running {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		return stdout, inspect
+	}
+
+	out, st := exec("echo", "hi")
+	if out != "hi\n" || st.ExitCode != 0 {
+		t.Errorf("echo hi: stdout %q, exit %d", out, st.ExitCode)
+	}
+	if _, st := exec("sh", "-c", "exit 3"); st.ExitCode != 3 {
+		t.Errorf("exit 3: exit code %d", st.ExitCode)
+	}
+}
+
 // TestBuildCachePruneByID may discover that an engine ignores the ID filter.
 // Explicitly opt in only with a disposable daemon: it can prune all unused cache.
 func TestBuildCachePruneByID(t *testing.T) {

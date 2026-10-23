@@ -56,6 +56,7 @@ const (
 // using the client timeout unless a method specifies its own bound.
 type Client struct {
 	http    *http.Client
+	dial    func(ctx context.Context) (net.Conn, error) // raw connection for hijacked exec streams
 	timeout time.Duration
 	maxBody int64
 
@@ -71,6 +72,9 @@ func New(socketPath string, timeout time.Duration) *Client {
 	}
 	dialer := &net.Dialer{}
 	return &Client{
+		dial: func(ctx context.Context) (net.Conn, error) {
+			return dialer.DialContext(ctx, "unix", socketPath)
+		},
 		timeout: timeout,
 		maxBody: maxBodyBytes,
 		http: &http.Client{Transport: &http.Transport{
