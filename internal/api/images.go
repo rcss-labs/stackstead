@@ -81,7 +81,7 @@ const (
 	codeGitHubRateLimited  = "github_rate_limited"
 	codeGitHubUnreachable  = "github_unreachable"
 	maxUploadFiles         = 10000
-	uploadEnvelopeBytes    = 1 << 20 // multipart framing allowed on top of the context cap
+	uploadEnvelopeBytes    = maxUploadFiles * (4096 + 512) // worst-case multipart framing: a longest path (images.maxPathBytes) plus boundary and headers per file
 	dockerfileBodyMaxJSON  = dockerfileBodyBytes
 )
 

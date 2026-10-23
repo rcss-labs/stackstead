@@ -499,6 +499,39 @@ func revisionCount(t *testing.T, env *imagesEnv) int {
 	return len(revs)
 }
 
+// manyLongNamedParts builds count parts with long paths of size bytes each, so
+// the multipart framing is a large share of the body.
+func manyLongNamedParts(count, size int) []multipartPart {
+	content := strings.Repeat("c", size)
+	dir := strings.Repeat("d", 200)
+	file := strings.Repeat("f", 150)
+	parts := make([]multipartPart, count)
+	for i := range parts {
+		parts[i] = multipartPart{fmt.Sprintf("f/%s/%d/%s", dir, i, file), content}
+	}
+	return parts
+}
+
+func TestUploadManyFilesUnderCapIsAccepted(t *testing.T) {
+	env := newImagesEnv(t)
+	env.createImage(t, "web")
+	// 3000 x 600 B = 1.7 MiB of content, under the 2 MiB context cap, but with
+	// roughly 1.4 MiB of framing the body passes cap + 1 MiB.
+	rec := env.upload(t, "web", manyLongNamedParts(3000, 600))
+	if rec.Code != 201 {
+		t.Fatalf("under the context cap = %d %s, want 201", rec.Code, rec.Body)
+	}
+	assertNoSpool(t, env)
+
+	// 3600 x 600 B = 2.06 MiB of content passes the context cap.
+	rec = env.upload(t, "web", manyLongNamedParts(3600, 600))
+	var eb apitypes.ErrorBody
+	decodeBody(t, rec, &eb)
+	if rec.Code != 413 || eb.Code != "image_too_large" {
+		t.Fatalf("over the context cap = %d %s, want 413", rec.Code, rec.Body)
+	}
+}
+
 func TestUploadTooLarge413(t *testing.T) {
 	env := newImagesEnv(t)
 	env.createImage(t, "web")
