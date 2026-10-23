@@ -64,7 +64,7 @@ Minor calls made here (marked **[call]** where they appear): image slugs are fix
 | --- | --- |
 | `internal/imageref/ref.go` (new) | Parse/format `stackstead.invalid/...` references; `OwnerID`; `Usage` type shared by stacks and images |
 | `internal/secret/secret.go` (new), `internal/peers/secret.go`, `store.go` (modify) | Redacting `Secret`; `peers.Secret` becomes an alias |
-| `internal/store/store.go` (modify) | Migration 7: all image-library tables |
+| `internal/store/store.go` (modify) | Migration 8: all image-library tables |
 | `internal/config/*` , `deploy/config.example.yaml` (modify) | Two upload-limit keys |
 | `internal/apitypes/images.go` (new), `types.go` (modify: two fields) | Wire types for images, registries, GitHub, defaults |
 | `internal/engine/images_ops.go`, `jsonstream.go` (new) | Build, push, tag, save, load, arch; Docker JSON message stream |
@@ -170,10 +170,10 @@ Tasks in one wave touch disjoint files and may run concurrently in separate work
 ### Task 2: Schema migration, upload-limit and image-timeout config
 
 **Files:**
-- Modify: `internal/stacks/ops.go`, `internal/stacks/ops_test.go` (or the existing ops test file), `internal/store/store.go` (append migration 7), `internal/store/store_test.go`, `internal/config/config.go`, `config_test.go`, `template.go`, `template.yaml`, `template_test.go`, `deploy/config.example.yaml`
+- Modify: `internal/stacks/ops.go`, `internal/stacks/ops_test.go` (or the existing ops test file), `internal/store/store.go` (append migration 8), `internal/store/store_test.go`, `internal/config/config.go`, `config_test.go`, `template.go`, `template.yaml`, `template_test.go`, `deploy/config.example.yaml`
 
 **Interfaces:**
-- Produces migration 7 (one string, append-only), tables:
+- Produces migration 8 (one string, append-only), tables:
   ```sql
   images(id TEXT PK, slug TEXT NOT NULL UNIQUE, name TEXT NOT NULL, source TEXT NOT NULL CHECK (source IN ('upload','github')),
          dockerfile_path TEXT NOT NULL DEFAULT 'Dockerfile', github_repo TEXT NOT NULL DEFAULT '', github_branch TEXT NOT NULL DEFAULT '',
@@ -204,8 +204,8 @@ Tasks in one wave touch disjoint files and may run concurrently in separate work
 - Produces `func (o *Ops) StartTimeout(key, action string, timeout time.Duration, fn OpFunc) (Operation, error)` in `internal/stacks/ops.go`: same as `Start` but bounded by `timeout` instead of the manager's default; `Start` keeps its behaviour.
 
 - [ ] **Step 1: Failing tests**
-  - `TestMigration7Tables` (store): after `Open`, inserting an image, a revision, a building version, then a second building version with the same tag fails with a unique violation; after updating the first to `failed`, the second insert succeeds; deleting the image cascades the revisions and versions.
-  - `TestSupportedSchemaIs7`.
+  - `TestMigration8Tables` (store): after `Open`, inserting an image, a revision, a building version, then a second building version with the same tag fails with a unique violation; after updating the first to `failed`, the second insert succeeds; deleting the image cascades the revisions and versions.
+  - `TestSupportedSchemaIs8`.
   - Config: `TestImageLimitDefaults`, `TestImageLimitsFromFileAndEnv` (file sets file bytes, env `STACKSTEAD_IMAGE_MAX_CONTEXT_BYTES=2097152` wins), `TestImageLimitTooSmall` (`image_max_file_bytes: 1024` → error naming the key); `TestImageOperationTimeoutDefault` (60m) and bare `image_operation_timeout: 900` rejected like `operation_timeout`; ops: `TestStartTimeoutOverridesDefault` (manager default 1h, `StartTimeout` with 50ms and a blocking fn → operation ends failed/timed out within ~1s, while `Start` with the same fn is still running); template renders both keys and round-trips through `Load`.
 - [ ] **Step 2: Run** `go test ./internal/store ./internal/config ./internal/stacks -run 'Migration|Schema|Image|StartTimeout'`. Expected: FAIL.
 - [ ] **Step 3: Implement.** Follow the existing env/validation patterns (integers parse with `strconv.ParseInt`). Template comments: one line each ("Largest single file in an uploaded image context (bytes)" / "Largest uploaded image context in total (bytes)").
@@ -250,7 +250,7 @@ Tasks in one wave touch disjoint files and may run concurrently in separate work
   type BuildRequest struct{ Tag string; BuildArgs map[string]string; SaveArgs bool; Ref string }
   type BuildStarted struct{ Version LibraryVersion; Operation Operation }
   type PushRequest struct{ Target string }
-  type PushTargetRequest struct{ Registry, Repository string; AutoPush bool }
+  type PushTargetRequest struct{ RegistryID, Repository string; AutoPush bool }
   type FetchRequest struct{ Ref string }
   type ServiceLibrary struct{ Ref, Owner, OwnerName, Image, Tag, LatestTag, Arch string; Newer, Known bool }
   type GitHubHead struct{ Commit, Dockerfile, Path string }
@@ -273,7 +273,7 @@ Tasks in one wave touch disjoint files and may run concurrently in separate work
   ```ts
   export function parseLibraryRef(s: string): { owner: string; slug: string; tag: string } | null      // ref.ts
   export function formatLibraryRef(owner: string, slug: string, tag: string): string
-  export function isNewerAvailable(current: string, latest: string | undefined): boolean            // tags.ts: latest defined and != current
+  export function isNewerAvailable(current: string, latest: string | undefined): boolean            // tags.ts: latest non-empty and != current
   export function retentionText(r: { keepLast: number; keepDays: number }): string                 // retention.ts: "Keep forever" | "Keep the last 5" | "Keep 30 days" | "Keep the last 5 and anything from the last 30 days"
   export function relativeUploadPaths(files: File[], base?: string): { path: string; blob: File }[] // upload.ts: uses webkitRelativePath when set; prefixes base
   export function groupByOwner(images: LibraryImage[]): { owner: LibraryServer; images: LibraryImage[] }[]  // library.ts: local first, then by owner name; images by name
@@ -628,8 +628,8 @@ Tasks in one wave touch disjoint files and may run concurrently in separate work
   GET    /api/images/{slug}/revisions/{n}         → ImageRevisionDetail
   POST   /api/images/{slug}/revisions/{n}/restore → ImageRevision
   POST   /api/images/{slug}/builds                → 202 BuildStarted | 409 tag_taken | 409 build_running | 400 fields
-  GET    /api/images/{slug}/versions/{tag}        → LibraryVersionDetail
-  DELETE /api/images/{slug}/versions/{tag}        → 204 | 409 image_in_use
+  GET    /api/images/{slug}/versions/{id}         → LibraryVersionDetail
+  DELETE /api/images/{slug}/versions/{id}         → 204 | 409 image_in_use
   ```
   `writeImagesError(w, r, err)` maps: `ValidationError` → 400 with fields; `ErrImageNotFound`/`ErrVersionNotFound`/`ErrRevisionNotFound`/`fs.ErrNotExist` → 404; `ErrImageExists` → 409; `*InUseError` → 409 `image_in_use` + `usedBy`; `ErrTagTaken` → 409 `tag_taken`; `ErrBuildRunning` → 409 `build_running`; `ErrRevisionConflict` → 409 `revision_conflict`; `ErrFileTooLarge`/`ErrContextTooLarge` → 413 `image_too_large`; `ErrBadPath` → 400; `engine.ErrUnavailable` → 503; else 500. Multipart body is bounded by `MaxBytesReader(limits.MaxContextBytes + 1 MiB)`.
   Enrichment: `GET /api/stacks` sets `libraryUpdates` per stack from `Summary.LibraryRefs` through `Images.Resolve`; `GET /api/stacks/{name}` sets `services[].library` for services whose image parses as a library ref. A `Resolve` failure leaves the fields zero and logs at warn (stacks must list even when the library is broken).
@@ -750,7 +750,7 @@ Tasks in one wave touch disjoint files and may run concurrently in separate work
 - Consumes: Task 3 `RegistryView`, `RegistryRequest`, `PushTarget`, `PushState`; `createLocalImagesApi().registries/...`; `imageRegistries()` (names for the picker on any scope).
 - Produces: `RegistriesCard` lists registries (name, kind, host, last test), add/edit dialog with kind-specific fields (Hub: username, token masked; ECR: region, mode segmented `Access key / IAM role / AWS profile`, the fields of the chosen mode), "Test connection" with the result inline, delete with confirm. `PushTargetsCard` lists targets with registry name, repository and auto-push toggle; add/edit/remove.
 
-- [ ] **Step 1: Failing tests**: add Hub registry posts `{name, kind:'dockerhub', hub:{username, token}}`; editing shows the token field empty with "leave blank to keep"; ECR mode switch shows only that mode's fields; test button shows `message`; delete confirms; `PushTargetsCard` posts `{registry, repository, autoPush}`; the Versions tab shows a `pushed`/`failed` chip per target and Push posts `{target}` then shows the operation.
+- [ ] **Step 1: Failing tests**: add Hub registry posts `{name, kind:'dockerhub', hub:{username, token}}`; editing shows the token field empty with "leave blank to keep"; ECR mode switch shows only that mode's fields; test button shows `message`; delete confirms; `PushTargetsCard` posts `{registryId, repository, autoPush}`; the Versions tab shows a `pushed`/`failed` chip per target and Push posts `{target}` then shows the operation.
 - [ ] **Step 2: Run** `cd web && npx vitest run src/app/settings src/app/images`. Expected: FAIL.
 - [ ] **Step 3: Implement** with `SettingsCard`, `Dialog`, `Field`, `Segmented`.
 - [ ] **Step 4: Run** `cd web && npm run check && npx vitest run`. Expected: PASS.
