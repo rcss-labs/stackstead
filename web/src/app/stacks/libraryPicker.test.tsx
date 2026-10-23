@@ -89,7 +89,7 @@ describe('LibraryPicker', () => {
       },
     });
     await userEvent.setup().click(await screen.findByRole('radio', { name: 'web' }));
-    expect(onChange).toHaveBeenCalledWith('stackstead.invalid/0123456789ab/web:3');
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith('stackstead.invalid/0123456789ab/web:3'));
     const versions = within(await screen.findByRole('group', { name: 'Version' }));
     expect(versions.getAllByRole('radio').map((r) => (r as HTMLInputElement).value.split(':').pop())).toEqual(['3', '2', '1']);
   });
@@ -125,6 +125,33 @@ describe('LibraryPicker', () => {
     expect((screen.getByRole('radio', { name: '2' }) as HTMLInputElement).disabled).toBe(false);
     await userEvent.setup().click(radio);
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('defaults to the newest compatible version when the latest is for another architecture', async () => {
+    const onChange = mount(library([image('web', local, version('3', { arch: 'arm64' }))]), {
+      localArch: 'amd64',
+      versions: { web: [version('3', { arch: 'arm64', startedAt: '2026-10-22T10:00:00Z' }), version('2', { startedAt: '2026-10-21T10:00:00Z' })] },
+    });
+    await userEvent.setup().click(await screen.findByRole('radio', { name: 'web' }));
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith('stackstead.invalid/0123456789ab/web:2'));
+    expect(onChange).not.toHaveBeenCalledWith('stackstead.invalid/0123456789ab/web:3');
+  });
+
+  it('clears the choice and shows the note when no version is compatible', async () => {
+    const onChange = mount(library([image('web', local, version('3', { arch: 'arm64' }))]), { localArch: 'amd64', versions: { web: [version('3', { arch: 'arm64' })] } });
+    await userEvent.setup().click(await screen.findByRole('radio', { name: 'web' }));
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith(''));
+    expect(onChange).not.toHaveBeenCalledWith('stackstead.invalid/0123456789ab/web:3');
+    expect(screen.getByText('built for arm64; this server is amd64')).toBeTruthy();
+  });
+
+  it('replaces an existing reference to a wrong-architecture version', async () => {
+    const onChange = mount(library([image('web', local, version('3'))]), {
+      localArch: 'amd64',
+      value: 'stackstead.invalid/0123456789ab/web:1',
+      versions: { web: [version('3', { startedAt: '2026-10-22T10:00:00Z' }), version('1', { arch: 'arm64', startedAt: '2026-10-20T10:00:00Z' })] },
+    });
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith('stackstead.invalid/0123456789ab/web:3'));
   });
 
   it('shows an empty library with a link to the images screen', async () => {

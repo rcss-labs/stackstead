@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Field } from '$lib/api/types';
-import { DOCKERFILE_TEMPLATE, emptyForm, type FormErrors, type ServiceForm as Form } from '$lib/compose/form';
+import { DOCKERFILE_TEMPLATE, emptyForm, fromForm, type FormErrors, type ServiceForm as Form } from '$lib/compose/form';
 import { installFakeFetch } from '../../vitest-setup';
 import { fieldLabel, ServiceForm, type BrowsePurpose, type ServiceFormHandle, type ServiceFormProps } from './ServiceForm';
 
@@ -123,6 +123,19 @@ describe('ServiceForm library source', () => {
       expect(handle.current.getForm().library).toEqual({ ref: REF });
       await user.click(screen.getByRole('radio', { name: /From Image/ }));
       expect((screen.getByLabelText('Image') as HTMLInputElement).value).toBe(REF);
+    } finally {
+      fake.restore();
+    }
+  });
+
+  it.each(['dockerfile', 'build'] as const)('drops the library reference when switching to %s', async (target) => {
+    const fake = installFakeFetch({ 'GET /api/images': { body: { images: [], servers: [] } } });
+    try {
+      const { handle } = setup({ initial: { source: 'library', image: REF, library: { ref: REF }, buildContext: './app' } });
+      await userEvent.setup().click(screen.getByRole('radio', { name: target === 'build' ? /Existing build/ : /Write a Dockerfile/ }));
+      const form = handle.current.getForm();
+      expect(form.library).toBeNull();
+      expect(fromForm(form, null, 'web').image).toBeUndefined();
     } finally {
       fake.restore();
     }

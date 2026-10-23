@@ -197,13 +197,16 @@ export function ServiceForm({
   const invalid = (path: string) => (shown[path] ? ('true' as const) : undefined);
 
   function selectSource(source: ServiceFormValue['source']) {
-    const base = onSourceChange?.(source) ?? latest.current;
+    let base = onSourceChange?.(source) ?? latest.current;
     if (source === 'library') {
       // An image that already is a library reference stays chosen.
       const ref = base.library?.ref ?? (parseLibraryRef(base.image.trim()) ? base.image.trim() : '');
       onChange({ ...base, source, library: ref ? { ref } : null });
       return;
     }
+    // A library reference must not stay as the image tag of a build; only the Image source keeps it as text.
+    const leaving = base.source === 'library' && source !== 'image';
+    if (leaving) base = { ...base, library: null, image: parseLibraryRef(base.image.trim()) ? '' : base.image };
     onChange(source === 'dockerfile' ? { ...base, source, dockerfileText: base.dockerfileText || DOCKERFILE_TEMPLATE } : { ...base, source });
   }
 
