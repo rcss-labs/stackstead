@@ -25,7 +25,7 @@ const MODES = [
 ];
 const kindLabel = (kind: string) => KINDS.find((k) => k.value === kind)?.label ?? kind;
 
-function RegistryDialog({ registry, onSaved, onClose }: { registry?: RegistryView; onSaved(): void; onClose(): void }) {
+function RegistryDialog({ registry, onSaved, onClose }: { registry?: RegistryView; onSaved(id: string): void; onClose(): void }) {
   const uid = useId();
   const editing = registry !== undefined;
   const [name, setName] = useState(registry?.name ?? '');
@@ -34,7 +34,7 @@ function RegistryDialog({ registry, onSaved, onClose }: { registry?: RegistryVie
   const [token, setToken] = useState('');
   const [region, setRegion] = useState(registry?.region ?? '');
   const [mode, setMode] = useState(registry?.mode || 'static');
-  const [accessKeyId, setAccessKeyId] = useState('');
+  const [accessKeyId, setAccessKeyId] = useState(registry?.accessKeyId ?? '');
   const [secretAccessKey, setSecretAccessKey] = useState('');
   const [sessionToken, setSessionToken] = useState('');
   const [profile, setProfile] = useState(registry?.profile ?? '');
@@ -59,7 +59,7 @@ function RegistryDialog({ registry, onSaved, onClose }: { registry?: RegistryVie
     try {
       if (registry) await api.updateRegistry(registry.id, request);
       else await api.createRegistry(request);
-      onSaved();
+      onSaved(registry?.id ?? '');
     } catch (e) {
       setError(messageOf(e));
       setPending(false);
@@ -94,7 +94,7 @@ function RegistryDialog({ registry, onSaved, onClose }: { registry?: RegistryVie
             <Segmented label="Credentials" options={MODES} value={mode} onChange={setMode} />
             {mode === 'static' && (
               <>
-                <Field label="Access key ID" id={`${uid}-akid`} mono hint={keepHint}>
+                <Field label="Access key ID" id={`${uid}-akid`} mono>
                   {(c) => <input {...c} value={accessKeyId} autoComplete="off" onChange={(e) => setAccessKeyId(e.target.value)} />}
                 </Field>
                 <Field label="Secret access key" id={`${uid}-secret`} hint={keepHint}>
@@ -234,7 +234,8 @@ export function RegistriesCard() {
         <RegistryDialog
           registry={dialog.registry}
           onClose={() => setDialog(undefined)}
-          onSaved={() => {
+          onSaved={(id) => {
+            setResults(({ [id]: _stale, ...rest }) => rest);
             setDialog(undefined);
             load();
           }}

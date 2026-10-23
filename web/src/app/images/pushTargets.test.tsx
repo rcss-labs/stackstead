@@ -75,6 +75,17 @@ describe('Versions tab push', () => {
     expect(await screen.findByRole('region', { name: 'Operation output' })).toBeTruthy();
   });
 
+  it('explains an unconfigured registry inline and links to the registries settings', async () => {
+    install(
+      { pushTargets: [TARGET], versions: [version()] },
+      { [`POST ${IMG}/versions/3/push`]: { status: 409, body: { error: 'registry is not configured', code: 'registry_unconfigured' } } },
+    );
+    mountImages('/images/web?tab=versions');
+    await userEvent.click(await screen.findByRole('button', { name: 'Push 3 to Docker Hub pavel/web' }));
+    expect(await screen.findByText(/The registry for Docker Hub isn't configured/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Settings → Registries/ }).getAttribute('href')).toBe('/settings#settings-registries');
+  });
+
   it('offers no Push for a failed version', async () => {
     install({ pushTargets: [TARGET], versions: [version({ status: 'failed' })] });
     mountImages('/images/web?tab=versions');

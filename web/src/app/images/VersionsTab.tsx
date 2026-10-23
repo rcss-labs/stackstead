@@ -1,5 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import type { LibraryImageDetail, PushTarget, LibraryUse, LibraryVersion, LibraryVersionDetail } from '$lib/api/imageTypes';
+import { Link } from 'react-router';
+import { ApiError } from '$lib/api/client';
 import { toasts } from '$lib/stores/toasts';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
@@ -28,6 +30,7 @@ export function VersionsTab({ image, onChanged }: { image: LibraryImageDetail; o
   const [deleting, setDeleting] = useState<LibraryVersion>();
   const [pending, setPending] = useState(false);
   const [pushOperation, setPushOperation] = useState<string>();
+  const [unconfigured, setUnconfigured] = useState<Record<string, string>>({});
   const [pushing, setPushing] = useState<string>();
   const [inUse, setInUse] = useState<{ message: string; usedBy: LibraryUse[] }>();
 
@@ -71,6 +74,7 @@ export function VersionsTab({ image, onChanged }: { image: LibraryImageDetail; o
 
   async function push(version: LibraryVersion, target: PushTarget) {
     setPushing(`${version.id}/${target.id}`);
+    setUnconfigured(({ [version.id]: _gone, ...rest }) => rest);
     try {
       const operation = await api.pushImageVersion(slug, version.tag, target.id);
       setPushOperation(operation.id);
@@ -78,6 +82,10 @@ export function VersionsTab({ image, onChanged }: { image: LibraryImageDetail; o
       refreshRunningOps();
       onChanged();
     } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && e.code === 'registry_unconfigured') {
+        setUnconfigured((prev) => ({ ...prev, [version.id]: target.registryName }));
+        return;
+      }
       toasts.push({ kind: 'danger', message: `Could not start the push: ${e instanceof Error ? e.message : String(e)}` });
     } finally {
       setPushing(undefined);
@@ -144,6 +152,15 @@ export function VersionsTab({ image, onChanged }: { image: LibraryImageDetail; o
                       </Button>
                     </td>
                   </tr>
+                  {unconfigured[v.id] && (
+                    <tr>
+                      <td colSpan={6}>
+                        <Banner kind="danger" title="Registry not configured">
+                          The registry for {unconfigured[v.id]} isn&apos;t configured. Add credentials in <Link to="/settings#settings-registries">Settings → Registries</Link>.
+                        </Banner>
+                      </td>
+                    </tr>
+                  )}
                   {isOpen && (
                     <tr>
                       <td colSpan={6}>
