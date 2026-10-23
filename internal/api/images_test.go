@@ -42,6 +42,9 @@ type imgEngine struct {
 	present map[string]bool
 	gate    chan struct{}
 	started chan struct{}
+
+	failBuild bool   // builds end in an error
+	saveData  string // bytes SaveImage streams; empty makes it fail
 }
 
 func (f *imgEngine) Build(ctx context.Context, in io.Reader, opts engine.BuildOptions, out func(string)) (engine.BuildResult, error) {
@@ -69,6 +72,9 @@ func (f *imgEngine) Build(ctx context.Context, in io.Reader, opts engine.BuildOp
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failBuild {
+		return engine.BuildResult{}, errors.New("build failed")
+	}
 	for _, t := range opts.Tags {
 		f.present[t] = true
 	}
@@ -80,7 +86,12 @@ func (f *imgEngine) Push(context.Context, string, engine.RegistryAuth, func(stri
 }
 func (f *imgEngine) TagImage(context.Context, string, string, string) error { return nil }
 func (f *imgEngine) SaveImage(context.Context, string) (io.ReadCloser, error) {
-	return nil, errors.New("unused")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.saveData == "" {
+		return nil, errors.New("unused")
+	}
+	return io.NopCloser(strings.NewReader(f.saveData)), nil
 }
 func (f *imgEngine) LoadImage(context.Context, io.Reader) error { return nil }
 func (f *imgEngine) InspectImage(_ context.Context, ref string) (engine.ImageInspect, error) {

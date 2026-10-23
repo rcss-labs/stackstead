@@ -39,6 +39,9 @@ type fakeEngine struct {
 	pushErr    func(auth engine.RegistryAuth) error
 	pushDigest string
 	pushHook   func() // runs inside Push, before it returns
+
+	saveData string   // bytes SaveImage streams; empty makes it fail
+	saved    []string // refs SaveImage was asked for
 }
 
 func newFakeEngine() *fakeEngine {
@@ -108,8 +111,14 @@ func (f *fakeEngine) TagImage(_ context.Context, source, repo, tag string) error
 	f.calls = append(f.calls, "tag "+source+" "+repo+" "+tag)
 	return nil
 }
-func (f *fakeEngine) SaveImage(context.Context, string) (io.ReadCloser, error) {
-	return nil, errors.New("not used")
+func (f *fakeEngine) SaveImage(_ context.Context, ref string) (io.ReadCloser, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.saveData == "" {
+		return nil, errors.New("not used")
+	}
+	f.saved = append(f.saved, ref)
+	return io.NopCloser(strings.NewReader(f.saveData)), nil
 }
 func (f *fakeEngine) LoadImage(context.Context, io.Reader) error { return nil }
 func (f *fakeEngine) InspectImage(_ context.Context, ref string) (engine.ImageInspect, error) {

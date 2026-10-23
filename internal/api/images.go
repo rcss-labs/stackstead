@@ -49,6 +49,9 @@ type ImagesAPI interface {
 	DeletePushTarget(ctx context.Context, user, slug, id string) error
 	Push(ctx context.Context, user, slug, tag, targetID string) (stacks.Operation, error)
 	Resolve(ctx context.Context, refs []string) (map[string]images.ResolvedRef, error)
+	OwnImages(ctx context.Context) ([]images.LibraryEntry, error)
+	OwnUsage(ctx context.Context) ([]imageref.Usage, error)
+	OpenVersionTar(ctx context.Context, slug, tag string) (io.ReadCloser, string, error)
 	Limits() images.Limits
 	LocalServer(ctx context.Context) (images.ServerInfo, error)
 	NewUploadSpool(ctx context.Context, slug string) (string, error)
@@ -82,6 +85,8 @@ type imageInUseBody struct {
 	Error  string                `json:"error"`
 	Code   string                `json:"code"`
 	UsedBy []apitypes.LibraryUse `json:"usedBy"`
+	// Unreachable names the servers that could not be asked whether the image is in use.
+	Unreachable []apitypes.LibraryServer `json:"unreachable"`
 }
 
 func (s *server) registerImageRoutes(mux *http.ServeMux) {
@@ -131,7 +136,7 @@ func (s *server) writeImagesError(w http.ResponseWriter, r *http.Request, err er
 		}
 		writeJSON(w, http.StatusBadRequest, fieldErrorBody{Error: validation.Error(), Fields: fields})
 	case errors.As(err, &inUse):
-		writeJSON(w, http.StatusConflict, imageInUseBody{Error: inUse.Error(), Code: codeImageInUse, UsedBy: toLibraryUses(inUse.UsedBy)})
+		writeJSON(w, http.StatusConflict, imageInUseBody{Error: inUse.Error(), Code: codeImageInUse, UsedBy: toLibraryUses(inUse.UsedBy), Unreachable: toLibraryServers(inUse.Unreachable)})
 	case errors.Is(err, registry.ErrInvalid), errors.Is(err, registry.ErrNameTaken), errors.Is(err, registry.ErrNotFound),
 		errors.Is(err, registry.ErrUnconfigured):
 		s.writeRegistryError(w, r, err)

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/rcss-labs/stackstead/internal/engine"
+	"github.com/rcss-labs/stackstead/internal/imageref"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 )
 
@@ -316,7 +317,7 @@ func (s *Service) VersionDetail(ctx context.Context, slug, id string) (VersionDe
 		if err != nil {
 			return VersionDetail{}, err
 		}
-		if d.UsedBy, err = s.usedBy(ctx, owner, slug, v.Tag); err != nil {
+		if d.UsedBy, _, err = s.usedBy(ctx, imageref.Ref{Owner: owner, Slug: slug, Tag: v.Tag}); err != nil {
 			return VersionDetail{}, err
 		}
 	}
@@ -340,7 +341,7 @@ func (s *Service) DeleteVersion(ctx context.Context, user, slug, id string) erro
 		if err != nil {
 			return err
 		}
-		if err := s.checkUnused(ctx, owner, slug, v.Tag); err != nil {
+		if err := s.checkUnused(ctx, imageref.Ref{Owner: owner, Slug: slug, Tag: v.Tag}); err != nil {
 			return err
 		}
 		// Only a live version owns its reference; a failed one may share the tag.
