@@ -101,6 +101,23 @@ func TestFileTooLarge(t *testing.T) {
 	}
 }
 
+func TestFileMalformedBodyIsUnexpectedResponse(t *testing.T) {
+	for name, body := range map[string]string{
+		"html":            `<html><body>captive portal</body></html>`,
+		"truncated":       `{"type":"file","encoding":"base64","con`,
+		"truncated array": `[{"type":"fi`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, body) }))
+			defer srv.Close()
+			_, err := newClient(srv).File(context.Background(), testToken, "o/r", "main", "Dockerfile")
+			if err == nil || errors.Is(err, ErrNotFound) {
+				t.Fatalf("want an unexpected-response error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestFileDirectoryIsNotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, `[{"type":"file"}]`) }))
 	defer srv.Close()

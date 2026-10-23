@@ -234,8 +234,16 @@ func (c *Client) File(ctx context.Context, token secret.Secret, repo, ref, path 
 	if err != nil {
 		return nil, errors.New("github: unexpected response")
 	}
-	if err := json.Unmarshal(raw, &f); err != nil || f.Type != "file" {
+	if err := json.Unmarshal(raw, &f); err != nil {
 		// A directory answers with a JSON array; treat it as "no such file".
+		// Anything that is not valid JSON (a proxy's HTML page, a cut-off
+		// body) is an upstream problem, not a missing Dockerfile.
+		if json.Valid(raw) {
+			return nil, ErrNotFound
+		}
+		return nil, errors.New("github: unexpected response")
+	}
+	if f.Type != "file" {
 		return nil, ErrNotFound
 	}
 	if f.Size > maxFileSize {
