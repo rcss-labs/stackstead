@@ -1,6 +1,20 @@
 package images
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestDockerignoreLongLine(t *testing.T) {
+	long := strings.Repeat("x", 100*1024)
+	ig, err := ParseDockerignore([]byte(long + "\n*.log\n"))
+	if err != nil {
+		t.Fatalf("a 100 KiB line must parse: %v", err)
+	}
+	if !ig.Excluded("a.log") {
+		t.Error("rules after the long line must still apply")
+	}
+}
 
 func TestDockerignore(t *testing.T) {
 	cases := []struct {

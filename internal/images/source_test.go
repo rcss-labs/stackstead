@@ -47,6 +47,16 @@ func up(path, content string) UploadFile {
 	return UploadFile{Path: path, Content: strings.NewReader(content)}
 }
 
+func TestUploadRejectsDuplicatePaths(t *testing.T) {
+	for _, dup := range []string{"a/b", "./a/b", "a//b"} {
+		b, _ := newTestBlobs(t)
+		got, _, err := ApplyUpload(Manifest{}, b, []UploadFile{up("a/b", "one"), up(dup, "two")}, Limits{1 << 20, 1 << 20})
+		if !errors.Is(err, ErrBadPath) || got != nil {
+			t.Errorf("duplicate %q: got %v, %v; want ErrBadPath and no manifest", dup, got, err)
+		}
+	}
+}
+
 func TestUploadRejectsPaths(t *testing.T) {
 	b, blobDir := newTestBlobs(t)
 	base, _, err := ApplyUpload(Manifest{}, b, []UploadFile{up("keep.txt", "k")}, Limits{1 << 20, 1 << 20})

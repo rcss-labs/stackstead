@@ -111,11 +111,16 @@ func plural(n int, one string) string {
 // stored before a failure stay for GC to collect.
 func ApplyUpload(m Manifest, b *Blobs, files []UploadFile, lim Limits) (Manifest, string, error) {
 	paths := make([]string, len(files))
+	seen := make(map[string]struct{}, len(files))
 	for i, f := range files {
 		clean, err := ValidatePath(f.Path)
 		if err != nil {
 			return nil, "", err
 		}
+		if _, dup := seen[clean]; dup {
+			return nil, "", badPath(f.Path, "appears more than once in the upload")
+		}
+		seen[clean] = struct{}{}
 		paths[i] = clean
 	}
 	next := m.clone()

@@ -1,7 +1,6 @@
 package images
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"path"
@@ -20,10 +19,10 @@ type Ignore struct{ rules []ignoreRule }
 // negation, "*", "?", "[...]" per path segment and "**" across segments.
 func ParseDockerignore(src []byte) (*Ignore, error) {
 	ig := &Ignore{}
-	sc := bufio.NewScanner(bytes.NewReader(src))
-	sc.Buffer(make([]byte, 0, 64*1024), maxPathBytes*2)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
+	// Split rather than scan: Docker accepts lines of any length and src is
+	// already bounded by the file size limit.
+	for _, rawLine := range bytes.Split(src, []byte("\n")) {
+		line := strings.TrimSpace(string(rawLine))
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -46,9 +45,6 @@ func ParseDockerignore(src []byte) (*Ignore, error) {
 			}
 		}
 		ig.rules = append(ig.rules, rule)
-	}
-	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf(".dockerignore: %w", err)
 	}
 	return ig, nil
 }
