@@ -5,15 +5,26 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/rcss-labs/stackstead/internal/store"
 )
 
-type testClock struct{ t time.Time }
+// testClock ticks one second per call; the mutex lets operation pruning read
+// it from other goroutines.
+type testClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
 
-func (c *testClock) now() time.Time { c.t = c.t.Add(time.Second); return c.t }
+func (c *testClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(time.Second)
+	return c.t
+}
 
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
