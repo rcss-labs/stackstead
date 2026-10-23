@@ -13,7 +13,7 @@ func rootCommand() *Command {
 	add("Server", serveCommand(), versionCommand())
 	add("Remote",
 		loginCommand(), logoutCommand(), contextCommand(), whoamiCommand(), statusCommand(),
-		stacksCommand(), opsCommand(), logsCommand(), metricsCommand(), eventsCommand(),
+		stacksCommand(), opsCommand(), logsCommand(), execCommand(), metricsCommand(), eventsCommand(),
 		networksCommand(), storageCommand(), settingsCommand())
 	add("Host admin", configCommand(), dbCommand(), adminCommand(), healthCommand(), upgradeCommand())
 	return &Command{
