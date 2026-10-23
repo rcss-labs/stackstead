@@ -203,3 +203,39 @@ func TestClientAgainstRealRouter(t *testing.T) {
 		t.Fatalf("Me after logout err = %v", err)
 	}
 }
+
+// TestImagesClientAgainstRealRouter pins the images client methods to the
+// real router: paths, the CSRF JSON rule and the decoded shapes.
+func TestImagesClientAgainstRealRouter(t *testing.T) {
+	env := newImagesEnv(t)
+	env.createImage(t, "web")
+	srv := httptest.NewServer(env.handler)
+	t.Cleanup(srv.Close)
+	u, _ := url.Parse(srv.URL)
+	ctx := context.Background()
+
+	anon, err := client.New(client.Config{BaseURL: u})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, _, err := anon.Login(ctx, "admin", adminPassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := client.New(client.Config{BaseURL: u, Session: session})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lib, err := c.Images(ctx)
+	if err != nil || len(lib.Images) != 1 || lib.Images[0].Slug != "web" || !lib.Images[0].Owner.Local {
+		t.Fatalf("Images = %+v %v", lib, err)
+	}
+	detail, err := c.Image(ctx, "web")
+	if err != nil || detail.Slug != "web" || detail.SuggestedTag != "1" {
+		t.Fatalf("Image = %+v %v", detail, err)
+	}
+	if _, err := c.Image(ctx, "missing"); !errors.Is(err, client.ErrNotFound) {
+		t.Fatalf("Image(missing) err = %v", err)
+	}
+}

@@ -8,7 +8,7 @@ The `stackstead` binary is both the server and a complete command-line tool.
 - **Server:** `serve`, `version`.
 - **Remote:** talk to a running server over its HTTP API from any machine:
   `login`, `logout`, `context`, `whoami`, `status`, `stacks`, `ops`, `logs`,
-  `metrics`, `events`, `networks`, `storage`, `settings`.
+  `metrics`, `events`, `networks`, `storage`, `images`, `settings`.
 - **Host admin:** run on the server's host, next to the files:
   `config`, `db`, `admin`, `health`.
 
@@ -42,6 +42,9 @@ stackstead ops ls --running
 | `stacks rm <name> [--volumes] [--yes] [--detach]` | compose down; asks on a terminal, `--yes` is required without one |
 | `stacks import <path>` | import an existing compose file (e.g. `/opt/stacks/web/compose.yaml`) inside the server's allowed roots |
 | `stacks compose get\|edit\|put <name>` | read, edit (in `$VISUAL`/`$EDITOR`) or replace (`-f FILE --hash H`) the compose file |
+| `images ls` | the image library: NAME, SOURCE, OWNER, LATEST, LAST BUILD and PUSH TARGETS, including images owned by paired servers |
+| `images build <image> [--tag T] [--build-arg K=V]... [--ref REF] [--detach]` | build a new version; the tag defaults to the suggested next tag |
+| `images push <image> <tag> [--target NAME] [--detach]` | push a built version to a registry push target |
 | `ops ls\|show\|stream\|cancel` | operations and their output |
 | `logs <stack> [-f] [--tail N\|all] [--since X] [--service S] [--timestamps] [--raw]` | container logs |
 | `exec (<stack> <service> \| --container <name\|id>) [--index N] [--user U] [-T] [-- cmd args...]` | run a command or a shell inside a running container |
@@ -112,6 +115,38 @@ Storage exits: 5 for conflicts/protected targets, 6 for a wrong typed phrase,
 for a waited operation that fails, is cancelled or times out. Other codes
 follow the table below. See [Storage API](api.md#storage) for cache ages,
 identity checks, build-cache modes and action-log byte estimates.
+
+### Images
+
+`stackstead images ls [-o table|json]` lists the library the server sees: its
+own images and those of directly paired servers (the OWNER column names the
+server that owns each one). NAME is the image slug. Missing values are `-`;
+JSON prints the library API response.
+
+```bash
+stackstead images ls
+stackstead images build web                       # tag = the suggested next tag, streams the build
+stackstead images build web --tag v2 --build-arg VERSION=2 --detach
+stackstead images build app --ref release/1.4     # GitHub images only
+stackstead images push web v2 --target hub        # --target is the registry name
+```
+
+`images build` uses the server's suggested tag unless `--tag` is given. When
+there is no suggestion (the latest tag is not numeric or semver-like) it exits
+2 and prints the latest tag; pass `--tag`. `--build-arg` repeats and needs
+`KEY=VALUE` (a bare `KEY` is exit 2). `--ref` builds a GitHub image at a
+branch, tag or commit; the server refuses it for upload images (exit 6).
+
+`images push` needs `--target` (the push target's registry name) when the image
+has more than one push target; with one it is used, with none the command exits
+2. Both commands stream the operation like `stacks up` (exit 9 if it fails), or
+print its ID with `--detach`.
+
+Image exits: 5 for a taken tag, a running build, an image in use, or a missing
+registry or GitHub token (`tag_taken`, `build_running`, `image_in_use`,
+`registry_unconfigured`, `github_unconfigured`); 8 for GitHub rate limiting;
+7 when GitHub or the owning peer is unreachable (502). The server's message is
+printed.
 
 ### Contexts and credentials
 
