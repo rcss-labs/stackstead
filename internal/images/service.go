@@ -98,6 +98,7 @@ type Service struct {
 	locks sync.Map // slug -> *sync.Mutex
 
 	beforeBuildLock func() // test hook: runs in Build before the image lock
+	beforeBuildOp   func() // test hook: runs in Build after the image lock is released, before the operation starts
 }
 
 var _ stacks.LibraryFetcher = (*Service)(nil)

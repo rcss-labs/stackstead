@@ -193,6 +193,36 @@ func TestBuildOpsBusyLeavesNoVersionAndRestoresDefaults(t *testing.T) {
 	}
 }
 
+func TestBuildFailedStartKeepsArgsChangedMeanwhile(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.create(t, "app")
+	release := make(chan struct{})
+	if _, err := h.ops.StartTimeout(OpKey(testOwner, "app"), "push", time.Minute, func(ctx context.Context, _ func(string)) error {
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer close(release)
+	h.svc.beforeBuildOp = func() {
+		if _, err := h.svc.Update(ctx, "bob", "app", UpdateRequest{Name: "app", BuildArgs: map[string]string{"C": "3"}}); err != nil {
+			t.Error(err)
+		}
+	}
+	_, _, err := h.svc.Build(ctx, "alice", "app", BuildRequest{Tag: "1", BuildArgs: map[string]string{"B": "9"}, SaveArgs: true})
+	if !errors.Is(err, ErrImageBusy) {
+		t.Fatalf("err = %v", err)
+	}
+	got, _ := h.svc.Get(ctx, "app")
+	if len(got.BuildArgs) != 1 || got.BuildArgs["C"] != "3" {
+		t.Fatalf("build args = %v; want the concurrent update {C:3}", got.BuildArgs)
+	}
+}
+
 func TestBuildDeletedImageDuringStart(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()

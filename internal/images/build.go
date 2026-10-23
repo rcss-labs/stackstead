@@ -76,7 +76,6 @@ func (s *Service) Build(ctx context.Context, user, slug string, req BuildRequest
 		unlock()
 		return Version{}, stacks.Operation{}, fieldError("source", "building from this source is not supported")
 	}
-	previous := maps.Clone(img.BuildArgs)
 	args := maps.Clone(img.BuildArgs)
 	if args == nil {
 		args = map[string]string{}
@@ -99,22 +98,22 @@ func (s *Service) Build(ctx context.Context, user, slug string, req BuildRequest
 	if err == nil {
 		v, err = s.store.StartVersion(ctx, next)
 	}
-	if err == nil && req.SaveArgs {
-		img.BuildArgs = args
-		if err = s.store.UpdateImage(ctx, img); err != nil {
-			err = fmt.Errorf("save build defaults: %w", err)
-			s.store.DeleteVersion(context.WithoutCancel(ctx), v.ID)
-		}
-	}
 	unlock()
 	if err != nil {
 		return Version{}, stacks.Operation{}, err
 	}
+	if s.beforeBuildOp != nil {
+		s.beforeBuildOp()
+	}
 
 	opReady := make(chan struct{})
 	var opID string
+	var abort error // set before opReady is closed
 	op, err := s.ops.StartTimeout(OpKey(owner, slug), "build", s.timeout, func(opCtx context.Context, out func(string)) error {
 		<-opReady
+		if abort != nil {
+			return abort
+		}
 		return s.runBuild(opCtx, user, img, v, owner, opID, args, out)
 	})
 	if err != nil {
@@ -122,13 +121,22 @@ func (s *Service) Build(ctx context.Context, user, slug string, req BuildRequest
 		if derr := s.store.DeleteVersion(bg, v.ID); derr != nil {
 			s.log.Error("remove version after failed build start", "image", slug, "version", v.ID, "err", derr)
 		}
-		if req.SaveArgs {
-			s.restoreDefaults(bg, slug, previous)
-		}
 		if errors.Is(err, stacks.ErrBusy) {
 			return Version{}, stacks.Operation{}, ErrImageBusy
 		}
 		return Version{}, stacks.Operation{}, err
+	}
+	// Defaults are saved only once the operation exists, so a failed start never
+	// writes them and never has to undo them over someone else's edit.
+	if req.SaveArgs {
+		if serr := s.saveBuildDefaults(ctx, slug, args); serr != nil {
+			abort = serr
+			if derr := s.store.DeleteVersion(context.WithoutCancel(ctx), v.ID); derr != nil {
+				s.log.Error("remove version after failed defaults save", "image", slug, "version", v.ID, "err", derr)
+			}
+			close(opReady)
+			return Version{}, stacks.Operation{}, serr
+		}
 	}
 	opID = op.ID
 	v.OperationID = op.ID
@@ -406,8 +414,9 @@ func (s *Service) deleteVersionRow(ctx context.Context, slug string, v Version) 
 	return nil
 }
 
-// restoreDefaults puts back the build defaults a build that never started had saved.
-func (s *Service) restoreDefaults(ctx context.Context, slug string, args map[string]string) {
+// saveBuildDefaults stores args as the image's build defaults, leaving its
+// other fields as they are now.
+func (s *Service) saveBuildDefaults(ctx context.Context, slug string, args map[string]string) error {
 	unlock := s.lockImage(slug)
 	defer unlock()
 	img, err := s.store.Image(ctx, slug)
@@ -416,6 +425,7 @@ func (s *Service) restoreDefaults(ctx context.Context, slug string, args map[str
 		err = s.store.UpdateImage(ctx, img)
 	}
 	if err != nil {
-		s.log.Error("restore build defaults failed", "image", slug, "err", err)
+		return fmt.Errorf("save build defaults: %w", err)
 	}
+	return nil
 }
