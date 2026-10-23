@@ -961,8 +961,10 @@ I/O. Rows older than `metrics_retention` (default `72h`) are pruned hourly. At
 the default settings that is about 26,000 rows per container. Containers
 outside compose are sampled for live values only (the Containers screen, Top
 consumers and `/metrics`) and never stored. Sampling runs with a concurrency
-of 4 and is sized for about 40 running containers per 10 s tick; beyond that a
-tick can overrun and the next ticks are skipped, so samples get sparser. If
+of 32; Docker holds each stats call for about 2 s, so a tick takes roughly
+`ceil(containers / 32) * 2 s` and 10 s fits about 150 running containers.
+Each sample carries the time Docker took the reading. Beyond that a tick can
+overrun and the next ticks are skipped, so samples get sparser. If
 the database cannot be written, `/api/status` reports `metricsDegraded` and
 live data keeps working.
 

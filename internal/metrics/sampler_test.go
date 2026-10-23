@@ -32,14 +32,15 @@ func (f *fakeLister) Containers(context.Context) ([]engine.Container, error) {
 }
 
 type fakeStats struct {
-	mu       sync.Mutex
-	inflight int
-	max      int
-	delay    time.Duration
-	fail     map[string]bool
-	zero     map[string]bool
-	calls    int32
-	deadline time.Duration
+	mu        sync.Mutex
+	inflight  int
+	max       int
+	delay     time.Duration
+	fail      map[string]bool
+	zero      map[string]bool
+	calls     int32
+	deadline  time.Duration
+	readAfter time.Duration // Stats.Read is base plus this
 }
 
 func (f *fakeStats) Stats(ctx context.Context, id string) (engine.Stats, error) {
@@ -67,7 +68,7 @@ func (f *fakeStats) Stats(ctx context.Context, id string) (engine.Stats, error) 
 	if f.zero[id] {
 		return engine.Stats{}, nil
 	}
-	return engine.Stats{Read: base, CPUPercent: 1.5, MemUsage: 10, MemLimit: 100, NetRx: 1, NetTx: 2, BlkRead: 3, BlkWrite: 4}, nil
+	return engine.Stats{Read: base.Add(f.readAfter), CPUPercent: 1.5, MemUsage: 10, MemLimit: 100, NetRx: 1, NetTx: 2, BlkRead: 3, BlkWrite: 4}, nil
 }
 
 func ctr(id, project, service, state string) engine.Container {
@@ -163,6 +164,22 @@ func TestTickStoresRunningComposeContainersOnly(t *testing.T) {
 	}
 }
 
+// A tick can run for many seconds when containers are sampled in waves, so a
+// sample is stamped with the time the daemon took its reading, not the tick start.
+func TestSampleIsStampedWithStatsReadTime(t *testing.T) {
+	h := newHarness(t, ctr("a", "p", "web", "running"))
+	h.stats.readAfter = 7 * time.Second
+	h.start(t)
+	h.tick()
+	var ts int64
+	if err := h.db.QueryRow("SELECT ts FROM metric_samples").Scan(&ts); err != nil {
+		t.Fatal(err)
+	}
+	if want := base.Add(7 * time.Second).Unix(); ts != want {
+		t.Fatalf("stored ts = %d, want Stats.Read %d (tick started at %d)", ts, want, base.Unix())
+	}
+}
+
 func TestFailingContainerSkipped(t *testing.T) {
 	h := newHarness(t, ctr("a", "p", "web", "running"), ctr("b", "p", "db", "running"))
 	h.stats.fail = map[string]bool{"a": true}
@@ -173,9 +190,9 @@ func TestFailingContainerSkipped(t *testing.T) {
 	}
 }
 
-func TestConcurrencyCappedAtFour(t *testing.T) {
+func TestConcurrencyIsCapped(t *testing.T) {
 	var cs []engine.Container
-	for i := 0; i < 12; i++ {
+	for i := 0; i < 3*metrics.MaxStatsConcurrency; i++ {
 		cs = append(cs, ctr(fmt.Sprint("c", i), "p", fmt.Sprint("s", i), "running"))
 	}
 	h := newHarness(t, cs...)
@@ -184,10 +201,10 @@ func TestConcurrencyCappedAtFour(t *testing.T) {
 	h.tick()
 	h.stats.mu.Lock()
 	defer h.stats.mu.Unlock()
-	if h.stats.max > 4 || h.stats.max < 2 {
-		t.Errorf("max concurrency = %d, want 2..4", h.stats.max)
+	if h.stats.max > metrics.MaxStatsConcurrency || h.stats.max < 2 {
+		t.Errorf("max concurrency = %d, want 2..%d", h.stats.max, metrics.MaxStatsConcurrency)
 	}
-	if h.rows() != 12 {
+	if h.rows() != 3*metrics.MaxStatsConcurrency {
 		t.Errorf("rows = %d", h.rows())
 	}
 }
