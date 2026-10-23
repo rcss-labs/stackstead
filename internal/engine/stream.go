@@ -3,6 +3,7 @@ package engine
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -422,16 +423,16 @@ func demuxLogs(r *bufio.Reader, tty bool, fn func(stream string, p []byte) bool)
 			}
 		}
 	}
-	var hdr [8]byte
 	for {
-		if _, err := io.ReadFull(r, hdr[:]); err != nil {
+		kind, size, err := readFrameHeader(r)
+		if err != nil {
 			return err
 		}
 		stream := "stdout"
-		if hdr[0] == 2 {
+		if kind == 2 {
 			stream = "stderr"
 		}
-		remaining := int64(uint32(hdr[4])<<24 | uint32(hdr[5])<<16 | uint32(hdr[6])<<8 | uint32(hdr[7]))
+		remaining := int64(size)
 		for remaining > 0 {
 			n := int64(len(chunk))
 			if remaining < n {
@@ -446,6 +447,16 @@ func demuxLogs(r *bufio.Reader, tty bool, fn func(stream string, p []byte) bool)
 			remaining -= n
 		}
 	}
+}
+
+// readFrameHeader reads one 8-byte multiplexed frame header: the stream type
+// (1 stdout, 2 stderr) and the payload length. Shared by logs and exec.
+func readFrameHeader(r io.Reader) (kind byte, size uint32, err error) {
+	var hdr [8]byte
+	if _, err := io.ReadFull(r, hdr[:]); err != nil {
+		return 0, 0, err
+	}
+	return hdr[0], binary.BigEndian.Uint32(hdr[4:]), nil
 }
 
 // validFrameStart reports whether the leading bytes (up to 8) are consistent
