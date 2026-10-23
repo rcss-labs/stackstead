@@ -84,6 +84,9 @@ type Options struct {
 	// Images backs the /api/images routes and the library badges on stacks;
 	// nil disables both.
 	Images ImagesAPI
+	// Registries backs /api/settings/registries and /api/images/registries;
+	// nil disables them.
+	Registries RegistriesAPI
 	// Arch reports this server's Docker architecture for /api/status; nil or
 	// an error leaves it out.
 	Arch func(context.Context) (string, error)
@@ -167,6 +170,9 @@ func New(opts Options) http.Handler {
 	}
 	if opts.Images != nil {
 		s.registerImageRoutes(mux)
+	}
+	if opts.Registries != nil {
+		s.registerRegistryRoutes(mux)
 	}
 	if opts.Stacks != nil && opts.Observe != nil {
 		s.registerContainerRoutes(mux)

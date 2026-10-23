@@ -299,6 +299,53 @@ All routes need a session. Errors use the shape from [API overview](#api-overvie
 | `POST /api/images/{slug}/builds` | build with `{tag, buildArgs, saveArgs, ref}`; 202 `{version, operation}` |
 | `GET /api/images/{slug}/versions/{id}` | one version with its build log and `usedBy`; keyed by version ID, not tag |
 | `DELETE /api/images/{slug}/versions/{id}` | delete a version by ID (409 `image_in_use` if a container uses it) |
+| `GET /api/images/registries` | registries for the push-target picker: `[{id, name, kind, host}]` only; reachable with a peer credential |
+| `POST /api/images/{slug}/push-targets` | add a push target `{registryId, repository, autoPush}` (201); a registry and repository pair is unique per image |
+| `PUT`/`DELETE /api/images/{slug}/push-targets/{id}` | change or remove a target (204); a changed registry or repository clears that target's push results |
+| `POST /api/images/{slug}/versions/{tag}/push` | push the succeeded version with this tag (by tag, unlike the version routes) with `{target}`; 202 Operation (action `push`) |
+
+A target with `autoPush` is pushed after every successful build, inside the
+build's operation; a failed push never fails the build. Push errors: 404 for an
+unknown image, tag (a failed version has none) or target; 409
+`registry_unconfigured` when the registry lacks credentials; 409
+`build_running` while a build or push of the image runs; 400 `fields` for a bad
+repository or a version still building.
+
+### Registries
+
+Registries hold the credentials used to push. The routes are session-only and
+on the peer denylist (`/api/settings`); a peer sees only the list under
+`/api/images/registries`.
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/settings/registries` | all registries as `RegistryView` |
+| `POST /api/settings/registries` | create `{name, kind, hub?, ecr?}` (201) |
+| `PUT /api/settings/registries/{id}` | update; the kind cannot change |
+| `DELETE /api/settings/registries/{id}` | delete (204); its push targets are removed with it |
+| `POST /api/settings/registries/{id}/test` | check the connection: `{ok, host, message}` |
+
+`kind` is `dockerhub` (`hub: {username, token}`) or `ecr`
+(`ecr: {region, mode, accessKeyId, secretAccessKey, sessionToken, profile}`).
+ECR `mode` is one of:
+
+- `static`: `accessKeyId` and `secretAccessKey` (and an optional `sessionToken`)
+  are stored.
+- `role`: credentials come from the instance role (IMDS); only `region` is
+  needed.
+- `profile`: the named profile in the AWS shared credentials files. Only
+  static-key profiles work (`aws_access_key_id`, `aws_secret_access_key`,
+  optional `aws_session_token`); a profile using `role_arn`, `sso_*` or
+  `credential_process` is refused with a clear error.
+
+Secrets are write-only: a view carries `configured` and, for static ECR, the
+non-secret `accessKeyId`, never a token or secret key. On update a blank (or
+`[redacted]`) secret keeps the stored one. A fresh ECR registry needs no account
+or host: the host is discovered from AWS on its first test or push and saved
+without overwriting operator-set values. A failed test answers 200 with
+`ok: false` and a scrubbed `message`. Errors: 400 with `fields`, 404 unknown
+registry, 409 for a taken name, 409 `registry_unconfigured` when settings are
+missing.
 
 ### Limits
 
@@ -326,6 +373,7 @@ afterwards; content blobs live under `DataDir/images/<slug>/blobs/`.
 | 409 `tag_taken` | the tag exists on a non-failed version |
 | 409 `revision_conflict` | the file set or Dockerfile changed since the `revision` you sent |
 | 409 `image_not_built` | the referenced tag has no built version |
+| 409 `registry_unconfigured` | the push target's registry is missing credentials |
 | 413 `image_too_large` | a file or the context is over its limit |
 
 ### Operations

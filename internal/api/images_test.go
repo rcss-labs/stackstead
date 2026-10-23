@@ -26,6 +26,7 @@ import (
 	"github.com/rcss-labs/stackstead/internal/imageref"
 	"github.com/rcss-labs/stackstead/internal/images"
 	"github.com/rcss-labs/stackstead/internal/peers"
+	"github.com/rcss-labs/stackstead/internal/registry"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 	"github.com/rcss-labs/stackstead/internal/store"
 )
@@ -134,6 +135,8 @@ type imagesEnv struct {
 	usage  *imgUsage
 	ops    *stacks.Ops
 	dir    string
+	regs   *registry.Service
+	prov   *fakeRegistryProvider
 }
 
 func newImagesEnv(t *testing.T, tweaks ...func(*api.Options)) *imagesEnv {
@@ -146,8 +149,13 @@ func newImagesEnv(t *testing.T, tweaks ...func(*api.Options)) *imagesEnv {
 	ie := &imagesEnv{eng: &imgEngine{present: map[string]bool{}}, log: &imgLog{}, usage: &imgUsage{}, dir: t.TempDir()}
 	ie.ops = stacks.NewOps(time.Minute, time.Now)
 	t.Cleanup(func() { ie.ops.Shutdown(context.Background()) })
+	ie.prov = &fakeRegistryProvider{}
+	ie.regs = registry.NewService(registry.NewStore(db, time.Now), map[registry.Kind]registry.Provider{
+		registry.KindDockerHub: ie.prov, registry.KindECR: ie.prov,
+	}, ie.log, nil)
 	ie.svc = images.NewService(images.Deps{
-		Store: images.NewStore(db, time.Now), Ops: ie.ops, Engine: ie.eng, Dir: ie.dir,
+		Registries: ie.regs,
+		Store:      images.NewStore(db, time.Now), Ops: ie.ops, Engine: ie.eng, Dir: ie.dir,
 		Limits: images.Limits{MaxFileBytes: 1 << 20, MaxContextBytes: 2 << 20}, OpTimeout: time.Minute,
 		Actions: ie.log, Usage: ie.usage, Now: time.Now,
 		Self: func(context.Context) (images.Self, error) {
@@ -156,6 +164,7 @@ func newImagesEnv(t *testing.T, tweaks ...func(*api.Options)) *imagesEnv {
 	})
 	ie.testEnv = newEnvWith(t, "", func(o *api.Options) {
 		o.Images = ie.svc
+		o.Registries = ie.regs
 		o.Arch = func(context.Context) (string, error) { return "amd64", nil }
 		for _, tw := range tweaks {
 			tw(o)

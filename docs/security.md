@@ -189,9 +189,15 @@ upload secrets in a build context. Uploads are capped by `image_max_file_bytes`
 and `image_max_context_bytes`, paths that escape the context (`..`, absolute,
 backslash, NUL) are refused, and builds are bounded by
 `image_operation_timeout`. Build logs are capped at 8 MiB and are text only.
-This release stores no registry or GitHub credentials. Image data is only the
-uploaded build context, its revisions, build args (not for secrets; they are
-saved in plain text and can appear in build output) and build logs.
+Registry credentials (Docker Hub tokens, AWS keys and session tokens) are
+stored at rest in the SQLite database under the data directory, which is 0700.
+They are write-only through the API (views show only whether a secret is set,
+plus the non-secret ECR access key id), are never forwarded to peers, and are
+redacted from logs, action history, error messages and push output. The
+`/api/settings/registries` routes are on the peer denylist. This release stores
+no GitHub credentials. Other image data is the uploaded build context, its
+revisions, build args (not for secrets; they are saved in plain text and can
+appear in build output) and build logs.
 
 A connected server's peer credential can reach `/api/images/...`: `/api/images`
 is not among the denied prefixes listed under

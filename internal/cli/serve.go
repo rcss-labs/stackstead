@@ -28,6 +28,7 @@ import (
 	"github.com/rcss-labs/stackstead/internal/lockfile"
 	"github.com/rcss-labs/stackstead/internal/metrics"
 	"github.com/rcss-labs/stackstead/internal/peers"
+	"github.com/rcss-labs/stackstead/internal/registry"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 	"github.com/rcss-labs/stackstead/internal/state"
 	"github.com/rcss-labs/stackstead/internal/storage"
@@ -190,19 +191,24 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	bg := startBackground(context.Background(), cache.Run, recorder.Run, sampler.Run, checker.Run, peersSvc.Run)
 	defer bg.stop(time.Second) // safety net for early returns; the normal path stops it in order below
 
-	registry := stacks.NewRegistry(db, time.Now)
+	stackRegistry := stacks.NewRegistry(db, time.Now)
 	ops := stacks.NewOps(cfg.OperationTimeout, time.Now)
-	storageSvc := storage.NewService(storage.ServiceConfig{Engine: dockerEngine, Registry: registry, Declarations: storage.NewDeclarationCache(buildRunner(cfg), logger), Now: time.Now, Ops: ops, Actions: actions})
+	storageSvc := storage.NewService(storage.ServiceConfig{Engine: dockerEngine, Registry: stackRegistry, Declarations: storage.NewDeclarationCache(buildRunner(cfg), logger), Now: time.Now, Ops: ops, Actions: actions})
 	// The library service and the stack service need each other: stacks fetch
 	// library images before up, the library asks stacks which images are used.
+	registries := registry.NewService(registry.NewStore(db, time.Now), map[registry.Kind]registry.Provider{
+		registry.KindDockerHub: &registry.HubProvider{},
+		registry.KindECR:       &registry.ECRProvider{},
+	}, actions, logger)
 	imagesSvc := images.NewService(images.Deps{
-		Store:     images.NewStore(db, time.Now),
-		Ops:       ops,
-		Engine:    dockerEngine,
-		Dir:       filepath.Join(cfg.DataDir, "images"),
-		Limits:    images.Limits{MaxFileBytes: cfg.ImageMaxFileBytes, MaxContextBytes: cfg.ImageMaxContextBytes},
-		OpTimeout: cfg.ImageOperationTimeout,
-		Actions:   actions,
+		Registries: registries,
+		Store:      images.NewStore(db, time.Now),
+		Ops:        ops,
+		Engine:     dockerEngine,
+		Dir:        filepath.Join(cfg.DataDir, "images"),
+		Limits:     images.Limits{MaxFileBytes: cfg.ImageMaxFileBytes, MaxContextBytes: cfg.ImageMaxContextBytes},
+		OpTimeout:  cfg.ImageOperationTimeout,
+		Actions:    actions,
 		Self: func(ctx context.Context) (images.Self, error) {
 			fallback, err := os.Hostname()
 			if err != nil || fallback == "" {
@@ -219,7 +225,7 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	})
 	stackSvc := stacks.NewService(stacks.Deps{
 		Library:      imagesSvc,
-		Registry:     registry,
+		Registry:     stackRegistry,
 		Ops:          ops,
 		Compose:      runner,
 		Engine:       dockerEngine,
@@ -264,6 +270,7 @@ func serve(ctx context.Context, env *Env, args []string) error {
 			Logger:           logger,
 			Stacks:           stackSvc,
 			Images:           imagesSvc,
+			Registries:       registries,
 			Arch:             dockerEngine.Arch,
 			Operations:       ops,
 			FSRoots:          cfg.AllowedRoots,

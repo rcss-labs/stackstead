@@ -17,6 +17,7 @@ import (
 	"github.com/rcss-labs/stackstead/internal/engine"
 	"github.com/rcss-labs/stackstead/internal/imageref"
 	"github.com/rcss-labs/stackstead/internal/images"
+	"github.com/rcss-labs/stackstead/internal/registry"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 )
 
@@ -42,6 +43,10 @@ type ImagesAPI interface {
 	Build(ctx context.Context, user, slug string, req images.BuildRequest) (images.Version, stacks.Operation, error)
 	VersionDetail(ctx context.Context, slug, versionID string) (images.VersionDetail, error)
 	DeleteVersion(ctx context.Context, user, slug, versionID string) error
+	AddPushTarget(ctx context.Context, user, slug string, req images.PushTargetRequest) (images.PushTarget, error)
+	UpdatePushTarget(ctx context.Context, user, slug, id string, req images.PushTargetRequest) (images.PushTarget, error)
+	DeletePushTarget(ctx context.Context, user, slug, id string) error
+	Push(ctx context.Context, user, slug, tag, targetID string) (stacks.Operation, error)
 	Resolve(ctx context.Context, refs []string) (map[string]images.ResolvedRef, error)
 	Limits() images.Limits
 	LocalServer(ctx context.Context) (images.ServerInfo, error)
@@ -90,6 +95,10 @@ func (s *server) registerImageRoutes(mux *http.ServeMux) {
 	route("POST /api/images/{slug}/builds", s.handleBuildImage)
 	route("GET /api/images/{slug}/versions/{id}", s.handleGetImageVersion)
 	route("DELETE /api/images/{slug}/versions/{id}", s.handleDeleteImageVersion)
+	route("POST /api/images/{slug}/push-targets", s.handleAddPushTarget)
+	route("PUT /api/images/{slug}/push-targets/{id}", s.handleUpdatePushTarget)
+	route("DELETE /api/images/{slug}/push-targets/{id}", s.handleDeletePushTarget)
+	route("POST /api/images/{slug}/versions/{tag}/push", s.handlePushImageVersion)
 }
 
 // writeImagesError maps image-library errors to HTTP answers. Unknown errors
@@ -110,6 +119,11 @@ func (s *server) writeImagesError(w http.ResponseWriter, r *http.Request, err er
 		writeJSON(w, http.StatusBadRequest, fieldErrorBody{Error: validation.Error(), Fields: fields})
 	case errors.As(err, &inUse):
 		writeJSON(w, http.StatusConflict, imageInUseBody{Error: inUse.Error(), Code: codeImageInUse, UsedBy: toLibraryUses(inUse.UsedBy)})
+	case errors.Is(err, registry.ErrInvalid), errors.Is(err, registry.ErrNameTaken), errors.Is(err, registry.ErrNotFound),
+		errors.Is(err, registry.ErrUnconfigured):
+		s.writeRegistryError(w, r, err)
+	case errors.Is(err, images.ErrTargetNotFound):
+		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, images.ErrImageNotFound), errors.Is(err, images.ErrVersionNotFound),
 		errors.Is(err, images.ErrRevisionNotFound), errors.Is(err, fs.ErrNotExist):
 		writeError(w, http.StatusNotFound, err.Error())
@@ -142,7 +156,11 @@ func (s *server) handleListImages(w http.ResponseWriter, r *http.Request) {
 		s.writeImagesError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toLibrary(lib))
+	out := toLibrary(lib)
+	for i := range out.Images {
+		s.namePushTargets(r.Context(), out.Images[i].PushTargets)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // imageView is the LibraryImage answer for slug, with its versions.
@@ -155,7 +173,9 @@ func (s *server) imageView(ctx context.Context, slug string) (apitypes.LibraryIm
 	if err != nil {
 		return apitypes.LibraryImage{}, err
 	}
-	return toLibraryImageDetail(d, owner).LibraryImage, nil
+	view := toLibraryImageDetail(d, owner).LibraryImage
+	s.namePushTargets(ctx, view.PushTargets)
+	return view, nil
 }
 
 func (s *server) handleCreateImage(w http.ResponseWriter, r *http.Request) {
@@ -187,7 +207,9 @@ func (s *server) handleGetImage(w http.ResponseWriter, r *http.Request) {
 		s.writeImagesError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toLibraryImageDetail(d, owner))
+	detail := toLibraryImageDetail(d, owner)
+	s.namePushTargets(r.Context(), detail.PushTargets)
+	writeJSON(w, http.StatusOK, detail)
 }
 
 func (s *server) handleUpdateImage(w http.ResponseWriter, r *http.Request) {
@@ -577,3 +599,84 @@ func (l *lazyFile) Read(p []byte) (int, error) {
 }
 
 func ownerIDOf(s images.ServerInfo) string { return imageref.OwnerID(s.ID) }
+
+// pushTargetView is the PushTarget answer with the registry's name and kind;
+// a registry that cannot be read leaves them empty.
+func (s *server) pushTargetView(ctx context.Context, t images.PushTarget) apitypes.PushTarget {
+	view := toPushTargets([]images.PushTarget{t})[0]
+	if s.opts.Registries != nil {
+		if reg, err := s.opts.Registries.Get(ctx, t.RegistryID); err == nil {
+			view.RegistryName, view.Kind = reg.Name, string(reg.Kind)
+		}
+	}
+	return view
+}
+
+// namePushTargets fills registryName and kind in place from the registry list.
+func (s *server) namePushTargets(ctx context.Context, targets []apitypes.PushTarget) {
+	if s.opts.Registries == nil || len(targets) == 0 {
+		return
+	}
+	list, err := s.opts.Registries.List(ctx)
+	if err != nil {
+		return
+	}
+	byID := make(map[string]registry.Registry, len(list))
+	for _, reg := range list {
+		byID[reg.ID] = reg
+	}
+	for i := range targets {
+		if reg, ok := byID[targets[i].RegistryID]; ok {
+			targets[i].RegistryName, targets[i].Kind = reg.Name, string(reg.Kind)
+		}
+	}
+}
+
+func (s *server) handleAddPushTarget(w http.ResponseWriter, r *http.Request) {
+	var req apitypes.PushTargetRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	t, err := s.opts.Images.AddPushTarget(r.Context(), userFrom(r.Context()).Username, r.PathValue("slug"), images.PushTargetRequest(req))
+	if err != nil {
+		s.writeImagesError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, s.pushTargetView(r.Context(), t))
+}
+
+func (s *server) handleUpdatePushTarget(w http.ResponseWriter, r *http.Request) {
+	var req apitypes.PushTargetRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	t, err := s.opts.Images.UpdatePushTarget(r.Context(), userFrom(r.Context()).Username, r.PathValue("slug"), r.PathValue("id"), images.PushTargetRequest(req))
+	if err != nil {
+		s.writeImagesError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.pushTargetView(r.Context(), t))
+}
+
+func (s *server) handleDeletePushTarget(w http.ResponseWriter, r *http.Request) {
+	if err := s.opts.Images.DeletePushTarget(r.Context(), userFrom(r.Context()).Username, r.PathValue("slug"), r.PathValue("id")); err != nil {
+		s.writeImagesError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handlePushImageVersion starts a push of the version with this tag to one
+// target; the answer is the running operation.
+func (s *server) handlePushImageVersion(w http.ResponseWriter, r *http.Request) {
+	var req apitypes.PushRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	op, err := s.opts.Images.Push(r.Context(), userFrom(r.Context()).Username, r.PathValue("slug"), r.PathValue("tag"), req.Target)
+	if err != nil {
+		s.writeImagesError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, toOperation(op))
+}

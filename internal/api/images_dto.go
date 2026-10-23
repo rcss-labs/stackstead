@@ -37,7 +37,7 @@ func toLibraryServers(list []images.ServerInfo) []apitypes.LibraryServer {
 func toPushTargets(list []images.PushTarget) []apitypes.PushTarget {
 	out := make([]apitypes.PushTarget, 0, len(list))
 	for _, t := range list {
-		// Registry name and kind come with the registry store (M2).
+		// Registry name and kind are filled in by the handlers from the registry list.
 		out = append(out, apitypes.PushTarget{ID: t.ID, RegistryID: t.RegistryID, Repository: t.Repository, AutoPush: t.AutoPush})
 	}
 	return out
