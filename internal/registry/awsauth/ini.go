@@ -9,7 +9,7 @@ import (
 
 // ParseINI reads an AWS shared-config style file into section -> key -> value.
 // Section names and values are trimmed, keys are lowercased, lines starting
-// with # or ; are comments, and lines without "=" are ignored. Errors never
+// with # or ; are comments, and lines without "=" or ":" are ignored. Errors never
 // quote line content, since it may hold credentials.
 func ParseINI(r io.Reader) (map[string]map[string]string, error) {
 	out := map[string]map[string]string{}
@@ -38,10 +38,13 @@ func ParseINI(r io.Reader) (map[string]map[string]string, error) {
 			cur = out[name]
 			continue
 		}
-		k, v, ok := strings.Cut(line, "=")
-		if !ok {
+		// Like Python configparser (used by the AWS CLI), the earliest "=" or
+		// ":" separates key from value.
+		i := strings.IndexAny(line, "=:")
+		if i < 0 {
 			continue
 		}
+		k, v := line[:i], line[i+1:]
 		if cur == nil {
 			return nil, fmt.Errorf("awsauth: line %d: setting outside a section", n)
 		}

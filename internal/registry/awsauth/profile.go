@@ -45,6 +45,44 @@ func readINI(path string) (map[string]map[string]string, error) {
 	return m, nil
 }
 
+// configSection collects the config-file settings of a profile. As in the AWS
+// CLI, "[profile NAME]" may have any whitespace after "profile", and the
+// default profile is "[default]" or "[profile default]". Plain "[NAME]"
+// sections only count for the default profile.
+func configSection(conf map[string]map[string]string, name string) (map[string]string, bool) {
+	var out map[string]string
+	var found bool
+	add := func(sec map[string]string) {
+		if out == nil {
+			out = map[string]string{}
+		}
+		for k, v := range sec {
+			out[k] = v
+		}
+		found = true
+	}
+	if sec, ok := conf["default"]; ok && name == "default" {
+		add(sec)
+	}
+	// Map iteration order is random; sort so overlapping sections merge
+	// deterministically.
+	sections := make([]string, 0, len(conf))
+	for s := range conf {
+		sections = append(sections, s)
+	}
+	sort.Strings(sections)
+	for _, s := range sections {
+		rest, ok := strings.CutPrefix(s, "profile")
+		if !ok || rest == "" || strings.TrimLeft(rest, " \t") == rest {
+			continue
+		}
+		if strings.TrimSpace(rest) == name {
+			add(conf[s])
+		}
+	}
+	return out, found
+}
+
 // LoadProfile reads static keys for a named profile. Settings from the
 // credentials file ([name]) win over the config file ([profile name], or
 // [default] for the default profile). Profiles that delegate to roles, SSO or
@@ -61,12 +99,8 @@ func LoadProfile(name, credentialsPath, configPath string) (Credentials, string,
 	if err != nil {
 		return Credentials{}, "", err
 	}
-	confSection := "profile " + name
-	if name == "default" {
-		confSection = "default"
-	}
 	cSec, cOK := cred[name]
-	fSec, fOK := conf[confSection]
+	fSec, fOK := configSection(conf, name)
 	if !cOK && !fOK {
 		return Credentials{}, "", fmt.Errorf("%w: %q", ErrProfileNotFound, name)
 	}

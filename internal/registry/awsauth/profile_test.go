@@ -45,6 +45,45 @@ func TestLoadProfileStaticKeys(t *testing.T) {
 	}
 }
 
+func TestLoadProfileColonDelimiter(t *testing.T) {
+	cp, fp := writeFiles(t, "[work]\naws_access_key_id: AKIA\naws_secret_access_key: sek\n", "")
+	c, _, err := LoadProfile("work", cp, fp)
+	if err != nil || c.AccessKeyID != "AKIA" || c.SecretAccessKey.Reveal() != "sek" {
+		t.Errorf("got %+v %v", c, err)
+	}
+}
+
+func TestLoadProfileExtraSpacesInConfigSection(t *testing.T) {
+	cp, fp := writeFiles(t, "[work]\naws_access_key_id=K\naws_secret_access_key=V\n", "[profile  work]\nregion=eu-west-1\n")
+	_, region, err := LoadProfile("work", cp, fp)
+	if err != nil || region != "eu-west-1" {
+		t.Errorf("region %q err %v", region, err)
+	}
+	cp, fp = writeFiles(t, "", "[profile\twork]\naws_access_key_id=K\naws_secret_access_key=V\n")
+	if c, _, err := LoadProfile("work", cp, fp); err != nil || c.AccessKeyID != "K" {
+		t.Errorf("tab: %+v %v", c, err)
+	}
+}
+
+func TestLoadProfileProfileDefaultSection(t *testing.T) {
+	cp, fp := writeFiles(t, "", "[profile default]\nregion=eu-west-1\naws_access_key_id=K\naws_secret_access_key=V\n")
+	for _, name := range []string{"default", ""} {
+		c, region, err := LoadProfile(name, cp, fp)
+		if err != nil || c.AccessKeyID != "K" || region != "eu-west-1" {
+			t.Errorf("%q: %+v %q %v", name, c, region, err)
+		}
+	}
+}
+
+// The AWS CLI also reads region from the credentials file, and that file wins
+// over the config file; this pins the behaviour so it is not "fixed" away.
+func TestLoadProfileRegionFromCredentialsFile(t *testing.T) {
+	cp, fp := writeFiles(t, "[work]\naws_access_key_id=K\naws_secret_access_key=V\nregion=eu-west-1\n", "[profile work]\nregion=us-east-1\n")
+	if _, region, err := LoadProfile("work", cp, fp); err != nil || region != "eu-west-1" {
+		t.Errorf("region %q err %v", region, err)
+	}
+}
+
 func TestLoadProfileUnsupported(t *testing.T) {
 	for _, key := range []string{"role_arn", "sso_start_url", "sso_session", "credential_process", "source_profile"} {
 		cp, fp := writeFiles(t, "", "[profile p]\n"+key+" = value-"+"zzz\naws_access_key_id=K\naws_secret_access_key=secretzzz\n")
