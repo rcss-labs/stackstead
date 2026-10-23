@@ -52,8 +52,10 @@ type Deps struct {
 	Actions   ActionLog
 	Self      func(ctx context.Context) (Self, error)
 	Usage     UsageSource
-	Now       func() time.Time
-	Logger    *slog.Logger
+	// Registries supplies push credentials; nil makes push routes answer registry_unconfigured.
+	Registries RegistryAuth
+	Now        func() time.Time
+	Logger     *slog.Logger
 }
 
 // Service is the image library: images, source revisions, builds and versions.
@@ -68,6 +70,8 @@ type Service struct {
 	self    func(ctx context.Context) (Self, error)
 	now     func() time.Time
 	log     *slog.Logger
+
+	registries RegistryAuth
 
 	usageMu sync.RWMutex
 	usage   UsageSource
@@ -99,7 +103,7 @@ func NewService(d Deps) *Service {
 		d.Logger = slog.Default()
 	}
 	return &Service{store: d.Store, ops: d.Ops, eng: d.Engine, dir: d.Dir, limits: d.Limits, timeout: d.OpTimeout,
-		actions: d.Actions, self: d.Self, usage: d.Usage, now: d.Now, log: d.Logger}
+		actions: d.Actions, self: d.Self, usage: d.Usage, registries: d.Registries, now: d.Now, log: d.Logger}
 }
 
 // SetUsage binds the usage source after construction (stacks needs the

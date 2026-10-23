@@ -122,13 +122,18 @@ func (s *Service) runBuild(ctx context.Context, user string, img Image, v Versio
 		emit = func(line string) { out(line); bl.line(line) }
 	}
 	result := VersionResult{Status: VersionFailed, Error: "build aborted"}
+	finished := false
 	defer func() {
 		if r := recover(); r != nil {
-			result.Error = fmt.Sprintf("build panicked: %v", r)
-			s.finishAndLog(ctx, user, img, v, opID, result)
+			if !finished {
+				result.Error = fmt.Sprintf("build panicked: %v", r)
+				s.finishAndLog(ctx, user, img, v, opID, result)
+			}
 			panic(r)
 		}
-		s.finishAndLog(ctx, user, img, v, opID, result)
+		if !finished {
+			s.finishAndLog(ctx, user, img, v, opID, result)
+		}
 	}()
 
 	inspect, err := s.build(ctx, img, v, ref, args, emit)
@@ -139,7 +144,12 @@ func (s *Service) runBuild(ctx context.Context, user string, img Image, v Versio
 	}
 	arch := inspect.Architecture
 	result = VersionResult{Status: VersionSucceeded, Arch: arch, ImageDigest: inspect.ID, Size: inspect.Size}
-	// Auto-push (M2) and retention (M5) hooks run here after a success.
+	// The version is finished before auto-push so it shows as succeeded while
+	// pushes run; a push failure never changes the build outcome.
+	s.finishAndLog(ctx, user, img, v, opID, result)
+	finished = true
+	s.autoPush(ctx, user, img, v, opID, emit)
+	// The retention hook (M5) runs here after a success.
 	return nil
 }
 

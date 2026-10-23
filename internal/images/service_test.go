@@ -34,6 +34,11 @@ type fakeEngine struct {
 	buildErr error
 	block    chan struct{} // when set, Build waits for it to close (or ctx)
 	started  chan struct{} // closed when Build begins, if set
+
+	calls      []string // tag/push/remove calls, in order
+	pushErr    func(auth engine.RegistryAuth) error
+	pushDigest string
+	pushHook   func() // runs inside Push, before it returns
 }
 
 func newFakeEngine() *fakeEngine {
@@ -83,10 +88,26 @@ func (f *fakeEngine) Build(ctx context.Context, tarIn io.Reader, opts engine.Bui
 	return engine.BuildResult{ImageID: "sha256:abc"}, nil
 }
 
-func (f *fakeEngine) Push(context.Context, string, engine.RegistryAuth, func(string)) (string, error) {
-	return "", errors.New("not used")
+func (f *fakeEngine) Push(_ context.Context, ref string, auth engine.RegistryAuth, out func(string)) (string, error) {
+	f.mu.Lock()
+	f.calls = append(f.calls, "push "+ref)
+	hook, perr, digest := f.pushHook, f.pushErr, f.pushDigest
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	out("layer: Pushing as " + auth.Password)
+	if perr != nil {
+		return "", perr(auth)
+	}
+	return digest, nil
 }
-func (f *fakeEngine) TagImage(context.Context, string, string, string) error { return nil }
+func (f *fakeEngine) TagImage(_ context.Context, source, repo, tag string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "tag "+source+" "+repo+" "+tag)
+	return nil
+}
 func (f *fakeEngine) SaveImage(context.Context, string) (io.ReadCloser, error) {
 	return nil, errors.New("not used")
 }
@@ -103,6 +124,7 @@ func (f *fakeEngine) RemoveImage(_ context.Context, ref string) (engine.ImageDel
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.removed = append(f.removed, ref)
+	f.calls = append(f.calls, "remove "+ref)
 	if !f.present[ref] {
 		return engine.ImageDeleteResult{}, engine.ErrImageNotFound
 	}
