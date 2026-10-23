@@ -3,6 +3,8 @@ import type {
   ActionEntry, StorageOverview, StorageImages, StorageVolumes, StorageBuildCache,
   StorageImageDetail, StorageVolumeDetail, StoragePlan, StoragePlanRequest,
   AddServiceRequest,
+  AddServiceResponse,
+  UpdateServiceResponse,
   ChangePasswordRequest,
   DockerfileContent,
   DockerfileView,
@@ -216,7 +218,7 @@ export function createApi(base: string) {
     saveCompose: (name: string, content: string, hash: string) =>
       call<HashResponse>('PUT', `/api/stacks/${seg(name)}/compose`, { content, hash } satisfies RawCompose),
     updateService: (name: string, service: string, config: ServiceConfig, hash: string, dockerfile?: DockerfileContent) =>
-      call<HashResponse>('PUT', `/api/stacks/${seg(name)}/services/${seg(service)}`, {
+      call<UpdateServiceResponse>('PUT', `/api/stacks/${seg(name)}/services/${seg(service)}`, {
         config,
         hash,
         ...(dockerfile ? { dockerfile } : {}),
@@ -227,7 +229,7 @@ export function createApi(base: string) {
         hash,
       } satisfies UpdateServiceRequest),
     addService: (name: string, service: string, config: ServiceConfig, hash: string, dockerfile?: DockerfileContent) =>
-      call<StackDetail>('POST', `/api/stacks/${seg(name)}/services`, {
+      call<AddServiceResponse>('POST', `/api/stacks/${seg(name)}/services`, {
         service,
         config,
         hash,

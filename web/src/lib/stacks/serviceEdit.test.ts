@@ -358,6 +358,50 @@ describe('createServiceEdit with a Dockerfile', () => {
     expect(deps.update).toHaveBeenCalledWith(expect.objectContaining({ build: { context: './app', dockerfile: 'Dockerfile.dev' } }), 'h1', { content: 'FROM alpine:3.21\n', hash: 'd1' });
   });
 
+  describe('the Dockerfile baseline after a save', () => {
+    async function saveTwice(updateResult: { hash: string; dockerfileHash?: string }, loadDockerfile: Mock<() => Promise<DockerfileView>>) {
+      let composeHash = 'h1';
+      const update = vi.fn<ServiceEditDeps['update']>(async () => {
+        composeHash = updateResult.hash;
+        return updateResult;
+      });
+      const { edit, deps } = setup({ loadDockerfile, update, compose: vi.fn(async () => ({ content: 'old: yaml\n', hash: composeHash })) }, [], buildConfig);
+      await vi.waitFor(() => expect(get(edit.form).source).toBe('dockerfile'));
+      edit.form.update((f) => ({ ...f, dockerfileText: 'FROM alpine:3.21\n' }));
+      await edit.preview();
+      expect(await edit.save()).toBe(true);
+      edit.form.update((f) => ({ ...f, dockerfileText: 'FROM alpine:3.22\n' }));
+      await edit.preview();
+      await edit.save();
+      return { deps, update };
+    }
+
+    it('uses the hash returned by the write and does not fetch the Dockerfile again, so another writer cannot slip in', async () => {
+      // Whatever a re-fetch would return is another writer's version D3.
+      const loadDockerfile = vi.fn(async () => view());
+      loadDockerfile.mockResolvedValueOnce(view());
+      const { update } = await saveTwice({ hash: 'h2', dockerfileHash: 'd2' }, loadDockerfile);
+      expect(loadDockerfile).toHaveBeenCalledTimes(1);
+      expect(update.mock.calls[1][2]).toEqual({ content: 'FROM alpine:3.22\n', hash: 'd2' });
+    });
+
+    it('without a returned hash (older server) never adopts a re-fetched hash for text it did not see', async () => {
+      const loadDockerfile = vi.fn(async () => view());
+      loadDockerfile.mockResolvedValueOnce(view());
+      loadDockerfile.mockResolvedValueOnce(view({ content: 'FROM other-writer\n', hash: 'd3' }));
+      const { update } = await saveTwice({ hash: 'h2' }, loadDockerfile);
+      expect(update.mock.calls[1][2]?.hash).not.toBe('d3');
+    });
+
+    it('without a returned hash adopts the re-fetched hash when the file holds exactly the saved text', async () => {
+      const loadDockerfile = vi.fn(async () => view());
+      loadDockerfile.mockResolvedValueOnce(view());
+      loadDockerfile.mockResolvedValueOnce(view({ content: 'FROM alpine:3.21\n', hash: 'd2' }));
+      const { update } = await saveTwice({ hash: 'h2' }, loadDockerfile);
+      expect(update.mock.calls[1][2]?.hash).toBe('d2');
+    });
+  });
+
   it('does not send the Dockerfile when only another group changed', async () => {
     const { edit, deps } = withView();
     await vi.waitFor(() => expect(get(edit.form).source).toBe('dockerfile'));

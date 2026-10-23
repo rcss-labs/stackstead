@@ -46,6 +46,8 @@ type fakeStacks struct {
 	gotCancel     string
 	gotDockerfile *stacks.DockerfileWrite
 
+	dockerfileHash string // returned by UpdateService/AddService as the written file's hash
+
 	replay       []string
 	first        int // absolute index of replay[0]
 	live         chan string
@@ -99,7 +101,7 @@ func (f *fakeStacks) SaveRaw(_ context.Context, _ string, content []byte, hash s
 }
 func (f *fakeStacks) UpdateService(_ context.Context, _, service string, cfg composefile.ServiceConfig, hash string, df *stacks.DockerfileWrite) (stacks.EditResult, error) {
 	f.gotService, f.gotCfg, f.gotHash, f.gotDockerfile = service, cfg, hash, df
-	return stacks.EditResult{Hash: "h2", ChecksPartial: f.partial}, f.err
+	return stacks.EditResult{Hash: "h2", ChecksPartial: f.partial, DockerfileHash: f.dockerfileHash}, f.err
 }
 func (f *fakeStacks) PreviewService(_ context.Context, _, service string, cfg composefile.ServiceConfig, hash string) ([]byte, error) {
 	f.gotService, f.gotCfg, f.gotHash = service, cfg, hash
@@ -1026,6 +1028,35 @@ func TestUpdateServicePassesDockerfile(t *testing.T) {
 	rec = env.do(t, "PUT", "/api/stacks/web/services/app", `{"config":{"image":"x"},"hash":"h1"}`, withCookie(cookie))
 	if rec.Code != 200 || f.gotDockerfile != nil {
 		t.Fatalf("without dockerfile: %d %+v", rec.Code, f.gotDockerfile)
+	}
+}
+
+func TestServiceWritesReturnTheDockerfileHashOfTheWrite(t *testing.T) {
+	f := newFakeStacks()
+	f.dockerfileHash = "d2"
+	env, cookie := newStacksEnv(t, f)
+	rec := env.do(t, "PUT", "/api/stacks/web/services/app",
+		`{"config":{"image":"x"},"hash":"h1","dockerfile":{"content":"FROM alpine\n","hash":"d1"}}`, withCookie(cookie))
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	var upd struct{ Hash, DockerfileHash string }
+	if err := json.Unmarshal(rec.Body.Bytes(), &upd); err != nil || upd.Hash != "h2" || upd.DockerfileHash != "d2" {
+		t.Fatalf("update body = %s (%v), want hash h2 and dockerfileHash d2", rec.Body, err)
+	}
+	rec = env.do(t, "POST", "/api/stacks/web/services",
+		`{"service":"api","config":{"image":"x"},"hash":"h1","dockerfile":{"content":"FROM alpine\n"}}`, withCookie(cookie))
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	var add struct{ Name, DockerfileHash string }
+	if err := json.Unmarshal(rec.Body.Bytes(), &add); err != nil || add.DockerfileHash != "d2" || add.Name == "" {
+		t.Fatalf("add body = %s (%v), want the stack detail plus dockerfileHash d2", rec.Body, err)
+	}
+	f.dockerfileHash = ""
+	rec = env.do(t, "PUT", "/api/stacks/web/services/app", `{"config":{"image":"x"},"hash":"h1"}`, withCookie(cookie))
+	if strings.Contains(rec.Body.String(), "dockerfileHash") {
+		t.Errorf("body without a Dockerfile write mentions dockerfileHash: %s", rec.Body)
 	}
 }
 

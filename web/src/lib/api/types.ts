@@ -269,6 +269,19 @@ export interface HashResponse {
   hash: string;
 }
 
+/**
+ * Result of a service save. `dockerfileHash` is the hash of the Dockerfile bytes that save wrote; it is
+ * absent when no Dockerfile was written and from servers that predate it.
+ */
+export interface UpdateServiceResponse extends HashResponse {
+  dockerfileHash?: string;
+}
+
+/** The stack after a service add, plus the hash of the Dockerfile the add wrote (when it wrote one). */
+export interface AddServiceResponse extends StackDetail {
+  dockerfileHash?: string;
+}
+
 export interface LogEvent {
   service: string;
   container: string;

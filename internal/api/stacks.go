@@ -252,7 +252,7 @@ func (s *server) handleUpdateService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	markPartial(w, res.ChecksPartial)
-	writeJSON(w, http.StatusOK, hashResponse{Hash: res.Hash})
+	writeJSON(w, http.StatusOK, apitypes.UpdateServiceResponse{Hash: res.Hash, DockerfileHash: res.DockerfileHash})
 }
 
 // handlePreviewService returns the file a save of the same edit would write,
@@ -408,7 +408,7 @@ func (s *server) handleAddService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	markPartial(w, res.ChecksPartial)
-	writeJSON(w, http.StatusOK, toDetail(d))
+	writeJSON(w, http.StatusOK, apitypes.AddServiceResponse{StackDetail: toDetail(d), DockerfileHash: res.DockerfileHash})
 }
 
 func (s *server) handlePreviewAddService(w http.ResponseWriter, r *http.Request) {

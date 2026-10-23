@@ -216,6 +216,20 @@ type HashResponse struct {
 	Hash string `json:"hash"`
 }
 
+// UpdateServiceResponse is the result of a service save: the new compose hash
+// and, when the save wrote a Dockerfile, the hash of those written bytes.
+type UpdateServiceResponse struct {
+	Hash           string `json:"hash"`
+	DockerfileHash string `json:"dockerfileHash,omitempty"`
+}
+
+// AddServiceResponse is the stack detail after an add, plus the hash of the
+// Dockerfile the add wrote (omitted when it wrote none).
+type AddServiceResponse struct {
+	StackDetail
+	DockerfileHash string `json:"dockerfileHash,omitempty"`
+}
+
 // PreviewResponse carries the candidate file and the hash it was computed
 // against, which the save must send unchanged.
 type PreviewResponse struct {

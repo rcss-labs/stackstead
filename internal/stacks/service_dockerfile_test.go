@@ -298,3 +298,37 @@ func TestAddServiceSymlinkedServiceFolderNeedsHash(t *testing.T) {
 		t.Errorf("existing Dockerfile changed: %q", got)
 	}
 }
+
+func TestServiceEditsReturnTheHashOfTheDockerfileTheyWrote(t *testing.T) {
+	h := newHarness(t)
+	dir := dockerfileStack(t, h, "lab", imageOnlyCompose)
+	added, err := h.svc.AddService(context.Background(), "lab", "api", buildCfg("./api"), composeHash(t, h, "lab"),
+		&stacks.DockerfileWrite{Content: []byte("FROM alpine\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := composefile.Hash([]byte("FROM alpine\n")); added.DockerfileHash != want {
+		t.Errorf("add DockerfileHash = %q, want %q", added.DockerfileHash, want)
+	}
+
+	updated, err := h.svc.UpdateService(context.Background(), "lab", "api", buildCfg("./api"), composeHash(t, h, "lab"),
+		&stacks.DockerfileWrite{Content: []byte("FROM alpine:3.20\n"), Hash: added.DockerfileHash, CheckHash: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := composefile.Hash([]byte(readTestFile(t, filepath.Join(dir, "api", "Dockerfile")))); updated.DockerfileHash != want {
+		t.Errorf("update DockerfileHash = %q, want the hash of the file on disk %q", updated.DockerfileHash, want)
+	}
+	if updated.DockerfileHash == updated.Hash {
+		t.Error("DockerfileHash must not be the compose hash")
+	}
+
+	// A save that writes no Dockerfile reports none.
+	plain, err := h.svc.UpdateService(context.Background(), "lab", "api", buildCfg("./api"), composeHash(t, h, "lab"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.DockerfileHash != "" {
+		t.Errorf("DockerfileHash = %q without a Dockerfile write, want empty", plain.DockerfileHash)
+	}
+}

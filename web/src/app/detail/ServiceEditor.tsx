@@ -66,7 +66,7 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
         preview: (config, hash) => api.previewService(stackName, serviceName, config, hash).catch((e) => unavailableRefresh(e, refreshStatus)),
         update: async (config, hash, dockerfile) => {
           const res = await api.updateService(stackName, serviceName, config, hash, dockerfile).catch((e) => unavailableRefresh(e, refreshStatus));
-          return { hash: res.data.hash, checksPartial: res.checksPartial };
+          return { hash: res.data.hash, checksPartial: res.checksPartial, dockerfileHash: res.data.dockerfileHash };
         },
         compose: () => api.compose(stackName),
         loadDockerfile: () => api.dockerfile(stackName, serviceName),

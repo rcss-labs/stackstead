@@ -10,7 +10,7 @@ export type EditNotice = { kind: 'rawEditor' | 'error'; message: string };
 export interface ServiceEditDeps {
   preview: (config: ServiceConfig, hash: string) => Promise<{ content: string; hash: string }>;
   /** `dockerfile` is sent only when the Dockerfile itself changed; its hash is the one loaded ('' = must not exist yet). */
-  update: (config: ServiceConfig, hash: string, dockerfile?: DockerfileContent) => Promise<{ hash: string; checksPartial?: boolean }>;
+  update: (config: ServiceConfig, hash: string, dockerfile?: DockerfileContent) => Promise<{ hash: string; checksPartial?: boolean; dockerfileHash?: string }>;
   /** Fetch this service's Dockerfile. A failure leaves the editor working on the build entry alone. */
   loadDockerfile?: () => Promise<DockerfileView>;
   compose: () => Promise<RawCompose>;
@@ -173,6 +173,26 @@ export function createServiceEdit(
     loadedBuild = usable ? JSON.stringify(cfg.build ?? null) : undefined;
   }
 
+  /**
+   * After a save that wrote the Dockerfile, remember which version that text is. The hash comes from the write
+   * itself; a server that does not return one is asked for the file, and its hash is adopted only if the file holds
+   * exactly the saved text. Otherwise another writer got in between and the baseline is left unknown ('' makes the
+   * next save conflict instead of overwriting their version).
+   */
+  async function adoptSavedDockerfile(cfg: ServiceConfig, content: string, writtenHash: string | undefined) {
+    const previous = get(dockerfileView);
+    const saved = (hash: string): DockerfileView => ({
+      content, hash, exists: true, editable: true, path: previous?.path ?? '',
+    });
+    if (writtenHash) {
+      rememberView(saved(writtenHash), cfg);
+      return;
+    }
+    const after = loadView(cfg, []);
+    const fetched = after ? await after : undefined;
+    rememberView(fetched && fetched.content === content ? fetched : saved(''), cfg);
+  }
+
   /** The Dockerfile to send with a save: only when it changed or became the source, and with the hash it was loaded at. */
   function dockerfileToSend(config: ServiceConfig, f: ServiceForm): DockerfileContent | undefined {
     if (f.source !== 'dockerfile') return undefined;
@@ -323,12 +343,7 @@ export function createServiceEdit(
       try {
         const res = await deps.update(sent.config, sent.hash, sent.dockerfile);
         original = sent.config;
-        // The write returns only the compose hash: read the Dockerfile again so the next save has its new hash.
-        if (sent.dockerfile) {
-          const after = loadView(sent.config, []);
-          const view = after ? await after : undefined;
-          if (view) rememberView(view, sent.config);
-        }
+        if (sent.dockerfile) await adoptSavedDockerfile(sent.config, sent.dockerfile.content, res.dockerfileHash);
         setHash(res.hash);
         // The baseline is what was actually saved; edits typed during the request stay dirty.
         seeded = sent.form;

@@ -36,6 +36,9 @@ func (s *Service) lockedEntry(ctx context.Context, stack string) (Entry, func(),
 type EditResult struct {
 	Hash          string
 	ChecksPartial bool
+	// DockerfileHash is the hash of the Dockerfile bytes this edit wrote, taken
+	// from the write itself; empty when the edit wrote no Dockerfile.
+	DockerfileHash string
 }
 
 // stagedEdit loads the stack's compose file under its lock, checks the
@@ -81,11 +84,17 @@ func (s *Service) UpdateService(ctx context.Context, stack, service string, cfg 
 		return EditResult{}, err
 	}
 	defer unlock()
-	preSave, err := dockerfilePreSave(e, edited, service, df)
+	var written string
+	preSave, err := dockerfilePreSave(e, edited, service, df, &written)
 	if err != nil {
 		return EditResult{}, err
 	}
-	return s.commit(ctx, e, old, edited, hash, false, preSave)
+	res, err := s.commit(ctx, e, old, edited, hash, false, preSave)
+	if err != nil {
+		return EditResult{}, err
+	}
+	res.DockerfileHash = written
+	return res, nil
 }
 
 // DockerfileWrite is a Dockerfile to write along with a service edit. When
@@ -99,9 +108,10 @@ type DockerfileWrite struct {
 
 // dockerfilePreSave checks df against the edited compose file and returns the
 // step commit runs once compose accepts the edit. It returns nil for a nil df.
+// The step stores the hash of the bytes it wrote in *written.
 // The target is resolved on the edited file, so the Dockerfile lands where the
 // saved service will look for it, and only inside the stack folder.
-func dockerfilePreSave(e Entry, edited *composefile.File, service string, df *DockerfileWrite) (func() (func() error, error), error) {
+func dockerfilePreSave(e Entry, edited *composefile.File, service string, df *DockerfileWrite, written *string) (func() (func() error, error), error) {
 	if df == nil {
 		return nil, nil
 	}
@@ -127,7 +137,8 @@ func dockerfilePreSave(e Entry, edited *composefile.File, service string, df *Do
 		expected = &df.Hash
 	}
 	return func() (func() error, error) {
-		_, rollback, err := writeDockerfile(stackDir, path, df.Content, expected)
+		hash, rollback, err := writeDockerfile(stackDir, path, df.Content, expected)
+		*written = hash
 		return rollback, err
 	}, nil
 }
@@ -719,15 +730,18 @@ func (s *Service) AddService(ctx context.Context, stack, service string, cfg com
 		return EditResult{}, err
 	}
 	defer unlock()
-	preSave, err := dockerfilePreSave(e, edited, service, df)
+	var written string
+	preSave, err := dockerfilePreSave(e, edited, service, df, &written)
 	if err != nil {
 		return EditResult{}, err
 	}
 	result, err := s.commit(ctx, e, old, edited, hash, false, preSave)
-	if err == nil {
-		s.log.Info("added service", "stack", stack, "service", service)
+	if err != nil {
+		return result, err
 	}
-	return result, err
+	result.DockerfileHash = written
+	s.log.Info("added service", "stack", stack, "service", service)
+	return result, nil
 }
 
 // PreviewAddService returns the candidate without compose calls or filesystem writes.
