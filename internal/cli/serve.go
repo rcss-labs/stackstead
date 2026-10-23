@@ -223,6 +223,7 @@ func serve(ctx context.Context, env *Env, args []string) error {
 			}
 			return images.Self{InstanceID: id.InstanceID, Name: id.Name, Slug: id.Slug}, nil
 		},
+		Peers:  peersSvc,
 		Now:    time.Now,
 		Logger: logger,
 	})

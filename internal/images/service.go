@@ -58,8 +58,12 @@ type Deps struct {
 	// images answer ErrGitHubUnconfigured.
 	GitHub   GitHubAPI
 	Settings *SettingsStore
-	Now      func() time.Time
-	Logger   *slog.Logger
+	// Peers lists the paired servers whose libraries are merged in; nil means
+	// no peers. PeerTimeout bounds each peer call (default 3 s).
+	Peers       PeerSource
+	PeerTimeout time.Duration
+	Now         func() time.Time
+	Logger      *slog.Logger
 }
 
 // Service is the image library: images, source revisions, builds and versions.
@@ -82,6 +86,11 @@ type Service struct {
 	usageMu sync.RWMutex
 	usage   UsageSource
 
+	peers       PeerSource
+	peerTimeout time.Duration
+	libraryTTL  time.Duration
+	peerCache   peerCache
+
 	locks sync.Map // slug -> *sync.Mutex
 
 	beforeBuildLock func() // test hook: runs in Build before the image lock
@@ -102,6 +111,9 @@ func NewService(d Deps) *Service {
 	if d.Limits.MaxContextBytes <= 0 {
 		d.Limits.MaxContextBytes = defaultMaxContextBytes
 	}
+	if d.PeerTimeout <= 0 {
+		d.PeerTimeout = defaultPeerTimeout
+	}
 	if d.Now == nil {
 		d.Now = time.Now
 	}
@@ -109,7 +121,8 @@ func NewService(d Deps) *Service {
 		d.Logger = slog.Default()
 	}
 	return &Service{store: d.Store, ops: d.Ops, eng: d.Engine, dir: d.Dir, limits: d.Limits, timeout: d.OpTimeout,
-		actions: d.Actions, self: d.Self, usage: d.Usage, registries: d.Registries, github: d.GitHub, settings: d.Settings, now: d.Now, log: d.Logger}
+		actions: d.Actions, self: d.Self, usage: d.Usage, registries: d.Registries, github: d.GitHub, settings: d.Settings, now: d.Now, log: d.Logger,
+		peers: d.Peers, peerTimeout: d.PeerTimeout, libraryTTL: libraryCacheTTL}
 }
 
 // SetUsage binds the usage source after construction (stacks needs the
@@ -342,8 +355,8 @@ func (s *Service) Delete(ctx context.Context, user, slug string) error {
 			live = append(live, v)
 		}
 	}
-	for _, v := range live {
-		if err := s.checkUnused(ctx, owner, slug, v.Tag); err != nil {
+	if len(live) > 0 {
+		if err := s.checkUnused(ctx, imageref.Ref{Owner: owner, Slug: slug}); err != nil {
 			return err
 		}
 	}

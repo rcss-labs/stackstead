@@ -170,6 +170,9 @@ func New(opts Options) http.Handler {
 	}
 	if opts.Images != nil {
 		s.registerImageRoutes(mux)
+		if opts.Peers != nil {
+			s.registerPeerImageRoutes(mux)
+		}
 	}
 	if opts.Registries != nil {
 		s.registerRegistryRoutes(mux)

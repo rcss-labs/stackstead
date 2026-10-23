@@ -28,18 +28,22 @@ type InUseError struct {
 }
 
 func (e *InUseError) Error() string {
+	var parts []string
 	if len(e.UsedBy) > 0 {
-		parts := make([]string, len(e.UsedBy))
+		uses := make([]string, len(e.UsedBy))
 		for i, u := range e.UsedBy {
-			parts[i] = fmt.Sprintf("%s/%s on %s", u.Stack, u.Service, u.ServerName)
+			uses[i] = fmt.Sprintf("%s/%s on %s", u.Stack, u.Service, u.ServerName)
 		}
-		return "in use by " + strings.Join(parts, ", ")
+		parts = append(parts, "in use by "+strings.Join(uses, ", "))
 	}
-	names := make([]string, len(e.Unreachable))
-	for i, s := range e.Unreachable {
-		names[i] = s.Name
+	if len(e.Unreachable) > 0 {
+		names := make([]string, len(e.Unreachable))
+		for i, s := range e.Unreachable {
+			names[i] = s.Name
+		}
+		parts = append(parts, "cannot confirm use: "+strings.Join(names, ", ")+" could not be asked")
 	}
-	return "cannot confirm use: " + strings.Join(names, ", ") + " could not be reached"
+	return strings.Join(parts, "; ")
 }
 
 // ErrImageNotBuilt is matched by errors for versions missing on this server.
@@ -60,36 +64,45 @@ func (s *Service) usageSource() UsageSource {
 	return s.usage
 }
 
-// usedBy lists the stack services running owner/slug:tag (any tag when empty).
-func (s *Service) usedBy(ctx context.Context, owner, slug, tag string) ([]UsedBy, error) {
-	out := []UsedBy{}
-	src := s.usageSource()
-	if src == nil {
-		return out, nil
+// usedBy lists the stack services running ref (any tag when ref.Tag is
+// empty) on this server and on every active peer. Peers that cannot be asked
+// are returned in unreachable: the caller must not treat them as "unused".
+func (s *Service) usedBy(ctx context.Context, ref imageref.Ref) (uses []UsedBy, unreachable []ServerInfo, err error) {
+	uses, unreachable = []UsedBy{}, []ServerInfo{}
+	matches := func(r imageref.Ref) bool {
+		return r.Owner == ref.Owner && r.Slug == ref.Slug && (ref.Tag == "" || r.Tag == ref.Tag)
 	}
-	me, _, err := s.selfInfo(ctx)
-	if err != nil {
-		return nil, err
-	}
-	usages, err := src.LibraryUsage(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read library usage: %w", err)
-	}
-	for _, u := range usages {
-		if u.Ref.Owner == owner && u.Ref.Slug == slug && (tag == "" || u.Ref.Tag == tag) {
-			out = append(out, UsedBy{Server: me.InstanceID, ServerName: me.Name, Stack: u.Stack, Service: u.Service})
+	if src := s.usageSource(); src != nil {
+		me, _, err := s.selfInfo(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		usages, err := src.LibraryUsage(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read library usage: %w", err)
+		}
+		for _, u := range usages {
+			if matches(u.Ref) {
+				uses = append(uses, UsedBy{Server: me.InstanceID, ServerName: me.Name, Stack: u.Stack, Service: u.Service})
+			}
 		}
 	}
-	return out, nil
+	peerUses, unreachable, err := s.peerUsage(ctx, matches)
+	if err != nil {
+		return nil, nil, err
+	}
+	return append(uses, peerUses...), unreachable, nil
 }
 
-func (s *Service) checkUnused(ctx context.Context, owner, slug, tag string) error {
-	used, err := s.usedBy(ctx, owner, slug, tag)
+// checkUnused refuses with *InUseError when ref is in use anywhere or when
+// that cannot be established.
+func (s *Service) checkUnused(ctx context.Context, ref imageref.Ref) error {
+	used, unreachable, err := s.usedBy(ctx, ref)
 	if err != nil {
 		return err
 	}
-	if len(used) > 0 {
-		return &InUseError{UsedBy: used, Unreachable: []ServerInfo{}}
+	if len(used) > 0 || len(unreachable) > 0 {
+		return &InUseError{UsedBy: used, Unreachable: unreachable}
 	}
 	return nil
 }
@@ -147,25 +160,25 @@ func (s *Service) entryOf(ctx context.Context, img Image, owner ServerInfo) (Lib
 	return LibraryEntry{Image: img, Owner: owner, Versions: versions, PushTargets: targets, Pushes: pushes}, nil
 }
 
-// Library lists this server's images; Servers holds only this server.
-func (s *Service) Library(ctx context.Context) (Library, error) {
+// localLibrary lists this server's images.
+func (s *Service) localLibrary(ctx context.Context) (ServerInfo, []LibraryEntry, error) {
 	self, _, err := s.localServer(ctx)
 	if err != nil {
-		return Library{}, err
+		return ServerInfo{}, nil, err
 	}
 	imgs, err := s.store.Images(ctx)
 	if err != nil {
-		return Library{}, err
+		return ServerInfo{}, nil, err
 	}
-	lib := Library{Images: make([]LibraryEntry, 0, len(imgs)), Servers: []ServerInfo{self}}
+	entries := make([]LibraryEntry, 0, len(imgs))
 	for _, img := range imgs {
 		e, err := s.entryOf(ctx, img, self)
 		if err != nil {
-			return Library{}, err
+			return ServerInfo{}, nil, err
 		}
-		lib.Images = append(lib.Images, e)
+		entries = append(entries, e)
 	}
-	return lib, nil
+	return self, entries, nil
 }
 
 // Detail is the image screen: versions, pushes, source revision and tag hint.
@@ -222,13 +235,17 @@ type ResolvedRef struct {
 	Newer                                         bool
 }
 
-// Resolve describes the given references; only this server's images are known.
+// Resolve describes the given references. This server's images come from the
+// database; peer-owned ones from the cached peer libraries, which never makes
+// it wait on a peer.
 func (s *Service) Resolve(ctx context.Context, refs []string) (map[string]ResolvedRef, error) {
 	out := make(map[string]ResolvedRef, len(refs))
 	self, owner, err := s.localServer(ctx)
 	if err != nil {
 		return nil, err
 	}
+	var cached []peerResult
+	loaded := false
 	for _, raw := range refs {
 		ref, ok := imageref.Parse(raw)
 		if !ok {
@@ -240,6 +257,11 @@ func (s *Service) Resolve(ctx context.Context, refs []string) (map[string]Resolv
 			if err := s.resolveLocal(ctx, ref, &r); err != nil {
 				return nil, err
 			}
+		} else {
+			if !loaded {
+				cached, loaded = s.cachedPeerLibraries(ctx), true
+			}
+			resolvePeerRef(cached, ref, &r)
 		}
 		out[raw] = r
 	}
