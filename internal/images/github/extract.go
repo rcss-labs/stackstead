@@ -14,15 +14,17 @@ import (
 const (
 	maxPathBytes    = 4096
 	maxSegmentBytes = 255
-	// tarOverhead lets the decompression bound cover tar headers and padding
-	// on top of maxTotal bytes of content.
-	tarOverhead = 1 << 20
+	// The decompressed stream (including entries outside subdir) may reach
+	// archiveFactor*maxTotal plus tarOverhead for tar headers and padding.
+	archiveFactor = 4
+	tarOverhead   = 1 << 20
 )
 
 var (
 	ErrBadPath         = errors.New("invalid file path")
 	ErrFileTooLarge    = errors.New("file is larger than the per-file limit")
 	ErrContextTooLarge = errors.New("files are larger than the build context limit")
+	ErrArchiveTooLarge = errors.New("repository archive is too large")
 )
 
 // validatePath mirrors images.ValidatePath (internal/images/source.go), which
@@ -68,7 +70,7 @@ func validatePath(p string) (string, error) {
 }
 
 // limitedReader fails (instead of reporting EOF) once more than n bytes have
-// been read, so a gzip bomb surfaces as ErrContextTooLarge.
+// been read, so a gzip bomb surfaces as ErrArchiveTooLarge.
 type limitedReader struct {
 	r io.Reader
 	n int64
@@ -76,7 +78,7 @@ type limitedReader struct {
 
 func (l *limitedReader) Read(p []byte) (int, error) {
 	if l.n <= 0 {
-		return 0, ErrContextTooLarge
+		return 0, ErrArchiveTooLarge
 	}
 	if int64(len(p)) > l.n {
 		p = p[:l.n]
@@ -90,8 +92,11 @@ func (l *limitedReader) Read(p []byte) (int, error) {
 // directory. The top-level "<owner>-<repo>-<sha>/" component is stripped and
 // only entries under subdir ("" is the repo root) are written, relative to
 // subdir. Symlinks, hard links and devices are skipped. A hostile path fails
-// the whole extraction with ErrBadPath. Each file is capped at maxFile bytes
-// and the written total plus the decompressed stream at maxTotal.
+// the whole extraction with ErrBadPath. Each file is capped at maxFile bytes,
+// the written content at maxTotal (ErrContextTooLarge) and the decompressed
+// archive at 4*maxTotal (ErrArchiveTooLarge).
+//
+// On any error dst may hold partial content; the caller must remove dst.
 func ExtractContext(tarGz io.Reader, subdir, dst string, maxFile, maxTotal int64) (int, error) {
 	cleanSub := ""
 	if subdir != "" {
@@ -118,7 +123,7 @@ func ExtractContext(tarGz io.Reader, subdir, dst string, maxFile, maxTotal int64
 		return 0, errors.New("not a gzip archive")
 	}
 	defer gz.Close()
-	tr := tar.NewReader(&limitedReader{r: gz, n: maxTotal + tarOverhead})
+	tr := tar.NewReader(&limitedReader{r: gz, n: archiveFactor*maxTotal + tarOverhead})
 
 	var files int
 	var total int64
@@ -128,7 +133,7 @@ func ExtractContext(tarGz io.Reader, subdir, dst string, maxFile, maxTotal int64
 			return files, nil
 		}
 		if err != nil {
-			if errors.Is(err, ErrContextTooLarge) {
+			if errors.Is(err, ErrArchiveTooLarge) {
 				return files, err
 			}
 			return files, fmt.Errorf("read archive: %w", err)

@@ -10,9 +10,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/rcss-labs/stackstead/internal/secret"
 )
+
+const sha40 = "0123456789abcdef0123456789abcdef01234567"
 
 const testToken = secret.Secret("ghp_supersecret")
 
@@ -62,11 +65,11 @@ func TestHeadSHA(t *testing.T) {
 		if r.URL.Path != "/repos/o/r/commits/feature/x" {
 			t.Errorf("path = %s", r.URL.Path)
 		}
-		io.WriteString(w, `{"sha":"abc123"}`)
+		io.WriteString(w, `{"sha":"`+sha40+`"}`)
 	}))
 	defer srv.Close()
 	sha, err := newClient(srv).Head(context.Background(), testToken, "o/r", "feature/x")
-	if err != nil || sha != "abc123" {
+	if err != nil || sha != sha40 {
 		t.Fatalf("Head = %q, %v", sha, err)
 	}
 }
@@ -188,7 +191,7 @@ func TestValidateRepoAndBranch(t *testing.T) {
 			t.Errorf("repo %q rejected", ok)
 		}
 	}
-	for _, bad := range []string{"", "o", "o/r/x", "/r", "o/", "o/r?x", "o/../r x", "o /r"} {
+	for _, bad := range []string{"", "o", "./r", "o/..", "../r", "o/.", "o/r/x", "/r", "o/", "o/r?x", "o/../r x", "o /r"} {
 		if ValidateRepo(bad) == nil {
 			t.Errorf("repo %q accepted", bad)
 		}
@@ -201,6 +204,136 @@ func TestValidateRepoAndBranch(t *testing.T) {
 	for _, bad := range []string{"", "-x", "a..b", strings.Repeat("a", 256), "a\x00b"} {
 		if ValidateBranch(bad) == nil {
 			t.Errorf("branch %q accepted", bad)
+		}
+	}
+}
+
+func TestHeadRejectsNonSHA(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, `{"sha":"abc123"}`) }))
+	defer srv.Close()
+	if _, err := newClient(srv).Head(context.Background(), testToken, "o/r", "main"); err == nil {
+		t.Fatal("want error for a malformed sha")
+	}
+}
+
+func TestRateLimited(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		remain string
+		want   error
+	}{
+		{"429", 429, "", ErrRateLimited},
+		{"403 exhausted", 403, "0", ErrRateLimited},
+		{"403 plain", 403, "", ErrUnauthorized},
+		{"403 with quota", 403, "42", ErrUnauthorized},
+	}
+	for _, tc := range cases {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if tc.remain != "" {
+				w.Header().Set("X-RateLimit-Remaining", tc.remain)
+			}
+			w.WriteHeader(tc.status)
+		}))
+		_, err := newClient(srv).User(context.Background(), testToken)
+		srv.Close()
+		if !errors.Is(err, tc.want) {
+			t.Errorf("%s: got %v, want %v", tc.name, err, tc.want)
+		}
+	}
+}
+
+func TestFileRejectsHostilePath(t *testing.T) {
+	c := &Client{Base: "http://127.0.0.1:1"}
+	for _, p := range []string{"../x", "/etc/passwd", `a\b`} {
+		if _, err := c.File(context.Background(), testToken, "o/r", "main", p); !errors.Is(err, ErrBadPath) {
+			t.Errorf("%q: want ErrBadPath, got %v", p, err)
+		}
+	}
+}
+
+func TestTarballIdleWatchdog(t *testing.T) {
+	old := idleTimeout
+	idleTimeout = 100 * time.Millisecond
+	defer func() { idleTimeout = old }()
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "start")
+		w.(http.Flusher).Flush()
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+	rc, err := (&Client{Base: srv.URL, HTTP: &http.Client{Timeout: time.Hour}}).Tarball(context.Background(), testToken, "o/r", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	done := make(chan error, 1)
+	go func() { _, err := io.ReadAll(rc); done <- err }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("want a stall error")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("watchdog did not fire")
+	}
+}
+
+func TestTarballIdleResetsOnProgress(t *testing.T) {
+	old := idleTimeout
+	idleTimeout = 300 * time.Millisecond
+	defer func() { idleTimeout = old }()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for i := 0; i < 4; i++ {
+			io.WriteString(w, "x")
+			w.(http.Flusher).Flush()
+			time.Sleep(150 * time.Millisecond)
+		}
+	}))
+	defer srv.Close()
+	rc, err := newClient(srv).Tarball(context.Background(), testToken, "o/r", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	b, err := io.ReadAll(rc)
+	if err != nil || string(b) != "xxxx" {
+		t.Fatalf("got %q, %v", b, err)
+	}
+}
+
+func TestRedirectKeepsTokenOnlyForSameSchemeAndHost(t *testing.T) {
+	mk := func(u string) *http.Request {
+		r, _ := http.NewRequest("GET", u, nil)
+		r.Header.Set("Authorization", "Bearer x")
+		return r
+	}
+	orig := mk("https://api.example.com/a")
+	cases := []struct {
+		to       string
+		tarball  bool
+		wantKeep bool
+		wantErr  bool
+	}{
+		{"https://api.example.com/b", false, true, false},
+		{"http://api.example.com/b", true, false, false}, // scheme downgrade
+		{"http://api.example.com/b", false, false, true}, // API refuses
+		{"https://codeload.example.com/b", true, false, false},
+		{"https://codeload.example.com/b", false, false, true},
+	}
+	for _, tc := range cases {
+		req := mk(tc.to)
+		err := redirectPolicy(tc.tarball)(req, []*http.Request{orig})
+		if (err != nil) != tc.wantErr {
+			t.Errorf("%s tarball=%v: err=%v", tc.to, tc.tarball, err)
+		}
+		if err == nil && (req.Header.Get("Authorization") != "") != tc.wantKeep {
+			t.Errorf("%s tarball=%v: Authorization kept=%v", tc.to, tc.tarball, !tc.wantKeep)
 		}
 	}
 }

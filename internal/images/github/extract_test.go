@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -144,13 +145,38 @@ func TestExtractCaps(t *testing.T) {
 	}
 }
 
+func TestExtractBigEntryOutsideSubdirIsAllowed(t *testing.T) {
+	// Between maxTotal and 4*maxTotal of skipped content is fine.
+	big := strings.Repeat("\x00", 2<<20)
+	n, err := ExtractContext(buildTarGz(t, []entry{{name: "r/skip/big", body: big}, {name: "r/svc/a", body: "x"}}), "svc", t.TempDir(), 1<<20, 1<<20)
+	if err != nil || n != 1 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+}
+
 func TestExtractGzipBombIsBounded(t *testing.T) {
-	// A large entry outside the subdir is never written, so only the
-	// decompression bound can stop it.
-	big := strings.Repeat("\x00", 8<<20)
+	big := strings.Repeat("\x00", 6<<20) // over 4*maxTotal, never written
 	_, err := ExtractContext(buildTarGz(t, []entry{{name: "r/skip/big", body: big}, {name: "r/svc/a", body: "x"}}), "svc", t.TempDir(), 1<<20, 1<<20)
-	if !errors.Is(err, ErrContextTooLarge) {
-		t.Fatalf("want ErrContextTooLarge, got %v", err)
+	if !errors.Is(err, ErrArchiveTooLarge) {
+		t.Fatalf("want ErrArchiveTooLarge, got %v", err)
+	}
+}
+
+func TestExtractManySmallFiles(t *testing.T) {
+	var es []entry
+	for i := 0; i < 3000; i++ {
+		es = append(es, entry{name: fmt.Sprintf("r/d%d/f%d", i%50, i), body: strings.Repeat("y", 100)})
+	}
+	n, err := ExtractContext(buildTarGz(t, es), "", t.TempDir(), 1<<20, 1<<20)
+	if err != nil || n != 3000 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+}
+
+func TestExtractDuplicateEntryFailsClosed(t *testing.T) {
+	_, err := ExtractContext(buildTarGz(t, []entry{{name: "r/a", body: "1"}, {name: "r/a", body: "2"}}), "", t.TempDir(), 10, 100)
+	if err == nil {
+		t.Fatal("want error for a duplicate entry")
 	}
 }
 

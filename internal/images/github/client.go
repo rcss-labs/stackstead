@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/rcss-labs/stackstead/internal/secret"
 )
@@ -27,13 +29,24 @@ var (
 	ErrUnauthorized = errors.New("github: token rejected or lacks access")
 	ErrNotFound     = errors.New("github: not found")
 	ErrTooLarge     = errors.New("github: file is larger than 1 MiB")
+	ErrRateLimited  = errors.New("github: rate limit reached")
+	errStalled      = errors.New("github: download stalled")
 )
+
+// apiTimeout bounds each User, Head and File call.
+const apiTimeout = 30 * time.Second
+
+// idleTimeout is how long a tarball download may go without receiving bytes.
+var idleTimeout = 2 * time.Minute
+
+var shaPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 var repoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
 // ValidateRepo checks an "owner/name" repository.
 func ValidateRepo(repo string) error {
-	if !repoPattern.MatchString(repo) {
+	owner, name, _ := strings.Cut(repo, "/")
+	if !repoPattern.MatchString(repo) || owner == "." || owner == ".." || name == "." || name == ".." {
 		return errors.New("github: repository must look like owner/name")
 	}
 	return nil
@@ -69,20 +82,15 @@ func (c *Client) base() string {
 	return strings.TrimRight(c.Base, "/")
 }
 
-// httpClient copies the configured client so the redirect policy is always
-// ours: at most one redirect, and the token never leaves the API host.
-// tarball allows the one redirect to another host (GitHub sends it to a
-// download host); other calls only follow a redirect on the same host.
-func (c *Client) httpClient(tarball bool) *http.Client {
-	var hc http.Client
-	if c.HTTP != nil {
-		hc = *c.HTTP
-	}
-	hc.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+// redirectPolicy allows at most one redirect. The token survives only a
+// redirect to the same scheme and host; Tarball may follow one redirect to a
+// download host (without the token), other calls refuse it.
+func redirectPolicy(tarball bool) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
 		if len(via) > 1 {
 			return errors.New("github: too many redirects")
 		}
-		if req.URL.Host != via[0].URL.Host {
+		if req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host {
 			if !tarball {
 				return errors.New("github: refusing a redirect to another host")
 			}
@@ -90,6 +98,19 @@ func (c *Client) httpClient(tarball bool) *http.Client {
 		}
 		return nil
 	}
+}
+
+// httpClient copies the configured client so the redirect policy is always
+// ours. A tarball download has no overall timeout (the idle watchdog guards it).
+func (c *Client) httpClient(tarball bool) *http.Client {
+	var hc http.Client
+	if c.HTTP != nil {
+		hc = *c.HTTP
+	}
+	if tarball {
+		hc.Timeout = 0
+	}
+	hc.CheckRedirect = redirectPolicy(tarball)
 	return &hc
 }
 
@@ -115,6 +136,9 @@ func (c *Client) get(ctx context.Context, token secret.Secret, p string, tarball
 		return nil, fmt.Errorf("github: request failed: %w", err)
 	}
 	switch {
+	case resp.StatusCode == 429 || (resp.StatusCode == 403 && resp.Header.Get("X-RateLimit-Remaining") == "0"):
+		resp.Body.Close()
+		return nil, ErrRateLimited
 	case resp.StatusCode == 401 || resp.StatusCode == 403:
 		resp.Body.Close()
 		return nil, ErrUnauthorized
@@ -151,6 +175,8 @@ func escapePath(p string) string {
 
 // User returns the login the token belongs to.
 func (c *Client) User(ctx context.Context, token secret.Secret) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, apiTimeout)
+	defer cancel()
 	var u struct {
 		Login string `json:"login"`
 	}
@@ -168,13 +194,15 @@ func (c *Client) Head(ctx context.Context, token secret.Secret, repo, branch str
 	if err := validateTarget(repo, branch); err != nil {
 		return "", err
 	}
+	ctx, cancel := context.WithTimeout(ctx, apiTimeout)
+	defer cancel()
 	var r struct {
 		SHA string `json:"sha"`
 	}
 	if err := c.getJSON(ctx, token, "/repos/"+repo+"/commits/"+escapePath(branch), &r); err != nil {
 		return "", err
 	}
-	if r.SHA == "" {
+	if !shaPattern.MatchString(r.SHA) {
 		return "", errors.New("github: unexpected response")
 	}
 	return r.SHA, nil
@@ -185,9 +213,12 @@ func (c *Client) File(ctx context.Context, token secret.Secret, repo, ref, path 
 	if err := validateTarget(repo, ref); err != nil {
 		return nil, err
 	}
-	if path == "" || strings.ContainsRune(path, 0) {
-		return nil, errors.New("github: invalid file path")
+	path, err := validatePath(path)
+	if err != nil {
+		return nil, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, apiTimeout)
+	defer cancel()
 	resp, err := c.get(ctx, token, "/repos/"+repo+"/contents/"+escapePath(path)+"?ref="+url.QueryEscape(ref), false)
 	if err != nil {
 		return nil, err
@@ -229,11 +260,54 @@ func (c *Client) Tarball(ctx context.Context, token secret.Secret, repo, ref str
 	if err := validateTarget(repo, ref); err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	var stalled sync.Once
+	var stalledFlag bool
+	var mu sync.Mutex
+	timer := time.AfterFunc(idleTimeout, func() {
+		stalled.Do(func() { mu.Lock(); stalledFlag = true; mu.Unlock() })
+		cancel()
+	})
 	resp, err := c.get(ctx, token, "/repos/"+repo+"/tarball/"+escapePath(ref), true)
 	if err != nil {
+		timer.Stop()
+		cancel()
+		mu.Lock()
+		defer mu.Unlock()
+		if stalledFlag {
+			return nil, errStalled
+		}
 		return nil, err
 	}
-	return resp.Body, nil
+	timer.Reset(idleTimeout)
+	return &idleBody{rc: resp.Body, timer: timer, cancel: cancel, stalled: func() bool { mu.Lock(); defer mu.Unlock(); return stalledFlag }}, nil
+}
+
+// idleBody resets a watchdog on every read; if no bytes arrive before it
+// fires, the request is cancelled and the read fails.
+type idleBody struct {
+	rc      io.ReadCloser
+	timer   *time.Timer
+	cancel  context.CancelFunc
+	stalled func() bool
+}
+
+func (b *idleBody) Read(p []byte) (int, error) {
+	n, err := b.rc.Read(p)
+	if n > 0 {
+		b.timer.Reset(idleTimeout)
+	}
+	if err != nil && err != io.EOF && b.stalled() {
+		err = errStalled
+	}
+	return n, err
+}
+
+func (b *idleBody) Close() error {
+	b.timer.Stop()
+	err := b.rc.Close()
+	b.cancel()
+	return err
 }
 
 func validateTarget(repo, ref string) error {
