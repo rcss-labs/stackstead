@@ -57,7 +57,7 @@ type forwardRig struct {
 	peerID  string
 }
 
-func newForwardRig(t *testing.T, upstream *httptest.Server, tls peers.TLSOptions) *forwardRig {
+func newForwardRig(t *testing.T, upstream *httptest.Server, tls peers.TLSOptions, tweaks ...func(*api.Options)) *forwardRig {
 	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "a.db"))
 	if err != nil {
@@ -86,11 +86,15 @@ func newForwardRig(t *testing.T, upstream *httptest.Server, tls peers.TLSOptions
 	if err := st.InsertPeer(context.Background(), peer, "hash-b"); err != nil {
 		t.Fatal(err)
 	}
-	handler := api.New(api.Options{
+	opts := api.Options{
 		Auth: authSvc, Limiter: auth.NewLoginLimiter(5, time.Minute, time.Now), Peers: svc,
 		Static: fstest.MapFS{"index.html": {Data: []byte("<html></html>")}}, Logger: logger,
 		Closing: rig.closing, SSEWriteTimeout: time.Second,
-	})
+	}
+	for _, tweak := range tweaks {
+		tweak(&opts)
+	}
+	handler := api.New(opts)
 	rig.a = httptest.NewServer(handler)
 	t.Cleanup(rig.a.Close)
 

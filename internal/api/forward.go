@@ -160,6 +160,14 @@ func (s *server) handleForward(w http.ResponseWriter, r *http.Request) {
 	}()
 	r = r.WithContext(ctx)
 
+	upgrade := isWebSocketUpgrade(r)
+	if upgrade && !originAllowed(r) {
+		// Same check the exec route makes, done here so a foreign page never
+		// causes a call to the peer.
+		writeCodedError(w, http.StatusForbidden, "cross-origin requests are not allowed", "bad_origin")
+		return
+	}
+
 	username := userFrom(r.Context()).Username
 	credential := peer.OutCredential.Reveal()
 	// Request body limits are enforced by the peer's own handlers.
@@ -177,6 +185,10 @@ func (s *server) handleForward(w http.ResponseWriter, r *http.Request) {
 			h := out.Header
 			// Rewrite already dropped Forwarded and X-Forwarded-*.
 			h.Del("Cookie")
+			if upgrade {
+				// The peer sees a credentialed server call, not a browser.
+				h.Del("Origin")
+			}
 			h.Del("Authorization")
 			h.Del(peers.PeerHeader)
 			h.Del(peerUserHeader)
@@ -224,5 +236,26 @@ func (s *server) handleForward(w http.ResponseWriter, r *http.Request) {
 			writeCodedError(w, http.StatusBadGateway, pe.Msg, pe.Code)
 		},
 	}
+	if upgrade {
+		// A write deadline armed on the 101 would survive the hijack and cut
+		// quiet sessions, so upgrades get the raw writer.
+		proxy.ServeHTTP(w, r)
+		return
+	}
 	proxy.ServeHTTP(&deadlineWriter{ResponseWriter: w, rc: http.NewResponseController(w), timeout: s.sseWriteTimeout()}, r)
+}
+
+// isWebSocketUpgrade reports whether r asks for a WebSocket upgrade.
+func isWebSocketUpgrade(r *http.Request) bool {
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		return false
+	}
+	for _, v := range r.Header.Values("Connection") {
+		for _, tok := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(tok), "upgrade") {
+				return true
+			}
+		}
+	}
+	return false
 }
