@@ -44,8 +44,11 @@ const (
 
 	execPing        = 20 * time.Second
 	execPongTimeout = 60 * time.Second
-	// execWriteTimeout bounds one write to the client; the conn and the session must agree.
-	execWriteTimeout = 60 * time.Second
+	// execWriteTimeout is the per-write deadline: at most PongTimeout - Ping, so one
+	// slow write cannot cause a false pong timeout. execFlushWait is the session's
+	// WriteTimeout: room for one in-flight write plus the terminal frame.
+	execWriteTimeout = 40 * time.Second
+	execFlushWait    = 2 * execWriteTimeout
 	execDetachCheck  = 2 * time.Second
 
 	autoShellScript = "if [ -x /bin/bash ]; then exec /bin/bash; else exec /bin/sh; fi"
@@ -293,7 +296,7 @@ func (e execSession) serve(ws *websocket.Conn) {
 	result = runSession(ctx, conn, stream, execBackendAdapter{eng: eng, execID: execID}, sessionConfig{
 		Ping:            execPing,
 		PongTimeout:     execPongTimeout,
-		WriteTimeout:    execWriteTimeout,
+		WriteTimeout:    execFlushWait,
 		IdleTimeout:     e.s.opts.Exec.IdleTimeout,
 		DetachCheck:     execDetachCheck,
 		Now:             time.Now,
