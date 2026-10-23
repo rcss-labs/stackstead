@@ -45,6 +45,7 @@ type ImagesAPI interface {
 	Resolve(ctx context.Context, refs []string) (map[string]images.ResolvedRef, error)
 	Limits() images.Limits
 	LocalServer(ctx context.Context) (images.ServerInfo, error)
+	NewUploadSpool(ctx context.Context, slug string) (string, error)
 }
 
 var _ ImagesAPI = (*images.Service)(nil)
@@ -444,14 +445,23 @@ func (s *server) handleUploadImageFiles(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "expected a multipart/form-data body")
 		return
 	}
-	spool, err := os.MkdirTemp("", "stackstead-upload-*")
+	slug := r.PathValue("slug")
+	spool, err := s.opts.Images.NewUploadSpool(r.Context(), slug)
 	if err != nil {
-		s.internalError(w, r, err)
+		s.writeImagesError(w, r, err)
 		return
 	}
 	defer os.RemoveAll(spool)
 
 	files, err := spoolUploadParts(mr, spool, lim)
+	// The service may stop reading early; release any descriptor still open.
+	defer func() {
+		for _, f := range files {
+			if c, ok := f.Content.(io.Closer); ok {
+				c.Close()
+			}
+		}
+	}()
 	if err != nil {
 		s.writeImagesError(w, r, err)
 		return
@@ -460,7 +470,6 @@ func (s *server) handleUploadImageFiles(w http.ResponseWriter, r *http.Request) 
 		s.writeImagesError(w, r, &stacks.ValidationError{Fields: []stacks.FieldError{{Field: "files", Message: "no files were uploaded"}}})
 		return
 	}
-	slug := r.PathValue("slug")
 	rev, err := s.opts.Images.Upload(r.Context(), userFrom(r.Context()).Username, slug, files)
 	s.writeRevision(w, r, http.StatusCreated, slug, rev, err)
 }
@@ -543,6 +552,13 @@ func spoolPart(part io.Reader, path string, limit int64) (int64, error) {
 type lazyFile struct {
 	path string
 	f    *os.File
+}
+
+func (l *lazyFile) Close() error {
+	if l.f == nil {
+		return nil
+	}
+	return l.f.Close()
 }
 
 func (l *lazyFile) Read(p []byte) (int, error) {

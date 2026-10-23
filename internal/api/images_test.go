@@ -148,7 +148,7 @@ func newImagesEnv(t *testing.T, tweaks ...func(*api.Options)) *imagesEnv {
 	t.Cleanup(func() { ie.ops.Shutdown(context.Background()) })
 	ie.svc = images.NewService(images.Deps{
 		Store: images.NewStore(db, time.Now), Ops: ie.ops, Engine: ie.eng, Dir: ie.dir,
-		Limits: images.Limits{MaxFileBytes: 1 << 20, MaxContextBytes: 4 << 20}, OpTimeout: time.Minute,
+		Limits: images.Limits{MaxFileBytes: 1 << 20, MaxContextBytes: 2 << 20}, OpTimeout: time.Minute,
 		Actions: ie.log, Usage: ie.usage, Now: time.Now,
 		Self: func(context.Context) (images.Self, error) {
 			return images.Self{InstanceID: imgInstanceID, Name: "Host A", Slug: "host-a"}, nil
@@ -472,15 +472,42 @@ func TestUploadTooLarge413(t *testing.T) {
 	if body.Code != "image_too_large" {
 		t.Errorf("code = %q", body.Code)
 	}
-	// Several files each under the per-file cap but over the context cap.
-	chunk := strings.Repeat("b", 1<<20)
-	rec = env.upload(t, "web", []multipartPart{{"f/1", chunk}, {"f/2", chunk}, {"f/3", chunk}, {"f/4", chunk}, {"f/5", chunk}})
-	if rec.Code != 413 {
-		t.Fatalf("context cap = %d %s, want 413", rec.Code, rec.Body)
+	assertNoSpool(t, env)
+	// Three files under the per-file cap whose sum passes the context cap; the
+	// body (about 2.1 MiB) is below the body cap, so only the context cap can trip.
+	chunk := strings.Repeat("b", 700<<10)
+	rec = env.upload(t, "web", []multipartPart{{"f/1", chunk}, {"f/2", chunk}, {"f/3", chunk}})
+	eb := apitypes.ErrorBody{}
+	decodeBody(t, rec, &eb)
+	if rec.Code != 413 || eb.Code != "image_too_large" || !strings.Contains(eb.Error, "build context") {
+		t.Fatalf("context cap = %d %s, want 413 naming the build context", rec.Code, rec.Body)
 	}
+	assertNoSpool(t, env)
 	if got := revisionCount(t, env); got != before {
 		t.Errorf("revisions = %d, want %d", got, before)
 	}
+}
+
+// assertNoSpool checks that no upload scratch directory is left in the image dir.
+func assertNoSpool(t *testing.T, env *imagesEnv) {
+	t.Helper()
+	left, _ := filepath.Glob(filepath.Join(env.dir, "*", "tmp-upload-*"))
+	if len(left) > 0 {
+		t.Errorf("upload spool left behind: %v", left)
+	}
+}
+
+func TestUploadSpoolRemovedAndUnknownImage(t *testing.T) {
+	env := newImagesEnv(t)
+	env.createImage(t, "web")
+	if rec := env.upload(t, "web", []multipartPart{{"f/a.txt", "x"}}); rec.Code != 201 {
+		t.Fatalf("upload = %d %s", rec.Code, rec.Body)
+	}
+	assertNoSpool(t, env)
+	if rec := env.upload(t, "ghost", []multipartPart{{"f/a.txt", "x"}}); rec.Code != 404 {
+		t.Fatalf("unknown image = %d, want 404", rec.Code)
+	}
+	assertNoSpool(t, env)
 }
 
 func TestDockerfileConflict409(t *testing.T) {
