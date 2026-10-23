@@ -26,7 +26,7 @@ const BASE: BaseEntry[] = [
   { path: '/stacks/import', label: 'Import', icon: 'import', match: (p) => p === '/stacks/import', group: 'create' },
 ];
 
-/** The six per-server entries for this server (null) or a connected one, linking and matching inside its URL space. */
+/** The per-server entries for this server (null) or a connected one, linking and matching inside its URL space. */
 export function serverNav(slug: string | null): NavEntry[] {
   const prefix = slug === null ? '' : `/s/${encodeURIComponent(slug)}`;
   return BASE.map(({ path, match, ...rest }) => ({

@@ -189,6 +189,15 @@ upload secrets in a build context. Uploads are capped by `image_max_file_bytes`
 and `image_max_context_bytes`, paths that escape the context (`..`, absolute,
 backslash, NUL) are refused, and builds are bounded by
 `image_operation_timeout`. Build logs are capped at 8 MiB and are text only.
+This release stores no registry or GitHub credentials. Image data is only the
+uploaded build context, its revisions, build args (not for secrets; they are
+saved in plain text and can appear in build output) and build logs.
+
+A connected server's peer credential can reach `/api/images/...`: `/api/images`
+is not among the denied prefixes listed under
+[Connected servers](#connected-servers), so a peer can create, upload to, build
+and delete images here through forwarding, exactly as it can manage stacks.
+That matches stacks and is not a security boundary; see the caveat there.
 See [Image library](api.md#image-library).
 
 ## Storage cleanup
