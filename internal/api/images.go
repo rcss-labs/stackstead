@@ -18,6 +18,7 @@ import (
 	"github.com/rcss-labs/stackstead/internal/imageref"
 	"github.com/rcss-labs/stackstead/internal/images"
 	"github.com/rcss-labs/stackstead/internal/registry"
+	"github.com/rcss-labs/stackstead/internal/secret"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 )
 
@@ -51,21 +52,26 @@ type ImagesAPI interface {
 	Limits() images.Limits
 	LocalServer(ctx context.Context) (images.ServerInfo, error)
 	NewUploadSpool(ctx context.Context, slug string) (string, error)
+	GitHubStatus(ctx context.Context) (images.GitHubStatus, error)
+	SetGitHubToken(ctx context.Context, user string, token secret.Secret) error
+	TestGitHub(ctx context.Context) (string, error)
+	GitHubHead(ctx context.Context, slug string) (images.GitHubHead, error)
 }
 
 var _ ImagesAPI = (*images.Service)(nil)
 
 // Error codes of the image routes.
 const (
-	codeImageInUse        = "image_in_use"
-	codeBuildRunning      = "build_running"
-	codeTagTaken          = "tag_taken"
-	codeRevisionConflict  = "revision_conflict"
-	codeImageNotBuilt     = "image_not_built"
-	codeImageTooLarge     = "image_too_large"
-	maxUploadFiles        = 10000
-	uploadEnvelopeBytes   = 1 << 20 // multipart framing allowed on top of the context cap
-	dockerfileBodyMaxJSON = dockerfileBodyBytes
+	codeImageInUse         = "image_in_use"
+	codeBuildRunning       = "build_running"
+	codeTagTaken           = "tag_taken"
+	codeRevisionConflict   = "revision_conflict"
+	codeImageNotBuilt      = "image_not_built"
+	codeImageTooLarge      = "image_too_large"
+	codeGitHubUnconfigured = "github_unconfigured"
+	maxUploadFiles         = 10000
+	uploadEnvelopeBytes    = 1 << 20 // multipart framing allowed on top of the context cap
+	dockerfileBodyMaxJSON  = dockerfileBodyBytes
 )
 
 // imageInUseBody is the 409 body of a delete refused because the image is running.
@@ -99,6 +105,10 @@ func (s *server) registerImageRoutes(mux *http.ServeMux) {
 	route("PUT /api/images/{slug}/push-targets/{id}", s.handleUpdatePushTarget)
 	route("DELETE /api/images/{slug}/push-targets/{id}", s.handleDeletePushTarget)
 	route("POST /api/images/{slug}/versions/{tag}/push", s.handlePushImageVersion)
+	route("GET /api/images/{slug}/github/head", s.handleGitHubHead)
+	route("GET /api/settings/github", s.handleGitHubSettings)
+	route("PUT /api/settings/github", s.handleSetGitHubToken)
+	route("POST /api/settings/github/test", s.handleTestGitHub)
 }
 
 // writeImagesError maps image-library errors to HTTP answers. Unknown errors
@@ -127,6 +137,8 @@ func (s *server) writeImagesError(w http.ResponseWriter, r *http.Request, err er
 	case errors.Is(err, images.ErrImageNotFound), errors.Is(err, images.ErrVersionNotFound),
 		errors.Is(err, images.ErrRevisionNotFound), errors.Is(err, fs.ErrNotExist):
 		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, images.ErrGitHubUnconfigured):
+		writeCodedError(w, http.StatusConflict, err.Error(), codeGitHubUnconfigured)
 	case errors.Is(err, images.ErrImageExists):
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, images.ErrTagTaken):

@@ -195,8 +195,14 @@ They are write-only through the API (a view carries a single `configured` flag,
 plus the non-secret ECR access key id), are never forwarded to peers, and are
 redacted from logs, action history, error messages and push output. `stackstead db backup` includes
 the registry credentials, so a backup is as sensitive as the database. The
-`/api/settings/registries` routes are on the peer denylist. This release stores
-no GitHub credentials. Other image data is the uploaded build context, its
+`/api/settings/registries` routes are on the peer denylist. The GitHub token
+(for images built from a repository) is stored the same way: in SQLite under
+the 0700 data directory, write-only (`GET /api/settings/github` answers only
+`{configured, login}`), never forwarded to peers, redacted from logs, action
+history and errors, and included in `stackstead db backup`. It is sent only to
+the GitHub API; the tarball download follows one redirect to the archive host
+and the token is never sent on it. `/api/settings/github` is on the peer
+denylist. Other image data is the uploaded build context, its
 revisions, build args (not for secrets; they are saved in plain text and can
 appear in build output) and build logs.
 

@@ -25,6 +25,7 @@ import (
 	"github.com/rcss-labs/stackstead/internal/history"
 	"github.com/rcss-labs/stackstead/internal/host"
 	"github.com/rcss-labs/stackstead/internal/images"
+	"github.com/rcss-labs/stackstead/internal/images/github"
 	"github.com/rcss-labs/stackstead/internal/lockfile"
 	"github.com/rcss-labs/stackstead/internal/metrics"
 	"github.com/rcss-labs/stackstead/internal/peers"
@@ -203,6 +204,8 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	imagesSvc := images.NewService(images.Deps{
 		Registries: registries,
 		Store:      images.NewStore(db, time.Now),
+		GitHub:     &github.Client{},
+		Settings:   images.NewSettingsStore(db),
 		Ops:        ops,
 		Engine:     dockerEngine,
 		Dir:        filepath.Join(cfg.DataDir, "images"),

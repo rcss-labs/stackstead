@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"github.com/rcss-labs/stackstead/internal/images"
 	"net/http"
 	"strings"
 
@@ -201,4 +202,58 @@ func (s *server) handleImageRegistries(w http.ResponseWriter, r *http.Request) {
 		out = append(out, apitypes.RegistryOption{ID: reg.ID, Name: reg.Name, Kind: string(reg.Kind), Host: reg.Host})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// handleGitHubHead answers the branch head and Dockerfile of a GitHub image.
+func (s *server) handleGitHubHead(w http.ResponseWriter, r *http.Request) {
+	head, err := s.opts.Images.GitHubHead(r.Context(), r.PathValue("slug"))
+	if err != nil {
+		s.writeImagesError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, apitypes.GitHubHead{Commit: head.Commit, Dockerfile: head.Dockerfile, Path: head.Path})
+}
+
+// githubSettingsView answers only whether a token exists and its login; the
+// token itself never leaves the server.
+func (s *server) githubSettingsView(w http.ResponseWriter, r *http.Request) {
+	st, err := s.opts.Images.GitHubStatus(r.Context())
+	if err != nil {
+		s.writeImagesError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, apitypes.GitHubSettings{Configured: st.Configured, Login: st.Login})
+}
+
+func (s *server) handleGitHubSettings(w http.ResponseWriter, r *http.Request) {
+	s.githubSettingsView(w, r)
+}
+
+// handleSetGitHubToken stores the token, or clears it when token is empty.
+// The request body is never logged or echoed.
+func (s *server) handleSetGitHubToken(w http.ResponseWriter, r *http.Request) {
+	var req apitypes.GitHubTokenRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	token := strings.TrimSpace(req.Token)
+	if err := s.opts.Images.SetGitHubToken(r.Context(), userFrom(r.Context()).Username, secret.Secret(token)); err != nil {
+		s.writeImagesError(w, r, err)
+		return
+	}
+	s.githubSettingsView(w, r)
+}
+
+// handleTestGitHub answers 200 with ok=false for a failed check, like the
+// registry test; a missing token is the 409 github_unconfigured.
+func (s *server) handleTestGitHub(w http.ResponseWriter, r *http.Request) {
+	login, err := s.opts.Images.TestGitHub(r.Context())
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, apitypes.GitHubTest{OK: true, Login: login, Message: "token accepted"})
+	case errors.Is(err, images.ErrGitHubUnconfigured):
+		s.writeImagesError(w, r, err)
+	default:
+		writeJSON(w, http.StatusOK, apitypes.GitHubTest{OK: false, Message: err.Error()})
+	}
 }

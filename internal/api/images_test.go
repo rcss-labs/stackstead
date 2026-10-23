@@ -137,6 +137,7 @@ type imagesEnv struct {
 	dir    string
 	regs   *registry.Service
 	prov   *fakeRegistryProvider
+	gh     *fakeGitHub
 }
 
 func newImagesEnv(t *testing.T, tweaks ...func(*api.Options)) *imagesEnv {
@@ -150,6 +151,7 @@ func newImagesEnv(t *testing.T, tweaks ...func(*api.Options)) *imagesEnv {
 	ie.ops = stacks.NewOps(time.Minute, time.Now)
 	t.Cleanup(func() { ie.ops.Shutdown(context.Background()) })
 	ie.prov = &fakeRegistryProvider{}
+	ie.gh = &fakeGitHub{login: "octocat", head: strings.Repeat("a", 40)}
 	ie.regs = registry.NewService(registry.NewStore(db, time.Now), map[registry.Kind]registry.Provider{
 		registry.KindDockerHub: ie.prov, registry.KindECR: ie.prov,
 	}, ie.log, nil)
@@ -157,7 +159,7 @@ func newImagesEnv(t *testing.T, tweaks ...func(*api.Options)) *imagesEnv {
 		Registries: ie.regs,
 		Store:      images.NewStore(db, time.Now), Ops: ie.ops, Engine: ie.eng, Dir: ie.dir,
 		Limits: images.Limits{MaxFileBytes: 1 << 20, MaxContextBytes: 2 << 20}, OpTimeout: time.Minute,
-		Actions: ie.log, Usage: ie.usage, Now: time.Now,
+		Actions: ie.log, Usage: ie.usage, Now: time.Now, GitHub: ie.gh, Settings: images.NewSettingsStore(db),
 		Self: func(context.Context) (images.Self, error) {
 			return images.Self{InstanceID: imgInstanceID, Name: "Host A", Slug: "host-a"}, nil
 		},

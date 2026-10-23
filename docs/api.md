@@ -287,7 +287,7 @@ All routes need a session. Errors use the shape from [API overview](#api-overvie
 | Method and path | Purpose |
 | --- | --- |
 | `GET /api/images` | the library: `{images, servers}` with each image's owner, versions and latest version |
-| `POST /api/images` | create with `{name, source: "upload", dockerfilePath, buildArgs, retention?}` (201) |
+| `POST /api/images` | create with `{name, source: "upload" \| "github", dockerfilePath, buildArgs, retention?, github?}` (201); a GitHub image needs a token first |
 | `GET`/`PUT`/`DELETE /api/images/{slug}` | detail (versions, `revision`, `suggestedTag`, `tagHint`, `arch`), update, delete (409 `image_in_use` while a version runs) |
 | `GET /api/images/{slug}/files` | the file manifest and current `revision` |
 | `POST /api/images/{slug}/files` | upload `multipart/form-data`, one part per file named `f/<path>`; creates a revision (201) |
@@ -296,7 +296,8 @@ All routes need a session. Errors use the shape from [API overview](#api-overvie
 | `GET`/`PUT /api/images/{slug}/dockerfile` | the Dockerfile, saved with the `revision` from the read (409 `revision_conflict` if stale) |
 | `GET /api/images/{slug}/revisions`, `GET .../revisions/{n}` | revision history and one revision |
 | `POST /api/images/{slug}/revisions/{n}/restore` | restore a revision as a new one |
-| `POST /api/images/{slug}/builds` | build with `{tag, buildArgs, saveArgs, ref}`; 202 `{version, operation}` |
+| `POST /api/images/{slug}/builds` | build with `{tag, buildArgs, saveArgs, ref}`; 202 `{version, operation}`; `ref` (GitHub images only) is a branch, tag or 40-hex commit, default the branch head |
+| `GET /api/images/{slug}/github/head` | a GitHub image's branch head: `{commit, dockerfile, path}`; forwardable to a peer like the other image routes |
 | `GET /api/images/{slug}/versions/{id}` | one version with its build log and `usedBy`; keyed by version ID, not tag |
 | `DELETE /api/images/{slug}/versions/{id}` | delete a version by ID (409 `image_in_use` if a container uses it) |
 | `GET /api/images/registries` | registries for the push-target picker: `[{id, name, kind, host}]` only; reachable with a peer credential |
@@ -347,6 +348,32 @@ without overwriting operator-set values. A failed test answers 200 with
 registry, 409 for a taken name, 409 `registry_unconfigured` when settings are
 missing.
 
+### GitHub images
+
+An image with `source: "github"` and `github: {repo, branch, path}` (`repo` is
+`owner/name`, `path` a directory in the repository, empty for the root) is
+built from a GitHub tarball instead of an upload. A GitHub token is required
+for creating, updating, building and reading the head of such an image; without
+one the routes answer 409 `github_unconfigured`. The token is the only
+credential and applies to every GitHub image on this server.
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/settings/github` | `{configured, login}`; the token is never returned |
+| `PUT /api/settings/github` | set the token with `{token}`, or clear it with an empty token; answers the same `{configured, login}` |
+| `POST /api/settings/github/test` | check the stored token: `{ok, login, message}`; a failed check answers 200 with `ok: false` and a scrubbed `message` |
+
+The settings routes are session-only and on the peer denylist
+(`/api/settings`). A bad `github.repo`, `github.branch` or `github.path`
+answers 400 with that field name; a bad or unknown build `ref` answers 400 with
+the field `ref`. GitHub images are read-only here: file, Dockerfile, revision
+and rename routes answer 400 `GitHub images are read-only`, and they have no
+revisions.
+
+Every build resolves the branch (or `ref`) to a commit and records the full
+40-hex commit on the version; building at a 40-hex `ref` makes no lookup. A
+GitHub image never auto-pushes: a push target is used only by an explicit push.
+
 ### Limits
 
 | Setting | Default | Environment |
@@ -374,6 +401,7 @@ afterwards; content blobs live under `DataDir/images/<slug>/blobs/`.
 | 409 `revision_conflict` | the file set or Dockerfile changed since the `revision` you sent |
 | 409 `image_not_built` | the referenced tag has no built version |
 | 409 `registry_unconfigured` | the push target's registry is missing credentials |
+| 409 `github_unconfigured` | no GitHub token is stored |
 | 413 `image_too_large` | a file or the context is over its limit |
 
 ### Operations
