@@ -3,9 +3,15 @@ import type { ClipboardEvent, ReactNode, Ref } from 'react';
 import type { Field as FieldGroup } from '$lib/api/types';
 import type { FormErrors, ServiceForm as ServiceFormValue } from '$lib/compose/form';
 import { DOCKERFILE_TEMPLATE } from '$lib/compose/form';
+import { createApi } from '$lib/api/client';
+import { ownerIsViewed } from '$lib/images/library';
+import { parseLibraryRef } from '$lib/images/ref';
+import { useStore } from '../hooks/useStore';
 import { Button } from '../components/Button';
 import { Field } from '../components/Field';
 import { ListEditor } from '../components/ListEditor';
+import { useServer } from '../servers/ServerContext';
+import { LibraryPicker } from './LibraryPicker';
 import { YamlEditor } from './YamlEditor';
 import styles from './ServiceForm.module.css';
 
@@ -65,8 +71,9 @@ const RESTART: [string, string][] = [
   ['unless-stopped', 'unless-stopped'],
   ['on-failure', 'on-failure'],
 ];
-const SOURCES: ['image' | 'build' | 'dockerfile', string][] = [
+const SOURCES: [ServiceFormValue['source'], string][] = [
   ['image', 'Image'],
+  ['library', 'From library'],
   ['build', 'Existing build'],
   ['dockerfile', 'Write a Dockerfile'],
 ];
@@ -90,7 +97,7 @@ const FIXED_LABELS: Record<string, string> = {
 
 // Human-readable name of a form path, matching the control's own label.
 export function fieldLabel(path: string, source: ServiceFormValue['source']): string {
-  if (path === 'image') return source === 'image' ? 'Image' : 'Image tag';
+  if (path === 'image') return source === 'image' || source === 'library' ? 'Image' : 'Image tag';
   if (FIXED_LABELS[path]) return FIXED_LABELS[path];
   const row = /^(ports|volumes|env|networks)\[(\d+)\](?:\.(name|value|ipv4Address))?$/.exec(path);
   if (!row) return path;
@@ -134,6 +141,8 @@ export function ServiceForm({
   ref,
 }: ServiceFormProps) {
   const radioName = useId();
+  const { api, live, id: serverId } = useServer();
+  const liveState = useStore(live);
   const root = useRef<HTMLDivElement>(null);
   const [pickedCustom, setPickedCustom] = useState(false);
   const [advancedToggled, setAdvancedToggled] = useState(false);
@@ -164,7 +173,7 @@ export function ServiceForm({
   // Errors for the source that is not selected, and for a disabled healthcheck, are not shown or counted.
   const shown: FormErrors = {};
   for (const [path, message] of Object.entries(errors)) {
-    if (form.source === 'image' && path.startsWith('build.') && !sourceReadOnly) continue;
+    if ((form.source === 'image' || form.source === 'library') && path.startsWith('build.') && !sourceReadOnly) continue;
     if (form.source !== 'dockerfile' && path === 'dockerfileText' && !sourceReadOnly) continue;
     if (form.source === 'dockerfile' && path.startsWith('build.') && !sourceReadOnly) continue;
     if (path.startsWith('healthcheck.') && !form.healthcheck.enabled && !ro('healthcheck')) continue;
@@ -188,7 +197,16 @@ export function ServiceForm({
   const invalid = (path: string) => (shown[path] ? ('true' as const) : undefined);
 
   function selectSource(source: ServiceFormValue['source']) {
-    const base = onSourceChange?.(source) ?? latest.current;
+    let base = onSourceChange?.(source) ?? latest.current;
+    if (source === 'library') {
+      // An image that already is a library reference stays chosen.
+      const ref = base.library?.ref ?? (parseLibraryRef(base.image.trim()) ? base.image.trim() : '');
+      onChange({ ...base, source, library: ref ? { ref } : null });
+      return;
+    }
+    // A library reference must not stay as the image tag of a build; only the Image source keeps it as text.
+    const leaving = base.source === 'library' && source !== 'image';
+    if (leaving) base = { ...base, library: null, image: parseLibraryRef(base.image.trim()) ? '' : base.image };
     onChange(source === 'dockerfile' ? { ...base, source, dockerfileText: base.dockerfileText || DOCKERFILE_TEMPLATE } : { ...base, source });
   }
 
@@ -457,13 +475,29 @@ export function ServiceForm({
           {SOURCES.map(([value, text]) => (
             <label key={value} className={styles.seg}>
               <input type="radio" name={radioName} value={value} checked={form.source === value} disabled={sourceReadOnly} onChange={() => selectSource(value)} />
-              {value !== 'dockerfile' && <span className="visually-hidden">From</span>}
-              {value !== 'dockerfile' && ' '}
+              {(value === 'image' || value === 'build') && <span className="visually-hidden">From</span>}
+              {(value === 'image' || value === 'build') && ' '}
               {text}
             </label>
           ))}
         </div>
-        {form.source === 'image' ? (
+        {form.source === 'library' ? (
+          <div className={styles.library}>
+            <LibraryPicker
+              value={form.library?.ref ?? ''}
+              onChange={(ref) => patch({ library: { ref }, image: ref })}
+              load={api.images}
+              loadImage={(image) => (ownerIsViewed(image, serverId) ? api : createApi(`/api/servers/${encodeURIComponent(image.owner.id)}`)).image(image.slug)}
+              localArch={liveState.arch}
+            />
+            {shown['image'] && (
+              <p className={styles.fieldError} id={id('image-error')} role="alert" tabIndex={-1} data-form-error>
+                <span aria-hidden="true">✖ </span>
+                {shown['image']}
+              </p>
+            )}
+          </div>
+        ) : form.source === 'image' ? (
           <Field label="Image" id={id('image')} mono error={shown['image']} hint="For example nginx:1.27" readonly={sourceReadOnly}>
             {(aria) => <input type="text" {...aria} value={form.image} onChange={(e) => patch({ image: e.target.value })} {...textProps} />}
           </Field>

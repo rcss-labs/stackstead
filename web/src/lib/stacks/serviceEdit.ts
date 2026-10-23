@@ -23,7 +23,7 @@ const RAW_EDITOR_RE = /raw yaml/i;
 
 // Form fields per editable group, used to tell which groups the user changed.
 const GROUPS: (keyof ServiceForm)[][] = [
-  ['source', 'image', 'buildContext', 'dockerfile', 'dockerfileAt'],
+  ['source', 'image', 'library', 'buildContext', 'dockerfile', 'dockerfileAt'],
   ['ports'],
   ['volumes'],
   ['env'],

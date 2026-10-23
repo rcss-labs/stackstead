@@ -5,6 +5,7 @@ import { serviceState } from '$lib/stacks/summary';
 import { Led } from '../components/Led';
 import { PanelLabel } from '../components/PanelLabel';
 import { Sparkline } from '../components/Sparkline';
+import { Tag } from '../components/Tag';
 import styles from './ServiceOverview.module.css';
 
 import { useServer } from '../servers/ServerContext';
@@ -35,7 +36,7 @@ function Chips({ values, tone }: { values: string[]; tone?: 'info' }) {
 
 export function ServiceOverview({ service, latestCpu, cpuHour }: ServiceOverviewProps) {
   const { href } = useServer();
-  const { config } = service;
+  const { config, library } = service;
   const image = config.image ?? (config.build ? `build: ${config.build.context}` : '');
   const limits = [config.limits.cpus ? `${config.limits.cpus} cpus` : '', config.limits.memory ?? ''].filter(Boolean).join(' · ');
   const text = (value: string) => (value ? value : <span className={styles.dash}>—</span>);
@@ -44,7 +45,15 @@ export function ServiceOverview({ service, latestCpu, cpuHour }: ServiceOverview
       <div className={styles.details}>
         <dl className={styles.dl}>
           <dt>Image</dt>
-          <dd>{text(image)}</dd>
+          <dd>
+            {library ? `${library.image}:${library.tag} (${library.ownerName})` : text(image)}
+            {library?.newer && (
+              <>
+                {' '}
+                <Tag tone="info">{`new version available: ${library.latestTag}`}</Tag>
+              </>
+            )}
+          </dd>
           <dt>Ports</dt>
           <dd>
             <Chips values={(config.ports ?? []).map(portChip)} tone="info" />

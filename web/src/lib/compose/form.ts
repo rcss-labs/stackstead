@@ -1,8 +1,11 @@
 import type { Field, FieldError, ServiceConfig } from '../api/types';
+import { parseLibraryRef } from '../images/ref';
 
 export interface ServiceForm {
-  source: 'image' | 'build' | 'dockerfile';
+  source: 'image' | 'build' | 'dockerfile' | 'library';
   image: string;
+  /** The library reference chosen for source 'library'; null until one is picked. */
+  library: { ref: string } | null;
   buildContext: string;
   dockerfile: string;
   /** Contents of the Dockerfile written in the form (source 'dockerfile'). */
@@ -54,6 +57,7 @@ export function emptyForm(): ServiceForm {
   return {
     source: 'image',
     image: '',
+    library: null,
     buildContext: '',
     dockerfile: '',
     dockerfileText: '',
@@ -81,6 +85,10 @@ export function toForm(cfg: ServiceConfig, readOnly: Field[]): ServiceForm {
   const f = emptyForm();
   f.source = cfg.build ? 'build' : 'image';
   f.image = cfg.image ?? '';
+  if (!cfg.build && parseLibraryRef(f.image)) {
+    f.source = 'library';
+    f.library = { ref: f.image };
+  }
   f.buildContext = cfg.build?.context ?? '';
   f.dockerfile = cfg.build?.dockerfile ?? '';
   f.ports = [...(cfg.ports ?? [])];
@@ -150,6 +158,8 @@ export function fromForm(f: ServiceForm, original: ServiceConfig | null, service
     if (context || f.dockerfile.trim()) cfg.build = f.dockerfile.trim() ? { context, dockerfile: f.dockerfile.trim() } : { context };
     // compose allows image alongside build (the tag to give the built image); never drop it.
     if (f.image.trim()) cfg.image = f.image.trim();
+  } else if (f.source === 'library') {
+    if (f.library?.ref) cfg.image = f.library.ref;
   } else if (f.image.trim()) {
     cfg.image = f.image.trim();
   }
@@ -308,6 +318,8 @@ export function validateForm(f: ServiceForm, opts: { name?: string; requireName?
       if (f.dockerfileText.trim() === '') errors.dockerfileText = 'Dockerfile is required';
       else if (new TextEncoder().encode(f.dockerfileText).length > MAX_DOCKERFILE_BYTES) errors.dockerfileText = 'Dockerfile is larger than 1 MiB';
       else if (f.dockerfileText.includes('\0')) errors.dockerfileText = 'Dockerfile must not contain NUL bytes';
+    } else if (f.source === 'library') {
+      if (!f.library?.ref) errors.image = 'choose an image from the library';
     } else if (f.source === 'image') {
       if (!f.image.trim()) errors.image = 'image is required';
     } else if (!f.buildContext.trim() && !(orig?.build && orig.build.context === '' && (orig.build.dockerfile ?? '') === f.dockerfile.trim())) {

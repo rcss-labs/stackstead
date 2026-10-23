@@ -147,6 +147,14 @@ describe('stacks list', () => {
     expect(alpha.getByText('2/3')).toBeTruthy();
   });
 
+  it('shows an update tag only for stacks whose library images have newer versions', async () => {
+    install([stack('alpha', { libraryUpdates: 2 }), stack('beta', { libraryUpdates: 1 }), stack('gamma')]);
+    await mount();
+    expect(within(rowOf('alpha')).getByText('2 updates')).toBeTruthy();
+    expect(within(rowOf('beta')).getByText('1 update')).toBeTruthy();
+    expect(within(rowOf('gamma')).queryByText(/update/)).toBeNull();
+  });
+
   it('needs attention group lists partial and unhealthy stacks first and the Unknown group appears only when present', async () => {
     install([
       stack('calm'),
