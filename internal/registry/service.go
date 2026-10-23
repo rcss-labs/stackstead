@@ -10,6 +10,7 @@ import (
 
 	"github.com/rcss-labs/stackstead/internal/actionlog"
 	"github.com/rcss-labs/stackstead/internal/engine"
+	"github.com/rcss-labs/stackstead/internal/secret"
 )
 
 // TestResult is the outcome of a connection test.
@@ -76,6 +77,43 @@ func validName(name string) bool {
 	return n >= 1 && n <= 64
 }
 
+// redactedLiteral is what views show for a stored secret; a form that sends it
+// back means "keep the stored value".
+const redactedLiteral = "[redacted]"
+
+func isBlankSecret(s secret.Secret) bool { return s == "" || s.Reveal() == redactedLiteral }
+
+// mergeECR applies req over the stored ECR settings. Blank secrets keep the
+// stored ones, except that a new key pair invalidates the stored session
+// token, and a non-static mode drops all static credentials.
+func mergeECR(stored, req ECR) (ECR, error) {
+	e := req
+	if req.Mode != ECRStatic {
+		e.AccessKeyID, e.SecretAccessKey, e.SessionToken = "", "", ""
+		return e, nil
+	}
+	newSecret := !isBlankSecret(req.SecretAccessKey)
+	newSession := !isBlankSecret(req.SessionToken)
+	if req.AccessKeyID == "" {
+		e.AccessKeyID = stored.AccessKeyID
+	}
+	keyChanged := stored.AccessKeyID != "" && e.AccessKeyID != stored.AccessKeyID
+	if keyChanged && !newSecret {
+		return ECR{}, fmt.Errorf("%w: secretAccessKey is required when accessKeyId changes", ErrInvalid)
+	}
+	e.SecretAccessKey, e.SessionToken = stored.SecretAccessKey, stored.SessionToken
+	if newSecret {
+		e.SecretAccessKey = req.SecretAccessKey
+	}
+	switch {
+	case newSession:
+		e.SessionToken = req.SessionToken
+	case newSecret || keyChanged:
+		e.SessionToken = ""
+	}
+	return e, nil
+}
+
 // build merges req over base (the stored registry on update, zero on create).
 func build(base Registry, req Request) (Registry, error) {
 	r := base
@@ -96,7 +134,7 @@ func build(base Registry, req Request) (Registry, error) {
 			return Registry{}, fmt.Errorf("%w: Docker Hub settings required", ErrInvalid)
 		}
 		r.Hub.Username = strings.TrimSpace(req.Hub.Username)
-		if req.Hub.Token != "" {
+		if !isBlankSecret(req.Hub.Token) {
 			r.Hub.Token = req.Hub.Token
 		}
 	case KindECR:
@@ -108,12 +146,9 @@ func build(base Registry, req Request) (Registry, error) {
 		default:
 			return Registry{}, fmt.Errorf("%w: unknown ECR mode", ErrInvalid)
 		}
-		e := *req.ECR
-		if e.SecretAccessKey == "" {
-			e.SecretAccessKey = r.ECR.SecretAccessKey
-		}
-		if e.SessionToken == "" && e.Mode == ECRStatic {
-			e.SessionToken = r.ECR.SessionToken
+		e, err := mergeECR(r.ECR, *req.ECR)
+		if err != nil {
+			return Registry{}, err
 		}
 		r.ECR = e
 		if e.AccountID != "" && e.Region != "" {
@@ -223,6 +258,9 @@ func (s *Service) Test(ctx context.Context, id string) (TestResult, error) {
 	}
 	res, err := p.Test(ctx, r)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return TestResult{}, fmt.Errorf("registry test: %w", ctxErr)
+		}
 		msg := scrub(r, err.Error())
 		s.log.Warn("registry test failed", "registry", r.Name, "kind", r.Kind, "reason", msg)
 		if rerr := s.store.RecordTest(context.WithoutCancel(ctx), id, false, msg); rerr != nil {
@@ -234,7 +272,7 @@ func (s *Service) Test(ctx context.Context, id string) (TestResult, error) {
 		return TestResult{OK: false, Host: r.Host, Message: msg}, errors.New(msg)
 	}
 	res.Message = scrub(r, res.Message)
-	if rerr := s.store.RecordTest(ctx, id, res.OK, res.Message); rerr != nil {
+	if rerr := s.store.RecordTest(context.WithoutCancel(ctx), id, res.OK, res.Message); rerr != nil {
 		return res, rerr
 	}
 	return res, nil

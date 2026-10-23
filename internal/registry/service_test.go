@@ -1,10 +1,12 @@
 package registry
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/rcss-labs/stackstead/internal/actionlog"
@@ -129,5 +131,152 @@ func TestActionLogOnCreate(t *testing.T) {
 	e := actions.entries[0]
 	if e.Kind != "registry.create" || e.Scope != "host" || e.Username != "bob" || e.Detail != "name=hub kind=dockerhub" {
 		t.Errorf("entry: %+v", e)
+	}
+}
+
+func ecrReq(e ECR) Request { return Request{Name: "ecr", Kind: KindECR, ECR: &e} }
+
+func storedECR(t *testing.T, svc *Service, id string) ECR {
+	t.Helper()
+	r, err := svc.store.Get(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r.ECR
+}
+
+func newECR(t *testing.T) (*Service, string) {
+	t.Helper()
+	svc, _ := newTestService(t)
+	r, err := svc.Create(context.Background(), "u", ecrReq(ECR{Region: "eu-west-1", Mode: ECRStatic, AccessKeyID: "AKIA1",
+		SecretAccessKey: "sk1", SessionToken: "st1", AccountID: "123"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.ECR.AccessKeyID != "AKIA1" || r.ECR.SecretAccessKey != "" || !r.ECR.SecretKeySet {
+		t.Fatalf("view: %+v", r.ECR)
+	}
+	return svc, r.ID
+}
+
+func TestECRBlankKeepsKeyAndSecrets(t *testing.T) {
+	svc, id := newECR(t)
+	if _, err := svc.Update(context.Background(), "u", id, ecrReq(ECR{Region: "eu-west-1", Mode: ECRStatic, AccountID: "123"})); err != nil {
+		t.Fatal(err)
+	}
+	e := storedECR(t, svc, id)
+	if e.AccessKeyID != "AKIA1" || e.SecretAccessKey != "sk1" || e.SessionToken != "st1" {
+		t.Errorf("blank update changed stored values: %+v", e)
+	}
+}
+
+func TestECRRedactedLiteralCountsAsBlank(t *testing.T) {
+	svc, id := newECR(t)
+	if _, err := svc.Update(context.Background(), "u", id, ecrReq(ECR{Region: "eu-west-1", Mode: ECRStatic, AccessKeyID: "AKIA1",
+		SecretAccessKey: "[redacted]", SessionToken: "[redacted]"})); err != nil {
+		t.Fatal(err)
+	}
+	e := storedECR(t, svc, id)
+	if e.SecretAccessKey != "sk1" || e.SessionToken != "st1" {
+		t.Errorf("literal overwrote secrets: %+v", e)
+	}
+	hub, _ := svc.Create(context.Background(), "u", Request{Name: "hub", Kind: KindDockerHub, Hub: &Hub{Username: "a", Token: "tok"}})
+	if _, err := svc.Update(context.Background(), "u", hub.ID, Request{Name: "hub", Hub: &Hub{Username: "a", Token: "[redacted]"}, Kind: KindDockerHub}); err != nil {
+		t.Fatal(err)
+	}
+	if h, _ := svc.store.Get(context.Background(), hub.ID); h.Hub.Token.Reveal() != "tok" {
+		t.Error("hub token overwritten by the redacted literal")
+	}
+}
+
+func TestECRNewSecretDropsSessionToken(t *testing.T) {
+	svc, id := newECR(t)
+	if _, err := svc.Update(context.Background(), "u", id, ecrReq(ECR{Region: "eu-west-1", Mode: ECRStatic, SecretAccessKey: "sk2"})); err != nil {
+		t.Fatal(err)
+	}
+	if e := storedECR(t, svc, id); e.SecretAccessKey != "sk2" || e.SessionToken != "" || e.AccessKeyID != "AKIA1" {
+		t.Errorf("%+v", e)
+	}
+}
+
+func TestECRNewSecretWithSessionKeepsNewSession(t *testing.T) {
+	svc, id := newECR(t)
+	if _, err := svc.Update(context.Background(), "u", id, ecrReq(ECR{Region: "eu-west-1", Mode: ECRStatic, SecretAccessKey: "sk2", SessionToken: "st2"})); err != nil {
+		t.Fatal(err)
+	}
+	if e := storedECR(t, svc, id); e.SecretAccessKey != "sk2" || e.SessionToken != "st2" {
+		t.Errorf("%+v", e)
+	}
+}
+
+func TestECRChangedKeyNeedsNewSecret(t *testing.T) {
+	svc, id := newECR(t)
+	_, err := svc.Update(context.Background(), "u", id, ecrReq(ECR{Region: "eu-west-1", Mode: ECRStatic, AccessKeyID: "AKIA2"}))
+	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "secretAccessKey") {
+		t.Fatalf("got %v", err)
+	}
+	if e := storedECR(t, svc, id); e.AccessKeyID != "AKIA1" || e.SecretAccessKey != "sk1" {
+		t.Errorf("rejected update changed data: %+v", e)
+	}
+	if _, err := svc.Update(context.Background(), "u", id, ecrReq(ECR{Region: "eu-west-1", Mode: ECRStatic, AccessKeyID: "AKIA2", SecretAccessKey: "sk2"})); err != nil {
+		t.Fatal(err)
+	}
+	if e := storedECR(t, svc, id); e.AccessKeyID != "AKIA2" || e.SessionToken != "" {
+		t.Errorf("changed key must drop the session token: %+v", e)
+	}
+}
+
+func TestECRLeavingStaticClearsSecrets(t *testing.T) {
+	svc, id := newECR(t)
+	if _, err := svc.Update(context.Background(), "u", id, ecrReq(ECR{Region: "eu-west-1", Mode: ECRRole, AccountID: "123"})); err != nil {
+		t.Fatal(err)
+	}
+	if e := storedECR(t, svc, id); e.AccessKeyID != "" || e.SecretAccessKey != "" || e.SessionToken != "" || e.Mode != ECRRole {
+		t.Errorf("static secrets survived: %+v", e)
+	}
+}
+
+type failingProvider struct{ err error }
+
+func (f failingProvider) Test(context.Context, Registry) (TestResult, error) {
+	return TestResult{}, f.err
+}
+func (f failingProvider) Credentials(context.Context, Registry) (engine.RegistryAuth, error) {
+	return engine.RegistryAuth{}, f.err
+}
+
+func TestServiceTestScrubsProviderError(t *testing.T) {
+	const token = "tok_LEAK_ME"
+	var logs bytes.Buffer
+	st := newTestStore(t)
+	svc := NewService(st, map[Kind]Provider{KindDockerHub: failingProvider{errors.New("upstream said " + token)}}, nil,
+		slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	r, err := svc.Create(context.Background(), "u", Request{Name: "hub", Kind: KindDockerHub, Hub: &Hub{Username: "a", Token: token}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := svc.Test(context.Background(), r.ID)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	got, _ := st.Get(context.Background(), r.ID)
+	for name, text := range map[string]string{"error": err.Error(), "result": res.Message, "recorded": got.LastTestMessage, "logs": logs.String()} {
+		if strings.Contains(text, token) {
+			t.Errorf("%s leaks the token: %q", name, text)
+		}
+	}
+	if got.LastTestMessage == "" || got.LastTestOK {
+		t.Errorf("failure not recorded: %+v", got)
+	}
+}
+
+func TestServiceTestPreservesContextError(t *testing.T) {
+	st := newTestStore(t)
+	svc := NewService(st, map[Kind]Provider{KindDockerHub: failingProvider{context.Canceled}}, nil, nil)
+	r, _ := svc.Create(context.Background(), "u", Request{Name: "hub", Kind: KindDockerHub, Hub: &Hub{Username: "a", Token: "t"}})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := svc.Test(ctx, r.ID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v, want context.Canceled", err)
 	}
 }
