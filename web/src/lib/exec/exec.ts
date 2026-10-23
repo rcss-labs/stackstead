@@ -30,6 +30,41 @@ export interface ExecHandle {
 }
 
 const STREAM_STDIN = 0;
+// Browsers fragment big messages and the server reads each fragment as its own
+// message, so a paste is sent as separate frames that each carry the stream byte.
+const MAX_STDIN_CHUNK = 16 * 1024;
+
+export type RefusalReason = 'disabled' | 'limit' | 'not_running' | 'bad_origin' | 'peer_old' | 'unknown';
+
+/**
+ * A refused WebSocket upgrade hides its reason from the browser. The server runs the same
+ * checks for a plain GET, so ask it that way. `peer` is true when the URL goes through a
+ * connected server, where a bare 404 means that server predates the terminal.
+ */
+export async function explainRefusal(wsUrl: string, peer: boolean, fetchFn: typeof fetch = fetch): Promise<RefusalReason> {
+  try {
+    const res = await fetchFn(wsUrl.replace(/^ws/, 'http'), { credentials: 'same-origin' });
+    let code: string | undefined;
+    try {
+      code = ((await res.json()) as { code?: string }).code;
+    } catch {
+      // no JSON body
+    }
+    switch (code) {
+      case 'exec_disabled':
+        return 'disabled';
+      case 'exec_limit':
+        return 'limit';
+      case 'not_running':
+        return 'not_running';
+      case 'bad_origin':
+        return 'bad_origin';
+    }
+    return res.status === 404 && !code && peer ? 'peer_old' : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
 
 /** `base` is '' locally and `/api/servers/{id}` for a peer. `tty` is left to the server default (1). */
 export function execUrl(base: string, containerId: string, o: ExecOptions, loc: Location = window.location): string {
@@ -106,10 +141,13 @@ export function openExec(url: string, h: ExecHandlers, socketCtor: typeof WebSoc
   return {
     send(text) {
       const payload = typeof text === 'string' ? encoder.encode(text) : text;
-      const frame = new Uint8Array(payload.length + 1);
-      frame[0] = STREAM_STDIN;
-      frame.set(payload, 1);
-      write(frame);
+      for (let at = 0; at < payload.length || at === 0; at += MAX_STDIN_CHUNK) {
+        const part = payload.subarray(at, at + MAX_STDIN_CHUNK);
+        const frame = new Uint8Array(part.length + 1);
+        frame[0] = STREAM_STDIN;
+        frame.set(part, 1);
+        write(frame);
+      }
     },
     resize(cols, rows) {
       sendControl({ type: 'resize', cols, rows });

@@ -2,8 +2,8 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { useEffect, useRef, useState } from 'react';
-import { execUrl, openExec } from '$lib/exec/exec';
-import type { ExecEnd } from '$lib/exec/exec';
+import { execUrl, explainRefusal, openExec } from '$lib/exec/exec';
+import type { ExecEnd, RefusalReason } from '$lib/exec/exec';
 import { debounce } from '$lib/stores/debounce';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
@@ -79,6 +79,12 @@ function endNote(end: ExecEnd): string | undefined {
   }
 }
 
+const REFUSAL_TEXT: Record<Exclude<RefusalReason, 'not_running' | 'peer_old' | 'unknown'>, string> = {
+  disabled: 'Terminal is disabled on this server.',
+  limit: 'Too many open terminals on this server. Close one and try again.',
+  bad_origin: "The server refused the connection's origin. Check the reverse proxy forwards the Host header with its port.",
+};
+
 export interface TerminalTabProps {
   containerId: string;
   containerName: string;
@@ -95,7 +101,7 @@ export function TerminalTab({ containerId, containerName, running, onStart }: Te
   const [run, setRun] = useState(() => ({ n: 0, prefs }));
   const [end, setEnd] = useState<ExecEnd | undefined>();
   const [idleSeconds, setIdleSeconds] = useState<number | undefined>();
-  const [neverOpened, setNeverOpened] = useState(false);
+  const [refusal, setRefusal] = useState<RefusalReason | undefined>();
   const hostRef = useRef<HTMLDivElement>(null);
 
   function update(change: Partial<Prefs>) {
@@ -107,7 +113,7 @@ export function TerminalTab({ containerId, containerName, running, onStart }: Te
   function restart() {
     setEnd(undefined);
     setIdleSeconds(undefined);
-    setNeverOpened(false);
+    setRefusal(undefined);
     setRun((r) => ({ n: r.n + 1, prefs }));
   }
 
@@ -126,19 +132,28 @@ export function TerminalTab({ containerId, containerName, running, onStart }: Te
     fit.fit();
 
     let opened = false;
+    let disposed = false;
+    const url = execUrl(base, containerId, { cmd: commandFor(run.prefs), user: run.prefs.user, cols: term.cols, rows: term.rows });
     const handle = openExec(
-      execUrl(base, containerId, { cmd: commandFor(run.prefs), user: run.prefs.user, cols: term.cols, rows: term.rows }),
+      url,
       {
         onOpen: () => {
           opened = true;
         },
-        onData: (bytes) => term.write(bytes),
+        onData: (bytes) => {
+          term.write(bytes);
+          setIdleSeconds(undefined);
+        },
         onIdleWarning: setIdleSeconds,
         onEnd: (e) => {
           setEnd(e);
           setIdleSeconds(undefined);
-          if (e.kind === 'lost' && !opened) setNeverOpened(true);
-          else {
+          if (e.kind === 'lost' && !opened) {
+            // The browser hides why an upgrade was refused; ask the server over plain HTTP.
+            void explainRefusal(url, !local).then((reason) => {
+              if (!disposed) setRefusal(reason);
+            });
+          } else {
             const note = endNote(e);
             if (note) term.write(`\r\n${note}\r\n`);
           }
@@ -172,13 +187,14 @@ export function TerminalTab({ containerId, containerName, running, onStart }: Te
       observer?.disconnect();
       mq?.removeEventListener('change', restyle);
       mutations?.disconnect();
+      disposed = true;
       input.dispose();
       handle.close();
       term.dispose();
     };
-  }, [running, containerId, base, run]);
+  }, [running, containerId, base, run, local]);
 
-  if (!running) {
+  if (!running || refusal === 'not_running') {
     return (
       <EmptyState title="Container isn't running">
         <Button variant="primary" onClick={onStart}>
@@ -213,8 +229,17 @@ export function TerminalTab({ containerId, containerName, running, onStart }: Te
           {end ? 'Reconnect' : 'Apply and restart'}
         </Button>
       </div>
-      {neverOpened && (
-        <Banner kind="danger" title={local ? 'Could not open a terminal.' : 'Could not open a terminal. This server may need a newer Stackstead.'} />
+      {refusal && (
+        <Banner
+          kind="danger"
+          title={
+            refusal === 'peer_old'
+              ? 'Could not open a terminal. This server may need a newer Stackstead.'
+              : refusal === 'unknown'
+                ? 'Could not open a terminal.'
+                : REFUSAL_TEXT[refusal]
+          }
+        />
       )}
       {end?.kind === 'error' && (
         <Banner kind="danger" title="Terminal error">
