@@ -183,6 +183,45 @@ func (s *Store) Update(ctx context.Context, r Registry) error {
 	return nil
 }
 
+// SetDiscoveredHost fills the host, account id and region that are still empty
+// and touches nothing else, so a value the operator set is never overwritten.
+func (s *Store) SetDiscoveredHost(ctx context.Context, id, host, account, region string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store discovered host: %w", err)
+	}
+	defer tx.Rollback()
+	var curHost, config string
+	if err := tx.QueryRowContext(ctx, `SELECT host, config FROM registries WHERE id=?`, id).Scan(&curHost, &config); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("store discovered host: %w", err)
+	}
+	var c configJSON
+	if err := json.Unmarshal([]byte(config), &c); err != nil {
+		return fmt.Errorf("decode registry config: %w", err)
+	}
+	if curHost == "" {
+		curHost = host
+	}
+	if c.AccountID == "" {
+		c.AccountID = account
+	}
+	if c.Region == "" {
+		c.Region = region
+	}
+	out, err := json.Marshal(c)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE registries SET host=?, config=?, updated_at=? WHERE id=?`,
+		curHost, string(out), s.stamp().Unix(), id); err != nil {
+		return fmt.Errorf("store discovered host: %w", err)
+	}
+	return tx.Commit()
+}
+
 // Delete removes a registry; its push targets go with it.
 func (s *Store) Delete(ctx context.Context, id string) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM registries WHERE id = ?`, id)

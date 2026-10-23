@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -226,41 +227,77 @@ func TestECRErrorRedacts(t *testing.T) {
 	}
 }
 
-func TestECRHostRequirements(t *testing.T) {
+func TestECRConfiguredNeedsOnlyCredentialFields(t *testing.T) {
+	if !staticECR().configured() {
+		t.Error("static keys and region are enough; the host is discovered")
+	}
+	noRegionProfile := Registry{Kind: KindECR, ECR: ECR{Mode: ECRProfile, Profile: "dev"}}
+	if !noRegionProfile.configured() {
+		t.Error("profile mode resolves its region from the profile")
+	}
+	noRegionStatic := staticECR()
+	noRegionStatic.ECR.Region = ""
+	if noRegionStatic.configured() {
+		t.Error("static mode needs a region")
+	}
+}
+
+func TestECRPushRefNeverEmptyHost(t *testing.T) {
 	base := staticECR()
-	if base.configured() {
-		t.Error("ECR without account or host must not be configured")
-	}
-	withAccount := base
-	withAccount.ECR.AccountID = testAccount
-	if !withAccount.configured() {
-		t.Error("account id and region are enough to build the host")
-	}
-	withHost := base
-	withHost.Host = testHost
-	if !withHost.configured() {
-		t.Error("a discovered host is enough")
-	}
 	if got := PushRef(base, "app", "1"); strings.HasPrefix(got, "/") {
 		t.Errorf("PushRef without host = %q", got)
 	}
+	withAccount := base
+	withAccount.ECR.AccountID = testAccount
 	if got := PushRef(withAccount, "app", "1"); got != testHost+"/app:1" {
 		t.Errorf("PushRef from account = %q", got)
 	}
 }
 
-func TestServiceTestStoresDiscoveredECRHost(t *testing.T) {
+func TestECRRejectsInvalidRegionAndAccount(t *testing.T) {
+	svc, _ := newTestService(t)
+	for _, e := range []ECR{
+		{Region: "eu west 1", Mode: ECRRole},
+		{Region: "eu-west-1", Mode: ECRRole, AccountID: "12345"},
+	} {
+		if _, err := svc.Create(context.Background(), "u", ecrReq(e)); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%+v: got %v, want ErrInvalid", e, err)
+		}
+	}
+}
+
+func newECRService(t *testing.T, srv *httptest.Server) *Service {
+	t.Helper()
+	return NewService(newTestStore(t), map[Kind]Provider{KindECR: newECRProvider(srv)}, nil, slog.New(slog.DiscardHandler))
+}
+
+func TestServiceCredentialsDiscoversECRHost(t *testing.T) {
 	var seen ecrSeen
-	srv := ecrServer(t, "AKIDEXAMPLE", testSecret, testSession, &seen)
-	svc := NewService(newTestStore(t), map[Kind]Provider{KindECR: newECRProvider(srv)}, nil, slog.New(slog.DiscardHandler))
+	svc := newECRService(t, ecrServer(t, "AKIDEXAMPLE", testSecret, testSession, &seen))
 	ctx := context.Background()
 	e := staticECR().ECR
 	created, err := svc.Create(ctx, "u", Request{Name: "ecr", Kind: KindECR, ECR: &e})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := svc.Credentials(ctx, created.ID); err == nil {
-		t.Fatal("credentials before the first test must be unconfigured")
+	auth, host, err := svc.Credentials(ctx, created.ID)
+	if err != nil || host != testHost || auth.Password != testPassword || auth.ServerAddress != testHost {
+		t.Fatalf("%+v %q %v", auth, host, err)
+	}
+	stored, _ := svc.store.Get(ctx, created.ID)
+	if stored.Host != testHost || stored.ECR.AccountID != testAccount {
+		t.Fatalf("host/account not stored: %q %q", stored.Host, stored.ECR.AccountID)
+	}
+}
+
+func TestServiceTestStoresDiscoveredECRHost(t *testing.T) {
+	var seen ecrSeen
+	svc := newECRService(t, ecrServer(t, "AKIDEXAMPLE", testSecret, testSession, &seen))
+	ctx := context.Background()
+	e := staticECR().ECR
+	created, err := svc.Create(ctx, "u", Request{Name: "ecr", Kind: KindECR, ECR: &e})
+	if err != nil {
+		t.Fatal(err)
 	}
 	if res, err := svc.Test(ctx, created.ID); err != nil || !res.OK {
 		t.Fatalf("%+v, %v", res, err)
@@ -269,8 +306,33 @@ func TestServiceTestStoresDiscoveredECRHost(t *testing.T) {
 	if stored.Host != testHost || stored.ECR.AccountID != testAccount {
 		t.Fatalf("host/account not stored: %q %q", stored.Host, stored.ECR.AccountID)
 	}
-	auth, host, err := svc.Credentials(ctx, created.ID)
-	if err != nil || host != testHost || auth.Password != testPassword {
-		t.Errorf("%+v %q %v", auth, host, err)
+	if _, host, err := svc.Credentials(ctx, created.ID); err != nil || host != testHost {
+		t.Errorf("%q %v", host, err)
+	}
+}
+
+func TestDiscoveryNeverOverwritesOperatorValues(t *testing.T) {
+	var seen ecrSeen
+	svc := newECRService(t, ecrServer(t, "AKIDEXAMPLE", testSecret, testSession, &seen))
+	ctx := context.Background()
+	e := staticECR().ECR
+	e.AccountID = "210987654321"
+	created, err := svc.Create(ctx, "u", Request{Name: "ecr", Kind: KindECR, ECR: &e})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHost := "210987654321.dkr.ecr.eu-west-1.amazonaws.com"
+	if res, err := svc.Test(ctx, created.ID); err != nil || !res.OK {
+		t.Fatalf("%+v, %v", res, err)
+	}
+	if _, host, err := svc.Credentials(ctx, created.ID); err != nil || host != wantHost {
+		t.Errorf("credentials host %q, %v", host, err)
+	}
+	stored, _ := svc.store.Get(ctx, created.ID)
+	if stored.ECR.AccountID != "210987654321" || stored.Host != wantHost || stored.ECR.Region != "eu-west-1" {
+		t.Errorf("operator values overwritten: %+v host=%q", stored.ECR, stored.Host)
+	}
+	if stored.ECR.SecretAccessKey.Reveal() != testSecret {
+		t.Error("secrets must survive discovery")
 	}
 }

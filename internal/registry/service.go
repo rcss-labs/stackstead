@@ -150,6 +150,12 @@ func build(base Registry, req Request) (Registry, error) {
 		if err != nil {
 			return Registry{}, err
 		}
+		if e.Region != "" && !regionPattern.MatchString(e.Region) {
+			return Registry{}, fmt.Errorf("%w: region %q is not a valid AWS region", ErrInvalid, e.Region)
+		}
+		if e.AccountID != "" && !accountIDPattern.MatchString(e.AccountID) {
+			return Registry{}, fmt.Errorf("%w: accountId must be 12 digits", ErrInvalid)
+		}
 		if e.AccountID == "" {
 			e.AccountID = r.ECR.AccountID // discovered by a test; keep it across edits
 		}
@@ -276,9 +282,7 @@ func (s *Service) Test(ctx context.Context, id string) (TestResult, error) {
 	}
 	res.Message = scrub(r, res.Message)
 	if res.OK && r.Kind == KindECR {
-		if err := s.storeDiscoveredECRHost(ctx, r, res.Host); err != nil {
-			return res, err
-		}
+		s.storeDiscoveredECRHost(ctx, r, res.Host)
 	}
 	if rerr := s.store.RecordTest(context.WithoutCancel(ctx), id, res.OK, res.Message); rerr != nil {
 		return res, rerr
@@ -286,22 +290,22 @@ func (s *Service) Test(ctx context.Context, id string) (TestResult, error) {
 	return res, nil
 }
 
-// storeDiscoveredECRHost saves the host (and its account and region) that ECR
-// reported, so pushes can address the registry.
-func (s *Service) storeDiscoveredECRHost(ctx context.Context, r Registry, host string) error {
+// storeDiscoveredECRHost saves the host, account and region ECR reported,
+// filling only values that are still empty. A failure is logged, not fatal.
+func (s *Service) storeDiscoveredECRHost(ctx context.Context, r Registry, host string) {
 	account := ecrAccountID(host)
-	if host == "" || account == "" || (r.Host == host && r.ECR.AccountID == account) {
-		return nil
+	if host == "" || account == "" {
+		return
 	}
-	r.Host, r.ECR.AccountID = host, account
-	if r.ECR.Region == "" {
-		r.ECR.Region = ecrRegion(host)
+	if err := s.store.SetDiscoveredHost(context.WithoutCancel(ctx), r.ID, host, account, ecrRegion(host)); err != nil {
+		s.log.Warn("store discovered ECR host failed", "registry", r.Name, "err", err)
 	}
-	return s.store.Update(context.WithoutCancel(ctx), r)
 }
 
-// Credentials returns the push credential and registry host for id, or
-// ErrUnconfigured when the kind's required fields are missing.
+// Credentials returns the push credential and a usable registry host for id.
+// The host is the stored one, or for an ECR registry that has none yet, the one
+// discovered from the token (which is then stored without overwriting values the
+// operator set). ErrUnconfigured means the kind's credential fields are missing.
 func (s *Service) Credentials(ctx context.Context, id string) (engine.RegistryAuth, string, error) {
 	r, err := s.store.Get(ctx, id)
 	if err != nil {
@@ -318,7 +322,15 @@ func (s *Service) Credentials(ctx context.Context, id string) (engine.RegistryAu
 	if err != nil {
 		return engine.RegistryAuth{}, "", errors.New(scrub(r, err.Error()))
 	}
-	return auth, r.Host, nil
+	host := r.Host
+	if r.Kind == KindECR && host == "" {
+		host = auth.ServerAddress
+		s.storeDiscoveredECRHost(ctx, r, host)
+	}
+	if host == "" {
+		host = r.ecrHost()
+	}
+	return auth, host, nil
 }
 
 // PushRef returns the full image reference for repository:tag on r.

@@ -148,6 +148,9 @@ func (p *ECRProvider) authorize(ctx context.Context, r Registry) (ecrToken, erro
 	if region == "" {
 		return ecrToken{}, fmt.Errorf("%w: region is required", ErrUnconfigured)
 	}
+	if !regionPattern.MatchString(region) {
+		return ecrToken{}, fmt.Errorf("region %q is not a valid AWS region", region)
+	}
 	body := []byte("{}")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint(region)+"/", bytes.NewReader(body))
 	if err != nil {

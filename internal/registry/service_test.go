@@ -149,7 +149,7 @@ func newECR(t *testing.T) (*Service, string) {
 	t.Helper()
 	svc, _ := newTestService(t)
 	r, err := svc.Create(context.Background(), "u", ecrReq(ECR{Region: "eu-west-1", Mode: ECRStatic, AccessKeyID: "AKIA1",
-		SecretAccessKey: "sk1", SessionToken: "st1", AccountID: "123"}))
+		SecretAccessKey: "sk1", SessionToken: "st1", AccountID: "123456789012"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func newECR(t *testing.T) (*Service, string) {
 
 func TestECRBlankKeepsKeyAndSecrets(t *testing.T) {
 	svc, id := newECR(t)
-	if _, err := svc.Update(context.Background(), "u", id, ecrReq(ECR{Region: "eu-west-1", Mode: ECRStatic, AccountID: "123"})); err != nil {
+	if _, err := svc.Update(context.Background(), "u", id, ecrReq(ECR{Region: "eu-west-1", Mode: ECRStatic, AccountID: "123456789012"})); err != nil {
 		t.Fatal(err)
 	}
 	e := storedECR(t, svc, id)
@@ -228,7 +228,7 @@ func TestECRChangedKeyNeedsNewSecret(t *testing.T) {
 
 func TestECRLeavingStaticClearsSecrets(t *testing.T) {
 	svc, id := newECR(t)
-	if _, err := svc.Update(context.Background(), "u", id, ecrReq(ECR{Region: "eu-west-1", Mode: ECRRole, AccountID: "123"})); err != nil {
+	if _, err := svc.Update(context.Background(), "u", id, ecrReq(ECR{Region: "eu-west-1", Mode: ECRRole, AccountID: "123456789012"})); err != nil {
 		t.Fatal(err)
 	}
 	if e := storedECR(t, svc, id); e.AccessKeyID != "" || e.SecretAccessKey != "" || e.SessionToken != "" || e.Mode != ECRRole {
