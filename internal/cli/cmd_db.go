@@ -88,17 +88,21 @@ func dbInit(env *Env, cfg config.Config) error {
 		return fmt.Errorf("create data dir: %w", err)
 	}
 	path := dbPathOf(cfg)
-	db, err := store.Open(path)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	version, err := store.SchemaVersion(context.Background(), db)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(env.Stdout, "database %s at schema %d\n", path, version)
-	return nil
+	// Migration needs the maintenance lock: a running server or a restore in
+	// progress must not have its schema changed underneath it.
+	return withExclusiveLock(cfg, func() error {
+		db, err := store.Open(path)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		version, err := store.SchemaVersion(context.Background(), db)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(env.Stdout, "database %s at schema %d\n", path, version)
+		return nil
+	})
 }
 
 func fileSize(path string) int64 {

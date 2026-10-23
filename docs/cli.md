@@ -201,7 +201,8 @@ file in the data directory. They never create or migrate the database; only
 | `config init --path P [--listen A] [--stacks-dir D] [--data-dir D] [--force]` | any | write the commented config (exit 5 if it exists) |
 | `config validate`, `config show` | any | check a config (exit 6 when invalid); show every key and where its value came from |
 | `health [-o json]` | any | check config, database, server, Docker and compose; exit 7 when the server, Docker or compose is unreachable |
-| `db init`, `db check` | any | create and migrate the database; integrity check |
+| `db init` | stopped | create and migrate the database; refuses (exit 5) while a server holds the lock |
+| `db check` | any | integrity check |
 | `db backup <dest> [--force]` | online-safe | consistent copy, even under writes |
 | `db restore <src> [--yes]` | **stopped** | replace the database; exit 5 while a server runs |
 | `admin set-password [--username U] [--password-stdin\|--password-file F]` | online-safe | create the admin or reset its password |

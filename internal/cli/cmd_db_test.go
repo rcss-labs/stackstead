@@ -58,6 +58,23 @@ func TestDBInitCreatesAndIsIdempotent(t *testing.T) {
 	}
 }
 
+// A running server (or a restore in progress) holds the maintenance lock;
+// init must not create or migrate the database underneath it.
+func TestDBInitRefusedWhileLocked(t *testing.T) {
+	h := newLocalHost(t, false)
+	lock, err := lockfile.Acquire(filepath.Join(h.dataDir, "stackstead.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Release()
+	err = runLocal(newTestEnv(t, nil), "db", "init", "--config", h.cfgPath)
+	wantCode(t, err, ExitConflict)
+	mustContain(t, "error", errMessage(err), "server is running")
+	if _, serr := os.Stat(h.dbPath); serr == nil {
+		t.Error("database was created although the lock was held")
+	}
+}
+
 func TestDBInitAsRootRefusesForeignDataDir(t *testing.T) {
 	h := newLocalHost(t, false)
 	geteuid = func() int { return 0 }
