@@ -567,3 +567,64 @@ func TestSplitRefRejectsEmpty(t *testing.T) {
 		t.Errorf("splitRef ok = %q %q %v", repo, tag, err)
 	}
 }
+
+func TestBuildOutputSaysPushInterruptedWhenOperationEnds(t *testing.T) {
+	h, _ := newPushHarness(t)
+	h.create(t, "app")
+	h.addTarget(t, "app", "hub", "u/auto", true)
+	opIDs := make(chan string, 1)
+	h.eng.pushHook = func() {
+		if err := h.ops.Cancel(<-opIDs); err != nil {
+			t.Error(err)
+		}
+	}
+	v, op, err := h.svc.Build(context.Background(), "alice", "app", BuildRequest{Tag: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opIDs <- op.ID
+	h.waitOp(t, op.ID)
+	got, err := h.svc.store.VersionByID(context.Background(), v.ID)
+	if err != nil || got.Status != VersionSucceeded {
+		t.Fatalf("version = %+v err %v", got, err)
+	}
+	lines, err := h.ops.Lines(op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "build succeeded; push interrupted: operation cancelled") {
+		t.Errorf("output lacks interruption line: %q", lines)
+	}
+}
+
+func TestPushTargetChangesAreLogged(t *testing.T) {
+	h, _ := newPushHarness(t)
+	h.create(t, "app")
+	ctx := context.Background()
+	tg, err := h.svc.AddPushTarget(ctx, "alice", "app", PushTargetRequest{RegistryID: "hub", Repository: "u/app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.UpdatePushTarget(ctx, "bob", "app", tg.ID, PushTargetRequest{RegistryID: "hub", Repository: "u/app2", AutoPush: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.DeletePushTarget(ctx, "carol", "app", tg.ID); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	h.log.mu.Lock()
+	for _, e := range h.log.entries {
+		if e.Kind == "image.push-target" {
+			got = append(got, e.Username+"|"+e.Scope+"|"+e.Target+"|"+e.Detail+"|"+e.Result)
+		}
+	}
+	h.log.mu.Unlock()
+	want := []string{
+		"alice|app|app|added Hub u/app|succeeded",
+		"bob|app|app|updated Hub u/app2|succeeded",
+		"carol|app|app|removed Hub u/app2|succeeded",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("entries = %q, want %q", got, want)
+	}
+}

@@ -312,7 +312,11 @@ All routes need a session. Errors use the shape from [API overview](#api-overvie
 A target with `autoPush` is pushed after every successful build, inside the
 build's operation; a failed push never fails the build. An auto-push to a
 registry that is not configured is recorded as a failed push ("registry not
-configured") with a line in the build output. Push errors: 404 for an
+configured") with a line in the build output. If the operation times out or is
+cancelled during the auto-push, the operation ends `timed_out` or `cancelled`
+and the output says "build succeeded; push interrupted"; the version's status
+is authoritative. Adding, changing and removing push targets is recorded in the
+action log as `image.push-target`. Push errors: 404 for an
 unknown image, tag (a failed version has none) or target; 409
 `registry_unconfigured` when the registry lacks credentials; 409
 `build_running` while another operation on the image runs; 502

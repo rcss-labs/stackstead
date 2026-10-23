@@ -89,7 +89,23 @@ func (s *Service) AddPushTarget(ctx context.Context, user, slug string, req Push
 	if err := duplicateTarget(targets, req, ""); err != nil {
 		return PushTarget{}, err
 	}
-	return s.store.AddPushTarget(ctx, PushTarget{ImageID: img.ID, RegistryID: req.RegistryID, Repository: req.Repository, AutoPush: req.AutoPush})
+	t, err := s.store.AddPushTarget(ctx, PushTarget{ImageID: img.ID, RegistryID: req.RegistryID, Repository: req.Repository, AutoPush: req.AutoPush})
+	if err != nil {
+		return PushTarget{}, err
+	}
+	s.recordTarget(ctx, user, slug, "added", t)
+	return t, nil
+}
+
+// recordTarget logs a push-target change; the detail names the registry and repository.
+func (s *Service) recordTarget(ctx context.Context, user, slug, verb string, t PushTarget) {
+	name := t.RegistryID
+	if s.registries != nil {
+		if reg, err := s.registries.Get(context.WithoutCancel(ctx), t.RegistryID); err == nil {
+			name = reg.Name
+		}
+	}
+	s.record(ctx, user, "image.push-target", slug, slug, verb+" "+name+" "+t.Repository, "succeeded", "")
 }
 
 // UpdatePushTarget changes a push target of an image.
@@ -125,6 +141,7 @@ func (s *Service) UpdatePushTarget(ctx context.Context, user, slug, id string, r
 	if err := update(ctx, t); err != nil {
 		return PushTarget{}, err
 	}
+	s.recordTarget(ctx, user, slug, "updated", t)
 	return t, nil
 }
 
@@ -140,10 +157,15 @@ func (s *Service) DeletePushTarget(ctx context.Context, user, slug, id string) e
 	if err != nil {
 		return err
 	}
-	if _, ok := findTarget(targets, id); !ok {
+	t, ok := findTarget(targets, id)
+	if !ok {
 		return ErrTargetNotFound
 	}
-	return s.store.DeletePushTarget(ctx, id)
+	if err := s.store.DeletePushTarget(ctx, id); err != nil {
+		return err
+	}
+	s.recordTarget(ctx, user, slug, "removed", t)
+	return nil
 }
 
 func findTarget(targets []PushTarget, id string) (PushTarget, bool) {

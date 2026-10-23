@@ -179,7 +179,19 @@ func (s *Service) runBuild(ctx context.Context, user string, img Image, v Versio
 	finished = true
 	s.autoPush(ctx, user, img, v, opID, emit)
 	s.applyRetentionAfterBuild(ctx, user, img.Slug)
+	if ctx.Err() != nil {
+		// The operation ends as timed_out or cancelled although the version
+		// succeeded; say so, because the version status is authoritative.
+		emit("build succeeded; push interrupted: " + operationEndReason(ctx))
+	}
 	return nil
+}
+
+func operationEndReason(ctx context.Context) string {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "operation timed out"
+	}
+	return "operation cancelled"
 }
 
 func buildErrorText(ctx context.Context, err error) string {
