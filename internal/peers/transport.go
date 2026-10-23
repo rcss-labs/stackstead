@@ -53,7 +53,7 @@ func NewHTTPClient(base *url.URL, opts TLSOptions, timeout time.Duration) (*http
 		}
 	}
 	if base.Scheme == "https" {
-		cfg, err := tlsConfig(opts)
+		cfg, err := tlsConfig(opts, base.Hostname())
 		if err != nil {
 			return nil, err
 		}
@@ -68,7 +68,11 @@ func NewHTTPClient(base *url.URL, opts TLSOptions, timeout time.Duration) (*http
 	}, nil
 }
 
-func tlsConfig(opts TLSOptions) (*tls.Config, error) {
+// tlsConfig builds the TLS settings for a peer. expectedHost is the host of
+// the configured peer URL (a DNS name or an IP literal); the pinned
+// verification below checks it, because ConnectionState.ServerName is empty
+// for IP literals.
+func tlsConfig(opts TLSOptions, expectedHost string) (*tls.Config, error) {
 	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	var roots *x509.CertPool // nil means system roots
 	if opts.CAPEM != "" {
@@ -89,7 +93,7 @@ func tlsConfig(opts TLSOptions) (*tls.Config, error) {
 		if len(cs.PeerCertificates) == 0 {
 			return &pinMismatchError{}
 		}
-		if verifyChain(cs.PeerCertificates, cs.ServerName, roots) == nil {
+		if verifyChain(cs.PeerCertificates, expectedHost, roots) == nil {
 			return nil
 		}
 		if fingerprint(cs.PeerCertificates[0]) == pin {

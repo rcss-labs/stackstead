@@ -207,7 +207,7 @@ func (s *Service) validateAdd(ctx context.Context, req apitypes.AddPeerRequest) 
 				fail(prefix+".pinSha256", "the fingerprint must be 64 hex characters (SHA-256)")
 			}
 		}
-		if _, err := tlsConfig(TLSOptions{CAPEM: trust.CAPEM}); err != nil {
+		if _, err := tlsConfig(TLSOptions{CAPEM: trust.CAPEM}, ""); err != nil {
 			fail(prefix+".caPem", err.Error())
 		}
 	}
