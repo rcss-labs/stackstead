@@ -65,6 +65,19 @@ sudo dnf install ./stackstead-1.2.3-1.x86_64.rpm
 Download them from the release page and check them against `SHA256SUMS` first. Both enable and
 start the service on a fresh install, restart it on an upgrade, and recommend (never require) Docker.
 
+**Moving from the install script to a package.** The script's unit in `/etc/systemd/system` would
+shadow the packaged one and keep the old `/usr/local/bin` binary running, so the package refuses to
+install over a script install and changes nothing. Remove the script install first, without
+`--purge`, which keeps `/etc/stackstead`, `/var/lib/stackstead`, the `stackstead` user and your stacks:
+
+```bash
+sudo /usr/local/share/stackstead/install.sh --uninstall
+sudo apt install ./stackstead_1.2.3_amd64.deb
+```
+
+Your own copy of the packaged unit or a drop-in under `/etc/systemd/system` does not trigger the
+refusal. The script refuses to run over a package install in the same way (exit 8).
+
 ## Where things go
 
 | | Packages | Install script |

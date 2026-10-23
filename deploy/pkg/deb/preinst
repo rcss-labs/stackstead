@@ -2,6 +2,39 @@
 # Debian preinst: create the service group and user before files are unpacked.
 set -e
 
+R="${STACKSTEAD_PKG_ROOT:-}"
+
+# A script install (install.sh) puts a unit in /etc/systemd/system that points at /usr/local/bin.
+# That unit wins over the packaged /usr/lib unit, so installing over it would leave the old binary
+# running while the package looks installed. Refuse before changing anything. Detected: the
+# install.sh marker comment, a unit whose ExecStart is not the packaged binary, or the leftover
+# script binary plus helper. An administrator's copy of the packaged unit, drop-ins and a
+# hand-built /usr/local/bin/stackstead with no helper are not matched.
+refuse_script_install() {
+    found=
+    unit="$R/etc/systemd/system/stackstead.service"
+    if [ -f "$unit" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+            case $line in
+                "# Installed by stackstead install.sh"*) found=1 ;;
+                ExecStart=/usr/bin/stackstead | "ExecStart=/usr/bin/stackstead "*) ;;
+                ExecStart=?*) found=1 ;;
+            esac
+        done <"$unit"
+    fi
+    if [ -f "$R/usr/local/bin/stackstead" ] && [ -f "$R/usr/local/share/stackstead/install.sh" ]; then
+        found=1
+    fi
+    [ -n "$found" ] || return 0
+    printf '%s\n' \
+        'stackstead is already installed by the install.sh script (/usr/local/bin/stackstead and a unit in' \
+        '/etc/systemd/system). Installing this package over it would leave the old binary running.' \
+        'Remove the script install first, keeping your configuration, data and stacks:' \
+        '  sudo /usr/local/share/stackstead/install.sh --uninstall      (without --purge)' \
+        'then install the package again. Nothing was changed.' >&2
+    exit 1
+}
+
 ensure_identity() {
     getent group docker >/dev/null 2>&1 || groupadd --system docker
     getent group stackstead >/dev/null 2>&1 || groupadd --system stackstead
@@ -17,6 +50,7 @@ ensure_identity() {
 
 case "$1" in
     install | upgrade)
+        refuse_script_install
         ensure_identity
         ;;
     abort-upgrade) ;;

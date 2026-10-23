@@ -264,6 +264,8 @@ func TestScript(t *testing.T) {
 		unit := string(readFile(t, f.p("etc/systemd/system/stackstead.service")))
 		contains(t, "unit", unit, "ExecStart=/usr/local/bin/stackstead serve --config /etc/stackstead/config.yaml\n", "SupplementaryGroups=docker")
 		notContains(t, "unit", unit, "ExecStart=/usr/local/bin/stackstead --config")
+		// the deb/rpm pre-install scripts look for this marker to refuse installing over a script install (issue #33)
+		contains(t, "unit", unit, "# Installed by stackstead install.sh\n")
 		want := readFile(t, filepath.Join(repoRoot(t), "deploy", "config.example.yaml"))
 		if string(readFile(t, f.p("etc/stackstead/config.yaml"))) != string(want) {
 			t.Error("config.yaml differs from config.example.yaml")

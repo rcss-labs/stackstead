@@ -805,8 +805,13 @@ install_files() {
 
 	# a unit is only useful where systemd exists (not on Alpine, say)
 	if have systemctl; then
-		sed "s|^ExecStart=.*|ExecStart=$BIN serve --config $CONFIG|; s|^ExecStartPre=.*stackstead.* config validate.*|ExecStartPre=$BIN config validate --config $CONFIG|" \
-			"$STAGE/stackstead.service" >"$STAGE/unit.rewritten"
+		# the first line marks the unit as installer-owned: the deb/rpm pre-install scripts refuse to
+		# install over it (it would shadow the packaged unit and keep the old binary running)
+		{
+			printf '# Installed by stackstead install.sh\n'
+			sed "s|^ExecStart=.*|ExecStart=$BIN serve --config $CONFIG|; s|^ExecStartPre=.*stackstead.* config validate.*|ExecStartPre=$BIN config validate --config $CONFIG|" \
+				"$STAGE/stackstead.service"
+		} >"$STAGE/unit.rewritten"
 		put_file "$STAGE/unit.rewritten" "$(rp "$UNIT")" 0644
 	fi
 
