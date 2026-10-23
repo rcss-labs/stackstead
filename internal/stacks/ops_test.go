@@ -621,3 +621,31 @@ func TestStartServiceRecordsServiceAndKeepsBusyRule(t *testing.T) {
 		t.Errorf("final service = %q", fin.Service)
 	}
 }
+
+func TestStartTimeoutOverridesDefault(t *testing.T) {
+	o := NewOps(time.Hour, fixedNow)
+	startedPlain := make(chan struct{})
+	plain, err := o.Start("plain", "build", blockingFn(startedPlain))
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-startedPlain
+
+	startedBounded := make(chan struct{})
+	bounded, err := o.StartTimeout("bounded", "build", 50*time.Millisecond, blockingFn(startedBounded))
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-startedBounded
+	if fin := waitDone(t, o, bounded.ID); fin.State != OpTimedOut {
+		t.Errorf("StartTimeout state = %s, want %s", fin.State, OpTimedOut)
+	}
+
+	if cur, err := o.Get(plain.ID); err != nil || cur.State != OpRunning {
+		t.Errorf("Start state after the bounded op ended = %s (err %v), want running", cur.State, err)
+	}
+	if err := o.Cancel(plain.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, o, plain.ID)
+}

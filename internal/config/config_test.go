@@ -45,6 +45,10 @@ func TestLoadWithoutFileUsesDefaults(t *testing.T) {
 		ExecEnabled:      true,
 		ExecMaxSessions:  8,
 		ExecIdleTimeout:  30 * time.Minute,
+
+		ImageOperationTimeout: 60 * time.Minute,
+		ImageMaxFileBytes:     134217728,
+		ImageMaxContextBytes:  1073741824,
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("got  %+v\nwant %+v", cfg, want)
@@ -191,6 +195,66 @@ func TestExecIdleTimeoutNeedsUnit(t *testing.T) {
 	_, err := config.Load(writeConfig(t, "exec_idle_timeout: 30\n"), env(nil))
 	if err == nil || !strings.Contains(err.Error(), "exec_idle_timeout") {
 		t.Errorf("err = %v, want error mentioning exec_idle_timeout", err)
+	}
+}
+
+func TestImageLimitDefaults(t *testing.T) {
+	cfg, err := config.Load("", env(nil))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ImageMaxFileBytes != 134217728 {
+		t.Errorf("ImageMaxFileBytes = %d, want 134217728", cfg.ImageMaxFileBytes)
+	}
+	if cfg.ImageMaxContextBytes != 1073741824 {
+		t.Errorf("ImageMaxContextBytes = %d, want 1073741824", cfg.ImageMaxContextBytes)
+	}
+}
+
+func TestImageOperationTimeoutDefault(t *testing.T) {
+	cfg, err := config.Load("", env(nil))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ImageOperationTimeout != 60*time.Minute {
+		t.Errorf("ImageOperationTimeout = %s, want 1h0m0s", cfg.ImageOperationTimeout)
+	}
+}
+
+func TestImageLimitsFromFileAndEnv(t *testing.T) {
+	path := writeConfig(t, "image_max_file_bytes: 268435456\nimage_max_context_bytes: 1048576\n")
+	cfg, err := config.Load(path, env(map[string]string{"STACKSTEAD_IMAGE_MAX_CONTEXT_BYTES": "2097152"}))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ImageMaxFileBytes != 268435456 {
+		t.Errorf("ImageMaxFileBytes = %d, want 268435456 from the file", cfg.ImageMaxFileBytes)
+	}
+	if cfg.ImageMaxContextBytes != 2097152 {
+		t.Errorf("ImageMaxContextBytes = %d, want 2097152 from the env override", cfg.ImageMaxContextBytes)
+	}
+}
+
+func TestImageLimitTooSmall(t *testing.T) {
+	path := writeConfig(t, "image_max_file_bytes: 1024\n")
+	_, err := config.Load(path, env(nil))
+	if err == nil || !strings.Contains(err.Error(), "image_max_file_bytes") {
+		t.Fatalf("err = %v, want error naming image_max_file_bytes", err)
+	}
+}
+
+func TestImageOperationTimeoutRejectsBareNumber(t *testing.T) {
+	path := writeConfig(t, "image_operation_timeout: 900\n")
+	_, err := config.Load(path, env(nil))
+	if err == nil || !strings.Contains(err.Error(), "image_operation_timeout") {
+		t.Fatalf("err = %v, want error naming image_operation_timeout", err)
+	}
+}
+
+func TestImageOperationTimeoutMustBeAtLeastOneSecond(t *testing.T) {
+	_, err := config.Load(writeConfig(t, "image_operation_timeout: 500ms\n"), env(nil))
+	if err == nil || !strings.Contains(err.Error(), "image_operation_timeout must be at least 1s") {
+		t.Fatalf("err = %v, want error naming image_operation_timeout", err)
 	}
 }
 

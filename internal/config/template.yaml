@@ -18,6 +18,7 @@ data_dir: {{.DataDir}}
 metrics_retention: {{.MetricsRetention}}
 metrics_interval: {{.MetricsInterval}}
 operation_timeout: {{.OperationTimeout}}
+image_operation_timeout: {{.ImageOperationTimeout}}
 
 # Terminal access into containers. A terminal is root-equivalent on that container.
 exec_enabled: {{.ExecEnabled}}
@@ -37,3 +38,9 @@ exec_idle_timeout: {{.ExecIdleTimeout}}
 # https://github.com/rcss-labs/stackstead to show "update available" in Settings.
 # Set to false on air-gapped hosts. Nothing is ever installed automatically.
 {{.UpdateCheckLine}}
+
+# Largest single file in an uploaded image context (bytes)
+image_max_file_bytes: {{.ImageMaxFileBytes}}
+
+# Largest uploaded image context in total (bytes)
+image_max_context_bytes: {{.ImageMaxContextBytes}}

@@ -20,6 +20,7 @@ data_dir: /var/lib/stackstead
 metrics_retention: 72h
 metrics_interval: 10s
 operation_timeout: 15m
+image_operation_timeout: 1h
 
 # Terminal access into containers. A terminal is root-equivalent on that container.
 exec_enabled: true
@@ -39,3 +40,9 @@ exec_idle_timeout: 30m
 # https://github.com/rcss-labs/stackstead to show "update available" in Settings.
 # Set to false on air-gapped hosts. Nothing is ever installed automatically.
 # update_check: true
+
+# Largest single file in an uploaded image context (bytes)
+image_max_file_bytes: 134217728
+
+# Largest uploaded image context in total (bytes)
+image_max_context_bytes: 1073741824

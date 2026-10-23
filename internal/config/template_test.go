@@ -101,6 +101,36 @@ func TestTemplateExecLinesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestTemplateRendersAndLoadsImageLimits(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.ImageMaxFileBytes = 268435456
+	cfg.ImageMaxContextBytes = 2097152
+	cfg.ImageOperationTimeout = 90 * time.Minute
+	out, err := config.Template(cfg)
+	if err != nil {
+		t.Fatalf("Template: %v", err)
+	}
+	text := string(out)
+	for _, want := range []string{
+		"image_max_file_bytes: 268435456\n",
+		"image_max_context_bytes: 2097152\n",
+		"image_operation_timeout: 1h30m\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("output missing %q:\n%s", want, text)
+		}
+	}
+	loaded, err := config.Load(writeConfig(t, text), env(nil))
+	if err != nil {
+		t.Fatalf("Load of rendered template: %v\n%s", err, text)
+	}
+	if loaded.ImageMaxFileBytes != cfg.ImageMaxFileBytes || loaded.ImageMaxContextBytes != cfg.ImageMaxContextBytes || loaded.ImageOperationTimeout != cfg.ImageOperationTimeout {
+		t.Errorf("round trip image limits = %d/%d/%s, want %d/%d/%s",
+			loaded.ImageMaxFileBytes, loaded.ImageMaxContextBytes, loaded.ImageOperationTimeout,
+			cfg.ImageMaxFileBytes, cfg.ImageMaxContextBytes, cfg.ImageOperationTimeout)
+	}
+}
+
 func TestEffectiveReportsSources(t *testing.T) {
 	path := writeConfig(t, "listen: 127.0.0.1:7000\nmetrics_interval: 20s\n")
 	getenv := env(map[string]string{"STACKSTEAD_DATA_DIR": "/srv/data"})
@@ -126,6 +156,9 @@ func TestEffectiveReportsSources(t *testing.T) {
 		{Key: "exec_enabled", Value: "true", Source: "default"},
 		{Key: "exec_max_sessions", Value: "8", Source: "default"},
 		{Key: "exec_idle_timeout", Value: "30m", Source: "default"},
+		{Key: "image_operation_timeout", Value: "1h", Source: "default"},
+		{Key: "image_max_file_bytes", Value: "134217728", Source: "default"},
+		{Key: "image_max_context_bytes", Value: "1073741824", Source: "default"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Effective =\n%+v\nwant\n%+v", got, want)

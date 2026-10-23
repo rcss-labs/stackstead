@@ -114,6 +114,16 @@ func (o *Ops) Start(stack, action string, fn OpFunc) (Operation, error) {
 // StartService is Start for an operation scoped to one service. The busy
 // rule is the same: one running operation per stack.
 func (o *Ops) StartService(stack, action, service string, fn OpFunc) (Operation, error) {
+	return o.startOp(stack, action, service, o.timeout, fn)
+}
+
+// StartTimeout is Start for an operation bounded by timeout instead of the
+// manager's default. The busy rule is the same.
+func (o *Ops) StartTimeout(key, action string, timeout time.Duration, fn OpFunc) (Operation, error) {
+	return o.startOp(key, action, "", timeout, fn)
+}
+
+func (o *Ops) startOp(stack, action, service string, timeout time.Duration, fn OpFunc) (Operation, error) {
 	id, err := newOpID()
 	if err != nil {
 		return Operation{}, fmt.Errorf("generate operation id: %w", err)
@@ -130,8 +140,8 @@ func (o *Ops) StartService(stack, action, service string, fn OpFunc) (Operation,
 	}
 	var ctx context.Context
 	var cancel context.CancelFunc
-	if o.timeout > 0 {
-		ctx, cancel = context.WithTimeout(context.Background(), o.timeout)
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(context.Background(), timeout)
 	} else {
 		ctx, cancel = context.WithCancel(context.Background())
 	}

@@ -112,6 +112,79 @@ var migrations = []string{
 		created_at INTEGER NOT NULL,
 		expires_at INTEGER NOT NULL
 	);`,
+	// Image library: built container images, their revisions (source snapshots),
+	// versions (tagged builds), registries and push targets. A version is
+	// unique per tag among non-failed rows, so a failed build frees its tag.
+	`CREATE TABLE images (
+		id                 TEXT    PRIMARY KEY,
+		slug               TEXT    NOT NULL UNIQUE,
+		name               TEXT    NOT NULL,
+		source             TEXT    NOT NULL CHECK (source IN ('upload','github')),
+		dockerfile_path    TEXT    NOT NULL DEFAULT 'Dockerfile',
+		github_repo        TEXT    NOT NULL DEFAULT '',
+		github_branch      TEXT    NOT NULL DEFAULT '',
+		github_path        TEXT    NOT NULL DEFAULT '',
+		build_args         TEXT    NOT NULL DEFAULT '{}',
+		retention_keep_last INTEGER NOT NULL DEFAULT 0,
+		retention_keep_days INTEGER NOT NULL DEFAULT 0,
+		created_at         INTEGER NOT NULL,
+		updated_at         INTEGER NOT NULL
+	);
+	CREATE TABLE image_revisions (
+		image_id   TEXT    NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+		number     INTEGER NOT NULL,
+		created_at INTEGER NOT NULL,
+		summary    TEXT    NOT NULL DEFAULT '',
+		manifest   TEXT    NOT NULL,
+		PRIMARY KEY (image_id, number)
+	);
+	CREATE TABLE image_versions (
+		id           TEXT    PRIMARY KEY,
+		image_id     TEXT    NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+		tag          TEXT    NOT NULL,
+		status       TEXT    NOT NULL CHECK (status IN ('building','succeeded','failed')),
+		revision     INTEGER NOT NULL DEFAULT 0,
+		commit_sha   TEXT    NOT NULL DEFAULT '',
+		build_args   TEXT    NOT NULL DEFAULT '{}',
+		arch         TEXT    NOT NULL DEFAULT '',
+		image_digest TEXT    NOT NULL DEFAULT '',
+		size         INTEGER NOT NULL DEFAULT 0,
+		started_at   INTEGER NOT NULL,
+		ended_at     INTEGER,
+		error        TEXT    NOT NULL DEFAULT '',
+		operation_id TEXT    NOT NULL DEFAULT ''
+	);
+	CREATE UNIQUE INDEX image_versions_tag_live ON image_versions(image_id, tag) WHERE status != 'failed';
+	CREATE INDEX image_versions_image_started ON image_versions(image_id, started_at);
+	CREATE TABLE registries (
+		id                TEXT    PRIMARY KEY,
+		name              TEXT    NOT NULL UNIQUE,
+		kind              TEXT    NOT NULL CHECK (kind IN ('dockerhub','ecr')),
+		host              TEXT    NOT NULL DEFAULT '',
+		config            TEXT    NOT NULL DEFAULT '{}',
+		secrets           TEXT    NOT NULL DEFAULT '{}',
+		created_at        INTEGER NOT NULL,
+		updated_at        INTEGER NOT NULL,
+		last_test_at      INTEGER,
+		last_test_ok      INTEGER NOT NULL DEFAULT 0,
+		last_test_message TEXT    NOT NULL DEFAULT ''
+	);
+	CREATE TABLE push_targets (
+		id          TEXT    PRIMARY KEY,
+		image_id    TEXT    NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+		registry_id TEXT    NOT NULL REFERENCES registries(id) ON DELETE CASCADE,
+		repository  TEXT    NOT NULL,
+		auto_push   INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE TABLE image_pushes (
+		version_id TEXT    NOT NULL REFERENCES image_versions(id) ON DELETE CASCADE,
+		target_id  TEXT    NOT NULL REFERENCES push_targets(id) ON DELETE CASCADE,
+		status     TEXT    NOT NULL CHECK (status IN ('pending','pushing','pushed','failed')),
+		digest     TEXT    NOT NULL DEFAULT '',
+		error      TEXT    NOT NULL DEFAULT '',
+		updated_at INTEGER NOT NULL,
+		PRIMARY KEY (version_id, target_id)
+	);`,
 }
 
 // preMigration checks run inside the migration's transaction, before its SQL.

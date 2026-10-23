@@ -30,7 +30,14 @@ type Config struct {
 	ExecEnabled      bool          `yaml:"exec_enabled"`
 	ExecMaxSessions  int           `yaml:"exec_max_sessions"`
 	ExecIdleTimeout  time.Duration `yaml:"exec_idle_timeout"`
+
+	ImageOperationTimeout time.Duration `yaml:"image_operation_timeout"`
+	ImageMaxFileBytes     int64         `yaml:"image_max_file_bytes"`
+	ImageMaxContextBytes  int64         `yaml:"image_max_context_bytes"`
 }
+
+// minImageLimitBytes is the smallest accepted upload limit.
+const minImageLimitBytes = 1 << 20
 
 func Defaults() Config {
 	return Config{
@@ -46,6 +53,10 @@ func Defaults() Config {
 		ExecEnabled:      true,
 		ExecMaxSessions:  8,
 		ExecIdleTimeout:  30 * time.Minute,
+
+		ImageOperationTimeout: 60 * time.Minute,
+		ImageMaxFileBytes:     128 << 20,
+		ImageMaxContextBytes:  1 << 30,
 	}
 }
 
@@ -84,7 +95,7 @@ func Load(path string, getenv func(string) string) (Config, error) {
 	return cfg, nil
 }
 
-var durationKeys = []string{"metrics_retention", "metrics_interval", "operation_timeout", "shutdown_grace", "exec_idle_timeout"}
+var durationKeys = []string{"metrics_retention", "metrics_interval", "operation_timeout", "shutdown_grace", "exec_idle_timeout", "image_operation_timeout"}
 
 // rejectBareDurations gives a clear error for `operation_timeout: 900`, which
 // YAML would otherwise report without the key name (or read as 900ns).
@@ -113,11 +124,12 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 		}
 	}
 	for key, dst := range map[string]*time.Duration{
-		"STACKSTEAD_METRICS_RETENTION": &cfg.MetricsRetention,
-		"STACKSTEAD_METRICS_INTERVAL":  &cfg.MetricsInterval,
-		"STACKSTEAD_OPERATION_TIMEOUT": &cfg.OperationTimeout,
-		"STACKSTEAD_SHUTDOWN_GRACE":    &cfg.ShutdownGrace,
-		"STACKSTEAD_EXEC_IDLE_TIMEOUT": &cfg.ExecIdleTimeout,
+		"STACKSTEAD_METRICS_RETENTION":       &cfg.MetricsRetention,
+		"STACKSTEAD_METRICS_INTERVAL":        &cfg.MetricsInterval,
+		"STACKSTEAD_OPERATION_TIMEOUT":       &cfg.OperationTimeout,
+		"STACKSTEAD_SHUTDOWN_GRACE":          &cfg.ShutdownGrace,
+		"STACKSTEAD_EXEC_IDLE_TIMEOUT":       &cfg.ExecIdleTimeout,
+		"STACKSTEAD_IMAGE_OPERATION_TIMEOUT": &cfg.ImageOperationTimeout,
 	} {
 		if v := getenv(key); v != "" {
 			d, err := time.ParseDuration(v)
@@ -125,6 +137,18 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 				return fmt.Errorf("%s: %w", key, err)
 			}
 			*dst = d
+		}
+	}
+	for key, dst := range map[string]*int64{
+		"STACKSTEAD_IMAGE_MAX_FILE_BYTES":    &cfg.ImageMaxFileBytes,
+		"STACKSTEAD_IMAGE_MAX_CONTEXT_BYTES": &cfg.ImageMaxContextBytes,
+	} {
+		if v := getenv(key); v != "" {
+			n, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				return fmt.Errorf("%s: %w", key, err)
+			}
+			*dst = n
 		}
 	}
 	if v := getenv("STACKSTEAD_UPDATE_CHECK"); v != "" {
@@ -186,10 +210,11 @@ func (c Config) validate() error {
 		}
 	}
 	for name, d := range map[string]time.Duration{
-		"metrics_retention": c.MetricsRetention,
-		"metrics_interval":  c.MetricsInterval,
-		"operation_timeout": c.OperationTimeout,
-		"shutdown_grace":    c.ShutdownGrace,
+		"metrics_retention":       c.MetricsRetention,
+		"metrics_interval":        c.MetricsInterval,
+		"operation_timeout":       c.OperationTimeout,
+		"shutdown_grace":          c.ShutdownGrace,
+		"image_operation_timeout": c.ImageOperationTimeout,
 	} {
 		if d < time.Second {
 			return fmt.Errorf("%s must be at least 1s (use units, e.g. 15m), got %s", name, d)
@@ -200,6 +225,14 @@ func (c Config) validate() error {
 	}
 	if c.ExecIdleTimeout < 0 {
 		return fmt.Errorf("exec_idle_timeout must not be negative, got %s", c.ExecIdleTimeout)
+	}
+	for name, n := range map[string]int64{
+		"image_max_file_bytes":    c.ImageMaxFileBytes,
+		"image_max_context_bytes": c.ImageMaxContextBytes,
+	} {
+		if n < minImageLimitBytes {
+			return fmt.Errorf("%s must be at least %d bytes (1 MiB), got %d", name, minImageLimitBytes, n)
+		}
 	}
 	return nil
 }

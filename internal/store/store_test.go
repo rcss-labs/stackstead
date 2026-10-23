@@ -108,8 +108,8 @@ func TestOpenCreatesStacksTableAtLatestVersion(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 7 {
-		t.Errorf("user_version = %d, want 7", version)
+	if version != 8 {
+		t.Errorf("user_version = %d, want 8", version)
 	}
 	if _, err := db.Exec(`INSERT INTO stacks (name, compose_path, origin, project, created_at) VALUES ('a', '/a/compose.yaml', 'managed', 'a', 0)`); err != nil {
 		t.Fatalf("insert stack: %v", err)
@@ -235,8 +235,8 @@ func TestOpenUpgradesVersion3DatabaseKeepingStacks(t *testing.T) {
 
 func TestMigrationAddsPeerTables(t *testing.T) {
 	db := openTemp(t)
-	if got := store.SupportedSchema(); got != 7 {
-		t.Fatalf("SupportedSchema = %d, want 7", got)
+	if got := store.SupportedSchema(); got != 8 {
+		t.Fatalf("SupportedSchema = %d, want 8", got)
 	}
 	for _, table := range []string{"peers", "connection_tokens"} {
 		count(t, db, table)
@@ -244,5 +244,40 @@ func TestMigrationAddsPeerTables(t *testing.T) {
 	_, err := db.Exec(`INSERT INTO peers (instance_id, name, slug, url, created_at, state) VALUES ('i', 'n', 's', 'u', 0, 'removing')`)
 	if err == nil {
 		t.Fatal("insert with state 'removing' succeeded, want CHECK failure")
+	}
+}
+
+func TestMigration8Tables(t *testing.T) {
+	db := openTemp(t)
+	if _, err := db.Exec(`INSERT INTO images (id, slug, name, source, created_at, updated_at) VALUES ('img1', 'tools', 'Tools', 'upload', 0, 0)`); err != nil {
+		t.Fatalf("insert image: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO image_revisions (image_id, number, created_at, manifest) VALUES ('img1', 1, 0, '{}')`); err != nil {
+		t.Fatalf("insert revision: %v", err)
+	}
+	insertVersion := func(id string) error {
+		_, err := db.Exec(`INSERT INTO image_versions (id, image_id, tag, status, started_at) VALUES (?, 'img1', '1', 'building', 0)`, id)
+		return err
+	}
+	if err := insertVersion("v1"); err != nil {
+		t.Fatalf("insert first building version: %v", err)
+	}
+	if err := insertVersion("v2"); err == nil || !strings.Contains(err.Error(), "UNIQUE") {
+		t.Fatalf("second live version with the same tag: err = %v, want UNIQUE violation", err)
+	}
+	if _, err := db.Exec(`UPDATE image_versions SET status = 'failed' WHERE id = 'v1'`); err != nil {
+		t.Fatalf("mark v1 failed: %v", err)
+	}
+	if err := insertVersion("v3"); err != nil {
+		t.Fatalf("insert after the earlier version failed: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM images WHERE id = 'img1'`); err != nil {
+		t.Fatalf("delete image: %v", err)
+	}
+	if n := count(t, db, "image_revisions"); n != 0 {
+		t.Errorf("image_revisions = %d after image delete, want 0 (cascade)", n)
+	}
+	if n := count(t, db, "image_versions"); n != 0 {
+		t.Errorf("image_versions = %d after image delete, want 0 (cascade)", n)
 	}
 }

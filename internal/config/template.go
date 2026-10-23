@@ -42,19 +42,22 @@ func Template(cfg Config) ([]byte, error) {
 		allowedRoots = strings.Join(lines, "\n")
 	}
 	view := map[string]string{
-		"AllowedRootsBlock": allowedRoots,
-		"Listen":            yamlScalar(cfg.Listen),
-		"StacksDir":         yamlScalar(cfg.StacksDir),
-		"DataDir":           yamlScalar(cfg.DataDir),
-		"MetricsRetention":  formatDuration(cfg.MetricsRetention),
-		"MetricsInterval":   formatDuration(cfg.MetricsInterval),
-		"OperationTimeout":  formatDuration(cfg.OperationTimeout),
-		"DockerSocketLine":  optional("docker_socket", yamlScalar(cfg.DockerSocket), yamlScalar(def.DockerSocket)),
-		"ShutdownGraceLine": optional("shutdown_grace", formatDuration(cfg.ShutdownGrace), formatDuration(def.ShutdownGrace)),
-		"UpdateCheckLine":   optional("update_check", strconv.FormatBool(cfg.UpdateCheck), strconv.FormatBool(def.UpdateCheck)),
-		"ExecEnabled":       strconv.FormatBool(cfg.ExecEnabled),
-		"ExecMaxSessions":   strconv.Itoa(cfg.ExecMaxSessions),
-		"ExecIdleTimeout":   formatDuration(cfg.ExecIdleTimeout),
+		"AllowedRootsBlock":     allowedRoots,
+		"Listen":                yamlScalar(cfg.Listen),
+		"StacksDir":             yamlScalar(cfg.StacksDir),
+		"DataDir":               yamlScalar(cfg.DataDir),
+		"MetricsRetention":      formatDuration(cfg.MetricsRetention),
+		"MetricsInterval":       formatDuration(cfg.MetricsInterval),
+		"OperationTimeout":      formatDuration(cfg.OperationTimeout),
+		"ImageOperationTimeout": formatDuration(cfg.ImageOperationTimeout),
+		"ImageMaxFileBytes":     strconv.FormatInt(cfg.ImageMaxFileBytes, 10),
+		"ImageMaxContextBytes":  strconv.FormatInt(cfg.ImageMaxContextBytes, 10),
+		"DockerSocketLine":      optional("docker_socket", yamlScalar(cfg.DockerSocket), yamlScalar(def.DockerSocket)),
+		"ShutdownGraceLine":     optional("shutdown_grace", formatDuration(cfg.ShutdownGrace), formatDuration(def.ShutdownGrace)),
+		"UpdateCheckLine":       optional("update_check", strconv.FormatBool(cfg.UpdateCheck), strconv.FormatBool(def.UpdateCheck)),
+		"ExecEnabled":           strconv.FormatBool(cfg.ExecEnabled),
+		"ExecMaxSessions":       strconv.Itoa(cfg.ExecMaxSessions),
+		"ExecIdleTimeout":       formatDuration(cfg.ExecIdleTimeout),
 	}
 	var buf bytes.Buffer
 	if err := configTemplate.Execute(&buf, view); err != nil {
@@ -134,6 +137,9 @@ func Effective(cfg Config, path string, getenv func(string) string) ([]Setting, 
 		{"exec_enabled", strconv.FormatBool(cfg.ExecEnabled)},
 		{"exec_max_sessions", strconv.Itoa(cfg.ExecMaxSessions)},
 		{"exec_idle_timeout", formatDuration(cfg.ExecIdleTimeout)},
+		{"image_operation_timeout", formatDuration(cfg.ImageOperationTimeout)},
+		{"image_max_file_bytes", strconv.FormatInt(cfg.ImageMaxFileBytes, 10)},
+		{"image_max_context_bytes", strconv.FormatInt(cfg.ImageMaxContextBytes, 10)},
 	}
 	settings := make([]Setting, len(values))
 	for i, v := range values {
