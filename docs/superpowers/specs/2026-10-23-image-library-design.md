@@ -153,7 +153,11 @@ versions are cleaned up by policy.
   images through the existing forwarding route, because that acts *on* the
   owner. The peer-to-peer surface (`/api/peer/...`) for images is read-only:
   listing, version metadata, used-by queries, and image transfer. A peer
-  credential cannot build, push, edit, or delete another server's image.
+  server cannot act on another server's images *on its own behalf*: the
+  only write path is the operator's forwarded `/api/images/...` calls,
+  exactly as with stacks. `/api/settings/...` (registry and GitHub
+  credentials, defaults) stays peer-denied, so credentials are only
+  managed on the server itself.
   The merged library is assembled server-side from those read-only calls.
 - **Sharing reaches directly paired servers only**: a server sees and can
   fetch images only from servers it is paired with directly. "In use" for
