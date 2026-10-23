@@ -252,10 +252,21 @@ func (s *Service) Login(ctx context.Context, username, password string) (string,
 		return "", ErrInvalidCredentials
 	}
 	token := rand.Text()
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)`,
-		hashToken(token), id, s.now().Add(SessionTTL).Unix()); err != nil {
+	// Insert only while the hash we verified is still current: a password
+	// change or reset that committed meanwhile has already revoked sessions,
+	// and must not be followed by one minted from the old password. Hashes
+	// carry random salts, so a replaced hash never compares equal.
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO sessions (token_hash, user_id, expires_at)
+		 SELECT ?, id, ? FROM users WHERE id = ? AND password_hash = ?`,
+		hashToken(token), s.now().Add(SessionTTL).Unix(), id, hash)
+	if err != nil {
 		return "", fmt.Errorf("create session: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return "", fmt.Errorf("create session: %w", err)
+	} else if n == 0 {
+		return "", ErrInvalidCredentials
 	}
 	return token, nil
 }
