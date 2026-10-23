@@ -114,9 +114,16 @@ func (s *Service) UpdatePushTarget(ctx context.Context, user, slug, id string, r
 	if err := duplicateTarget(targets, req, id); err != nil {
 		return PushTarget{}, err
 	}
+	moved := t.RegistryID != req.RegistryID || t.Repository != req.Repository
 	t.RegistryID, t.Repository, t.AutoPush = req.RegistryID, req.Repository, req.AutoPush
 	if err := s.store.UpdatePushTarget(ctx, t); err != nil {
 		return PushTarget{}, err
+	}
+	if moved {
+		// Earlier pushes went to the old destination; they say nothing about the new one.
+		if _, err := s.store.db.ExecContext(ctx, `DELETE FROM image_pushes WHERE target_id = ?`, id); err != nil {
+			return PushTarget{}, fmt.Errorf("clear pushes of moved target: %w", err)
+		}
 	}
 	return t, nil
 }
@@ -185,12 +192,16 @@ func (s *Service) Push(ctx context.Context, user, slug, tag, targetID string) (s
 		}
 		return stacks.Operation{}, err
 	}
-	auth, _, err := s.registries.Credentials(ctx, target.RegistryID)
+	auth, host, err := s.registries.Credentials(ctx, target.RegistryID)
 	if err != nil {
 		if errors.Is(err, registry.ErrNotFound) {
 			return stacks.Operation{}, ErrTargetNotFound
 		}
 		return stacks.Operation{}, err
+	}
+	// Credentials may discover the host (ECR); the earlier Get can predate it.
+	if host != "" {
+		reg.Host = host
 	}
 
 	opReady := make(chan struct{})
@@ -250,7 +261,10 @@ func (s *Service) runPush(ctx context.Context, img Image, v Version, target Push
 	}
 	ref := s.Ref(owner, img.Slug, v.Tag)
 	pushRef := registry.PushRef(reg, target.Repository, v.Tag)
-	repo, tag := splitRef(pushRef)
+	repo, tag, err := splitRef(pushRef)
+	if err != nil {
+		return "", err
+	}
 	emit(fmt.Sprintf("pushing to %s", reg.Name))
 	if err := s.eng.TagImage(ctx, ref, repo, tag); err != nil {
 		return "", fmt.Errorf("tag for push: %w", err)
@@ -318,27 +332,44 @@ func (s *Service) autoPush(ctx context.Context, user string, img Image, v Versio
 		if ctx.Err() != nil {
 			return
 		}
+		if _, err := s.store.VersionByID(ctx, v.ID); errors.Is(err, ErrVersionNotFound) {
+			return // version deleted meanwhile: nothing left to push or record
+		}
 		reg, err := s.registries.Get(ctx, t.RegistryID)
 		if err != nil {
+			if !errors.Is(err, registry.ErrNotFound) {
+				s.log.Warn("auto-push skipped: read registry failed", "image", img.Slug, "target", t.ID, "err", err)
+			}
 			continue
 		}
-		auth, _, err := s.registries.Credentials(ctx, t.RegistryID)
+		auth, host, err := s.registries.Credentials(ctx, t.RegistryID)
 		if err != nil {
 			if !errors.Is(err, registry.ErrUnconfigured) && !errors.Is(err, registry.ErrNotFound) {
-				msg := newScrubber(auth.Password)(err.Error())
-				s.finishPush(context.WithoutCancel(ctx), Push{VersionID: v.ID, TargetID: t.ID, Status: PushFailed, Error: msg})
+				// registry.Service already scrubs its own errors of stored secrets.
+				msg := err.Error()
+				bg := context.WithoutCancel(ctx)
+				s.finishPush(bg, Push{VersionID: v.ID, TargetID: t.ID, Status: PushFailed, Error: msg})
+				s.record(bg, user, "image.push", img.Slug, v.Tag, reg.Name+" "+t.Repository+":"+v.Tag+": "+msg, "failed", opID)
 				out("push to " + reg.Name + " failed: " + msg)
 			}
 			continue
+		}
+		if host != "" {
+			reg.Host = host
 		}
 		// pushVersion reports its own failure; the build is not affected.
 		_ = s.pushVersion(ctx, user, img, v, t, reg, auth, opID, out)
 	}
 }
 
-func splitRef(ref string) (repo, tag string) {
+// splitRef splits repo:tag, refusing a reference with no registry host or tag
+// (for example a registry whose host is not known yet).
+func splitRef(ref string) (repo, tag string, err error) {
 	i := strings.LastIndex(ref, ":")
-	return ref[:i], ref[i+1:]
+	if ref == "" || i <= 0 || i == len(ref)-1 || strings.HasPrefix(ref, "/") {
+		return "", "", fmt.Errorf("invalid push reference %q: registry host is unknown", ref)
+	}
+	return ref[:i], ref[i+1:], nil
 }
 
 // newScrubber returns a function that replaces every occurrence of the
