@@ -54,8 +54,12 @@ type Deps struct {
 	Usage     UsageSource
 	// Registries supplies push credentials; nil makes push routes answer registry_unconfigured.
 	Registries RegistryAuth
-	Now        func() time.Time
-	Logger     *slog.Logger
+	// GitHub and Settings enable GitHub-sourced images; without them such
+	// images answer ErrGitHubUnconfigured.
+	GitHub   GitHubAPI
+	Settings *SettingsStore
+	Now      func() time.Time
+	Logger   *slog.Logger
 }
 
 // Service is the image library: images, source revisions, builds and versions.
@@ -72,6 +76,8 @@ type Service struct {
 	log     *slog.Logger
 
 	registries RegistryAuth
+	github     GitHubAPI
+	settings   *SettingsStore
 
 	usageMu sync.RWMutex
 	usage   UsageSource
@@ -103,7 +109,7 @@ func NewService(d Deps) *Service {
 		d.Logger = slog.Default()
 	}
 	return &Service{store: d.Store, ops: d.Ops, eng: d.Engine, dir: d.Dir, limits: d.Limits, timeout: d.OpTimeout,
-		actions: d.Actions, self: d.Self, usage: d.Usage, registries: d.Registries, now: d.Now, log: d.Logger}
+		actions: d.Actions, self: d.Self, usage: d.Usage, registries: d.Registries, github: d.GitHub, settings: d.Settings, now: d.Now, log: d.Logger}
 }
 
 // SetUsage binds the usage source after construction (stacks needs the
@@ -233,8 +239,10 @@ func (s *Service) Create(ctx context.Context, user string, req CreateRequest) (I
 	if err := validateRetention(retention); err != nil {
 		return Image{}, err
 	}
-	if req.Source == SourceGitHub && req.GitHub.Repo == "" {
-		return Image{}, fieldError("github.repo", "repository is required")
+	if req.Source == SourceGitHub {
+		if req.GitHub, err = s.checkGitHubSource(ctx, req.GitHub); err != nil {
+			return Image{}, err
+		}
 	}
 
 	unlock := s.lockImage(slug)
@@ -296,7 +304,9 @@ func (s *Service) Update(ctx context.Context, user, slug string, req UpdateReque
 	}
 	img.Name, img.DockerfilePath, img.BuildArgs, img.Retention = req.Name, path, req.BuildArgs, req.Retention
 	if img.Source == SourceGitHub {
-		img.GitHub = req.GitHub
+		if img.GitHub, err = s.checkGitHubSource(ctx, req.GitHub); err != nil {
+			return Image{}, err
+		}
 	}
 	if err := s.store.UpdateImage(ctx, img); err != nil {
 		return Image{}, err
@@ -378,6 +388,9 @@ func (s *Service) Files(ctx context.Context, slug string) (Manifest, int, error)
 	img, err := s.store.Image(ctx, slug)
 	if err != nil {
 		return nil, 0, err
+	}
+	if img.Source == SourceGitHub {
+		return nil, 0, errGitHubReadOnly()
 	}
 	return s.manifestOf(ctx, img)
 }
@@ -477,6 +490,9 @@ func (s *Service) editSource(ctx context.Context, user, slug string, expect int,
 	img, err := s.store.Image(ctx, slug)
 	if err != nil {
 		return Revision{}, err
+	}
+	if img.Source == SourceGitHub {
+		return Revision{}, errGitHubReadOnly()
 	}
 	if img.Source != SourceUpload {
 		return Revision{}, fieldError("source", "this image's source is not editable")

@@ -177,6 +177,7 @@ type harness struct {
 	usage *fakeUsage
 	ops   *stacks.Ops
 	dir   string
+	gh    *fakeGitHub
 }
 
 func newHarness(t *testing.T) *harness {
@@ -187,13 +188,14 @@ func newHarness(t *testing.T) *harness {
 	}
 	t.Cleanup(func() { db.Close() })
 	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
-	h := &harness{eng: newFakeEngine(), log: &recordingLog{}, usage: &fakeUsage{}, dir: t.TempDir()}
+	h := &harness{eng: newFakeEngine(), log: &recordingLog{}, usage: &fakeUsage{}, dir: t.TempDir(), gh: newFakeGitHub()}
 	h.ops = stacks.NewOps(time.Minute, clock.now)
 	t.Cleanup(func() { h.ops.Shutdown(context.Background()) })
 	h.svc = NewService(Deps{
 		Store: NewStore(db, clock.now), Ops: h.ops, Engine: h.eng, Dir: h.dir,
 		Limits: Limits{MaxFileBytes: 1 << 20, MaxContextBytes: 4 << 20}, OpTimeout: time.Minute,
 		Actions: h.log, Usage: h.usage, Now: clock.now,
+		GitHub: h.gh, Settings: NewSettingsStore(db),
 		Self: func(context.Context) (Self, error) {
 			return Self{InstanceID: testInstanceID, Name: "Host A", Slug: "host-a"}, nil
 		},

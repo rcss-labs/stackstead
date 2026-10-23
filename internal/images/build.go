@@ -14,8 +14,9 @@ import (
 )
 
 // BuildRequest asks for a new version. BuildArgs override the image defaults;
-// SaveArgs merges them into the defaults before the build. Ref is reserved for
-// building from a git ref (GitHub sources).
+// SaveArgs merges them into the defaults before the build. Ref (GitHub images
+// only) is a 40-hex commit, or a branch or tag name resolved to one; empty
+// means the head of the image's branch.
 type BuildRequest struct {
 	Tag       string
 	BuildArgs map[string]string
@@ -43,6 +44,18 @@ func (s *Service) Build(ctx context.Context, user, slug string, req BuildRequest
 		s.beforeBuildLock()
 	}
 
+	// A GitHub commit is resolved over the network, so before the image lock.
+	pre, err := s.store.Image(ctx, slug)
+	if err != nil {
+		return Version{}, stacks.Operation{}, err
+	}
+	var commit string
+	if pre.Source == SourceGitHub {
+		if commit, err = s.resolveCommit(ctx, pre.GitHub, req.Ref); err != nil {
+			return Version{}, stacks.Operation{}, err
+		}
+	}
+
 	// The image is read under the lock so a concurrent update or delete is
 	// seen, and a saved-defaults write never overwrites other fields.
 	unlock := s.lockImage(slug)
@@ -51,9 +64,13 @@ func (s *Service) Build(ctx context.Context, user, slug string, req BuildRequest
 		unlock()
 		return Version{}, stacks.Operation{}, err
 	}
-	if img.Source != SourceUpload {
+	if img.Source == SourceGitHub && (img.GitHub.Repo != pre.GitHub.Repo || img.GitHub.Branch != pre.GitHub.Branch) {
 		unlock()
-		return Version{}, stacks.Operation{}, fieldError("source", "building from this source is not supported yet")
+		return Version{}, stacks.Operation{}, fieldError("github", "the image's repository changed, try again")
+	}
+	if img.Source != SourceUpload && img.Source != SourceGitHub {
+		unlock()
+		return Version{}, stacks.Operation{}, fieldError("source", "building from this source is not supported")
 	}
 	previous := maps.Clone(img.BuildArgs)
 	args := maps.Clone(img.BuildArgs)
@@ -62,13 +79,21 @@ func (s *Service) Build(ctx context.Context, user, slug string, req BuildRequest
 	}
 	maps.Copy(args, req.BuildArgs)
 
-	rev, ok, err := s.store.LatestRevision(ctx, img.ID)
-	if err == nil && !ok {
-		err = errors.New("image has no source revision")
+	next := Version{ImageID: img.ID, Tag: req.Tag, BuildArgs: args}
+	var ok bool
+	if img.Source == SourceGitHub {
+		next.Commit = commit
+	} else {
+		var rev Revision
+		rev, ok, err = s.store.LatestRevision(ctx, img.ID)
+		if err == nil && !ok {
+			err = errors.New("image has no source revision")
+		}
+		next.Revision = rev.Number
 	}
 	var v Version
 	if err == nil {
-		v, err = s.store.StartVersion(ctx, Version{ImageID: img.ID, Tag: req.Tag, Revision: rev.Number, BuildArgs: args})
+		v, err = s.store.StartVersion(ctx, next)
 	}
 	if err == nil && req.SaveArgs {
 		img.BuildArgs = args
@@ -186,25 +211,32 @@ func (s *Service) finishAndLog(ctx context.Context, user string, img Image, v Ve
 // build materializes the version's revision, streams it to the engine and
 // inspects the result.
 func (s *Service) build(ctx context.Context, img Image, v Version, ref string, args map[string]string, emit func(string)) (engine.ImageInspect, error) {
-	rev, err := s.store.Revision(ctx, img.ID, v.Revision)
-	if err != nil {
-		return engine.ImageInspect{}, err
-	}
-	m, err := ParseManifest(rev.ManifestJSON)
-	if err != nil {
-		return engine.ImageInspect{}, err
-	}
-	blobs, err := s.blobs(img.Slug)
-	if err != nil {
-		return engine.ImageInspect{}, err
-	}
 	tmp := filepath.Join(s.imageDir(img.Slug), "tmp-"+v.ID)
 	defer os.RemoveAll(tmp)
-	if err := Materialize(tmp, m, blobs); err != nil {
-		return engine.ImageInspect{}, fmt.Errorf("prepare build context: %w", err)
+	if img.Source == SourceGitHub {
+		emit(fmt.Sprintf("downloading %s at %s", img.GitHub.Repo, v.Commit))
+		if err := s.extractGitHub(ctx, img, v.Commit, tmp); err != nil {
+			return engine.ImageInspect{}, err
+		}
+		emit(fmt.Sprintf("building %s from commit %s", ref, v.Commit))
+	} else {
+		rev, err := s.store.Revision(ctx, img.ID, v.Revision)
+		if err != nil {
+			return engine.ImageInspect{}, err
+		}
+		m, err := ParseManifest(rev.ManifestJSON)
+		if err != nil {
+			return engine.ImageInspect{}, err
+		}
+		blobs, err := s.blobs(img.Slug)
+		if err != nil {
+			return engine.ImageInspect{}, err
+		}
+		if err := Materialize(tmp, m, blobs); err != nil {
+			return engine.ImageInspect{}, fmt.Errorf("prepare build context: %w", err)
+		}
+		emit(fmt.Sprintf("building %s from revision %d", ref, v.Revision))
 	}
-
-	emit(fmt.Sprintf("building %s from revision %d", ref, v.Revision))
 	pr, pw := io.Pipe()
 	written := make(chan struct{})
 	go func() {
