@@ -309,3 +309,22 @@ func TestClientFrames(t *testing.T) {
 		t.Errorf("frames = %+v, want %+v", got, want)
 	}
 }
+
+// A server that checks Origin before its status checks must still report the
+// real refusal: the replay after a failed handshake has to carry the same Origin.
+func TestDialRefusalReplayKeepsOrigin(t *testing.T) {
+	s := serve(t, "", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Origin") == "" {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":"bad origin","code":"bad_origin"}`))
+			return
+		}
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"container is not running","code":"not_running"}`))
+	}))
+	_, err := Dial(context.Background(), s.cfg, testContainer, Options{})
+	var ce *client.Error
+	if !errors.As(err, &ce) || ce.Status != http.StatusConflict {
+		t.Fatalf("err = %v, want the 409 refusal", err)
+	}
+}

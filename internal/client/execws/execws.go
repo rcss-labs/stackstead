@@ -19,10 +19,16 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/net/websocket"
 
 	"github.com/rcss-labs/stackstead/internal/client"
+)
+
+const (
+	sessionCookie  = "stackstead_session"
+	defaultTimeout = 30 * time.Second // matches client.New
 )
 
 // Binary frame stream IDs (first payload byte).
@@ -138,16 +144,24 @@ func Dial(ctx context.Context, cfg client.Config, containerID string, o Options)
 	}
 	wc.TlsConfig = tlsCfg
 	if cfg.Session != "" {
-		wc.Header.Set("Cookie", "stackstead_session="+cfg.Session)
+		wc.Header.Set("Cookie", sessionCookie+"="+cfg.Session)
 	}
 	if cfg.UserAgent != "" {
 		wc.Header.Set("User-Agent", cfg.UserAgent)
 	}
-	conn, err := wc.DialContext(ctx)
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
+	// Bounds the connect, the handshake and a refusal replay; the session
+	// itself is long-lived and only follows ctx.
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	conn, err := wc.DialContext(dialCtx)
 	if err != nil {
 		var de *websocket.DialError // does not unwrap, so compare its cause
 		if errors.As(err, &de) && de.Err == websocket.ErrBadStatus {
-			return nil, upgradeRefusal(ctx, cfg, tlsCfg, wsURL)
+			return nil, upgradeRefusal(dialCtx, cfg, tlsCfg, wsURL, origin)
 		}
 		return nil, fmt.Errorf("connect to %s: %w", cfg.BaseURL.Host, err)
 	}
@@ -165,18 +179,19 @@ func Dial(ctx context.Context, cfg client.Config, containerID string, o Options)
 // upgradeRefusal explains a refused handshake. x/net/websocket discards the
 // refusing response, so the same request is repeated as a plain GET (no
 // Upgrade headers, so it can never start a session) to read the JSON error.
-func upgradeRefusal(ctx context.Context, cfg client.Config, tlsCfg *tls.Config, wsURL string) error {
+func upgradeRefusal(ctx context.Context, cfg client.Config, tlsCfg *tls.Config, wsURL, origin string) error {
 	httpURL := "http" + strings.TrimPrefix(wsURL, "ws")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, httpURL, nil)
 	if err != nil {
 		return err
 	}
 	if cfg.Session != "" {
-		req.Header.Set("Cookie", "stackstead_session="+cfg.Session)
+		req.Header.Set("Cookie", sessionCookie+"="+cfg.Session)
 	}
 	if cfg.UserAgent != "" {
 		req.Header.Set("User-Agent", cfg.UserAgent)
 	}
+	req.Header.Set("Origin", origin) // same as the handshake, so Origin checks answer identically
 	req.Header.Set("Accept", "application/json")
 	hc := &http.Client{
 		Transport:     &http.Transport{TLSClientConfig: tlsCfg},
