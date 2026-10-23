@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -117,6 +118,24 @@ func TestCredentialsUnconfigured(t *testing.T) {
 	auth, host, err := svc.Credentials(ctx, ok.ID)
 	if err != nil || host != HubHost || auth.Username != "u" {
 		t.Errorf("%+v %q %v", auth, host, err)
+	}
+}
+
+func TestCredentialsProviderUnconfiguredStaysUnconfigured(t *testing.T) {
+	const token = "tok_LEAK_ME"
+	st := newTestStore(t)
+	provErr := fmt.Errorf("%w: region is required for %s", ErrUnconfigured, token)
+	svc := NewService(st, map[Kind]Provider{KindDockerHub: failingProvider{provErr}}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r, err := svc.Create(context.Background(), "u", Request{Name: "hub", Kind: KindDockerHub, Hub: &Hub{Username: "a", Token: token}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = svc.Credentials(context.Background(), r.ID)
+	if !errors.Is(err, ErrUnconfigured) {
+		t.Fatalf("got %v, want an error satisfying ErrUnconfigured", err)
+	}
+	if !strings.Contains(err.Error(), "region is required") || strings.Contains(err.Error(), token) {
+		t.Errorf("message %q should keep the reason and scrub secrets", err)
 	}
 }
 

@@ -320,7 +320,12 @@ func (s *Service) Credentials(ctx context.Context, id string) (engine.RegistryAu
 	}
 	auth, err := p.Credentials(ctx, r)
 	if err != nil {
-		return engine.RegistryAuth{}, "", &AuthError{Msg: scrub(r, err.Error())}
+		msg := scrub(r, err.Error())
+		if errors.Is(err, ErrUnconfigured) {
+			// Keep the sentinel so callers show the settings link and auto-push skips.
+			return engine.RegistryAuth{}, "", fmt.Errorf("%w: %s", ErrUnconfigured, strings.TrimPrefix(msg, ErrUnconfigured.Error()+": "))
+		}
+		return engine.RegistryAuth{}, "", &AuthError{Msg: msg}
 	}
 	host := r.Host
 	if r.Kind == KindECR && host == "" {

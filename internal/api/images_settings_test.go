@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -354,6 +355,22 @@ func TestPushStateCarriesRegistryName(t *testing.T) {
 	decodeBody(t, env.req(t, "GET", "/api/images", ""), &lib)
 	if len(lib.Images) != 1 || lib.Images[0].LatestVersion == nil || lib.Images[0].LatestVersion.Pushes[0].Registry != "hub" {
 		t.Errorf("list pushes = %+v", lib.Images)
+	}
+}
+
+func TestPushUnconfiguredProviderIs409RegistryUnconfigured(t *testing.T) {
+	env := newImagesEnv(t)
+	hub := env.createRegistry(t, hubBody)
+	env.createImage(t, "web")
+	env.buildDone(t, "web", "1")
+	rec := env.req(t, "POST", "/api/images/web/push-targets", `{"registryId":"`+hub.ID+`","repository":"alice/web","autoPush":false}`)
+	var tg apitypes.PushTarget
+	decodeBody(t, rec, &tg)
+	env.prov.credErr = fmt.Errorf("%w: region is required", registry.ErrUnconfigured)
+
+	rec = env.req(t, "POST", "/api/images/web/versions/1/push", `{"target":"`+tg.ID+`"}`)
+	if rec.Code != 409 || !strings.Contains(rec.Body.String(), `"registry_unconfigured"`) {
+		t.Fatalf("push = %d %s, want 409 registry_unconfigured", rec.Code, rec.Body)
 	}
 }
 
