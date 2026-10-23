@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -355,6 +356,49 @@ func TestPushStateCarriesRegistryName(t *testing.T) {
 	decodeBody(t, env.req(t, "GET", "/api/images", ""), &lib)
 	if len(lib.Images) != 1 || lib.Images[0].LatestVersion == nil || lib.Images[0].LatestVersion.Pushes[0].Registry != "hub" {
 		t.Errorf("list pushes = %+v", lib.Images)
+	}
+}
+
+// countingRegistries counts List calls on top of the real registry service.
+type countingRegistries struct {
+	api.RegistriesAPI
+	lists atomic.Int32
+}
+
+func (c *countingRegistries) List(ctx context.Context) ([]registry.Registry, error) {
+	c.lists.Add(1)
+	return c.RegistriesAPI.List(ctx)
+}
+
+func TestListImagesReadsRegistriesOnce(t *testing.T) {
+	counter := &countingRegistries{}
+	env := newImagesEnv(t, func(o *api.Options) {
+		counter.RegistriesAPI = o.Registries
+		o.Registries = counter
+	})
+	hub := env.createRegistry(t, hubBody)
+	for _, slug := range []string{"web", "api", "worker"} {
+		env.createImage(t, slug)
+		env.buildDone(t, slug, "1")
+		rec := env.req(t, "POST", "/api/images/"+slug+"/push-targets", `{"registryId":"`+hub.ID+`","repository":"alice/`+slug+`","autoPush":false}`)
+		if rec.Code != 201 {
+			t.Fatalf("add target = %d %s", rec.Code, rec.Body)
+		}
+	}
+	counter.lists.Store(0)
+
+	var lib apitypes.Library
+	decodeBody(t, env.req(t, "GET", "/api/images", ""), &lib)
+	if got := counter.lists.Load(); got != 1 {
+		t.Errorf("Registries.List calls = %d, want 1", got)
+	}
+	if len(lib.Images) != 3 {
+		t.Fatalf("images = %d, want 3", len(lib.Images))
+	}
+	for _, img := range lib.Images {
+		if len(img.PushTargets) != 1 || img.PushTargets[0].RegistryName != "hub" {
+			t.Errorf("%s push targets = %+v, want the registry named hub", img.Slug, img.PushTargets)
+		}
 	}
 }
 

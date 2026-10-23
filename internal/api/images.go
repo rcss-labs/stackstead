@@ -199,9 +199,10 @@ func (s *server) handleListImages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := toLibrary(lib)
+	byID := s.registriesByID(r.Context())
 	for i := range out.Images {
-		s.namePushTargets(r.Context(), out.Images[i].PushTargets)
-		s.nameImagePushes(r.Context(), &out.Images[i], nil)
+		namePushTargetsWith(byID, out.Images[i].PushTargets)
+		nameImagePushesWith(byID, &out.Images[i], nil)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -657,8 +658,9 @@ func (s *server) pushTargetView(ctx context.Context, t images.PushTarget) apityp
 	return view
 }
 
-// registryNames maps registry id to name; empty when registries are unavailable.
-func (s *server) registryNames(ctx context.Context) map[string]string {
+// registriesByID indexes the registry list by id; nil when registries are
+// unavailable or cannot be read.
+func (s *server) registriesByID(ctx context.Context) map[string]registry.Registry {
 	if s.opts.Registries == nil {
 		return nil
 	}
@@ -666,11 +668,11 @@ func (s *server) registryNames(ctx context.Context) map[string]string {
 	if err != nil {
 		return nil
 	}
-	names := make(map[string]string, len(list))
+	byID := make(map[string]registry.Registry, len(list))
 	for _, reg := range list {
-		names[reg.ID] = reg.Name
+		byID[reg.ID] = reg
 	}
-	return names
+	return byID
 }
 
 // namePushes replaces the registry id in each push state with its name. A
@@ -690,9 +692,17 @@ func namePushes(names map[string]string, versions ...*apitypes.LibraryVersion) {
 }
 
 func (s *server) nameImagePushes(ctx context.Context, img *apitypes.LibraryImage, versions []apitypes.LibraryVersion) {
-	names := s.registryNames(ctx)
-	if len(names) == 0 {
+	nameImagePushesWith(s.registriesByID(ctx), img, versions)
+}
+
+// nameImagePushesWith names the pushes of img and versions from an already read registry index.
+func nameImagePushesWith(byID map[string]registry.Registry, img *apitypes.LibraryImage, versions []apitypes.LibraryVersion) {
+	if len(byID) == 0 {
 		return
+	}
+	names := make(map[string]string, len(byID))
+	for id, reg := range byID {
+		names[id] = reg.Name
 	}
 	for i := range versions {
 		namePushes(names, &versions[i])
@@ -702,17 +712,14 @@ func (s *server) nameImagePushes(ctx context.Context, img *apitypes.LibraryImage
 
 // namePushTargets fills registryName and kind in place from the registry list.
 func (s *server) namePushTargets(ctx context.Context, targets []apitypes.PushTarget) {
-	if s.opts.Registries == nil || len(targets) == 0 {
+	if len(targets) == 0 {
 		return
 	}
-	list, err := s.opts.Registries.List(ctx)
-	if err != nil {
-		return
-	}
-	byID := make(map[string]registry.Registry, len(list))
-	for _, reg := range list {
-		byID[reg.ID] = reg
-	}
+	namePushTargetsWith(s.registriesByID(ctx), targets)
+}
+
+// namePushTargetsWith fills registryName and kind from an already read registry index.
+func namePushTargetsWith(byID map[string]registry.Registry, targets []apitypes.PushTarget) {
 	for i := range targets {
 		if reg, ok := byID[targets[i].RegistryID]; ok {
 			targets[i].RegistryName, targets[i].Kind = reg.Name, string(reg.Kind)
