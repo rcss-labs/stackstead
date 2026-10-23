@@ -356,46 +356,90 @@ func (s *Service) EnsureLocal(ctx context.Context, ref imageref.Ref, out func(st
 }
 
 // fetchFlight is one transfer shared by every caller that wants the same ref.
+// It runs on its own context, so no single caller's cancellation can abort it
+// for the others; it is cancelled only when its last waiter has gone.
 type fetchFlight struct {
-	done chan struct{}
-	err  error
+	done    chan struct{}
+	err     error
+	cancel  context.CancelFunc
+	waiters int
 }
 
-// fetchShared runs one transfer per ref at a time. A concurrent caller waits
-// for it and shares its outcome, so a failed verification's untag can never
-// remove an image a sibling transfer has just loaded.
+// fetchShared runs one transfer per ref at a time. Every caller, the one that
+// started it included, waits on its own context and the shared result, so a
+// failed verification's untag can never remove an image a sibling transfer
+// has just loaded.
 func (s *Service) fetchShared(ctx context.Context, user string, ref imageref.Ref, owner ServerInfo, v Version, out func(string)) error {
 	key := ref.String()
+	var f *fetchFlight
+	var ok bool
 	s.fetchMu.Lock()
-	if f, ok := s.fetches[key]; ok {
-		s.fetchMu.Unlock()
-		if out != nil {
-			out("waiting for the transfer of " + key + " already in progress")
+	for {
+		f, ok = s.fetches[key]
+		if !ok || f.waiters > 0 {
+			break
 		}
+		// Abandoned and being cancelled: let it finish, then start afresh.
+		s.fetchMu.Unlock()
 		select {
 		case <-f.done:
-			return f.err
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+		s.fetchMu.Lock()
 	}
-	f := &fetchFlight{done: make(chan struct{})}
-	if s.fetches == nil {
-		s.fetches = map[string]*fetchFlight{}
+	if ok {
+		f.waiters++
+	} else {
+		runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		if s.timeout > 0 {
+			var stop context.CancelFunc
+			runCtx, stop = context.WithTimeout(runCtx, s.timeout)
+			inner := cancel
+			cancel = func() { stop(); inner() }
+		}
+		f = &fetchFlight{done: make(chan struct{}), cancel: cancel, waiters: 1}
+		if s.fetches == nil {
+			s.fetches = map[string]*fetchFlight{}
+		}
+		s.fetches[key] = f
+		go s.runFlight(runCtx, key, f, user, ref, owner, v, out)
 	}
-	s.fetches[key] = f
 	s.fetchMu.Unlock()
+	if ok && out != nil {
+		out("waiting for the transfer of " + key + " already in progress")
+	}
+	select {
+	case <-f.done:
+		return f.err
+	case <-ctx.Done():
+		s.fetchMu.Lock()
+		f.waiters--
+		last := f.waiters == 0
+		s.fetchMu.Unlock()
+		if last {
+			f.cancel()
+		}
+		return ctx.Err()
+	}
+}
+
+func (s *Service) runFlight(ctx context.Context, key string, f *fetchFlight, user string, ref imageref.Ref, owner ServerInfo, v Version, out func(string)) {
 	defer func() {
+		if r := recover(); r != nil {
+			f.err = fmt.Errorf("fetch panicked: %v", r)
+		}
+		f.cancel()
 		s.fetchMu.Lock()
 		delete(s.fetches, key)
 		s.fetchMu.Unlock()
 		close(f.done)
 	}()
 	// A sibling may have finished between the caller's check and this flight.
-	if present, err := s.presentWithID(ctx, ref, v.ImageDigest); err != nil || present {
+	present, err := s.presentWithID(ctx, ref, v.ImageDigest)
+	if err != nil || present {
 		f.err = err
-		return err
+		return
 	}
 	f.err = s.fetchFrom(ctx, user, ref, owner, v, out)
-	return f.err
 }

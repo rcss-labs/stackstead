@@ -94,8 +94,12 @@ func (t *tarInspector) parse(pr *io.PipeReader) {
 			}
 			break
 		}
-		name := strings.TrimPrefix(path.Clean(h.Name), "./")
-		if h.Typeflag != tar.TypeReg || (name != "manifest.json" && name != "repositories" && name != "index.json") {
+		name := path.Clean(strings.TrimLeft(h.Name, "/"))
+		if err := checkEntry(name, h); err != nil {
+			t.fail(err)
+			break
+		}
+		if !isMetadataName(name) {
 			continue
 		}
 		if h.Size > maxArchiveMetadataBytes {
@@ -117,6 +121,38 @@ func (t *tarInspector) parse(pr *io.PipeReader) {
 	t.cond.Broadcast()
 	t.mu.Unlock()
 	_, _ = io.Copy(io.Discard, pr) // keep the writer unblocked after the parser is done
+}
+
+func isMetadataName(n string) bool {
+	return n == "manifest.json" || n == "repositories" || n == "index.json"
+}
+
+// checkEntry refuses entries that could hide or redirect the tag metadata:
+// metadata names that are not plain files at the archive root, and links that
+// point at the root or outside the archive (so no link can stand in for a
+// directory that later entries write through).
+func checkEntry(name string, h *tar.Header) error {
+	if isMetadataName(path.Base(name)) {
+		if name != path.Base(name) || h.Typeflag != tar.TypeReg {
+			return errArchiveMalformed
+		}
+		return nil
+	}
+	if h.Typeflag != tar.TypeSymlink && h.Typeflag != tar.TypeLink {
+		return nil
+	}
+	target := h.Linkname
+	if target == "" || target == "." || target == ".." || path.IsAbs(target) || strings.HasSuffix(target, "/") {
+		return errArchiveMalformed
+	}
+	resolved := path.Clean(target) // a hard link names a path from the archive root
+	if h.Typeflag == tar.TypeSymlink {
+		resolved = path.Clean(path.Join(path.Dir(name), target))
+	}
+	if resolved == "." || resolved == ".." || strings.HasPrefix(resolved, "../") {
+		return errArchiveMalformed
+	}
+	return nil
 }
 
 func (t *tarInspector) checkMetadata(name string, data []byte) error {
@@ -151,12 +187,14 @@ func (t *tarInspector) checkMetadata(name string, data []byte) error {
 			return errArchiveMalformed
 		}
 		for _, m := range idx.Manifests {
-			if v, ok := m.Annotations["io.containerd.image.name"]; ok {
-				names = append(names, v)
+			cn, hasCN := m.Annotations["io.containerd.image.name"]
+			rn, hasRN := m.Annotations["org.opencontainers.image.ref.name"]
+			if hasCN {
+				names = append(names, cn)
 			}
-			// ref.name is a bare tag in OCI layouts; the tag of want is acceptable.
-			if v, ok := m.Annotations["org.opencontainers.image.ref.name"]; ok && v != t.wantTag() {
-				names = append(names, v)
+			// A bare tag is only meaningful next to the full name it completes.
+			if hasRN && rn != t.want && !(hasCN && cn == t.want && rn == t.wantTag()) {
+				names = append(names, rn)
 			}
 		}
 	}

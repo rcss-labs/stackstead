@@ -24,12 +24,16 @@ var tarPayload = string(archiveFor(rigRef, rigRef))
 
 const rigRef = "stackstead.invalid/bbbbbbbbbbbb/shared:2"
 
-type archiveFile struct{ name, content string }
+type archiveFile struct {
+	name, content string
+	typ           byte   // 0 = regular file
+	link          string // target of a symlink or hard link
+}
 
 // archiveFor builds a tar with a layer, then manifest.json naming tags last,
 // as docker save orders it.
 func archiveFor(_ string, tags ...string) []byte {
-	return buildArchive(archiveFile{"layer.tar", strings.Repeat("L", 4096)}, archiveFile{"manifest.json", manifestJSON(tags...)})
+	return buildArchive(archiveFile{name: "layer.tar", content: strings.Repeat("L", 4096)}, archiveFile{name: "manifest.json", content: manifestJSON(tags...)})
 }
 
 func manifestJSON(tags ...string) string {
@@ -41,7 +45,11 @@ func buildArchive(files ...archiveFile) []byte {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	for _, f := range files {
-		tw.WriteHeader(&tar.Header{Name: f.name, Mode: 0o644, Size: int64(len(f.content)), Typeflag: tar.TypeReg})
+		h := &tar.Header{Name: f.name, Mode: 0o644, Size: int64(len(f.content)), Typeflag: tar.TypeReg}
+		if f.typ != 0 {
+			h.Typeflag, h.Linkname, h.Size = f.typ, f.link, 0
+		}
+		tw.WriteHeader(h)
 		tw.Write([]byte(f.content))
 	}
 	tw.Close()
@@ -332,15 +340,15 @@ func TestFetchRejectsForeignTags(t *testing.T) {
 		b, _ := json.Marshal(map[string]any{"manifests": []map[string]any{{"annotations": ann}}})
 		return string(b)
 	}
-	layer := archiveFile{"layer.tar", strings.Repeat("L", 4096)}
+	layer := archiveFile{name: "layer.tar", content: strings.Repeat("L", 4096)}
 	cases := map[string][]byte{
-		"manifest extra tag":    buildArchive(layer, archiveFile{"manifest.json", manifestJSON(own, "nginx:latest")}),
-		"manifest only foreign": buildArchive(layer, archiveFile{"manifest.json", manifestJSON("nginx:latest")}),
-		"repositories": buildArchive(layer, archiveFile{"manifest.json", manifestJSON(own)},
-			archiveFile{"repositories", `{"nginx":{"latest":"abc"}}`}),
-		"index containerd name": buildArchive(layer, archiveFile{"index.json", index(map[string]string{"io.containerd.image.name": "docker.io/library/nginx:latest"})}),
-		"index ref name":        buildArchive(layer, archiveFile{"index.json", index(map[string]string{"org.opencontainers.image.ref.name": "docker.io/library/nginx:latest"})}),
-		"metadata too large":    buildArchive(layer, archiveFile{"manifest.json", manifestJSON(own) + strings.Repeat(" ", 2<<20)}),
+		"manifest extra tag":    buildArchive(layer, archiveFile{name: "manifest.json", content: manifestJSON(own, "nginx:latest")}),
+		"manifest only foreign": buildArchive(layer, archiveFile{name: "manifest.json", content: manifestJSON("nginx:latest")}),
+		"repositories": buildArchive(layer, archiveFile{name: "manifest.json", content: manifestJSON(own)},
+			archiveFile{name: "repositories", content: `{"nginx":{"latest":"abc"}}`}),
+		"index containerd name": buildArchive(layer, archiveFile{name: "index.json", content: index(map[string]string{"io.containerd.image.name": "docker.io/library/nginx:latest"})}),
+		"index ref name":        buildArchive(layer, archiveFile{name: "index.json", content: index(map[string]string{"org.opencontainers.image.ref.name": "docker.io/library/nginx:latest"})}),
+		"metadata too large":    buildArchive(layer, archiveFile{name: "manifest.json", content: manifestJSON(own) + strings.Repeat(" ", 2<<20)}),
 		"not a tar":             []byte(strings.Repeat("\x1f\x8b not a tar ", 200)),
 	}
 	// A slow check proves the chunk carrying the entry's end is withheld until judged.
@@ -377,8 +385,8 @@ func TestFetchAcceptsOwnTagInEveryMetadataFile(t *testing.T) {
 	r := newFetchRig(t)
 	idx, _ := json.Marshal(map[string]any{"manifests": []map[string]any{{"annotations": map[string]string{
 		"io.containerd.image.name": rigRef, "org.opencontainers.image.ref.name": "2"}}}})
-	r.serve(buildArchive(archiveFile{"layer.tar", "L"}, archiveFile{"index.json", string(idx)},
-		archiveFile{"manifest.json", manifestJSON(rigRef)}, archiveFile{"repositories", `{"stackstead.invalid/bbbbbbbbbbbb/shared":{"2":"abc"}}`}))
+	r.serve(buildArchive(archiveFile{name: "layer.tar", content: "L"}, archiveFile{name: "index.json", content: string(idx)},
+		archiveFile{name: "manifest.json", content: manifestJSON(rigRef)}, archiveFile{name: "repositories", content: `{"stackstead.invalid/bbbbbbbbbbbb/shared":{"2":"abc"}}`}))
 	var loadErr error
 	r.dockerLikeLoad(&loadErr)
 	op, _, err := r.svc.Fetch(context.Background(), "alice", r.ref)
@@ -498,7 +506,7 @@ func TestTarInspectorWithholdsChunkWithForeignTag(t *testing.T) {
 	// The manifest is exactly one block, so a chunk can end where its content ends.
 	manifest := manifestJSON(rigRef, "nginx:latest")
 	manifest += strings.Repeat(" ", 512-len(manifest))
-	archive := buildArchive(archiveFile{"layer.tar", "L"}, archiveFile{"manifest.json", manifest})
+	archive := buildArchive(archiveFile{name: "layer.tar", content: "L"}, archiveFile{name: "manifest.json", content: manifest})
 	cut := len(archive) - 1024 // the two end-of-archive blocks arrive later
 	insp := newTarInspector(io.MultiReader(bytes.NewReader(archive[:cut]), bytes.NewReader(archive[cut:])), rigRef)
 	defer insp.close()
@@ -507,10 +515,156 @@ func TestTarInspectorWithholdsChunkWithForeignTag(t *testing.T) {
 		t.Fatalf("first read = %d, %v", n, err)
 	}
 
-	own := newTarInspector(bytes.NewReader(buildArchive(archiveFile{"manifest.json", manifestJSON(rigRef)})), rigRef)
+	own := newTarInspector(bytes.NewReader(buildArchive(archiveFile{name: "manifest.json", content: manifestJSON(rigRef)})), rigRef)
 	defer own.close()
 	got, err := io.ReadAll(own)
 	if err != nil || len(got) == 0 {
 		t.Fatalf("own archive: %d bytes, %v", len(got), err)
+	}
+}
+
+func inspectAll(archive []byte) error {
+	insp := newTarInspector(bytes.NewReader(archive), rigRef)
+	defer insp.close()
+	_, err := io.ReadAll(insp)
+	return err
+}
+
+// Each archive tries to hide a foreign tag from, or smuggle one past, the inspector.
+func TestTarInspectorRejectsMetadataBypasses(t *testing.T) {
+	foreign := manifestJSON(rigRef, "nginx:latest")
+	layer := archiveFile{name: "layer.tar", content: "L"}
+	idx := func(ann map[string]string) string {
+		b, _ := json.Marshal(map[string]any{"manifests": []map[string]any{{"annotations": ann}}})
+		return string(b)
+	}
+	cases := map[string][]archiveFile{
+		"absolute manifest name":       {layer, {name: "/manifest.json", content: foreign}},
+		"double slash manifest name":   {layer, {name: "//manifest.json", content: foreign}},
+		"dotdot-cleaned manifest name": {layer, {name: "a/../manifest.json", content: foreign}},
+		"absolute repositories":        {layer, {name: "/repositories", content: `{"nginx":{"latest":"a"}}`}},
+		"manifest symlink":             {layer, {name: "manifest.json", typ: tar.TypeSymlink, link: "layer.tar"}},
+		"manifest hard link":           {layer, {name: "manifest.json", typ: tar.TypeLink, link: "layer.tar"}},
+		"manifest directory":           {layer, {name: "manifest.json/", typ: tar.TypeDir}},
+		"index symlink":                {layer, {name: "index.json", typ: tar.TypeSymlink, link: "layer.tar"}},
+		"nested manifest":              {layer, {name: "sub/manifest.json", content: foreign}},
+		"nested repositories":          {layer, {name: "blobs/repositories", content: "{}"}},
+		"nested index":                 {layer, {name: "x/y/index.json", content: "{}"}},
+		"symlink to dot":               {layer, {name: "d", typ: tar.TypeSymlink, link: "."}},
+		"symlink to dotdot":            {layer, {name: "d", typ: tar.TypeSymlink, link: ".."}},
+		"symlink absolute":             {layer, {name: "d", typ: tar.TypeSymlink, link: "/"}},
+		"symlink absolute path":        {layer, {name: "d", typ: tar.TypeSymlink, link: "/etc"}},
+		"symlink trailing slash":       {layer, {name: "d", typ: tar.TypeSymlink, link: "layer/"}},
+		"symlink resolves to root":     {layer, {name: "a/b", typ: tar.TypeSymlink, link: ".."}},
+		"symlink resolves to root 2":   {layer, {name: "x", typ: tar.TypeSymlink, link: "d/.."}},
+		"symlink escapes root":         {layer, {name: "a/l", typ: tar.TypeSymlink, link: "../../x"}},
+		"hard link to root":            {layer, {name: "h", typ: tar.TypeLink, link: "."}},
+		"hard link escapes":            {layer, {name: "h", typ: tar.TypeLink, link: "../x"}},
+		"index bare ref name only":     {layer, {name: "index.json", content: idx(map[string]string{"org.opencontainers.image.ref.name": "2"})}},
+		"index bare ref name, foreign": {layer, {name: "index.json", content: idx(map[string]string{"io.containerd.image.name": "nginx:latest", "org.opencontainers.image.ref.name": "2"})}},
+	}
+	for name, files := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := inspectAll(buildArchive(files...)); err == nil {
+				t.Fatal("archive passed the inspector")
+			}
+		})
+	}
+}
+
+// docker save shares layers between images with relative links; those stay legal.
+func TestTarInspectorAcceptsDockerSaveLayout(t *testing.T) {
+	idx, _ := json.Marshal(map[string]any{"manifests": []map[string]any{{"annotations": map[string]string{
+		"io.containerd.image.name": rigRef, "org.opencontainers.image.ref.name": "2"}}}})
+	archive := buildArchive(
+		archiveFile{name: "abc/", typ: tar.TypeDir},
+		archiveFile{name: "abc/VERSION", content: "1.0"},
+		archiveFile{name: "abc/json", content: "{}"},
+		archiveFile{name: "abc/layer.tar", content: "LAYER"},
+		archiveFile{name: "def/", typ: tar.TypeDir},
+		archiveFile{name: "def/layer.tar", typ: tar.TypeSymlink, link: "../abc/layer.tar"},
+		archiveFile{name: "ghi/layer.tar", typ: tar.TypeLink, link: "abc/layer.tar"},
+		archiveFile{name: "blobs/sha256/aaa", content: "blob"},
+		archiveFile{name: "index.json", content: string(idx)},
+		archiveFile{name: "manifest.json", content: manifestJSON(rigRef)},
+		archiveFile{name: "./repositories", content: `{"stackstead.invalid/bbbbbbbbbbbb/shared":{"2":"abc"}}`},
+	)
+	if err := inspectAll(archive); err != nil {
+		t.Fatalf("docker save layout rejected: %v", err)
+	}
+}
+
+func TestFetchSharedTransferSurvivesLeaderCancel(t *testing.T) {
+	r := newFetchRig(t)
+	release := make(chan struct{})
+	r.peer.tar = func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/x-tar")
+		w.Header().Set("X-Stackstead-Image-ID", "sha256:2")
+		<-release
+		w.Write([]byte(tarPayload))
+	}
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	leader := make(chan error, 1)
+	go func() { leader <- r.svc.EnsureLocal(leaderCtx, r.ref, func(string) {}) }()
+	for r.peer.tarHits.Load() == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	waiter := make(chan error, 1)
+	go func() { waiter <- r.svc.EnsureLocal(context.Background(), r.ref, func(string) {}) }()
+	time.Sleep(50 * time.Millisecond)
+	cancelLeader()
+	if err := <-leader; !errors.Is(err, context.Canceled) {
+		t.Fatalf("leader err = %v, want its own cancellation", err)
+	}
+	close(release)
+	if err := <-waiter; err != nil {
+		t.Fatalf("waiter err = %v", err)
+	}
+	if n := r.peer.tarHits.Load(); n != 1 {
+		t.Fatalf("tar requests = %d", n)
+	}
+	if !r.eng.present[r.ref.String()] {
+		t.Fatal("image not loaded")
+	}
+}
+
+func TestFetchSharedFailureReachesEveryWaiter(t *testing.T) {
+	r := newFetchRig(t)
+	r.peer.tar = func(w http.ResponseWriter, req *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/x-tar")
+		w.Header().Set("X-Stackstead-Image-ID", "sha256:else")
+	}
+	errs := make(chan error, 3)
+	for i := 0; i < 3; i++ {
+		go func() { errs <- r.svc.EnsureLocal(context.Background(), r.ref, func(string) {}) }()
+	}
+	for i := 0; i < 3; i++ {
+		if err := <-errs; err == nil || !strings.Contains(err.Error(), "does not match the owner's record") {
+			t.Fatalf("err = %v", err)
+		}
+	}
+	if n := r.peer.tarHits.Load(); n != 1 {
+		t.Fatalf("tar requests = %d", n)
+	}
+}
+
+func TestFetchSharedPanicBecomesError(t *testing.T) {
+	r := newFetchRig(t)
+	r.eng.loadFn = func(context.Context, io.Reader) error { panic("boom") }
+	r.peer.tar = func(w http.ResponseWriter, req *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/x-tar")
+		w.Header().Set("X-Stackstead-Image-ID", "sha256:2")
+		w.Write([]byte(tarPayload))
+	}
+	errs := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() { errs <- r.svc.EnsureLocal(context.Background(), r.ref, func(string) {}) }()
+	}
+	for i := 0; i < 2; i++ {
+		if err := <-errs; err == nil || !strings.Contains(err.Error(), "panicked") {
+			t.Fatalf("err = %v", err)
+		}
 	}
 }
