@@ -34,6 +34,7 @@ const svc: ServiceDetail = {
 };
 const stack = (hash = 'h1', s: ServiceDetail = svc): StackDetail => ({
   name: 'web', path: '/s/web', project: 'web', origin: 'managed', status: 'running', serviceCount: 1, running: 1, health: { healthy: 0, unhealthy: 0, starting: 0, none: 0, failed: 0 }, ports: [], hash, services: [s],
+  libraryUpdates: 0,
 });
 const op = (state: string) => ({ id: 'op1', stack: 'web', action: 'up', state, startedAt: '2026-01-01T00:00:00Z', exitCode: state === 'succeeded' ? 0 : undefined });
 

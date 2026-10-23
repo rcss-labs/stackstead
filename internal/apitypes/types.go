@@ -24,6 +24,8 @@ type StackSummary struct {
 	Health HealthCounts `json:"health"`
 	// Ports lists the host ports the compose file publishes, ranges as "a-b".
 	Ports []string `json:"ports"`
+	// LibraryUpdates counts services whose library image has a newer tag.
+	LibraryUpdates int `json:"libraryUpdates"`
 }
 
 type HealthCounts struct {
@@ -91,6 +93,7 @@ type ServiceDetail struct {
 	Config     ServiceConfig   `json:"config"`
 	ReadOnly   []string        `json:"readOnly"`
 	Containers []ContainerInfo `json:"containers"`
+	Library    *ServiceLibrary `json:"library,omitempty"`
 }
 
 // StackDetail flattens the summary but carries the per-service list under
@@ -170,6 +173,8 @@ type Status struct {
 	// Metrics sampling settings, in seconds; 0 when unset.
 	MetricsIntervalSeconds  int64 `json:"metricsIntervalSeconds"`
 	MetricsRetentionSeconds int64 `json:"metricsRetentionSeconds"`
+	// Arch is this server's Docker architecture (amd64, arm64); omitted when unknown.
+	Arch string `json:"arch,omitempty"`
 }
 
 type FieldError struct {

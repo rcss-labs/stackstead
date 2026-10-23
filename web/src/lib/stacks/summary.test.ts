@@ -13,6 +13,7 @@ const stack = (name: string, over: Partial<StackSummary> = {}): StackSummary => 
   running: 1,
   health: zero,
   ports: [],
+  libraryUpdates: 0,
   ...over,
 });
 

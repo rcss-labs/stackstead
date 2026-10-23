@@ -31,6 +31,7 @@ function stack(name: string, status: StackSummary['status'], running: number, se
     running,
     health: { healthy: 0, unhealthy: 0, starting: 0, none: 0, failed: 0 },
     ports: [],
+    libraryUpdates: 0,
   };
 }
 

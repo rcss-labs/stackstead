@@ -15,6 +15,7 @@ function stack(name: string, status: StackStatus, running: number, serviceCount:
     running,
     health: { healthy: 0, unhealthy: 0, starting: 0, none: 0, failed: 0 },
     ports: [],
+    libraryUpdates: 0,
   };
 }
 

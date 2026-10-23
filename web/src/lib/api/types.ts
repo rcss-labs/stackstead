@@ -2,6 +2,7 @@
 // handlers_auth.go). This file is the shared contract: change it only together
 // with the backend. Timestamps are RFC 3339 strings; optional fields are those
 // the server omits when empty (`omitempty`).
+import type { ServiceLibrary } from './imageTypes';
 
 export type StackStatus = 'running' | 'partial' | 'stopped' | 'unavailable' | 'unknown';
 export type Origin = 'managed' | 'external';
@@ -28,6 +29,8 @@ export interface StackSummary {
   health: HealthCounts;
   /** Published host ports from the compose file; ranges as "8000-8010". */
   ports: string[];
+  /** Services whose library image has a newer tag. */
+  libraryUpdates: number;
 }
 
 export type Managed = 'stack' | 'compose' | 'none';
@@ -144,6 +147,8 @@ export interface ServiceDetail {
   config: ServiceConfig;
   readOnly: Field[];
   containers: ContainerInfo[];
+  /** Present when the service's image is a library reference. */
+  library?: ServiceLibrary;
 }
 
 export interface StackDetail extends StackSummary {
@@ -233,6 +238,8 @@ export interface Status {
   /** Metrics sampling settings, in seconds; 0 when unset. */
   metricsIntervalSeconds: number;
   metricsRetentionSeconds: number;
+  /** This server's Docker architecture (amd64, arm64); absent when unknown. */
+  arch?: string;
 }
 
 export interface FieldError {

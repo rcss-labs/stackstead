@@ -20,6 +20,7 @@ const summary = (name: string, over: Partial<StackSummary> = {}): StackSummary =
   running: 2,
   health: { healthy: 0, unhealthy: 0, starting: 0, none: 0, failed: 0 },
   ports: [],
+  libraryUpdates: 0,
   ...over,
 });
 

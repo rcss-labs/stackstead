@@ -170,6 +170,7 @@ describe('Overview side column', () => {
     running: 1,
     health: { healthy: 0, unhealthy: 0, starting: 0, none: 0, failed: 0 },
     ports: [],
+    libraryUpdates: 0,
   });
   const host = (): HostSnapshot => ({
     hostname: 'box', os: 'linux', source: 'proc', sampledAt: new Date().toISOString(),

@@ -22,6 +22,7 @@ function setup(over: Partial<ServiceEditDeps> = {}, readOnly: ('ports' | 'volume
 function detail(hash: string, cfg: ServiceConfig, readOnly: ('ports' | 'volumes')[] = []): StackDetail {
   return {
     name: 'web', path: '/s/web', project: 'web', origin: 'managed', status: 'running', serviceCount: 1, running: 1, health: { healthy: 0, unhealthy: 0, starting: 0, none: 0, failed: 0 }, ports: [], hash,
+    libraryUpdates: 0,
     services: [{ name: 'app', config: cfg, readOnly, containers: [] }],
   };
 }

@@ -47,6 +47,7 @@ import type {
   ServerSelfUpdate,
   UpdateServiceRequest,
 } from './types';
+import { createImagesApi, createLocalImagesApi } from './images';
 
 export class ApiError extends Error {
   status: number;
@@ -94,7 +95,7 @@ function isAuthPath(path: string): boolean {
   return AUTH_PATHS.some((a) => p === a || p.startsWith(a + '/'));
 }
 
-function notifyUnauthorized(path: string): void {
+export function notifyUnauthorized(path: string): void {
   if (isAuthPath(path) || unauthorizedFired) return;
   unauthorizedFired = true;
   unauthorizedHandler?.();
@@ -292,6 +293,7 @@ export function createApi(base: string) {
         undefined,
         { signal },
       ).then((r) => r.data),
+    ...createImagesApi(base),
   };
 }
 
@@ -310,6 +312,7 @@ function createLocalOnlyApi() {
     updateServerSelf: (body: ServerSelfUpdate) => call<ServerSelf>('PUT', '/api/peers/self', body).then((r) => r.data),
     checkPeer: (id: string) => post<PeerView>(`/api/peers/${seg(id)}/check`),
     fleetStacks: () => get<FleetStacks>('/api/fleet/stacks'),
+    ...createLocalImagesApi(),
   };
 }
 
