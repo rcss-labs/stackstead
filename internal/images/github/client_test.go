@@ -276,8 +276,8 @@ func TestTarballIdleWatchdog(t *testing.T) {
 	go func() { _, err := io.ReadAll(rc); done <- err }()
 	select {
 	case err := <-done:
-		if err == nil {
-			t.Fatal("want a stall error")
+		if !errors.Is(err, ErrStalled) {
+			t.Fatalf("want ErrStalled, got %v", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("watchdog did not fire")

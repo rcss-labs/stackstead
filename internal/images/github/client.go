@@ -13,7 +13,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rcss-labs/stackstead/internal/secret"
@@ -30,7 +30,7 @@ var (
 	ErrNotFound     = errors.New("github: not found")
 	ErrTooLarge     = errors.New("github: file is larger than 1 MiB")
 	ErrRateLimited  = errors.New("github: rate limit reached")
-	errStalled      = errors.New("github: download stalled")
+	ErrStalled      = errors.New("GitHub download stalled")
 )
 
 // apiTimeout bounds each User, Head and File call.
@@ -261,26 +261,22 @@ func (c *Client) Tarball(ctx context.Context, token secret.Secret, repo, ref str
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	var stalled sync.Once
-	var stalledFlag bool
-	var mu sync.Mutex
+	var stalled atomic.Bool
 	timer := time.AfterFunc(idleTimeout, func() {
-		stalled.Do(func() { mu.Lock(); stalledFlag = true; mu.Unlock() })
+		stalled.Store(true)
 		cancel()
 	})
 	resp, err := c.get(ctx, token, "/repos/"+repo+"/tarball/"+escapePath(ref), true)
 	if err != nil {
 		timer.Stop()
 		cancel()
-		mu.Lock()
-		defer mu.Unlock()
-		if stalledFlag {
-			return nil, errStalled
+		if stalled.Load() {
+			return nil, ErrStalled
 		}
 		return nil, err
 	}
 	timer.Reset(idleTimeout)
-	return &idleBody{rc: resp.Body, timer: timer, cancel: cancel, stalled: func() bool { mu.Lock(); defer mu.Unlock(); return stalledFlag }}, nil
+	return &idleBody{rc: resp.Body, timer: timer, cancel: cancel, stalled: &stalled}, nil
 }
 
 // idleBody resets a watchdog on every read; if no bytes arrive before it
@@ -289,7 +285,7 @@ type idleBody struct {
 	rc      io.ReadCloser
 	timer   *time.Timer
 	cancel  context.CancelFunc
-	stalled func() bool
+	stalled *atomic.Bool
 }
 
 func (b *idleBody) Read(p []byte) (int, error) {
@@ -297,8 +293,8 @@ func (b *idleBody) Read(p []byte) (int, error) {
 	if n > 0 {
 		b.timer.Reset(idleTimeout)
 	}
-	if err != nil && err != io.EOF && b.stalled() {
-		err = errStalled
+	if err != nil && err != io.EOF && b.stalled.Load() {
+		err = ErrStalled
 	}
 	return n, err
 }
