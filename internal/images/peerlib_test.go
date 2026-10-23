@@ -26,7 +26,8 @@ type fakePeer struct {
 	name    string
 	images  []apitypes.LibraryImageDetail
 	usage   []apitypes.LibraryUsage
-	status  int         // non-zero: answer this status with a plain-text body
+	status  int // non-zero: answer this status with a plain-text body
+	jsonErr bool
 	hanging atomic.Bool // true: block until released or the request ends
 	release chan struct{}
 	calls   atomic.Int32
@@ -54,6 +55,12 @@ func newFakePeer(t *testing.T, id, name string) *fakePeer {
 			return
 		}
 		if p.status != 0 {
+			if p.jsonErr {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(p.status)
+				w.Write([]byte(`{"error":"not found"}`))
+				return
+			}
 			http.Error(w, "nope", p.status)
 			return
 		}
@@ -121,7 +128,7 @@ func TestLibraryMergesPeers(t *testing.T) {
 	good := newFakePeer(t, peerBID, "Host B")
 	good.images = []apitypes.LibraryImageDetail{peerImage("shared", "2", "1")}
 	old := newFakePeer(t, peerCID, "Host C")
-	old.status = http.StatusNotFound
+	old.status, old.jsonErr = http.StatusNotFound, true
 	hung := newFakePeer(t, peerDID, "Host D")
 	hung.hanging.Store(true)
 	h.withPeers(t, 300*time.Millisecond, good, old, hung)
@@ -275,16 +282,28 @@ func TestDeleteVersionRefusedWhenPeerUnreachable(t *testing.T) {
 	}
 }
 
-func TestDeleteVersionRefusedWhenPeerIsOld(t *testing.T) {
+func TestDeleteVersionIgnoresOldPeer(t *testing.T) {
 	h := newHarness(t)
 	h.create(t, "app")
 	v := h.build(t, "app", "1", nil)
 	old := newFakePeer(t, peerCID, "Host C")
-	old.status = http.StatusNotFound
+	old.status, old.jsonErr = http.StatusNotFound, true
 	h.withPeers(t, time.Second, old)
+	if err := h.svc.DeleteVersion(context.Background(), "alice", "app", v.ID); err != nil {
+		t.Fatalf("an old peer must count as zero usage: %v", err)
+	}
+}
+
+func TestDeleteVersionRefusedWhenPeerAnswersPlain404(t *testing.T) {
+	h := newHarness(t)
+	h.create(t, "app")
+	v := h.build(t, "app", "1", nil)
+	proxy := newFakePeer(t, peerCID, "Host C")
+	proxy.status = http.StatusNotFound // text/plain: not a Stackstead answer
+	h.withPeers(t, time.Second, proxy)
 	err := h.svc.DeleteVersion(context.Background(), "alice", "app", v.ID)
 	var inUse *InUseError
-	if !errors.As(err, &inUse) || len(inUse.Unreachable) != 1 || inUse.Unreachable[0].Status != "old" {
+	if !errors.As(err, &inUse) || len(inUse.Unreachable) != 1 || inUse.Unreachable[0].Status != "unreachable" {
 		t.Fatalf("err = %v", err)
 	}
 }

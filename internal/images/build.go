@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/rcss-labs/stackstead/internal/imageref"
 	"io"
 	"maps"
 	"os"
 	"path/filepath"
 
 	"github.com/rcss-labs/stackstead/internal/engine"
+	"github.com/rcss-labs/stackstead/internal/imageref"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 )
 

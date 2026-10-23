@@ -100,10 +100,13 @@ func (s *Service) peerGet(ctx context.Context, id, path string, out any) error {
 	if resp != nil {
 		defer resp.Body.Close()
 	}
-	if err == nil && resp.StatusCode == http.StatusNotFound {
-		return errPeerOld
-	}
 	if cerr := peers.Classify(p.Name, resp, err); cerr != nil {
+		// Only a Stackstead JSON 404 means "no image library here"; any other
+		// 404 (a proxy's page) stays a failure.
+		var re *peers.RemoteError
+		if errors.As(cerr, &re) && re.Status == http.StatusNotFound {
+			return errPeerOld
+		}
 		return cerr
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxPeerAnswerBytes)).Decode(out); err != nil {
@@ -151,9 +154,15 @@ func entryFromPeer(d apitypes.LibraryImageDetail, owner ServerInfo) LibraryEntry
 	if d.GitHub != nil {
 		e.GitHub = GitHubSource{Repo: d.GitHub.Repo, Branch: d.GitHub.Branch, Path: d.GitHub.Path}
 	}
+	if e.BuildArgs == nil {
+		e.BuildArgs = map[string]string{}
+	}
 	for _, v := range d.Versions {
 		if VersionStatus(v.Status) != VersionSucceeded {
 			continue
+		}
+		if v.BuildArgs == nil {
+			v.BuildArgs = map[string]string{}
 		}
 		e.Versions = append(e.Versions, Version{ID: v.ID, Tag: v.Tag, Status: VersionSucceeded, Revision: v.Revision,
 			Commit: v.Commit, BuildArgs: v.BuildArgs, Arch: v.Arch, ImageDigest: v.ImageID, Size: v.Size,
@@ -184,7 +193,8 @@ func (s *Service) peerLibraries(ctx context.Context) ([]peerResult, error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[i] = s.fetchPeerLibrary(ctx, v)
+			// Detached from the request: a cancelled caller must not cache a failure.
+			results[i] = s.fetchPeerLibrary(context.WithoutCancel(ctx), v)
 			s.peerCache.mu.Lock()
 			if s.peerCache.entries == nil {
 				s.peerCache.entries = map[string]peerResult{}
@@ -312,8 +322,8 @@ func (s *Service) Library(ctx context.Context) (Library, error) {
 }
 
 // peerUsage asks every active peer which of its stack services run an image
-// accepted by matches. Peers that cannot answer (including old ones) are
-// returned as unreachable so the caller never guesses.
+// accepted by matches. Peers that cannot answer are returned as unreachable so
+// the caller never guesses; an old peer (no image library) counts as zero use.
 func (s *Service) peerUsage(ctx context.Context, matches func(imageref.Ref) bool) ([]UsedBy, []ServerInfo, error) {
 	uses, unreachable := []UsedBy{}, []ServerInfo{}
 	if s.peers == nil {
@@ -338,6 +348,9 @@ func (s *Service) peerUsage(ctx context.Context, matches func(imageref.Ref) bool
 	}
 	wg.Wait()
 	for i, v := range views {
+		if errors.Is(answers[i].err, errPeerOld) {
+			continue // a server without the library runs no library images
+		}
 		if answers[i].err != nil {
 			info := peerServer(v)
 			info.Status, info.Error = peerFailure(v, answers[i].err)
