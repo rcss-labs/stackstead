@@ -1,6 +1,7 @@
 import { Fragment } from 'react';
 import { Link } from 'react-router';
 import type { Operation } from '$lib/api/types';
+import { operationSubject } from '$lib/images/ops';
 import { splitServerPath } from '$lib/router';
 import { peers } from '$lib/servers/peers';
 import { breadcrumb } from '$lib/shell/breadcrumb';
@@ -19,7 +20,7 @@ export function TopBar({ path, runningOps }: TopBarProps) {
   const crumbs = breadcrumb(path, slug === null ? undefined : (peerList.find((p) => p.slug === slug)?.name ?? slug));
   const { connection } = useStore(useServer().live);
   const liveState = connection === 'open' || connection === 'reconnecting' ? connection : undefined;
-  const runningText = runningOps.length === 1 ? `${runningOps[0].action} · ${runningOps[0].stack}` : `${runningOps.length} running`;
+  const runningText = runningOps.length === 1 ? `${runningOps[0].action} · ${operationSubject(runningOps[0]).label}` : `${runningOps.length} running`;
 
   return (
     <header className={styles.topbar}>

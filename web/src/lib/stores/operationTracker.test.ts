@@ -41,6 +41,12 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe('operationToast for image operations', () => {
+  it('names the image, not the op key', () => {
+    expect(operationToast({ stack: 'image/0123456789ab/web', action: 'build', state: 'succeeded' }).message).toBe('build · image web succeeded');
+  });
+});
+
 describe('operationToast', () => {
   it('reads the action alone for a host operation', () => {
     expect(operationToast({ stack: '', action: 'storage-cleanup', state: 'succeeded' })).toEqual({

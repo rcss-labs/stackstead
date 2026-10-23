@@ -18,6 +18,7 @@ data_dir: {{.DataDir}}
 metrics_retention: {{.MetricsRetention}}
 metrics_interval: {{.MetricsInterval}}
 operation_timeout: {{.OperationTimeout}}
+# Time limit for image builds, pushes and fetches
 image_operation_timeout: {{.ImageOperationTimeout}}
 
 # Terminal access into containers. A terminal is root-equivalent on that container.

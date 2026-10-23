@@ -115,6 +115,15 @@ describe('Sidebar', () => {
     }
   });
 
+  it('lists Images after Storage and marks it current below its route', () => {
+    renderIn(<Sidebar {...sidebarProps} current="/images/web" />);
+    const labels = screen.getAllByRole('link').map((a) => a.getAttribute('aria-label'));
+    expect(labels.indexOf('Images')).toBe(labels.indexOf('Storage') + 1);
+    expect(screen.getByRole('link', { name: 'Images' }).getAttribute('href')).toBe('/images');
+    expect(current('Images')).toBe('page');
+    expect(current('Storage')).toBeNull();
+  });
+
   it('marks Storage current below its route after Networks', () => {
     renderIn(<Sidebar {...sidebarProps} current="/storage/images/abcdef123456" />);
     const labels = screen.getAllByRole('link').map((a) => a.getAttribute('aria-label'));
@@ -328,6 +337,11 @@ describe('TopBar', () => {
     expect(screen.getByRole('status').textContent?.trim()).toBe('2 running');
     again([op('1', 'pull', 'immich')]);
     expect(screen.getByRole('status').textContent?.trim()).toBe('pull · immich');
+  });
+
+  it('labels an image operation by its image', () => {
+    renderIn(<TopBar path="/" runningOps={[op('1', 'build', 'image/0123456789ab/web')]} />);
+    expect(screen.getByRole('status').textContent?.trim()).toBe('build · image web');
   });
 
   it('live pill reflects the connection', async () => {

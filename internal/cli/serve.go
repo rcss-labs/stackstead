@@ -24,6 +24,7 @@ import (
 	"github.com/rcss-labs/stackstead/internal/engine"
 	"github.com/rcss-labs/stackstead/internal/history"
 	"github.com/rcss-labs/stackstead/internal/host"
+	"github.com/rcss-labs/stackstead/internal/images"
 	"github.com/rcss-labs/stackstead/internal/lockfile"
 	"github.com/rcss-labs/stackstead/internal/metrics"
 	"github.com/rcss-labs/stackstead/internal/peers"
@@ -176,8 +177,9 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	}
 	// One peer store and service per process; the service's checker runs in
 	// the background group so it stops before the database closes.
+	peerStore := peers.NewStore(db, time.Now)
 	peersSvc := peers.NewService(peers.ServiceConfig{
-		Store:    peers.NewStore(db, time.Now),
+		Store:    peerStore,
 		Version:  version.Get().Version,
 		Hostname: os.Hostname,
 		Now:      time.Now,
@@ -191,7 +193,32 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	registry := stacks.NewRegistry(db, time.Now)
 	ops := stacks.NewOps(cfg.OperationTimeout, time.Now)
 	storageSvc := storage.NewService(storage.ServiceConfig{Engine: dockerEngine, Registry: registry, Declarations: storage.NewDeclarationCache(buildRunner(cfg), logger), Now: time.Now, Ops: ops, Actions: actions})
+	// The library service and the stack service need each other: stacks fetch
+	// library images before up, the library asks stacks which images are used.
+	imagesSvc := images.NewService(images.Deps{
+		Store:     images.NewStore(db, time.Now),
+		Ops:       ops,
+		Engine:    dockerEngine,
+		Dir:       filepath.Join(cfg.DataDir, "images"),
+		Limits:    images.Limits{MaxFileBytes: cfg.ImageMaxFileBytes, MaxContextBytes: cfg.ImageMaxContextBytes},
+		OpTimeout: cfg.ImageOperationTimeout,
+		Actions:   actions,
+		Self: func(ctx context.Context) (images.Self, error) {
+			fallback, err := os.Hostname()
+			if err != nil || fallback == "" {
+				fallback = "stackstead"
+			}
+			id, err := peerStore.Identity(ctx, fallback)
+			if err != nil {
+				return images.Self{}, err
+			}
+			return images.Self{InstanceID: id.InstanceID, Name: id.Name, Slug: id.Slug}, nil
+		},
+		Now:    time.Now,
+		Logger: logger,
+	})
 	stackSvc := stacks.NewService(stacks.Deps{
+		Library:      imagesSvc,
 		Registry:     registry,
 		Ops:          ops,
 		Compose:      runner,
@@ -202,9 +229,13 @@ func serve(ctx context.Context, env *Env, args []string) error {
 		Logger:       logger,
 		Now:          time.Now,
 	})
+	imagesSvc.SetUsage(stackSvc)
 	// Sync returns joined per-folder warnings; none of them stop startup.
 	if err := stackSvc.Sync(ctx); err != nil {
 		logger.Warn("stack sync reported problems", "err", err)
+	}
+	if err := imagesSvc.Start(ctx); err != nil {
+		return fmt.Errorf("start image library: %w", err)
 	}
 
 	// The collector and alerts engine do nothing until a request arrives:
@@ -232,6 +263,8 @@ func serve(ctx context.Context, env *Env, args []string) error {
 			Static:           web.Dist(),
 			Logger:           logger,
 			Stacks:           stackSvc,
+			Images:           imagesSvc,
+			Arch:             dockerEngine.Arch,
 			Operations:       ops,
 			FSRoots:          cfg.AllowedRoots,
 			Status:           dockerStatus,

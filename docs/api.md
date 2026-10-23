@@ -270,6 +270,70 @@ Status checks run every 30 seconds while a browser session on this server
 was active in the last 60 seconds, and every 5 minutes otherwise. With no
 connected servers, nothing is checked.
 
+## Image library
+
+The Images screen (`/images`, `/images/{slug}`) manages images Stackstead builds
+from an uploaded context and keeps on this server. Every image has a `slug`
+(derived from its name at creation, never changed) and numbered, tagged
+versions. A service uses one by the reference
+`stackstead.invalid/<owner>/<slug>:<tag>`, where `<owner>` is the first 12 hex
+characters of the owning server's instance ID. Stackstead builds the image
+locally; `up` and `pull` make a referenced library image present first, and
+the stack list reports `libraryUpdates`, the number of services whose image has
+a newer tag. A service detail carries a `library` badge for such a reference.
+
+All routes need a session. Errors use the shape from [API overview](#api-overview).
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/images` | the library: `{images, servers}` with each image's owner, versions and latest version |
+| `POST /api/images` | create with `{name, source: "upload", dockerfilePath, buildArgs, retention?}` (201) |
+| `GET`/`PUT`/`DELETE /api/images/{slug}` | detail (versions, `revision`, `suggestedTag`, `tagHint`, `arch`), update, delete (409 `image_in_use` while a version runs) |
+| `GET /api/images/{slug}/files` | the file manifest and current `revision` |
+| `POST /api/images/{slug}/files` | upload `multipart/form-data`, one part per file named `f/<path>`; creates a revision (201) |
+| `GET`/`DELETE /api/images/{slug}/files/{path...}` | read a file (up to 1 MiB) or remove it |
+| `POST /api/images/{slug}/files/rename` | rename a file |
+| `GET`/`PUT /api/images/{slug}/dockerfile` | the Dockerfile, saved with the `revision` from the read (409 `revision_conflict` if stale) |
+| `GET /api/images/{slug}/revisions`, `GET .../revisions/{n}` | revision history and one revision |
+| `POST /api/images/{slug}/revisions/{n}/restore` | restore a revision as a new one |
+| `POST /api/images/{slug}/builds` | build with `{tag, buildArgs, saveArgs, ref}`; 202 `{version, operation}` |
+| `GET /api/images/{slug}/versions/{id}` | one version with its build log and `usedBy`; keyed by version ID, not tag |
+| `DELETE /api/images/{slug}/versions/{id}` | delete a version by ID (409 `image_in_use` if a container uses it) |
+
+### Limits
+
+| Setting | Default | Environment |
+| --- | --- | --- |
+| `image_max_file_bytes` | 134217728 (128 MiB) | `STACKSTEAD_IMAGE_MAX_FILE_BYTES` |
+| `image_max_context_bytes` | 1073741824 (1 GiB) | `STACKSTEAD_IMAGE_MAX_CONTEXT_BYTES` |
+| `image_operation_timeout` | `60m` | `STACKSTEAD_IMAGE_OPERATION_TIMEOUT` |
+
+The byte limits are integers of at least 1048576; an upload over either limit
+answers 413 `image_too_large`. `image_operation_timeout` bounds image builds,
+pushes and fetches; stack operations keep `operation_timeout`. Paths are
+cleaned and relative, with no `..`, leading `/`, backslash or NUL byte,
+segments of at most 255 bytes and 4096 in total. A Dockerfile is non-empty, at
+most 1 MiB and has no NUL byte. Uploads are staged under
+`DataDir/images/<slug>/tmp-upload-*` while they are checked and removed
+afterwards; content blobs live under `DataDir/images/<slug>/blobs/`.
+
+### Error codes
+
+| Status and `code` | Meaning |
+| --- | --- |
+| 409 `image_in_use` | the image or version is used by a container; the body also carries `usedBy` |
+| 409 `build_running` | a build of this image is already running |
+| 409 `tag_taken` | the tag exists on a non-failed version |
+| 409 `revision_conflict` | the file set or Dockerfile changed since the `revision` you sent |
+| 409 `image_not_built` | the referenced tag has no built version |
+| 413 `image_too_large` | a file or the context is over its limit |
+
+### Operations
+
+Builds run as operations in the shared operations list under the key
+`image/<owner>/<slug>` (action `build`), so the top bar and toasts label them
+`build · image <slug>`. One build runs at a time per image.
+
 ## Storage
 
 The Storage screen (`/storage`) has Overview, Images, Volumes and Build cache

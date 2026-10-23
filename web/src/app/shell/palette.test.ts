@@ -35,6 +35,7 @@ describe('paletteEntries', () => {
       'Containers',
       'Networks',
       'Storage',
+      'Images',
       'Settings',
     ]);
     expect(list.find((e) => e.group === 'Go to')?.hint).toBe('Page');

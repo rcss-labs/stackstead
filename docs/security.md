@@ -178,6 +178,19 @@ so treat it like the rest of the signed-in surface.
   entry records `detached` when the process is still running after the
   disconnect.
 
+## Image library
+
+Images are built from files uploaded through the signed-in UI or API, and any
+signed-in user can create, build and delete them: a Dockerfile runs commands
+at build time, so this is the same root-equivalent access Stackstead already
+has. Upload contents are stored on disk under `DataDir/images` (directories
+0700, files 0600), so they are only as private as the data directory; do not
+upload secrets in a build context. Uploads are capped by `image_max_file_bytes`
+and `image_max_context_bytes`, paths that escape the context (`..`, absolute,
+backslash, NUL) are refused, and builds are bounded by
+`image_operation_timeout`. Build logs are capped at 8 MiB and are text only.
+See [Image library](api.md#image-library).
+
 ## Storage cleanup
 
 Signed-in users can delete unused images, volumes and build cache. Deleting a

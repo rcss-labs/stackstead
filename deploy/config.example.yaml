@@ -20,6 +20,7 @@ data_dir: /var/lib/stackstead
 metrics_retention: 72h
 metrics_interval: 10s
 operation_timeout: 15m
+# Time limit for image builds, pushes and fetches
 image_operation_timeout: 1h
 
 # Terminal access into containers. A terminal is root-equivalent on that container.

@@ -36,6 +36,9 @@ function localBreadcrumb(path: string): Crumb[] {
   if (path === '/storage') return [{ label: 'Storage' }];
   const storage = /^\/storage\/(images|volumes)\/([^/]+)$/.exec(path);
   if (storage) return [{ label: 'Storage', href: '/storage' }, { label: storage[1] === 'images' ? 'Images' : 'Volumes', href: `/storage?tab=${storage[1]}` }, { label: decode(storage[2]), mono: true }];
+  if (path === '/images') return [{ label: 'Images' }];
+  const image = /^\/images\/([^/]+)$/.exec(path);
+  if (image) return [{ label: 'Images', href: '/images' }, { label: decode(image[1]), mono: true }];
   if (path === '/') return [{ label: 'Stacks' }];
   if (path === '/all') return [{ label: 'All stacks' }];
   if (path === '/settings') return [{ label: 'Settings' }];

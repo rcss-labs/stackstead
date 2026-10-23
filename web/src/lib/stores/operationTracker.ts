@@ -4,6 +4,7 @@
 // hidden, and stop() forgets every entry and drops answers that are still in flight.
 import { get, type Readable } from '$lib/store';
 import type { Operation } from '../api/types';
+import { operationSubject } from '$lib/images/ops';
 import { toasts, type ToastInput } from './toasts';
 
 export const TRACKER_RECHECK_MS = 2000;
@@ -22,7 +23,7 @@ interface Entry {
   timer?: ReturnType<typeof setTimeout>;
 }
 
-const label = (op: { stack: string; action: string }) => (op.stack ? `${op.action} · ${op.stack}` : op.action);
+const label = (op: { stack: string; action: string }) => (op.stack ? `${op.action} · ${operationSubject(op).label}` : op.action);
 
 export function operationToast(op: Pick<Operation, 'stack' | 'action' | 'state'> & { error?: string }): ToastInput {
   const name = label(op);

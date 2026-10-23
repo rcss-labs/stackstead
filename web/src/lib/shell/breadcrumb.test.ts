@@ -16,6 +16,8 @@ describe('breadcrumb', () => {
     ['/containers/my%20db', [{ label: 'Containers', href: '/containers' }, { label: 'my db', mono: true }]],
     ['/nope', [{ label: 'Stacks', href: '/' }, { label: 'Not found' }]],
     ['/storage', [{ label: 'Storage' }]],
+    ['/images', [{ label: 'Images' }]],
+    ['/images/web', [{ label: 'Images', href: '/images' }, { label: 'web', mono: true }]],
     [
       '/storage/images/abc',
       [{ label: 'Storage', href: '/storage' }, { label: 'Images', href: '/storage?tab=images' }, { label: 'abc', mono: true }],
