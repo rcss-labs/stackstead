@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,9 +20,15 @@ const testPassword = "hunter2-secret"
 type fakeRegistries struct {
 	regs         map[string]registry.Registry
 	unconfigured map[string]bool
+	credHost     map[string]string // host Credentials returns instead of the stored one
+	getErr       map[string]error
+	credErr      map[string]error
 }
 
 func (f *fakeRegistries) Get(_ context.Context, id string) (registry.Registry, error) {
+	if err := f.getErr[id]; err != nil {
+		return registry.Registry{}, err
+	}
 	r, ok := f.regs[id]
 	if !ok {
 		return registry.Registry{}, registry.ErrNotFound
@@ -34,8 +41,14 @@ func (f *fakeRegistries) Credentials(_ context.Context, id string) (engine.Regis
 	if !ok {
 		return engine.RegistryAuth{}, "", registry.ErrNotFound
 	}
+	if err := f.credErr[id]; err != nil {
+		return engine.RegistryAuth{}, "", err
+	}
 	if f.unconfigured[id] {
 		return engine.RegistryAuth{}, "", registry.ErrUnconfigured
+	}
+	if h, ok := f.credHost[id]; ok {
+		return engine.RegistryAuth{Username: "u", Password: testPassword, ServerAddress: h}, h, nil
 	}
 	return engine.RegistryAuth{Username: "u", Password: testPassword, ServerAddress: "docker.io"}, r.Host, nil
 }
@@ -47,9 +60,11 @@ func newPushHarness(t *testing.T) (*harness, *fakeRegistries) {
 	fr := &fakeRegistries{
 		regs: map[string]registry.Registry{
 			"hub":  {ID: "hub", Name: "Hub", Kind: registry.KindDockerHub, Host: "docker.io", Hub: registry.Hub{Username: "u"}},
+			"ecr":  {ID: "ecr", Name: "Ecr", Kind: registry.KindECR},
 			"bare": {ID: "bare", Name: "Bare", Kind: registry.KindDockerHub, Host: "docker.io"},
 		},
 		unconfigured: map[string]bool{"bare": true},
+		credHost:     map[string]string{"ecr": "123.dkr.ecr.eu-west-1.amazonaws.com"},
 	}
 	h.svc.registries = fr
 	for id, r := range fr.regs {
@@ -347,5 +362,155 @@ func TestPushTargetValidation(t *testing.T) {
 	}
 	if err := h.svc.DeletePushTarget(ctx, "alice", "app", tg.ID); !errors.Is(err, ErrTargetNotFound) {
 		t.Fatalf("second delete = %v", err)
+	}
+}
+
+func TestStartMarksPushingFailed(t *testing.T) {
+	h, _ := newPushHarness(t)
+	ctx := context.Background()
+	h.create(t, "app")
+	v := h.build(t, "app", "1", nil)
+	tg := h.addTarget(t, "app", "hub", "u/app", false)
+	if err := h.svc.store.SetPush(ctx, Push{VersionID: v.ID, TargetID: tg.ID, Status: PushPushing}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	p, ok := h.pushOf(t, v, tg.ID)
+	if !ok || p.Status != PushFailed || p.Error != "interrupted by server restart" {
+		t.Fatalf("push = %+v", p)
+	}
+}
+
+func TestAutoPushStopsWhenVersionDeleted(t *testing.T) {
+	h, _ := newPushHarness(t)
+	ctx := context.Background()
+	h.create(t, "app")
+	h.addTarget(t, "app", "hub", "u/one", true)
+	h.addTarget(t, "app", "hub", "u/two", true)
+	h.eng.pushHook = func() {
+		vs, _ := h.svc.store.Versions(ctx, mustID(t, h, "app"))
+		for _, v := range vs {
+			h.svc.store.DeleteVersion(ctx, v.ID)
+		}
+	}
+	_, op, err := h.svc.Build(ctx, "alice", "app", BuildRequest{Tag: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.waitOp(t, op.ID)
+	pushes := 0
+	for _, c := range h.engineCalls() {
+		if strings.HasPrefix(c, "push ") {
+			pushes++
+		}
+	}
+	if pushes != 1 {
+		t.Fatalf("pushes = %d, want 1", pushes)
+	}
+	h.log.mu.Lock()
+	defer h.log.mu.Unlock()
+	for _, e := range h.log.entries {
+		if e.Kind == "image.push" && e.Result == "failed" {
+			t.Errorf("failure entry written: %+v", e)
+		}
+	}
+}
+
+func TestAutoPushCredentialErrorRecorded(t *testing.T) {
+	h, fr := newPushHarness(t)
+	h.create(t, "app")
+	tg := h.addTarget(t, "app", "hub", "u/app", true)
+	fr.credErr = map[string]error{"hub": errors.New("token service down")}
+	v := h.build(t, "app", "1", nil)
+	p, ok := h.pushOf(t, v, tg.ID)
+	if !ok || p.Status != PushFailed || !strings.Contains(p.Error, "token service down") {
+		t.Fatalf("push = %+v", p)
+	}
+	if e, ok := h.log.last("image.push"); !ok || e.Result != "failed" || e.Detail != "Hub u/app:1: "+p.Error {
+		t.Fatalf("log = %+v", e)
+	}
+}
+
+func TestAutoPushLogsRegistryGetError(t *testing.T) {
+	h, fr := newPushHarness(t)
+	var buf strings.Builder
+	h.svc.log = slog.New(slog.NewTextHandler(&buf, nil))
+	h.create(t, "app")
+	tg := h.addTarget(t, "app", "hub", "u/app", true)
+	fr.getErr = map[string]error{"hub": errors.New("db locked")}
+	h.build(t, "app", "1", nil)
+	out := buf.String()
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, tg.ID) || !strings.Contains(out, "app") {
+		t.Fatalf("log = %q", out)
+	}
+	// not-found stays silent
+	buf.Reset()
+	fr.getErr = nil
+	delete(fr.regs, "hub")
+	h.build(t, "app", "2", nil)
+	if strings.Contains(buf.String(), "WARN") {
+		t.Fatalf("not-found logged: %q", buf.String())
+	}
+}
+
+func TestUpdatePushTargetClearsPushes(t *testing.T) {
+	h, _ := newPushHarness(t)
+	ctx := context.Background()
+	h.create(t, "app")
+	v := h.build(t, "app", "1", nil)
+	tg := h.addTarget(t, "app", "hub", "u/app", false)
+	if err := h.svc.store.SetPush(ctx, Push{VersionID: v.ID, TargetID: tg.ID, Status: PushPushed}); err != nil {
+		t.Fatal(err)
+	}
+	// flag-only change keeps the history
+	if _, err := h.svc.UpdatePushTarget(ctx, "alice", "app", tg.ID, PushTargetRequest{RegistryID: "hub", Repository: "u/app", AutoPush: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := h.pushOf(t, v, tg.ID); !ok {
+		t.Fatal("push cleared by flag-only change")
+	}
+	if _, err := h.svc.UpdatePushTarget(ctx, "alice", "app", tg.ID, PushTargetRequest{RegistryID: "hub", Repository: "u/new"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := h.pushOf(t, v, tg.ID); ok {
+		t.Fatal("push rows kept after repository change")
+	}
+}
+
+func TestPushUsesHostFromCredentials(t *testing.T) {
+	h, _ := newPushHarness(t)
+	h.create(t, "app")
+	v := h.build(t, "app", "1", nil)
+	tg := h.addTarget(t, "app", "ecr", "team/app", false)
+	op, err := h.svc.Push(context.Background(), "alice", "app", "1", tg.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := h.waitOp(t, op.ID); got.State != stacks.OpSucceeded {
+		t.Fatalf("op = %+v", got)
+	}
+	want := "push 123.dkr.ecr.eu-west-1.amazonaws.com/team/app:1"
+	found := false
+	for _, c := range h.engineCalls() {
+		found = found || c == want
+	}
+	if !found {
+		t.Fatalf("calls = %q, want %q", h.engineCalls(), want)
+	}
+	if p, _ := h.pushOf(t, v, tg.ID); p.Status != PushPushed {
+		t.Fatalf("push = %+v", p)
+	}
+}
+
+func TestSplitRefRejectsEmpty(t *testing.T) {
+	for _, ref := range []string{"", "/repo:1", "host/repo", "host/repo:"} {
+		if _, _, err := splitRef(ref); err == nil {
+			t.Errorf("splitRef(%q) = nil error", ref)
+		}
+	}
+	if repo, tag, err := splitRef("h:5000/o/img:2"); err != nil || repo != "h:5000/o/img" || tag != "2" {
+		t.Errorf("splitRef ok = %q %q %v", repo, tag, err)
 	}
 }

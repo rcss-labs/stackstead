@@ -600,6 +600,10 @@ func (s *Service) Start(ctx context.Context) error {
 			return err
 		}
 	}
+	if _, err := s.store.db.ExecContext(ctx, `UPDATE image_pushes SET status='failed', error=?, updated_at=? WHERE status='pushing'`,
+		interruptedMessage, s.store.stamp().Unix()); err != nil {
+		return fmt.Errorf("fail interrupted pushes: %w", err)
+	}
 	if matches, err := filepath.Glob(filepath.Join(s.dir, "*", "tmp-*")); err == nil {
 		for _, m := range matches {
 			os.RemoveAll(m)
