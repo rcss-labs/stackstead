@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,7 +68,17 @@ func (b *Blobs) Put(r io.Reader, maxBytes int64) (hash string, size int64, err e
 		}
 	}()
 	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(r, maxBytes+1))
+	if maxBytes < 0 {
+		maxBytes = 0
+	}
+	readLimit := maxBytes
+	if readLimit < math.MaxInt64 {
+		readLimit++
+	}
+	n, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(r, readLimit))
+	if err == nil {
+		err = tmp.Sync()
+	}
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
@@ -79,7 +90,9 @@ func (b *Blobs) Put(r io.Reader, maxBytes int64) (hash string, size int64, err e
 	}
 	hash = hex.EncodeToString(h.Sum(nil))
 	dst := filepath.Join(b.dir, hash)
-	if _, statErr := os.Stat(dst); statErr == nil {
+	// An existing file of the right size is trusted as a duplicate; a
+	// truncated leftover is replaced.
+	if info, statErr := os.Stat(dst); statErr == nil && info.Mode().IsRegular() && info.Size() == n {
 		os.Remove(tmpName)
 		return hash, n, nil
 	}
@@ -89,7 +102,19 @@ func (b *Blobs) Put(r io.Reader, maxBytes int64) (hash string, size int64, err e
 	if err = os.Rename(tmpName, dst); err != nil {
 		return "", 0, err
 	}
+	if err = syncDir(b.dir); err != nil {
+		return "", 0, err
+	}
 	return hash, n, nil
+}
+
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 // Open opens the blob for reading.

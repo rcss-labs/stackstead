@@ -2,6 +2,8 @@ package images
 
 import (
 	"archive/tar"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -77,20 +79,34 @@ func materializeOne(root *os.Root, p string, e FileEntry, b *Blobs) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+	h := sha256.New()
+	n, err := io.Copy(io.MultiWriter(out, h), in)
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
 		return err
 	}
-	if err := out.Close(); err != nil {
-		return err
+	if n != e.Size || hex.EncodeToString(h.Sum(nil)) != e.Hash {
+		root.Remove(rel)
+		return fmt.Errorf("blob for %q is corrupt (hash or size does not match the manifest)", p)
 	}
 	return root.Chmod(rel, mode)
 }
 
 // WriteContext writes dir as a tar build context: regular files only, those
 // excluded by dir/.dockerignore left out, sorted by path, owner 0, mtime at
-// the epoch, mode 0755 for executables and 0644 otherwise.
-func WriteContext(w io.Writer, dir string) error {
+// the epoch, mode 0755 for executables and 0644 otherwise. The file at
+// dockerfilePath (empty means "Dockerfile") and .dockerignore are always kept,
+// whatever the ignore rules say.
+func WriteContext(w io.Writer, dir, dockerfilePath string) error {
+	if dockerfilePath == "" {
+		dockerfilePath = "Dockerfile"
+	}
+	dockerfilePath, err := ValidatePath(dockerfilePath)
+	if err != nil {
+		return err
+	}
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return err
@@ -119,7 +135,7 @@ func WriteContext(w io.Writer, dir string) error {
 		if err != nil {
 			return err
 		}
-		if d.Type().IsRegular() && !ignore.Excluded(p) {
+		if d.Type().IsRegular() && (p == dockerfilePath || !ignore.Excluded(p)) {
 			files = append(files, p)
 		}
 		return nil

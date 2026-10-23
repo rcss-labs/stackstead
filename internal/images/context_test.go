@@ -12,7 +12,7 @@ import (
 )
 
 func TestMaterializeAndWriteContext(t *testing.T) {
-	b, _ := newTestBlobs(t)
+	b, blobDir := newTestBlobs(t)
 	lim := Limits{1 << 20, 1 << 20}
 	m, _, err := ApplyUpload(Manifest{}, b, []UploadFile{
 		up("Dockerfile", "FROM alpine:3.20\n"), up("src/app.py", "print(1)\n"),
@@ -41,7 +41,7 @@ func TestMaterializeAndWriteContext(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := WriteContext(&buf, dir); err != nil {
+	if err := WriteContext(&buf, dir, ""); err != nil {
 		t.Fatal(err)
 	}
 	tr := tar.NewReader(&buf)
@@ -77,8 +77,11 @@ func TestMaterializeAndWriteContext(t *testing.T) {
 	}
 	// The blob must keep its own mode: exec bits are set on a copy only.
 	h := m["src/app.py"].Hash
-	fi, _ := os.Stat(filepath.Join(filepath.Dir(dir), "blobs", h))
-	if fi != nil && fi.Mode().Perm() != 0o600 {
+	fi, err := os.Stat(filepath.Join(blobDir, h))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
 		t.Errorf("blob mode changed to %v", fi.Mode().Perm())
 	}
 }
@@ -103,10 +106,10 @@ func TestWriteContextNegatedIgnoreAndSizeStable(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "a.log"), []byte("x"), 0o644)
 	os.WriteFile(filepath.Join(dir, "keep.log"), []byte("x"), 0o644)
 	var one, two bytes.Buffer
-	if err := WriteContext(&one, dir); err != nil {
+	if err := WriteContext(&one, dir, ""); err != nil {
 		t.Fatal(err)
 	}
-	WriteContext(&two, dir)
+	WriteContext(&two, dir, "")
 	if !bytes.Equal(one.Bytes(), two.Bytes()) {
 		t.Fatal("tar is not reproducible")
 	}
@@ -120,6 +123,46 @@ func TestWriteContextNegatedIgnoreAndSizeStable(t *testing.T) {
 		names = append(names, h.Name)
 	}
 	if !reflect.DeepEqual(names, []string{".dockerignore", "Dockerfile", "keep.log"}) {
+		t.Fatalf("%v", names)
+	}
+}
+
+func TestMaterializeDetectsCorruptBlob(t *testing.T) {
+	b, blobDir := newTestBlobs(t)
+	m, _, err := ApplyUpload(Manifest{}, b, []UploadFile{up("src/app.py", "print(1)\n")}, Limits{1 << 20, 1 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := m["src/app.py"].Hash
+	if err := os.WriteFile(filepath.Join(blobDir, h), []byte("print(2)\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = Materialize(filepath.Join(t.TempDir(), "ctx"), m, b)
+	if err == nil || !strings.Contains(err.Error(), "src/app.py") {
+		t.Fatalf("want corrupt-blob error naming the path, got %v", err)
+	}
+}
+
+func TestWriteContextKeepsNestedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "build"), 0o755)
+	os.WriteFile(filepath.Join(dir, "build/prod.Dockerfile"), []byte("FROM a\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "app.txt"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(dir, ".dockerignore"), []byte("build\n*.Dockerfile\n.dockerignore\n"), 0o644)
+	var buf bytes.Buffer
+	if err := WriteContext(&buf, dir, "build/prod.Dockerfile"); err != nil {
+		t.Fatal(err)
+	}
+	tr := tar.NewReader(&buf)
+	var names []string
+	for {
+		h, err := tr.Next()
+		if err != nil {
+			break
+		}
+		names = append(names, h.Name)
+	}
+	if !reflect.DeepEqual(names, []string{".dockerignore", "app.txt", "build/prod.Dockerfile"}) {
 		t.Fatalf("%v", names)
 	}
 }

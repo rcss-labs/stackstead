@@ -81,3 +81,26 @@ func TestBlobsOpenRemoveGC(t *testing.T) {
 		t.Fatal("gc removed a kept blob")
 	}
 }
+
+func TestBlobsPutReplacesTruncatedLeftover(t *testing.T) {
+	b, err := OpenBlobs(filepath.Join(t.TempDir(), "blobs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, _, _ := b.Put(strings.NewReader("hello"), 10)
+	p := filepath.Join(b.dir, h)
+	os.WriteFile(p, []byte("he"), 0o600)
+	if _, _, err := b.Put(strings.NewReader("hello"), 10); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(p)
+	if string(got) != "hello" {
+		t.Fatalf("leftover not replaced: %q", got)
+	}
+	if _, _, err := b.Put(strings.NewReader("x"), -1); !errors.Is(err, ErrFileTooLarge) {
+		t.Fatalf("negative cap: %v", err)
+	}
+	if _, _, err := b.Put(strings.NewReader("x"), 9223372036854775807); err != nil {
+		t.Fatalf("max cap: %v", err)
+	}
+}

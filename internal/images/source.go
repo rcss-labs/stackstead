@@ -200,6 +200,9 @@ func ApplyRename(m Manifest, from, to string) (Manifest, string, error) {
 	}
 	for _, k := range keys {
 		target := dst + strings.TrimPrefix(k, src)
+		if clean, err := ValidatePath(target); err != nil || clean != target {
+			return nil, "", badPath(target, "renamed path is not valid")
+		}
 		if _, taken := next[target]; taken || next.pathConflict(target) {
 			return nil, "", fmt.Errorf("%w: %q", fs.ErrExist, target)
 		}
@@ -226,7 +229,7 @@ func ApplyDelete(m Manifest, p string) (Manifest, string, error) {
 }
 
 // ApplyDockerfile stores content as the file at p (normally "Dockerfile").
-func ApplyDockerfile(m Manifest, b *Blobs, p string, content []byte) (Manifest, string, error) {
+func ApplyDockerfile(m Manifest, b *Blobs, p string, content []byte, lim Limits) (Manifest, string, error) {
 	clean, err := ValidatePath(p)
 	if err != nil {
 		return nil, "", err
@@ -237,6 +240,12 @@ func ApplyDockerfile(m Manifest, b *Blobs, p string, content []byte) (Manifest, 
 	old, replacing := m[clean]
 	if !replacing && m.pathConflict(clean) {
 		return nil, "", badPath(p, "conflicts with an existing file or folder")
+	}
+	if int64(len(content)) > lim.MaxFileBytes {
+		return nil, "", fmt.Errorf("%w: %q", ErrFileTooLarge, clean)
+	}
+	if m.totalBytes()-old.Size+int64(len(content)) > lim.MaxContextBytes {
+		return nil, "", fmt.Errorf("%w: %q", ErrContextTooLarge, clean)
 	}
 	hash, size, err := b.Put(bytes.NewReader(content), stacks.MaxDockerfileBytes)
 	if err != nil {

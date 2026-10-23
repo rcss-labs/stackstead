@@ -191,16 +191,16 @@ func TestDeleteAndDockerfile(t *testing.T) {
 	if _, _, err := ApplyDelete(m, "zzz"); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("%v", err)
 	}
-	got, sum, err = ApplyDockerfile(m, b, "Dockerfile", []byte("FROM alpine:3.20\n"))
+	got, sum, err = ApplyDockerfile(m, b, "Dockerfile", []byte("FROM alpine:3.20\n"), lim)
 	if err != nil || sum != "edited Dockerfile" || got["Dockerfile"].Mode != 0o644 {
 		t.Fatalf("%v %q", err, sum)
 	}
 	for _, bad := range [][]byte{nil, []byte("  \n"), []byte("FROM a\x00"), []byte(strings.Repeat("a", 1<<20+1))} {
-		if _, _, err := ApplyDockerfile(m, b, "Dockerfile", bad); err == nil {
+		if _, _, err := ApplyDockerfile(m, b, "Dockerfile", bad, lim); err == nil {
 			t.Errorf("accepted bad Dockerfile of %d bytes", len(bad))
 		}
 	}
-	if _, _, err := ApplyDockerfile(m, b, "../Dockerfile", []byte("FROM a")); !errors.Is(err, ErrBadPath) {
+	if _, _, err := ApplyDockerfile(m, b, "../Dockerfile", []byte("FROM a"), lim); !errors.Is(err, ErrBadPath) {
 		t.Fatalf("%v", err)
 	}
 }
@@ -229,5 +229,45 @@ func TestManifestJSONRoundTrip(t *testing.T) {
 		if _, err := ParseManifest(bad); err == nil {
 			t.Errorf("accepted %s", bad)
 		}
+	}
+}
+
+func TestRenameRejectsOverlongTargets(t *testing.T) {
+	b, _ := newTestBlobs(t)
+	lim := Limits{1 << 20, 1 << 20}
+	deep := strings.Repeat("d/", 1990) + "f"
+	m, _, err := ApplyUpload(Manifest{}, b, []UploadFile{up("s/"+deep, "1"), up("x", "2")}, lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("n", 255)
+	// Child path becomes longer than 4096 bytes once the folder name grows.
+	if _, _, err := ApplyRename(m, "s", strings.Repeat(long+"/", 1)+"z"); !errors.Is(err, ErrBadPath) {
+		t.Errorf("child over 4096 bytes: %v", err)
+	}
+	if _, _, err := ApplyRename(m, "x", strings.Repeat("a", 300)); !errors.Is(err, ErrBadPath) {
+		t.Errorf("long segment: %v", err)
+	}
+	if _, _, err := ApplyRename(m, "x", strings.Repeat("a/", 2100)+"a"); !errors.Is(err, ErrBadPath) {
+		t.Errorf("long dst: %v", err)
+	}
+}
+
+func TestApplyDockerfileRespectsCaps(t *testing.T) {
+	b, _ := newTestBlobs(t)
+	m, _, _ := ApplyUpload(Manifest{}, b, []UploadFile{up("a", "12345678")}, Limits{100, 100})
+	before := m.JSON()
+	got, _, err := ApplyDockerfile(m, b, "Dockerfile", []byte("FROM alpine:3.20\n"), Limits{100, 20})
+	if !errors.Is(err, ErrContextTooLarge) {
+		t.Fatalf("want ErrContextTooLarge, got %v", err)
+	}
+	if got != nil || m.JSON() != before {
+		t.Fatal("manifest changed")
+	}
+	if _, _, err := ApplyDockerfile(m, b, "Dockerfile", []byte("FROM alpine:3.20\n"), Limits{5, 100}); !errors.Is(err, ErrFileTooLarge) {
+		t.Fatalf("want ErrFileTooLarge, got %v", err)
+	}
+	if _, _, err := ApplyDockerfile(m, b, "Dockerfile", []byte("FROM alpine:3.20\n"), Limits{100, 100}); err != nil {
+		t.Fatal(err)
 	}
 }
