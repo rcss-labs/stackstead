@@ -37,6 +37,18 @@ describe('GitHubCard', () => {
     expect((screen.getByLabelText('Token') as HTMLInputElement).value).toBe('');
   });
 
+  it('keeps Save disabled for a whitespace-only token and trims what it sends', async () => {
+    mount({ configured: false, login: '' }, { 'PUT /api/settings/github': { body: { configured: true, login: 'o' } } });
+    const field = await screen.findByLabelText('Token');
+    await userEvent.type(field, '   ');
+    await userEvent.click(screen.getByRole('button', { name: 'Save token' }));
+    expect(calls('PUT', '/api/settings/github')).toHaveLength(0);
+    await userEvent.type(field, 'tok ');
+    await userEvent.click(screen.getByRole('button', { name: 'Save token' }));
+    await waitFor(() => expect(calls('PUT', '/api/settings/github')).toHaveLength(1));
+    expect(calls('PUT', '/api/settings/github')[0].body).toEqual({ token: 'tok' });
+  });
+
   it('shows the test message inline', async () => {
     mount({ configured: true, login: 'octocat' }, { 'POST /api/settings/github/test': { body: { ok: false, login: '', message: 'Bad credentials' } } });
     await userEvent.click(await screen.findByRole('button', { name: 'Test connection' }));

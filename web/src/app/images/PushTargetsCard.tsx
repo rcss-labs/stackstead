@@ -28,8 +28,8 @@ function TargetDialog(props: { image: LibraryImageDetail; target?: PushTarget; o
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (pending) return;
-    // GitHub images are pushed manually, so auto-push is always off for them.
-    const request = { registryId, repository: repository.trim(), autoPush: image.source !== 'github' && autoPush };
+    // GitHub images are pushed manually: new targets start with auto-push off, and an edit leaves the stored value alone.
+    const request = { registryId, repository: repository.trim(), autoPush: image.source === 'github' ? (target?.autoPush ?? false) : autoPush };
     setPending(true);
     setError(undefined);
     try {

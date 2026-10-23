@@ -82,6 +82,32 @@ describe('GitHub images', () => {
     expect(within(await screen.findByRole('dialog')).queryByLabelText(/Push automatically/)).toBeNull();
   });
 
+  it('keeps auto-push on when editing an existing GitHub target', async () => {
+    backend = installImagesBackend({
+      ...ghRoutes(),
+      'GET /api/images/registries': { body: [{ id: 'r1', name: 'Hub', kind: 'dockerhub', host: 'docker.io' }] },
+      [`PUT ${IMG}/push-targets/t1`]: { body: {} },
+    });
+    mountImages('/images/gh?tab=settings');
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit me/gh' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    await waitFor(() => expect(dialog.getByRole('option', { name: 'Hub' })).toBeTruthy());
+    await userEvent.click(dialog.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(backend.calls('PUT', `${IMG}/push-targets/t1`)).toHaveLength(1));
+    expect((backend.calls('PUT', `${IMG}/push-targets/t1`)[0].body as { autoPush: boolean }).autoPush).toBe(true);
+  });
+
+  it('points to Settings when GitHub refuses the token, and drops the stale Dockerfile', async () => {
+    backend = installImagesBackend({
+      [`GET ${IMG}`]: { body: ghDetail() },
+      [`GET ${IMG}/github/head`]: { status: 401, body: { error: 'bad credentials' } },
+    });
+    mountImages('/images/gh?tab=source');
+    expect(await screen.findByText(/bad credentials/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Settings → GitHub' }).getAttribute('href')).toBe('/settings#settings-github');
+    expect(screen.queryByLabelText('Dockerfile at branch head')).toBeNull();
+  });
+
   async function openBuild() {
     backend = installImagesBackend({ ...ghRoutes(), [`POST ${IMG}/builds`]: { body: { version: version(), operation: { id: 'op-b1' } } } });
     mountImages('/images/gh?tab=versions');

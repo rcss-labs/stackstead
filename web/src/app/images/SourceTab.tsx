@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { Link } from 'react-router';
 import { ApiError } from '$lib/api/client';
 import type { GitHubHead, ImageFile, LibraryImageDetail } from '$lib/api/imageTypes';
 import { createComposeEditor } from '$lib/stacks/compose';
@@ -18,20 +19,26 @@ export function SourceTab({ image, onChanged }: { image: LibraryImageDetail; onC
   return image.source === 'github' ? <GitHubSource image={image} /> : <UploadSource image={image} onChanged={onChanged} />;
 }
 
+const encodePath = (p: string) => p.split('/').map(encodeURIComponent).join('/');
+
 function GitHubSource({ image }: { image: LibraryImageDetail }) {
-  const { api } = useServer();
+  const { api, href } = useServer();
   const [head, setHead] = useState<GitHubHead>();
   const [error, setError] = useState<string>();
+  const [needsToken, setNeedsToken] = useState(false);
   const [loading, setLoading] = useState(true);
   const slug = image.slug;
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(undefined);
+    setHead(undefined);
+    setNeedsToken(false);
     try {
       setHead(await api.githubHead(slug));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      setNeedsToken(e instanceof ApiError && (e.status === 401 || e.status === 403 || /github|token|unconfigured/i.test(e.code ?? '')));
     } finally {
       setLoading(false);
     }
@@ -57,6 +64,12 @@ function GitHubSource({ image }: { image: LibraryImageDetail }) {
         {error && (
           <Banner kind="danger" title="Could not reach GitHub">
             {error}
+            {needsToken && (
+              <>
+                {' '}
+                Check the GitHub token in <Link to={href('/settings#settings-github')}>Settings → GitHub</Link>.
+              </>
+            )}
           </Banner>
         )}
         {head && (
@@ -66,7 +79,7 @@ function GitHubSource({ image }: { image: LibraryImageDetail }) {
                 Branch head <span className={styles.mono}>{head.commit.slice(0, 7)}</span>
               </span>
               <span className={styles.spacer} />
-              <a href={`https://github.com/${gh?.repo ?? ''}/blob/${head.commit}/${head.path}`} target="_blank" rel="noreferrer noopener">
+              <a href={`https://github.com/${encodePath(gh?.repo ?? '')}/blob/${head.commit}/${encodePath(head.path)}`} target="_blank" rel="noreferrer noopener">
                 Open on GitHub
               </a>
             </div>

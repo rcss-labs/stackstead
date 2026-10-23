@@ -31,7 +31,7 @@ export function GitHubCard() {
     setSaving(true);
     setError(undefined);
     try {
-      setSettings(await api.setGitHubToken(token));
+      setSettings(await api.setGitHubToken(token.trim()));
       setToken('');
       setResult(undefined);
     } catch (e) {
@@ -66,14 +66,14 @@ export function GitHubCard() {
       {settings &&
         (settings.configured ? <Pill tone="success">{`Signed in as ${settings.login}`}</Pill> : <Pill tone="muted">Not configured</Pill>)}
       <form className={styles.form} onSubmit={(e) => void save(e)}>
-        <Field label="Token" id={`${uid}-token`} hint={settings?.configured ? 'Leave blank to keep the stored token.' : undefined}>
+        <Field label="Token" id={`${uid}-token`} hint={settings?.configured ? 'Saving replaces the stored token.' : undefined}>
           {({ readOnly: _, ...c }) => <input {...c} type="password" value={token} autoComplete="new-password" onChange={(e) => setToken(e.target.value)} />}
         </Field>
         <div className={styles.actions}>
           <Button variant="secondary" loading={testing} disabledReason={settings?.configured ? undefined : 'Save a token first'} onClick={() => void test()}>
             Test connection
           </Button>
-          <Button variant="primary" type="submit" loading={saving} disabledReason={token === '' ? 'Enter a token' : undefined}>
+          <Button variant="primary" type="submit" loading={saving} disabledReason={token.trim() === '' ? 'Enter a token' : undefined}>
             Save token
           </Button>
         </div>
