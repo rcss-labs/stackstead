@@ -25,6 +25,10 @@ type sessionConfig struct {
 	PongTimeout time.Duration // close if no pong arrived within this long
 	IdleTimeout time.Duration // 0 disables the idle timeout
 	DetachCheck time.Duration // wait after a disconnect before inspecting
+	// WriteTimeout is how long (real time) the session waits for the writer
+	// to flush the terminal frame before closing anyway. Pass the same value
+	// the ws adapter uses for its per-write deadline. Default 60s.
+	WriteTimeout time.Duration
 
 	Now   func() time.Time
 	After func(d time.Duration) <-chan time.Time
@@ -39,7 +43,7 @@ const (
 	idleWarningLead  = time.Minute
 	exitInspectTries = 20
 	exitInspectWait  = 50 * time.Millisecond
-	controlWriteWait = 250 * time.Millisecond // real time, not the injected clock
+	defaultFlushWait = 60 * time.Second
 )
 
 type sessionEnd int
@@ -56,8 +60,16 @@ type session struct {
 	be     execBackend
 	cfg    sessionConfig
 
-	writeMu sync.Mutex  // serialises every ws write
-	sealed  atomic.Bool // a terminal frame was sent or the client is gone
+	// One writer goroutine owns every ws write. Control frames always go
+	// before data; data is unbuffered so stdout backpressure reaches the
+	// stream reader, not the socket.
+	control      chan controlMsg
+	data         chan []byte
+	pingPending  atomic.Bool
+	terminalSent atomic.Bool
+	stopWriter   chan struct{}
+	stopOnce     sync.Once
+	writerDone   chan struct{}
 
 	stateMu      sync.Mutex
 	lastActivity time.Time
@@ -71,10 +83,15 @@ type session struct {
 // session ends, and returns the audit result: "exit N", "idle",
 // "session_expired", "shutdown", "disconnected", "detached" or "error".
 func runSession(ctx context.Context, ws wsConn, stream engine.ExecStream, be execBackend, cfg sessionConfig) string {
-	s := &session{ctx: ctx, ws: ws, stream: stream, be: be, cfg: cfg, ends: make(chan sessionEnd, 2)}
+	s := &session{ctx: ctx, ws: ws, stream: stream, be: be, cfg: cfg, ends: make(chan sessionEnd, 2),
+		control: make(chan controlMsg, 4), data: make(chan []byte), stopWriter: make(chan struct{}), writerDone: make(chan struct{})}
+	if s.cfg.WriteTimeout <= 0 {
+		s.cfg.WriteTimeout = defaultFlushWait
+	}
 	start := cfg.Now()
 	s.lastActivity, s.lastPong = start, start
 
+	go s.writeLoop()
 	go s.readClient()
 	go s.readStream()
 
@@ -104,9 +121,7 @@ func runSession(ctx context.Context, ws wsConn, stream engine.ExecStream, be exe
 			if sincePong >= cfg.PongTimeout {
 				return s.finishClientGone()
 			}
-			if err := s.writeText(controlMsg{Type: "ping"}); err != nil {
-				return s.finishClientGone()
-			}
+			s.enqueuePing()
 			pingCh = cfg.After(cfg.Ping)
 
 		case <-idleCh:
@@ -121,9 +136,7 @@ func runSession(ctx context.Context, ws wsConn, stream engine.ExecStream, be exe
 					warned = true
 					// Round up so the client never sees 0 or a figure a second short.
 					remaining := max(1, int((cfg.IdleTimeout-elapsed+time.Second-1)/time.Second))
-					if err := s.writeText(controlMsg{Type: "idle_warning", Seconds: remaining}); err != nil {
-						return s.finishClientGone()
-					}
+					s.enqueue(controlMsg{Type: "idle_warning", Seconds: remaining})
 				}
 				idleCh = cfg.After(cfg.IdleTimeout - elapsed)
 			default:
@@ -212,69 +225,108 @@ func (s *session) readStream() {
 		s.touchActivity()
 		frame := make([]byte, 0, len(p)+1)
 		frame = append(append(frame, kind), p...)
-		if err := s.writeBinary(frame); err != nil {
-			s.signal(endClientGone)
+		select {
+		case s.data <- frame:
+		case <-s.writerDone: // terminal frame sent or client gone
 			return
 		}
 	}
 }
 
-var errSealed = fmt.Errorf("exec session: no more frames")
-
-func (s *session) writeBinary(p []byte) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if s.sealed.Load() {
-		return errSealed
-	}
-	return s.ws.WriteBinary(p)
+func isTerminal(m controlMsg) bool {
+	return m.Type == "exit" || m.Type == "closed" || m.Type == "error"
 }
 
-// lockWriteWithin takes the write mutex, giving up after d of real time. A
-// write stuck on a dead client holds the mutex; the control loop must not
-// freeze behind it.
-func (s *session) lockWriteWithin(d time.Duration) bool {
-	for deadline := time.Now().Add(d); ; time.Sleep(time.Millisecond) {
-		if s.writeMu.TryLock() {
+// writeLoop is the only goroutine that writes to the WebSocket. Control
+// frames win over data. The terminal frame is its last write; data queued
+// behind it is dropped. A write error means the client is gone.
+func (s *session) writeLoop() {
+	defer close(s.writerDone)
+	writeControl := func(m controlMsg) (stop bool) {
+		err := s.ws.WriteText(m)
+		if m.Type == "ping" {
+			s.pingPending.Store(false)
+		}
+		if isTerminal(m) {
 			return true
 		}
-		if time.Now().After(deadline) {
-			return false
+		if err != nil {
+			s.signal(endClientGone)
+			return true
+		}
+		return false
+	}
+	for {
+		select { // control first, without waiting for data
+		case m := <-s.control:
+			if writeControl(m) {
+				return
+			}
+			continue
+		default:
+		}
+		select {
+		case m := <-s.control:
+			if writeControl(m) {
+				return
+			}
+		case p := <-s.data:
+			if err := s.ws.WriteBinary(p); err != nil {
+				s.signal(endClientGone)
+				return
+			}
+		case <-s.stopWriter:
+			return
 		}
 	}
 }
 
-// writeText sends a control frame. If a stuck write holds the connection, the
-// frame is skipped and the pong timeout decides the client's fate.
-func (s *session) writeText(m controlMsg) error {
-	if !s.lockWriteWithin(controlWriteWait) {
-		return nil
+// enqueue queues a control frame without ever blocking the control loop; if
+// the queue is full the frame is dropped.
+func (s *session) enqueue(m controlMsg) {
+	select {
+	case s.control <- m:
+	default:
 	}
-	defer s.writeMu.Unlock()
-	if s.sealed.Load() {
-		return errSealed
-	}
-	return s.ws.WriteText(m)
 }
 
-// sendTerminal seals the session, then sends the single final frame if the
-// connection is writable.
+// enqueuePing queues a ping unless one is already waiting to be written.
+func (s *session) enqueuePing() {
+	if !s.pingPending.CompareAndSwap(false, true) {
+		return
+	}
+	select {
+	case s.control <- controlMsg{Type: "ping"}:
+	default:
+		s.pingPending.Store(false)
+	}
+}
+
+// sendTerminal queues the single final frame and waits (bounded) for the
+// writer to flush it.
 func (s *session) sendTerminal(m controlMsg) {
-	if !s.sealed.CompareAndSwap(false, true) {
+	if !s.terminalSent.CompareAndSwap(false, true) {
 		return
 	}
-	if !s.lockWriteWithin(controlWriteWait) {
+	select {
+	case s.control <- m:
+	case <-s.writerDone:
 		return
 	}
-	defer s.writeMu.Unlock()
-	_ = s.ws.WriteText(m)
+	select {
+	case <-s.writerDone:
+	case <-time.After(s.cfg.WriteTimeout):
+	}
 }
 
-func (s *session) seal() { s.sealed.Store(true) }
+// seal stops the writer; no further frames are written.
+func (s *session) seal() { s.stopOnce.Do(func() { close(s.stopWriter) }) }
 
 func (s *session) shutdownConns() {
 	_ = s.stream.Close()
-	_ = s.ws.Close() // last: x/net Close waits for an in-flight write
+	// Last: x/net Close waits behind an in-flight write, bounded by the
+	// per-write deadline.
+	_ = s.ws.Close()
 }
 
 // finishClosed ends a session the process did not cause.
@@ -315,12 +367,12 @@ func (s *session) finishExit() string {
 func (s *session) finishClientGone() string {
 	s.seal()
 	s.shutdownConns()
-	select {
-	case <-s.cfg.After(s.cfg.DetachCheck):
-	case <-s.ctx.Done():
-		return "disconnected"
-	}
-	info, err := s.be.Inspect(s.ctx)
+	<-s.cfg.After(s.cfg.DetachCheck)
+	// A fresh context: a cancelled request must still be able to report
+	// "detached".
+	ictx, cancel := context.WithTimeout(context.Background(), s.cfg.DetachCheck+2*time.Second)
+	defer cancel()
+	info, err := s.be.Inspect(ictx)
 	if err == nil && info.Running {
 		return "detached"
 	}
