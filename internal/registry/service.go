@@ -150,6 +150,9 @@ func build(base Registry, req Request) (Registry, error) {
 		if err != nil {
 			return Registry{}, err
 		}
+		if e.AccountID == "" {
+			e.AccountID = r.ECR.AccountID // discovered by a test; keep it across edits
+		}
 		r.ECR = e
 		if e.AccountID != "" && e.Region != "" {
 			r.Host = e.AccountID + ".dkr.ecr." + e.Region + ".amazonaws.com"
@@ -272,10 +275,29 @@ func (s *Service) Test(ctx context.Context, id string) (TestResult, error) {
 		return TestResult{OK: false, Host: r.Host, Message: msg}, errors.New(msg)
 	}
 	res.Message = scrub(r, res.Message)
+	if res.OK && r.Kind == KindECR {
+		if err := s.storeDiscoveredECRHost(ctx, r, res.Host); err != nil {
+			return res, err
+		}
+	}
 	if rerr := s.store.RecordTest(context.WithoutCancel(ctx), id, res.OK, res.Message); rerr != nil {
 		return res, rerr
 	}
 	return res, nil
+}
+
+// storeDiscoveredECRHost saves the host (and its account and region) that ECR
+// reported, so pushes can address the registry.
+func (s *Service) storeDiscoveredECRHost(ctx context.Context, r Registry, host string) error {
+	account := ecrAccountID(host)
+	if host == "" || account == "" || (r.Host == host && r.ECR.AccountID == account) {
+		return nil
+	}
+	r.Host, r.ECR.AccountID = host, account
+	if r.ECR.Region == "" {
+		r.ECR.Region = ecrRegion(host)
+	}
+	return s.store.Update(context.WithoutCancel(ctx), r)
 }
 
 // Credentials returns the push credential and registry host for id, or
@@ -307,5 +329,9 @@ func PushRef(r Registry, repository, tag string) string {
 		}
 		return HubHost + "/" + repository + ":" + tag
 	}
-	return r.Host + "/" + repository + ":" + tag
+	host := r.ecrHost()
+	if host == "" {
+		return "" // the account is not known yet; callers check configured first
+	}
+	return host + "/" + repository + ":" + tag
 }

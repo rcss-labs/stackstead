@@ -48,6 +48,8 @@ func SignV4(req *http.Request, body []byte, c Credentials, region, service strin
 	req.Header.Set("X-Amz-Date", amzDate)
 	if c.SessionToken != "" {
 		req.Header.Set("X-Amz-Security-Token", c.SessionToken.Reveal())
+	} else {
+		req.Header.Del("X-Amz-Security-Token")
 	}
 	req.Header.Del("Authorization")
 
@@ -55,13 +57,26 @@ func SignV4(req *http.Request, body []byte, c Credentials, region, service strin
 	if req.Host != "" {
 		host = req.Host
 	}
-	headers := map[string]string{"host": host}
-	for name, vals := range req.Header {
-		trimmed := make([]string, len(vals))
-		for i, v := range vals {
-			trimmed[i] = strings.Join(strings.Fields(v), " ")
+	// Header names that differ only in case merge into one entry; a Host
+	// entry in req.Header is ignored in favour of the real request host.
+	rawNames := make([]string, 0, len(req.Header))
+	for name := range req.Header {
+		rawNames = append(rawNames, name)
+	}
+	sort.Strings(rawNames)
+	values := map[string][]string{}
+	for _, name := range rawNames {
+		lower := strings.ToLower(strings.TrimSpace(name))
+		if lower == "host" {
+			continue
 		}
-		headers[strings.ToLower(strings.TrimSpace(name))] = strings.Join(trimmed, ",")
+		for _, v := range req.Header[name] {
+			values[lower] = append(values[lower], strings.Join(strings.Fields(v), " "))
+		}
+	}
+	headers := map[string]string{"host": host}
+	for name, vals := range values {
+		headers[name] = strings.Join(vals, ",")
 	}
 	names := make([]string, 0, len(headers))
 	for n := range headers {

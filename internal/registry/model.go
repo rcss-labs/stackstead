@@ -96,17 +96,38 @@ func (r Registry) configured() bool {
 	case KindDockerHub:
 		return r.Hub.Username != "" && r.Hub.Token != ""
 	case KindECR:
-		if r.ECR.Region == "" {
-			return false
-		}
-		switch r.ECR.Mode {
-		case ECRStatic:
-			return r.ECR.AccessKeyID != "" && r.ECR.SecretAccessKey != ""
-		case ECRProfile:
-			return r.ECR.Profile != ""
-		case ECRRole:
-			return true
-		}
+		// A registry is usable only when its host can be built, so a first
+		// connection test (which discovers the account) comes before a push.
+		return r.ecrHost() != "" && r.ecrCredentialsConfigured()
+	}
+	return false
+}
+
+// ecrHost is the registry host: the stored one, else built from the account
+// id and region, else empty.
+func (r Registry) ecrHost() string {
+	if r.Host != "" {
+		return r.Host
+	}
+	if r.ECR.AccountID != "" && r.ECR.Region != "" {
+		return r.ECR.AccountID + ".dkr.ecr." + r.ECR.Region + ".amazonaws.com"
+	}
+	return ""
+}
+
+// ecrCredentialsConfigured reports whether the ECR mode has what it needs to
+// authenticate, independent of the host.
+func (r Registry) ecrCredentialsConfigured() bool {
+	if r.ECR.Region == "" {
+		return false
+	}
+	switch r.ECR.Mode {
+	case ECRStatic:
+		return r.ECR.AccessKeyID != "" && r.ECR.SecretAccessKey != ""
+	case ECRProfile:
+		return r.ECR.Profile != ""
+	case ECRRole:
+		return true
 	}
 	return false
 }
