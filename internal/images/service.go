@@ -359,31 +359,38 @@ func (s *Service) Update(ctx context.Context, user, slug string, req UpdateReque
 // refuses with *InUseError while any stack uses one of its versions, and with
 // ErrBuildRunning during a build.
 func (s *Service) Delete(ctx context.Context, user, slug string) error {
-	unlock := s.lockImage(slug)
-	defer unlock()
-	img, err := s.store.Image(ctx, slug)
-	if err != nil {
-		return err
-	}
 	_, owner, err := s.selfInfo(ctx)
 	if err != nil {
 		return err
 	}
-	versions, err := s.store.Versions(ctx, img.ID)
+	// The usage check calls every peer and the untag calls Docker, so neither
+	// runs under the image lock. The state is read again under the lock before
+	// the untag and before the rows go.
+	img, live, err := s.deletableState(ctx, slug)
 	if err != nil {
 		return err
 	}
-	var live []Version
-	for _, v := range versions {
-		switch v.Status {
-		case VersionBuilding:
-			return ErrBuildRunning
-		case VersionSucceeded:
-			live = append(live, v)
+	if len(live) > 0 {
+		if err := s.checkUnused(ctx, imageref.Ref{Owner: owner, Slug: slug}); err != nil {
+			return err
+		}
+	}
+	checked := make(map[string]bool, len(live))
+	for _, v := range live {
+		checked[v.ID] = true
+	}
+	img, live, err = s.deletableState(ctx, slug)
+	if err != nil {
+		return err
+	}
+	for _, v := range live {
+		if !checked[v.ID] {
+			return ErrImageBusy // built while the peers were asked: not checked yet
 		}
 	}
 	if len(live) > 0 {
-		if err := s.checkUnused(ctx, imageref.Ref{Owner: owner, Slug: slug}); err != nil {
+		// A stack may have started using the image while the peers were asked.
+		if err := s.checkUnusedLocally(ctx, imageref.Ref{Owner: owner, Slug: slug}); err != nil {
 			return err
 		}
 	}
@@ -391,6 +398,11 @@ func (s *Service) Delete(ctx context.Context, user, slug string) error {
 		if err := s.removeDockerTag(ctx, imageref.Format(owner, slug, v.Tag)); err != nil {
 			return err
 		}
+	}
+	unlock := s.lockImage(slug)
+	defer unlock()
+	if _, _, err := s.deletableStateLocked(ctx, slug); err != nil { // a build may have started meanwhile
+		return err
 	}
 	if err := s.store.DeleteImage(ctx, img.ID); err != nil {
 		return err
@@ -400,6 +412,35 @@ func (s *Service) Delete(ctx context.Context, user, slug string) error {
 	}
 	s.record(ctx, user, "image.delete", slug, slug, img.Name, "succeeded", "")
 	return nil
+}
+
+// deletableState reads the image and its succeeded versions under the image
+// lock and refuses with ErrBuildRunning while a version builds.
+func (s *Service) deletableState(ctx context.Context, slug string) (Image, []Version, error) {
+	unlock := s.lockImage(slug)
+	defer unlock()
+	return s.deletableStateLocked(ctx, slug)
+}
+
+func (s *Service) deletableStateLocked(ctx context.Context, slug string) (Image, []Version, error) {
+	img, err := s.store.Image(ctx, slug)
+	if err != nil {
+		return Image{}, nil, err
+	}
+	versions, err := s.store.Versions(ctx, img.ID)
+	if err != nil {
+		return Image{}, nil, err
+	}
+	var live []Version
+	for _, v := range versions {
+		switch v.Status {
+		case VersionBuilding:
+			return Image{}, nil, ErrBuildRunning
+		case VersionSucceeded:
+			live = append(live, v)
+		}
+	}
+	return img, live, nil
 }
 
 func (s *Service) removeDockerTag(ctx context.Context, ref string) error {

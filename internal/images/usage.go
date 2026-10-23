@@ -64,34 +64,63 @@ func (s *Service) usageSource() UsageSource {
 	return s.usage
 }
 
+func refMatcher(ref imageref.Ref) func(imageref.Ref) bool {
+	return func(r imageref.Ref) bool {
+		return r.Owner == ref.Owner && r.Slug == ref.Slug && (ref.Tag == "" || r.Tag == ref.Tag)
+	}
+}
+
+// usedLocally lists the stack services on this server whose reference matches.
+func (s *Service) usedLocally(ctx context.Context, matches func(imageref.Ref) bool) ([]UsedBy, error) {
+	uses := []UsedBy{}
+	src := s.usageSource()
+	if src == nil {
+		return uses, nil
+	}
+	me, _, err := s.selfInfo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	usages, err := src.LibraryUsage(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read library usage: %w", err)
+	}
+	for _, u := range usages {
+		if matches(u.Ref) {
+			uses = append(uses, UsedBy{Server: me.InstanceID, ServerName: me.Name, Stack: u.Stack, Service: u.Service})
+		}
+	}
+	return uses, nil
+}
+
 // usedBy lists the stack services running ref (any tag when ref.Tag is
 // empty) on this server and on every active peer. Peers that cannot be asked
 // are returned in unreachable: the caller must not treat them as "unused".
 func (s *Service) usedBy(ctx context.Context, ref imageref.Ref) (uses []UsedBy, unreachable []ServerInfo, err error) {
-	uses, unreachable = []UsedBy{}, []ServerInfo{}
-	matches := func(r imageref.Ref) bool {
-		return r.Owner == ref.Owner && r.Slug == ref.Slug && (ref.Tag == "" || r.Tag == ref.Tag)
-	}
-	if src := s.usageSource(); src != nil {
-		me, _, err := s.selfInfo(ctx)
-		if err != nil {
-			return nil, nil, err
-		}
-		usages, err := src.LibraryUsage(ctx)
-		if err != nil {
-			return nil, nil, fmt.Errorf("read library usage: %w", err)
-		}
-		for _, u := range usages {
-			if matches(u.Ref) {
-				uses = append(uses, UsedBy{Server: me.InstanceID, ServerName: me.Name, Stack: u.Stack, Service: u.Service})
-			}
-		}
+	matches := refMatcher(ref)
+	uses, err = s.usedLocally(ctx, matches)
+	if err != nil {
+		return nil, nil, err
 	}
 	peerUses, unreachable, err := s.peerUsage(ctx, matches)
 	if err != nil {
 		return nil, nil, err
 	}
 	return append(uses, peerUses...), unreachable, nil
+}
+
+// checkUnusedLocally refuses with *InUseError when a stack on this server
+// uses ref. It makes no peer call, so it is cheap enough to repeat under the
+// image lock after checkUnused has asked every server.
+func (s *Service) checkUnusedLocally(ctx context.Context, ref imageref.Ref) error {
+	used, err := s.usedLocally(ctx, refMatcher(ref))
+	if err != nil {
+		return err
+	}
+	if len(used) > 0 {
+		return &InUseError{UsedBy: used, Unreachable: []ServerInfo{}}
+	}
+	return nil
 }
 
 // checkUnused refuses with *InUseError when ref is in use anywhere or when

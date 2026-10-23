@@ -342,42 +342,59 @@ func (s *Service) VersionDetail(ctx context.Context, slug, id string) (VersionDe
 // DeleteVersion removes a version, its Docker tag and its log. It refuses with
 // *InUseError while a stack uses the version and ErrBuildRunning while it builds.
 func (s *Service) DeleteVersion(ctx context.Context, user, slug, id string) error {
-	unlock := s.lockImage(slug)
-	defer unlock()
-	img, v, err := s.versionOf(ctx, slug, id)
-	if err != nil {
-		return err
-	}
-	if v.Status == VersionBuilding {
-		return ErrBuildRunning
-	}
 	_, owner, err := s.selfInfo(ctx)
 	if err != nil {
 		return err
 	}
+	// The usage check calls every peer, so it runs with no lock held. The row
+	// is read again under the lock before anything is removed.
+	v, err := s.deletableVersion(ctx, slug, id)
+	if err != nil {
+		return err
+	}
+	ref := imageref.Ref{Owner: owner, Slug: slug, Tag: v.Tag}
 	if v.Status == VersionSucceeded {
-		if err := s.checkUnused(ctx, imageref.Ref{Owner: owner, Slug: slug, Tag: v.Tag}); err != nil {
+		if err := s.checkUnused(ctx, ref); err != nil {
 			return err
 		}
 	}
-	if err := s.removeVersionLocked(ctx, img.Slug, owner, v); err != nil {
+	if v, err = s.deletableVersion(ctx, slug, id); err != nil {
+		return err
+	}
+	if v.Status == VersionSucceeded {
+		// A stack may have started using the version while the peers were asked.
+		if err := s.checkUnusedLocally(ctx, ref); err != nil {
+			return err
+		}
+		// Never forced, so an image ID shared with another tag survives. Only a
+		// live version owns its reference; a failed one may share the tag.
+		if err := s.removeDockerTag(ctx, s.Ref(owner, slug, v.Tag)); err != nil {
+			return err
+		}
+	}
+	unlock := s.lockImage(slug)
+	err = s.deleteVersionRow(ctx, slug, v)
+	unlock()
+	if err != nil {
 		return err
 	}
 	s.record(ctx, user, "image.version", slug, v.Tag, "deleted version "+v.Tag, "succeeded", "")
 	return nil
 }
 
-// removeVersionLocked deletes a version: its Docker tag (never forced, so an
-// image ID shared with another tag survives), its row with the pushes and its
-// log. The caller holds the image lock and has checked that it is unused.
-func (s *Service) removeVersionLocked(ctx context.Context, slug, owner string, v Version) error {
-	// Only a live version owns its reference; a failed one may share the tag.
-	if v.Status == VersionSucceeded {
-		if err := s.removeDockerTag(ctx, s.Ref(owner, slug, v.Tag)); err != nil {
-			return err
-		}
+// deletableVersion reads a version under the image lock and refuses with
+// ErrBuildRunning while it builds.
+func (s *Service) deletableVersion(ctx context.Context, slug, id string) (Version, error) {
+	unlock := s.lockImage(slug)
+	defer unlock()
+	_, v, err := s.versionOf(ctx, slug, id)
+	if err != nil {
+		return Version{}, err
 	}
-	return s.deleteVersionRow(ctx, slug, v)
+	if v.Status == VersionBuilding {
+		return Version{}, ErrBuildRunning
+	}
+	return v, nil
 }
 
 // deleteVersionRow removes a version's row (pushes cascade) and its log file.

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -220,9 +221,19 @@ func (r *recordingLog) last(kind string) (actionlog.Entry, bool) {
 	return actionlog.Entry{}, false
 }
 
-type fakeUsage struct{ usages []imageref.Usage }
+type fakeUsage struct {
+	usages []imageref.Usage
+	onCall func(call int) // runs inside each LibraryUsage call, after usages is read
+	calls  atomic.Int32
+}
 
-func (u *fakeUsage) LibraryUsage(context.Context) ([]imageref.Usage, error) { return u.usages, nil }
+func (u *fakeUsage) LibraryUsage(context.Context) ([]imageref.Usage, error) {
+	usages := u.usages
+	if u.onCall != nil {
+		u.onCall(int(u.calls.Add(1)))
+	}
+	return usages, nil
+}
 
 type harness struct {
 	svc   *Service
