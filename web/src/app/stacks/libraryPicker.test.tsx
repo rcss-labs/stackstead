@@ -77,6 +77,15 @@ describe('LibraryPicker', () => {
     expect(screen.getAllByRole('radio')).toHaveLength(2);
   });
 
+  it('says a peer-owned version is fetched on save, and says nothing for a local one', async () => {
+    mount(library([image('web', local, version('2')), image('api', peer, version('7'))]));
+    const u = userEvent.setup();
+    await u.click(await screen.findByRole('radio', { name: 'api' }));
+    expect(await screen.findByText(/mini owns this image; this server fetches the version when you save/)).toBeTruthy();
+    await u.click(screen.getByRole('radio', { name: 'web' }));
+    await waitFor(() => expect(screen.queryByText(/fetches the version when you save/)).toBeNull());
+  });
+
   it('choosing an image defaults to its latest version and offers every succeeded version, newest first', async () => {
     const onChange = mount(library([image('web', local, version('3', { startedAt: '2026-10-22T10:00:00Z' }))]), {
       versions: {

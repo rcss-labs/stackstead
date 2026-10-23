@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router';
-import type { BuildStarted } from '$lib/api/imageTypes';
+import { Link, Navigate, useParams, useSearchParams } from 'react-router';
+import type { BuildStarted, LibraryImage } from '$lib/api/imageTypes';
+import { imageHref } from '$lib/images/library';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { CopyButton } from '../components/CopyButton';
@@ -35,12 +36,32 @@ export function ImageDetailScreen() {
 }
 
 function ImageDetail({ slug }: { slug: string }) {
-  const { href, trackOperation, refreshRunningOps, api } = useServer();
+  const scope = useServer();
+  const { href, trackOperation, refreshRunningOps, api } = scope;
   const { detail, error, notFound, reload } = useImageDetail(slug);
   const [query, setQuery] = useSearchParams();
   const requested = query.get('tab');
   const [building, setBuilding] = useState(false);
   const [buildOperation, setBuildOperation] = useState<string>();
+
+  // A slug this server does not have may be listed under a peer: send the user to that owner.
+  const [elsewhere, setElsewhere] = useState<LibraryImage>();
+  useEffect(() => {
+    if (!notFound) return;
+    let cancelled = false;
+    api
+      .images()
+      .then((lib) => {
+        if (cancelled) return;
+        setElsewhere(lib.images.find((i) => i.slug === slug && imageHref(i, scope) !== href(`/images/${slug}`)));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // scope and href are stable for this server; the lookup runs when the 404 arrives.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notFound, api, slug]);
 
   useEffect(() => {
     document.title = `${detail?.name ?? slug} · Images · Stackstead`;
@@ -54,6 +75,7 @@ function ImageDetail({ slug }: { slug: string }) {
     reload();
   }
 
+  if (notFound && elsewhere) return <Navigate to={imageHref(elsewhere, scope)} replace />;
   if (notFound) {
     return (
       <div className={styles.card}>

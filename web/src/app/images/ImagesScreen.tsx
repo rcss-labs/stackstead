@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import type { Library } from '$lib/api/imageTypes';
-import { groupByOwner, imageHref } from '$lib/images/library';
+import { groupByOwner, imageHref, ownerIsViewed } from '$lib/images/library';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { EmptyState } from '../components/EmptyState';
 import { Spinner } from '../components/Spinner';
+import { Tag } from '../components/Tag';
 import { useStore } from '../hooks/useStore';
 import { useServer } from '../servers/ServerContext';
 import styles from './images.module.css';
@@ -65,6 +66,15 @@ export function ImagesScreen() {
           </Button>
         </Banner>
       )}
+      {library?.servers
+        .filter((server) => server.status !== 'reachable')
+        .map((server) => (
+          <Banner key={server.id} kind="warning" title="Some images are missing">
+            {server.status === 'old'
+              ? `${server.name} runs an older Stackstead without the image library`
+              : `${server.name} could not be reached`}
+          </Banner>
+        ))}
       {!library && !error && <Spinner />}
       {library && images.length === 0 && (
         <div className={styles.card}>
@@ -91,7 +101,7 @@ export function ImagesScreen() {
                     <Link to={imageHref(image, scope)}>{image.name}</Link>
                   </td>
                   <td>{image.source}</td>
-                  <td>{image.owner.name}</td>
+                  <td>{ownerIsViewed(image, scope.id) ? image.owner.name : <Tag tone="info">{image.owner.name}</Tag>}</td>
                   <td className={styles.mono}>{image.latestVersion?.tag ?? '—'}</td>
                   <td>{image.lastBuild ? <VersionStatus status={image.lastBuild.status} /> : '—'}</td>
                   <td>{image.pushTargets.length}</td>

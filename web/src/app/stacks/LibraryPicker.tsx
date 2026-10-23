@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import type { Library, LibraryImage, LibraryImageDetail, LibraryVersion } from '$lib/api/imageTypes';
-import { groupByOwner } from '$lib/images/library';
+import { groupByOwner, ownerIsViewed } from '$lib/images/library';
 import { formatLibraryRef, parseLibraryRef } from '$lib/images/ref';
 import { useServer } from '../servers/ServerContext';
 import styles from './LibraryPicker.module.css';
@@ -25,7 +25,7 @@ function runnable(image: LibraryImage) {
 }
 
 export function LibraryPicker({ value, onChange, load, loadImage, localArch }: LibraryPickerProps) {
-  const { href } = useServer();
+  const { href, id: serverId } = useServer();
   const radioName = useId();
   const [library, setLibrary] = useState<Library | undefined>();
   const [failed, setFailed] = useState(false);
@@ -138,6 +138,11 @@ export function LibraryPicker({ value, onChange, load, loadImage, localArch }: L
       {selected && detailFailed && (
         <p className={styles.error} role="alert">
           Could not load the versions of {selected.slug}.
+        </p>
+      )}
+      {selected && !ownerIsViewed(selected, serverId) && (
+        <p className={styles.note}>
+          {selected.owner.name} owns this image; this server fetches the version when you save.
         </p>
       )}
       {selected && versions && (

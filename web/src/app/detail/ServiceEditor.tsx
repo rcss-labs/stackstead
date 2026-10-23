@@ -3,6 +3,8 @@ import type { ReactNode } from 'react';
 import { ApiError } from '$lib/api/client';
 import type { Operation, ServiceDetail, StackDetail } from '$lib/api/types';
 import { defaultImageTag, type ServiceForm as Form } from '$lib/compose/form';
+import { ownerIsViewed } from '$lib/images/library';
+import { parseLibraryRef } from '$lib/images/ref';
 import { dockerfileNote } from '$lib/stacks/dockerfileNote';
 import { createServiceEdit } from '$lib/stacks/serviceEdit';
 import { get } from '$lib/store';
@@ -48,7 +50,7 @@ const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor, onReload, lifecycleDisabledReason, onDirtyChange, removeSlot }: ServiceEditorProps) {
   // The page keys this editor by stack and service; both are fixed for its lifetime.
-  const { api, refreshStatus, trackOperation, refreshRunningOps, refreshStacks } = useServer();
+  const { api, id: serverId, refreshStatus, trackOperation, refreshRunningOps, refreshStacks } = useServer();
   const stackName = stack.name;
   const serviceName = service.name;
   const reloadRef = useRef(onReload);
@@ -166,8 +168,27 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
       toasts.push({ kind: 'success', message: `Saved ${serviceName}. Apply to run the change.` });
       if (get(edit.checksPartial)) toasts.push({ kind: 'warning', message: 'Port and IP checks were partial (Docker unreachable)' });
       onSaved?.(get(edit.hash));
+      const ref = formRef.current.source === 'library' ? formRef.current.library?.ref : undefined;
+      if (ref) void fetchPeerImage(ref);
     }
     requestFocus('save');
+  }
+
+  /** A peer-owned library version has to be on this server before Apply; started alongside the save, never blocking it. */
+  async function fetchPeerImage(ref: string) {
+    const parsed = parseLibraryRef(ref);
+    if (!parsed) return;
+    try {
+      const library = await api.images();
+      const owned = library.images.find((i) => i.slug === parsed.slug && i.owner.id.slice(0, 12) === parsed.owner);
+      if (!owned || ownerIsViewed(owned, serverId)) return;
+      const op = await api.fetchImage(ref);
+      trackOperation({ id: op.id, stack: op.stack, action: op.action });
+      void refreshRunningOps();
+    } catch (e) {
+      const message = e instanceof ApiError && e.code === 'arch_mismatch' ? 'that version was built for a different architecture than this server' : messageOf(e);
+      toasts.push({ kind: 'danger', message: `Saved, but could not fetch ${parsed.slug}:${parsed.tag}: ${message}` });
+    }
   }
 
   function backToEditing() {

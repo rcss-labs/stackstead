@@ -43,6 +43,28 @@ describe('Images list', () => {
     expect(link.getAttribute('href')).toBe('/s/mini-02/images/base');
   });
 
+  it('shows an owner chip on peer-owned rows only and no row actions', async () => {
+    backend = installImagesBackend({
+      [`GET ${LIST}`]: { body: { servers: [localOwner, peerOwner], images: [image(), image({ slug: 'base', name: 'Base', owner: peerOwner })] } },
+    });
+    mountImages('/images');
+    const peerRow = (await screen.findByRole('row', { name: /Base/ })) as HTMLElement;
+    expect(within(peerRow).getByText('Mini 02').getAttribute('data-tone')).toBe('info');
+    expect(within(peerRow).queryByRole('button')).toBeNull();
+    const localRow = screen.getByRole('row', { name: /Web/ }) as HTMLElement;
+    expect(within(localRow).getByText('Here').getAttribute('data-tone')).toBeNull();
+  });
+
+  it('warns about an unreachable server and one that runs an older Stackstead', async () => {
+    const down = { ...peerOwner, status: 'unreachable' as const };
+    const old = { id: 'peer-2', name: 'nas', slug: 'nas', local: false, status: 'old' as const };
+    backend = installImagesBackend({ [`GET ${LIST}`]: { body: { servers: [localOwner, down, old, { ...peerOwner, id: 'peer-3', name: 'fine' }], images: [image()] } } });
+    mountImages('/images');
+    expect(await screen.findByText('Mini 02 could not be reached')).toBeTruthy();
+    expect(screen.getByText('nas runs an older Stackstead without the image library')).toBeTruthy();
+    expect(screen.queryByText(/fine/)).toBeNull();
+  });
+
   it('shows an empty state when there are no images', async () => {
     backend = installImagesBackend({ [`GET ${LIST}`]: { body: { servers: [localOwner], images: [] } } });
     mountImages('/images');

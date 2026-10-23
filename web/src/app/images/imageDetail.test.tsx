@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { filesOf, imageDetail, installImagesBackend, mountImages, version, type ImagesHarness } from './imagesTestKit';
+import { filesOf, image, imageDetail, installImagesBackend, localOwner, mountImages, peerOwner, version, type ImagesHarness } from './imagesTestKit';
 
 vi.mock('$lib/stacks/cm', () => ({
   createEditor: () => {
@@ -85,6 +85,18 @@ describe('Image detail', () => {
     backend = installImagesBackend({ [`GET ${IMG}`]: { status: 404, body: { error: 'image not found' } } });
     mountImages('/images/web');
     expect(await screen.findByText('Image not found')).toBeTruthy();
+  });
+});
+
+describe('Image owned by a peer', () => {
+  it('redirects a slug that the library lists under another owner to the owner route', async () => {
+    backend = installImagesBackend({
+      [`GET ${IMG}`]: { status: 404, body: { error: 'image not found' } },
+      'GET /api/images': { body: { servers: [localOwner, peerOwner], images: [image({ owner: peerOwner })] } },
+    });
+    mountImages('/images/web');
+    expect(await screen.findByText('peer image')).toBeTruthy();
+    expect(screen.getByTestId('location').textContent).toBe('/s/mini-02/images/web');
   });
 });
 
