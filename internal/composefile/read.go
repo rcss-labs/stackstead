@@ -32,6 +32,20 @@ var fieldReaders = []fieldReader{
 // while they exist would leave two conflicting sources of truth.
 var legacyLimitKeys = []string{"cpus", "mem_limit"}
 
+// ServiceScalar returns the scalar value of a top-level key of a service, for
+// keys the forms do not model. ok is false when the key is absent or not a scalar.
+func (f *File) ServiceScalar(name, key string) (value string, ok bool, err error) {
+	node, err := f.serviceNode(name)
+	if err != nil {
+		return "", false, err
+	}
+	v := mappingValue(node, key)
+	if v == nil || !isScalar(v) {
+		return "", false, nil
+	}
+	return v.Value, true, nil
+}
+
 // Service reads one service's form-editable settings.
 func (f *File) Service(name string) (Service, error) {
 	node, err := f.serviceNode(name)

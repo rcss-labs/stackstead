@@ -220,3 +220,48 @@ func TestNilLibraryLeavesComposeAlone(t *testing.T) {
 		}
 	}
 }
+
+func TestPullPolicyAlwaysRefusedForLibraryService(t *testing.T) {
+	create := func(h *harness, name, extra string) {
+		t.Helper()
+		x, err := composefile.ParseExtra([]byte(extra))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = h.svc.Create(context.Background(), stacks.CreateRequest{Name: name, Services: []composefile.NamedService{
+			{Name: "web", Config: composefile.ServiceConfig{Image: libWeb}, Extra: x},
+			{Name: "db", Config: composefile.ServiceConfig{Image: "nginx"}, Extra: mustExtra(t, `{"pull_policy":"always"}`)},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	f := &fakeFetcher{}
+	h := libHarness(t, f)
+	create(h, "always", `{"pull_policy":"always"}`)
+	for _, action := range []string{"up", "pull"} {
+		_, err := h.svc.Act(context.Background(), "always", action)
+		var ve *stacks.ValidationError
+		if !errors.As(err, &ve) || !strings.Contains(err.Error(), "web") || !strings.Contains(err.Error(), "pull_policy") {
+			t.Fatalf("%s: err = %v", action, err)
+		}
+	}
+	if _, err := h.svc.ActService(context.Background(), "always", "web", "up"); err == nil {
+		t.Error("service up with pull_policy always was accepted")
+	}
+	if len(f.refs()) != 0 || len(h.compose.runs) != 0 {
+		t.Errorf("work started: fetched %v, compose %v", f.refs(), h.compose.runs)
+	}
+
+	for name, extra := range map[string]string{"missing": `{"pull_policy":"missing"}`, "never": `{"pull_policy":"never"}`, "unset": `{}`} {
+		create(h, name, extra)
+		op, err := h.svc.Act(context.Background(), name, "up")
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if op = wait(t, h.ops, op.ID); op.State != stacks.OpSucceeded {
+			t.Errorf("%s: state = %s (%s)", name, op.State, op.Error)
+		}
+	}
+}

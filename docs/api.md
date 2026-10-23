@@ -281,6 +281,10 @@ characters of the owning server's instance ID. Stackstead builds the image
 locally; `up` and `pull` make a referenced library image present first, and
 the stack list reports `libraryUpdates`, the number of services whose image has
 a newer tag. A service detail carries a `library` badge for such a reference.
+A service that uses a library image must not set `pull_policy: always`: Compose
+would try to pull it from the registry `stackstead.invalid`, so `up` and `pull`
+refuse such a stack with a validation error naming the service. `missing` and
+`never` work.
 
 All routes need a session. Errors use the shape from [API overview](#api-overview).
 

@@ -109,6 +109,11 @@ func (s *Service) actPlan(f *composefile.File, action string, args []string) ([]
 	if err != nil {
 		return nil, nil, fmt.Errorf("read services: %w", err)
 	}
+	for _, u := range usages {
+		if err := refuseAlwaysPull(f, u.Service); err != nil {
+			return nil, nil, err
+		}
+	}
 	refs := uniqueRefs(usages)
 	if action == "pull" && len(usages) > 0 {
 		if len(plain) == 0 {
@@ -117,4 +122,15 @@ func (s *Service) actPlan(f *composefile.File, action string, args []string) ([]
 		args = append([]string{"pull", "--"}, plain...)
 	}
 	return refs, args, nil
+}
+
+// refuseAlwaysPull rejects pull_policy: always on a library service: compose
+// would pull stackstead.invalid/... from a registry that does not exist.
+func refuseAlwaysPull(f *composefile.File, service string) error {
+	policy, ok, err := f.ServiceScalar(service, "pull_policy")
+	if err != nil || !ok || policy != "always" {
+		return err
+	}
+	return &ValidationError{Fields: []FieldError{{Field: "services." + service + ".pull_policy",
+		Message: fmt.Sprintf("service %s uses a library image, which cannot be pulled from a registry: remove pull_policy: always (missing or never are fine)", service)}}}
 }

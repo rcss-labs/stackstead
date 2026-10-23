@@ -554,6 +554,9 @@ func (s *Service) ActService(ctx context.Context, stack, service, action string)
 	if s.library != nil {
 		if svc, err := f.Service(service); err == nil {
 			if ref, ok := imageref.Parse(svc.Config.Image); ok {
+				if err := refuseAlwaysPull(f, service); err != nil {
+					return Operation{}, err
+				}
 				refs = append(refs, ref)
 			}
 		}
