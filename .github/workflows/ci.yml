@@ -1,0 +1,120 @@
+# Pull request and main-branch verification. Mirrors `make check` (the Makefile stays the
+# local entry point) and adds govulncheck.
+#
+# Security posture: the workflow uses `pull_request` (never `pull_request_target`), so code from
+# forks runs without secrets and with a read-only token; no job uses any secret. Every third-party
+# action is pinned to a full commit SHA (the tag is in the trailing comment).
+#
+# Execution policy for the heavier suites (issue #37):
+#   - `verify` is the required check: unit tests, vet, gofmt, UI type-check and tests, govulncheck.
+#   - `installer-host` runs the installer suite that needs no Docker or booted systemd. It is a
+#     separate job on purpose: it exercises install.sh and packaging scripts, not the unit tests.
+#   - The Docker container suites (`make installer-test` with Docker images), the booted-systemd
+#     checks, `make e2e` and `make package-lint` are NOT run here. Run them by hand on a Docker
+#     host before tagging a release (see deploy/release/RELEASING.md) and whenever install.sh,
+#     deploy/ or the packaging changes.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # go-version-file reads the `go` line of go.mod, which is the patched compiler floor.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Web dependencies
+        run: npm ci
+        working-directory: web
+
+      # The Go tests embed web/dist, so the UI is built before them.
+      - name: Web type-check, build and tests
+        run: |
+          npm run check
+          npm run build
+          npm run test
+        working-directory: web
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l cmd internal tools web/*.go)
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      # Verbose output is kept as an artifact when the run fails so an intermittent failure
+      # names the test that failed (issue #64). pipefail (the default shell here) keeps go
+      # test's exit status through tee.
+      - name: go test
+        run: go test -race -timeout 600s -v ./... 2>&1 | tee go-test.log
+
+      - name: Upload go test log
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: go-test-log
+          path: go-test.log
+          retention-days: 14
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  installer-host:
+    name: installer-host
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install shells for the script tests
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends dash shellcheck
+
+      # -skip InContainer: the container suites need prebuilt Docker images and are run by hand.
+      - name: Installer host suite
+        run: |
+          go vet -tags installer ./...
+          go test -tags installer -count=1 -timeout 1200s -v -skip InContainer ./test/installer/ ./deploy/... ./tools/... 2>&1 | tee installer-test.log
+
+      - name: Upload installer test log
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installer-test-log
+          path: installer-test.log
+          retention-days: 14
