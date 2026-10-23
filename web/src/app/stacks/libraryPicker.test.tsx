@@ -51,7 +51,7 @@ function mount(lib: Library, props: { value?: string; onChange?: (ref: string) =
     Promise.resolve({ ...img, versions: props.versions?.[img.slug] ?? (img.latestVersion ? [img.latestVersion] : []), suggestedTag: '', tagHint: '', arch: '', revision: 1 });
   render(
     <MemoryRouter>
-      <LibraryPicker value={props.value ?? ''} onChange={onChange} load={() => Promise.resolve(lib)} loadImage={loadImage} localArch={props.localArch} />
+      <LibraryPicker value={props.value ?? ''} onChange={onChange} load={() => Promise.resolve(lib)} loadImage={loadImage} localArch={'localArch' in props ? props.localArch : 'amd64'} />
     </MemoryRouter>,
   );
   return onChange;
@@ -134,6 +134,15 @@ describe('LibraryPicker', () => {
     expect((screen.getByRole('radio', { name: '2' }) as HTMLInputElement).disabled).toBe(false);
     await userEvent.setup().click(radio);
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('disables versions with a known architecture until this server architecture is known', async () => {
+    const onChange = mount(library([image('web', local, version('2'))]), { localArch: undefined, value: WEB2, versions: { web: [version('2'), version('1', { arch: 'arm64' })] } });
+    const radio = (await screen.findByRole('radio', { name: /^1/ })) as HTMLInputElement;
+    expect(radio.disabled).toBe(true);
+    expect(screen.getAllByText('checking server architecture…').length).toBeGreaterThan(0);
+    await userEvent.setup().click(radio);
+    expect(onChange).not.toHaveBeenCalledWith(expect.stringContaining('web:1'));
   });
 
   it('defaults to the newest compatible version when the latest is for another architecture', async () => {

@@ -24,6 +24,7 @@ vi.mock('$lib/stores/stacks', async (importActual) => ({
   refreshRunningOps: vi.fn(),
 }));
 
+import { startLive, stopLive } from '$lib/stores/live';
 import { ServiceEditor } from './ServiceEditor';
 
 const local: LibraryServer = { id: 'abcdef012345ffff', name: 'Here', slug: '', local: true, status: 'reachable' };
@@ -49,11 +50,19 @@ function install(owner: LibraryServer, fetchAnswer: FakeResponse = { body: { id:
     'GET /api/stacks/web/compose': { body: { content: 'x', hash: 'h1' } },
     'GET /api/images/web': { body: detail },
     'GET /api/servers/fedcba987654aaaa/api/images/web': { body: detail },
-    'GET /api/status': { body: { docker: 'ok', compose: '2.29.0', events: 'connected', metricsDegraded: false } },
+    'GET /api/status': { body: { docker: 'ok', compose: '2.29.0', events: 'connected', metricsDegraded: false, arch: 'amd64' } },
     'GET /api/operations?state=running': { body: [] },
     'POST /api/stacks/web/services/app/preview': (c) => ({ body: { content: 'x', hash: (c.body as { hash: string }).hash } }),
     'PUT /api/stacks/web/services/app': { body: { hash: 'h2' } },
     'POST /api/images/fetch': fetchAnswer,
+  });
+  // The picker keeps versions with a known architecture disabled until the live store has this server's.
+  startLive({
+    fetchStatus: () => fetch('/api/status').then((r) => r.json()),
+    open: (o) => {
+      queueMicrotask(() => o.onStatus?.('open'));
+      return { close() {}, status: 'open' };
+    },
   });
 }
 
@@ -77,6 +86,7 @@ function mount(ref: string) {
 
 beforeEach(() => toasts.reset());
 afterEach(async () => {
+  stopLive();
   cleanup();
   fake.restore();
   await new Promise((r) => setTimeout(r, 5));

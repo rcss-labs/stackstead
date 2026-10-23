@@ -38,8 +38,12 @@ export function LibraryPicker({ value, onChange, load, loadImage, localArch }: L
   onChangeRef.current = onChange;
   const valueRef = useRef(value);
   valueRef.current = value;
-  // While the server's architecture is still unknown (status not loaded) every version stays selectable.
-  const archNote = (v: LibraryVersion) => (localArch && v.arch && v.arch !== localArch ? `built for ${v.arch}; this server is ${localArch}` : '');
+  // While the server's architecture is unknown (status not loaded) a version with a known architecture cannot be chosen yet.
+  const archNote = (v: LibraryVersion) => {
+    if (!v.arch) return '';
+    if (!localArch) return 'checking server architecture…';
+    return v.arch !== localArch ? `built for ${v.arch}; this server is ${localArch}` : '';
+  };
   const incompatible = (v: LibraryVersion) => archNote(v) !== '';
   const parsed = parseLibraryRef(value);
   const ownerOf = (image: LibraryImage) => image.owner.id.slice(0, OWNER_LEN);
@@ -79,15 +83,6 @@ export function LibraryPicker({ value, onChange, load, loadImage, localArch }: L
           .filter((v) => v.status === 'succeeded')
           .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
         setDetail({ key, versions });
-        // Keep a reference that already points at a version of this image (a tag that is gone shows as "Current"),
-        // unless that version is for the wrong architecture. Otherwise default to the newest compatible version, or
-        // clear the choice when there is none, so a version that cannot run here is never selected.
-        const current = parseLibraryRef(valueRef.current);
-        const own = current && `${current.owner}/${current.slug}` === key ? current : undefined;
-        const chosen = own && versions.find((v) => v.tag === own.tag);
-        if (own && (!chosen || !incompatible(chosen))) return;
-        const best = versions.find((v) => !incompatible(v));
-        onChangeRef.current(best ? formatLibraryRef(selected.owner.id.slice(0, OWNER_LEN), selected.slug, best.tag) : '');
       },
       () => alive && setDetailFailed(true),
     );
@@ -97,6 +92,24 @@ export function LibraryPicker({ value, onChange, load, loadImage, localArch }: L
     // keyed by the image only; the library list object is stable once loaded.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedKey, library]);
+
+  // Keep a reference that already points at a version of this image (a tag that is gone shows as "Current"),
+  // unless that version is for the wrong architecture. Otherwise default to the newest compatible version, or
+  // clear the choice when there is none, so a version that cannot run here is never selected.
+  // Waits for this server's architecture when a version's compatibility depends on it.
+  useEffect(() => {
+    if (!selected || !detail || detail.key !== selectedKey) return;
+    const { versions } = detail;
+    if (!localArch && versions.some((v) => v.arch)) return;
+    const current = parseLibraryRef(valueRef.current);
+    const own = current && `${current.owner}/${current.slug}` === detail.key ? current : undefined;
+    const chosen = own && versions.find((v) => v.tag === own.tag);
+    if (own && (!chosen || !incompatible(chosen))) return;
+    const best = versions.find((v) => !incompatible(v));
+    onChangeRef.current(best ? formatLibraryRef(selected.owner.id.slice(0, OWNER_LEN), selected.slug, best.tag) : '');
+    // runs when the versions or the architecture arrive; later reference changes are the user's own choice.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail, localArch]);
 
   if (failed) {
     return (
