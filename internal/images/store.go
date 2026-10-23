@@ -471,6 +471,31 @@ func (s *Store) UpdatePushTarget(ctx context.Context, t PushTarget) error {
 	return requireRow(res, ErrTargetNotFound)
 }
 
+// MovePushTarget rewrites a target like UpdatePushTarget and clears its push
+// records, which described the old destination.
+func (s *Store) MovePushTarget(ctx context.Context, t PushTarget) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("move push target: %w", err)
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE push_targets SET registry_id=?, repository=?, auto_push=? WHERE id=?`,
+		t.RegistryID, t.Repository, t.AutoPush, t.ID)
+	if err != nil {
+		return fmt.Errorf("update push target: %w", err)
+	}
+	if err := requireRow(res, ErrTargetNotFound); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM image_pushes WHERE target_id = ?`, t.ID); err != nil {
+		return fmt.Errorf("clear pushes of moved target: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("move push target: %w", err)
+	}
+	return nil
+}
+
 // DeletePushTarget removes a target and its pushes.
 func (s *Store) DeletePushTarget(ctx context.Context, id string) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM push_targets WHERE id = ?`, id)

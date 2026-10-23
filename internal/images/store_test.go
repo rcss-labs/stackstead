@@ -310,6 +310,61 @@ func TestDeleteImageCascades(t *testing.T) {
 	}
 }
 
+func TestMovePushTargetIsAtomic(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	img := mustImage(t, s, "app")
+	if _, err := s.db.Exec(`INSERT INTO registries (id, name, kind, created_at, updated_at) VALUES ('r1','hub','dockerhub',1,1), ('r2','other','dockerhub',1,1)`); err != nil {
+		t.Fatal(err)
+	}
+	tg, err := s.AddPushTarget(ctx, PushTarget{ImageID: img.ID, RegistryID: "r1", Repository: "me/app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := mustStart(t, s, img.ID, "1")
+	if err := s.FinishVersion(ctx, v.ID, VersionResult{Status: VersionSucceeded}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPush(ctx, Push{VersionID: v.ID, TargetID: tg.ID, Status: PushPushed}); err != nil {
+		t.Fatal(err)
+	}
+	pushCount := func() int {
+		var n int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM image_pushes WHERE target_id = ?`, tg.ID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	// A failing delete must roll the target update back.
+	if _, err := s.db.Exec(`CREATE TRIGGER block_push_delete BEFORE DELETE ON image_pushes BEGIN SELECT RAISE(ABORT, 'blocked'); END`); err != nil {
+		t.Fatal(err)
+	}
+	moved := tg
+	moved.RegistryID = "r2"
+	if err := s.MovePushTarget(ctx, moved); err == nil {
+		t.Fatal("MovePushTarget succeeded although the delete was blocked")
+	}
+	targets, _ := s.PushTargets(ctx, img.ID)
+	if len(targets) != 1 || targets[0] != tg || pushCount() != 1 {
+		t.Fatalf("after a failed move: targets = %+v, pushes = %d; want the original target and its push", targets, pushCount())
+	}
+
+	if _, err := s.db.Exec(`DROP TRIGGER block_push_delete`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MovePushTarget(ctx, moved); err != nil {
+		t.Fatal(err)
+	}
+	targets, _ = s.PushTargets(ctx, img.ID)
+	if len(targets) != 1 || targets[0] != moved || pushCount() != 0 {
+		t.Errorf("after the move: targets = %+v, pushes = %d; want the new target and no pushes", targets, pushCount())
+	}
+	if err := s.MovePushTarget(ctx, PushTarget{ID: "nope"}); !errors.Is(err, ErrTargetNotFound) {
+		t.Errorf("MovePushTarget missing = %v", err)
+	}
+}
+
 func TestPushTargetsAndPushes(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)

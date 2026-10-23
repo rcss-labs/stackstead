@@ -116,14 +116,14 @@ func (s *Service) UpdatePushTarget(ctx context.Context, user, slug, id string, r
 	}
 	moved := t.RegistryID != req.RegistryID || t.Repository != req.Repository
 	t.RegistryID, t.Repository, t.AutoPush = req.RegistryID, req.Repository, req.AutoPush
-	if err := s.store.UpdatePushTarget(ctx, t); err != nil {
-		return PushTarget{}, err
-	}
+	// A moved target's earlier pushes went to the old destination; they say
+	// nothing about the new one, so both changes commit together.
+	update := s.store.UpdatePushTarget
 	if moved {
-		// Earlier pushes went to the old destination; they say nothing about the new one.
-		if _, err := s.store.db.ExecContext(ctx, `DELETE FROM image_pushes WHERE target_id = ?`, id); err != nil {
-			return PushTarget{}, fmt.Errorf("clear pushes of moved target: %w", err)
-		}
+		update = s.store.MovePushTarget
+	}
+	if err := update(ctx, t); err != nil {
+		return PushTarget{}, err
 	}
 	return t, nil
 }
