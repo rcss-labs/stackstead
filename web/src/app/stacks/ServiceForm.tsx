@@ -3,6 +3,8 @@ import type { ClipboardEvent, ReactNode, Ref } from 'react';
 import type { Field as FieldGroup } from '$lib/api/types';
 import type { FormErrors, ServiceForm as ServiceFormValue } from '$lib/compose/form';
 import { DOCKERFILE_TEMPLATE } from '$lib/compose/form';
+import { createApi } from '$lib/api/client';
+import { ownerIsViewed } from '$lib/images/library';
 import { parseLibraryRef } from '$lib/images/ref';
 import { useStore } from '../hooks/useStore';
 import { Button } from '../components/Button';
@@ -139,7 +141,7 @@ export function ServiceForm({
   ref,
 }: ServiceFormProps) {
   const radioName = useId();
-  const { api, live } = useServer();
+  const { api, live, id: serverId } = useServer();
   const liveState = useStore(live);
   const root = useRef<HTMLDivElement>(null);
   const [pickedCustom, setPickedCustom] = useState(false);
@@ -482,6 +484,7 @@ export function ServiceForm({
               value={form.library?.ref ?? ''}
               onChange={(ref) => patch({ library: { ref }, image: ref })}
               load={api.images}
+              loadImage={(image) => (ownerIsViewed(image, serverId) ? api : createApi(`/api/servers/${encodeURIComponent(image.owner.id)}`)).image(image.slug)}
               localArch={liveState.arch}
             />
             {shown['image'] && (

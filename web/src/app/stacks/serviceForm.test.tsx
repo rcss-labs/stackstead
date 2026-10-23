@@ -111,12 +111,15 @@ describe('ServiceForm library source', () => {
       ],
       servers: [],
     };
-    const fake = installFakeFetch({ 'GET /api/images': { body: lib }, 'GET /api/status': { body: { docker: 'ok', compose: '2', arch: 'amd64' } } });
+    const fake = installFakeFetch({
+      'GET /api/images': { body: lib },
+      'GET /api/images/web': { body: { ...lib.images[0], versions: [lib.images[0].latestVersion] } }, 'GET /api/status': { body: { docker: 'ok', compose: '2', arch: 'amd64' } },
+    });
     try {
       const user = userEvent.setup();
       const { handle } = setup();
       await user.click(screen.getByRole('radio', { name: /From library/ }));
-      await user.click(await screen.findByRole('radio', { name: /web:1/ }));
+      await user.click(await screen.findByRole('radio', { name: 'web' }));
       expect(handle.current.getForm().library).toEqual({ ref: REF });
       await user.click(screen.getByRole('radio', { name: /From Image/ }));
       expect((screen.getByLabelText('Image') as HTMLInputElement).value).toBe(REF);

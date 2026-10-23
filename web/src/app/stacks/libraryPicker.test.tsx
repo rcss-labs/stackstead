@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -45,18 +45,22 @@ const image = (slug: string, owner: LibraryServer, latestVersion?: LibraryVersio
 
 const library = (images: LibraryImage[]): Library => ({ images, servers: [local, peer] });
 
-function mount(lib: Library, props: { value?: string; onChange?: (ref: string) => void; localArch?: string } = {}) {
+function mount(lib: Library, props: { value?: string; onChange?: (ref: string) => void; localArch?: string; versions?: Record<string, LibraryVersion[]> } = {}) {
   const onChange = props.onChange ?? vi.fn();
+  const loadImage = (img: LibraryImage) =>
+    Promise.resolve({ ...img, versions: props.versions?.[img.slug] ?? (img.latestVersion ? [img.latestVersion] : []), suggestedTag: '', tagHint: '', arch: '', revision: 1 });
   render(
     <MemoryRouter>
-      <LibraryPicker value={props.value ?? ''} onChange={onChange} load={() => Promise.resolve(lib)} localArch={props.localArch} />
+      <LibraryPicker value={props.value ?? ''} onChange={onChange} load={() => Promise.resolve(lib)} loadImage={loadImage} localArch={props.localArch} />
     </MemoryRouter>,
   );
   return onChange;
 }
 
+const WEB2 = 'stackstead.invalid/0123456789ab/web:2';
+
 describe('LibraryPicker', () => {
-  it('groups images by owner and lists succeeded versions only', async () => {
+  it('groups images by owner and lists images with a succeeded latest version only', async () => {
     mount(
       library([
         image('web', local, version('2')),
@@ -67,30 +71,58 @@ describe('LibraryPicker', () => {
     );
     await screen.findByRole('group', { name: 'home' });
     expect(screen.getByRole('group', { name: 'mini' })).toBeTruthy();
-    expect(screen.getByRole('radio', { name: /web:2/ })).toBeTruthy();
-    expect(screen.queryByRole('radio', { name: /broken:3/ })).toBeNull();
+    expect(screen.getByRole('radio', { name: 'web' })).toBeTruthy();
+    expect(screen.getByRole('radio', { name: 'api' })).toBeTruthy();
+    expect(screen.queryByRole('radio', { name: 'broken' })).toBeNull();
     expect(screen.getAllByRole('radio')).toHaveLength(2);
-    expect(screen.getByRole('radio', { name: /api:7/ })).toBeTruthy();
   });
 
-  it('calls onChange with the formatted reference of the chosen version', async () => {
-    const onChange = mount(library([image('web', local, version('2'))]));
-    await userEvent.setup().click(await screen.findByRole('radio', { name: /web:2/ }));
-    expect(onChange).toHaveBeenCalledWith('stackstead.invalid/0123456789ab/web:2');
+  it('choosing an image defaults to its latest version and offers every succeeded version, newest first', async () => {
+    const onChange = mount(library([image('web', local, version('3', { startedAt: '2026-10-22T10:00:00Z' }))]), {
+      versions: {
+        web: [
+          version('1', { startedAt: '2026-10-20T10:00:00Z' }),
+          version('3', { startedAt: '2026-10-22T10:00:00Z' }),
+          version('2', { startedAt: '2026-10-21T10:00:00Z' }),
+          version('4', { status: 'failed', startedAt: '2026-10-23T10:00:00Z' }),
+        ],
+      },
+    });
+    await userEvent.setup().click(await screen.findByRole('radio', { name: 'web' }));
+    expect(onChange).toHaveBeenCalledWith('stackstead.invalid/0123456789ab/web:3');
+    const versions = within(await screen.findByRole('group', { name: 'Version' }));
+    expect(versions.getAllByRole('radio').map((r) => (r as HTMLInputElement).value.split(':').pop())).toEqual(['3', '2', '1']);
   });
 
-  it('marks the version matching the value as selected', async () => {
-    mount(library([image('web', local, version('2'))]), { value: 'stackstead.invalid/0123456789ab/web:2' });
-    const radio = (await screen.findByRole('radio', { name: /web:2/ })) as HTMLInputElement;
-    expect(radio.checked).toBe(true);
+  it('calls onChange with the reference of the version chosen', async () => {
+    const onChange = mount(library([image('web', local, version('2'))]), { versions: { web: [version('2'), version('1')] }, value: WEB2 });
+    await userEvent.setup().click(await screen.findByRole('radio', { name: '1' }));
+    expect(onChange).toHaveBeenLastCalledWith('stackstead.invalid/0123456789ab/web:1');
+  });
+
+  it('preselects the image and the older version an existing reference points at', async () => {
+    mount(library([image('web', local, version('3'))]), {
+      value: 'stackstead.invalid/0123456789ab/web:1',
+      versions: { web: [version('3', { startedAt: '2026-10-22T10:00:00Z' }), version('1', { startedAt: '2026-10-20T10:00:00Z' }), version('2', { status: 'failed' })] },
+    });
+    expect(((await screen.findByRole('radio', { name: 'web' })) as HTMLInputElement).checked).toBe(true);
+    expect(((await screen.findByRole('radio', { name: '1' })) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getAllByRole('radio', { name: /^\d$/ })).toHaveLength(2);
+    expect(screen.queryByText(/^Current:/)).toBeNull();
+  });
+
+  it('shows Current only for a tag that is no longer among the versions', async () => {
+    mount(library([image('web', local, version('3'))]), { value: 'stackstead.invalid/0123456789ab/web:9', versions: { web: [version('3')] } });
+    await screen.findByRole('group', { name: 'Version' });
+    expect(screen.getByText('Current: stackstead.invalid/0123456789ab/web:9')).toBeTruthy();
   });
 
   it('disables a version built for another architecture and says why', async () => {
-    const onChange = mount(library([image('web', local, version('2', { arch: 'arm64' })), image('api', local, version('1'))]), { localArch: 'amd64' });
-    const radio = (await screen.findByRole('radio', { name: /web:2/ })) as HTMLInputElement;
+    const onChange = mount(library([image('web', local, version('2'))]), { localArch: 'amd64', value: WEB2, versions: { web: [version('2'), version('1', { arch: 'arm64' })] } });
+    const radio = (await screen.findByRole('radio', { name: /^1/ })) as HTMLInputElement;
     expect(radio.disabled).toBe(true);
     expect(screen.getByText('built for arm64; this server is amd64')).toBeTruthy();
-    expect((screen.getByRole('radio', { name: /api:1/ }) as HTMLInputElement).disabled).toBe(false);
+    expect((screen.getByRole('radio', { name: '2' }) as HTMLInputElement).disabled).toBe(false);
     await userEvent.setup().click(radio);
     expect(onChange).not.toHaveBeenCalled();
   });
@@ -104,7 +136,7 @@ describe('LibraryPicker', () => {
   it('says so when the library cannot be loaded', async () => {
     render(
       <MemoryRouter>
-        <LibraryPicker value="" onChange={() => {}} load={() => Promise.reject(new Error('boom'))} />
+        <LibraryPicker value="" onChange={() => {}} load={() => Promise.reject(new Error('boom'))} loadImage={() => Promise.reject(new Error('x'))} />
       </MemoryRouter>,
     );
     await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/could not load/i));
