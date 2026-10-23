@@ -5,6 +5,7 @@ package registry
 
 import (
 	"errors"
+	"regexp"
 	"time"
 
 	"github.com/rcss-labs/stackstead/internal/secret"
@@ -96,17 +97,35 @@ func (r Registry) configured() bool {
 	case KindDockerHub:
 		return r.Hub.Username != "" && r.Hub.Token != ""
 	case KindECR:
-		if r.ECR.Region == "" {
-			return false
-		}
-		switch r.ECR.Mode {
-		case ECRStatic:
-			return r.ECR.AccessKeyID != "" && r.ECR.SecretAccessKey != ""
-		case ECRProfile:
-			return r.ECR.Profile != ""
-		case ECRRole:
-			return true
-		}
+		return r.ecrCredentialsConfigured()
+	}
+	return false
+}
+
+// ecrHost is the registry host: the stored one, else built from the account
+// id and region, else empty.
+func (r Registry) ecrHost() string {
+	if r.Host != "" {
+		return r.Host
+	}
+	if r.ECR.AccountID != "" && r.ECR.Region != "" {
+		return r.ECR.AccountID + ".dkr.ecr." + r.ECR.Region + ".amazonaws.com"
+	}
+	return ""
+}
+
+var regionPattern = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-\d$`)
+
+// ecrCredentialsConfigured reports whether the fields the ECR mode needs are
+// present. Profile mode resolves its region from the profile when unset.
+func (r Registry) ecrCredentialsConfigured() bool {
+	switch r.ECR.Mode {
+	case ECRStatic:
+		return r.ECR.Region != "" && r.ECR.AccessKeyID != "" && r.ECR.SecretAccessKey != ""
+	case ECRProfile:
+		return r.ECR.Profile != ""
+	case ECRRole:
+		return r.ECR.Region != ""
 	}
 	return false
 }

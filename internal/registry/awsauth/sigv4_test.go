@@ -94,3 +94,70 @@ func TestSignV4RejectsMissingKeys(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+// Pinned vector for an ECR-style request: session token, messy header
+// whitespace and an unsorted, partly empty query. The signature was computed
+// independently with a reference script.
+func TestSignV4ECRStyleVector(t *testing.T) {
+	c := vectorCreds()
+	c.SessionToken = secret.Secret("tok/en+=")
+	req, _ := http.NewRequest("POST", "https://api.ecr.eu-west-1.amazonaws.com/?c&b=x%20y&a=1", nil)
+	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	req.Header.Set("X-Amz-Target", "AmazonEC2ContainerRegistry_V20150921.GetAuthorizationToken")
+	req.Header.Set("X-Custom", "  a   b  c ")
+	if err := SignV4(req, []byte("{}"), c, "eu-west-1", "ecr", vectorTime); err != nil {
+		t.Fatal(err)
+	}
+	want := "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/eu-west-1/ecr/aws4_request, SignedHeaders=content-type;host;x-amz-date;x-amz-security-token;x-amz-target;x-custom, Signature=2f900099ab15d5dd406702a4eb241af146863f8aff558de046f5a0d63a969e89"
+	if got := req.Header.Get("Authorization"); got != want {
+		t.Fatalf("Authorization\n got %s\nwant %s", got, want)
+	}
+}
+
+func TestSignV4DropsStaleSecurityToken(t *testing.T) {
+	req, _ := http.NewRequest("GET", "https://example.amazonaws.com/", nil)
+	req.Header.Set("X-Amz-Security-Token", "stale")
+	if err := SignV4(req, nil, vectorCreds(), "us-east-1", "service", vectorTime); err != nil {
+		t.Fatal(err)
+	}
+	if v := req.Header.Get("X-Amz-Security-Token"); v != "" {
+		t.Errorf("stale token header kept: %q", v)
+	}
+	want := "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, SignedHeaders=host;x-amz-date, Signature=5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31"
+	if got := req.Header.Get("Authorization"); got != want {
+		t.Errorf("Authorization = %s", got)
+	}
+}
+
+func TestSignV4IgnoresHostHeaderEntry(t *testing.T) {
+	req, _ := http.NewRequest("GET", "https://example.amazonaws.com/", nil)
+	req.Header.Set("Host", "evil.example.com")
+	if err := SignV4(req, nil, vectorCreds(), "us-east-1", "service", vectorTime); err != nil {
+		t.Fatal(err)
+	}
+	want := "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, SignedHeaders=host;x-amz-date, Signature=5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31"
+	if got := req.Header.Get("Authorization"); got != want {
+		t.Errorf("Host header entry influenced the signature: %s", got)
+	}
+}
+
+func TestSignV4MergesCaseVariantHeaders(t *testing.T) {
+	sign := func(h http.Header) string {
+		req, _ := http.NewRequest("GET", "https://example.amazonaws.com/", nil)
+		for k, v := range h {
+			req.Header[k] = v
+		}
+		if err := SignV4(req, nil, vectorCreds(), "us-east-1", "service", vectorTime); err != nil {
+			t.Fatal(err)
+		}
+		return req.Header.Get("Authorization")
+	}
+	merged := sign(http.Header{"X-Custom": {"a", "b"}})
+	split := sign(http.Header{"X-Custom": {"a"}, "x-custom": {"b"}})
+	if merged != split {
+		t.Errorf("case variants must merge:\n%s\n%s", merged, split)
+	}
+	if split == sign(http.Header{"X-Custom": {"b"}}) {
+		t.Error("first variant was overwritten")
+	}
+}
