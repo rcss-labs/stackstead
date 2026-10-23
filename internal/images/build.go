@@ -178,7 +178,7 @@ func (s *Service) runBuild(ctx context.Context, user string, img Image, v Versio
 	s.finishAndLog(ctx, user, img, v, opID, result)
 	finished = true
 	s.autoPush(ctx, user, img, v, opID, emit)
-	// The retention hook (M5) runs here after a success.
+	s.applyRetentionAfterBuild(ctx, user, img.Slug)
 	return nil
 }
 
@@ -336,15 +336,28 @@ func (s *Service) DeleteVersion(ctx context.Context, user, slug, id string) erro
 	if v.Status == VersionBuilding {
 		return ErrBuildRunning
 	}
+	_, owner, err := s.selfInfo(ctx)
+	if err != nil {
+		return err
+	}
 	if v.Status == VersionSucceeded {
-		_, owner, err := s.selfInfo(ctx)
-		if err != nil {
-			return err
-		}
 		if err := s.checkUnused(ctx, imageref.Ref{Owner: owner, Slug: slug, Tag: v.Tag}); err != nil {
 			return err
 		}
-		// Only a live version owns its reference; a failed one may share the tag.
+	}
+	if err := s.removeVersionLocked(ctx, img.Slug, owner, v); err != nil {
+		return err
+	}
+	s.record(ctx, user, "image.version", slug, v.Tag, "deleted version "+v.Tag, "succeeded", "")
+	return nil
+}
+
+// removeVersionLocked deletes a version: its Docker tag (never forced, so an
+// image ID shared with another tag survives), its row with the pushes and its
+// log. The caller holds the image lock and has checked that it is unused.
+func (s *Service) removeVersionLocked(ctx context.Context, slug, owner string, v Version) error {
+	// Only a live version owns its reference; a failed one may share the tag.
+	if v.Status == VersionSucceeded {
 		if err := s.removeDockerTag(ctx, s.Ref(owner, slug, v.Tag)); err != nil {
 			return err
 		}
@@ -352,8 +365,7 @@ func (s *Service) DeleteVersion(ctx context.Context, user, slug, id string) erro
 	if err := s.store.DeleteVersion(ctx, v.ID); err != nil {
 		return err
 	}
-	os.Remove(s.logPath(img.Slug, v.ID))
-	s.record(ctx, user, "image.version", slug, v.Tag, "deleted version "+v.Tag, "succeeded", "")
+	os.Remove(s.logPath(slug, v.ID))
 	return nil
 }
 
