@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -32,6 +33,12 @@ type sessionConfig struct {
 
 	Now   func() time.Time
 	After func(d time.Duration) <-chan time.Time
+
+	// MissingExecutableMessage, when set, enables detection of a command Docker
+	// could not start. Real Docker still answers 101 and streams its "OCI
+	// runtime exec failed" text, then exits 126/127; the session then sends this
+	// as the error frame instead of the raw text and an exit frame.
+	MissingExecutableMessage string
 
 	// StillAuthorized is called on every ping tick; false ends the session.
 	StillAuthorized func(ctx context.Context) bool
@@ -77,6 +84,16 @@ type session struct {
 
 	eofOnce sync.Once
 	ends    chan sessionEnd
+
+	stdinSeen atomic.Bool // any client input reached the process
+	// heldOutput is the output withheld while it might be Docker's "could not
+	// start" text. Only readStream and, after it ends, finishExit touch it.
+	heldOutput []heldChunk
+}
+
+type heldChunk struct {
+	kind byte
+	p    []byte
 }
 
 // runSession pumps bytes between the WebSocket and the exec stream until the
@@ -188,6 +205,7 @@ func (s *session) readClient() {
 			continue
 		}
 		s.touchActivity()
+		s.stdinSeen.Store(true)
 		_, _ = s.stream.Write(data[1:]) // a closed stdin is the process's business
 	}
 }
@@ -213,6 +231,7 @@ func (s *session) handleControl(raw []byte) {
 
 // readStream pumps process output to the WebSocket.
 func (s *session) readStream() {
+	first, holding := true, false
 	for {
 		kind, p, err := s.stream.ReadFrame()
 		if err != nil {
@@ -223,13 +242,37 @@ func (s *session) readStream() {
 			continue
 		}
 		s.touchActivity()
-		frame := make([]byte, 0, len(p)+1)
-		frame = append(append(frame, kind), p...)
-		select {
-		case s.data <- frame:
-		case <-s.writerDone: // terminal frame sent or client gone
+		if first {
+			first = false
+			holding = s.cfg.MissingExecutableMessage != "" && !s.stdinSeen.Load() && looksLikeStartFailure(p)
+		}
+		if holding {
+			// Withhold it: finishExit decides whether it was a start failure.
+			s.heldOutput = append(s.heldOutput, heldChunk{kind, append([]byte(nil), p...)})
+			continue
+		}
+		if !s.forward(kind, p) {
 			return
 		}
+	}
+}
+
+// looksLikeStartFailure reports whether the output is the text Docker writes
+// when it cannot start the command.
+func looksLikeStartFailure(p []byte) bool {
+	return bytes.HasPrefix(p, []byte("OCI runtime exec failed")) || bytes.HasPrefix(p, []byte("exec failed"))
+}
+
+// forward queues one output chunk for the writer. It reports false when the
+// terminal frame was sent or the client is gone.
+func (s *session) forward(kind byte, p []byte) bool {
+	frame := make([]byte, 0, len(p)+1)
+	frame = append(append(frame, kind), p...)
+	select {
+	case s.data <- frame:
+		return true
+	case <-s.writerDone:
+		return false
 	}
 }
 
@@ -356,6 +399,18 @@ func (s *session) finishExit() string {
 		return "error"
 	}
 	code := info.ExitCode
+	if len(s.heldOutput) > 0 {
+		if code == 126 || code == 127 {
+			s.sendTerminal(controlMsg{Type: "error", Message: s.cfg.MissingExecutableMessage})
+			s.shutdownConns()
+			return "error"
+		}
+		for _, h := range s.heldOutput { // it was ordinary output after all
+			if !s.forward(h.kind, h.p) {
+				break
+			}
+		}
+	}
 	s.sendTerminal(controlMsg{Type: "exit", Code: &code})
 	s.shutdownConns()
 	return fmt.Sprintf("exit %d", code)

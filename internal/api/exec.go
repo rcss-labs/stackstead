@@ -303,7 +303,19 @@ func (e execSession) serve(ws *websocket.Conn) {
 		After:           time.After,
 		StillAuthorized: e.authorize,
 		Closing:         e.s.opts.Closing,
+
+		MissingExecutableMessage: e.missingExecutableMessage(),
 	})
+	if result == "detached" {
+		e.s.opts.Logger.Warn("container exec detached: the command is still running unattended", "container", e.insp.Name)
+	}
+}
+
+func (e execSession) missingExecutableMessage() string {
+	if e.req.autoShell {
+		return noShellMessage
+	}
+	return "command not found in this container"
 }
 
 func (e execSession) startFailureMessage(err error) string {
@@ -311,10 +323,7 @@ func (e execSession) startFailureMessage(err error) string {
 	case errors.Is(err, engine.ErrNotRunning):
 		return "container is not running"
 	case missingExecutable(err):
-		if e.req.autoShell {
-			return noShellMessage
-		}
-		return "command not found in this container"
+		return e.missingExecutableMessage()
 	}
 	return "could not start the command"
 }

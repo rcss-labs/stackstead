@@ -449,6 +449,66 @@ func TestSessionExitSendsCode(t *testing.T) {
 	}
 }
 
+// Real Docker answers a missing binary with a started stream carrying the OCI
+// error text, then exit code 127.
+const ociMissing = "OCI runtime exec failed: exec failed: unable to start container process: exec: \"/bin/bash\": stat /bin/bash: no such file or directory: unknown\r\n"
+
+func TestSessionMissingExecutableReportsError(t *testing.T) {
+	for _, tc := range []struct{ name, msg string }{
+		{"auto shell", "no shell found in this container; pass a command"},
+		{"custom command", "command not found in this container"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := startSession(t, func(c *sessionConfig) { c.MissingExecutableMessage = tc.msg })
+			h.be.setInspect(engine.ExecInspect{Running: false, ExitCode: 127})
+			h.st.out(1, ociMissing)
+			h.st.endOutput()
+			if r := h.waitResult(); r != "error" {
+				t.Fatalf("result = %q", r)
+			}
+			got := h.ws.textsExceptPing()
+			if len(got) != 1 || got[0].Type != "error" || got[0].Message != tc.msg {
+				t.Fatalf("texts = %+v", got)
+			}
+			if b := h.ws.binaries(); len(b) != 0 {
+				t.Fatalf("the raw OCI text was forwarded: %q", b)
+			}
+		})
+	}
+}
+
+func TestSessionOCITextAfterStdinIsOrdinaryOutput(t *testing.T) {
+	h := startSession(t, func(c *sessionConfig) { c.MissingExecutableMessage = "no shell" })
+	h.ws.sendBinary(0, 'x')
+	eventually(t, "stdin", func() bool { return string(h.st.stdinBytes()) == "x" })
+	h.be.setInspect(engine.ExecInspect{Running: false, ExitCode: 127})
+	h.st.out(1, ociMissing)
+	eventually(t, "forwarded", func() bool { return len(h.ws.binaries()) == 1 })
+	h.st.endOutput()
+	if r := h.waitResult(); r != "exit 127" {
+		t.Fatalf("result = %q", r)
+	}
+}
+
+func TestSessionHeldOCITextIsDeliveredWhenExitIsOrdinary(t *testing.T) {
+	h := startSession(t, func(c *sessionConfig) { c.MissingExecutableMessage = "no shell" })
+	h.be.setInspect(engine.ExecInspect{Running: false, ExitCode: 1})
+	h.st.out(1, ociMissing)
+	h.st.endOutput()
+	if r := h.waitResult(); r != "exit 1" {
+		t.Fatalf("result = %q", r)
+	}
+	if b := h.ws.binaries(); len(b) != 1 || string(b[0][1:]) != ociMissing {
+		t.Fatalf("binaries = %q", b)
+	}
+}
+
+func TestSessionOrdinaryFirstChunkIsNotHeldBack(t *testing.T) {
+	h := startSession(t, func(c *sessionConfig) { c.MissingExecutableMessage = "no shell" })
+	h.st.out(1, "$ ")
+	eventually(t, "prompt forwarded", func() bool { return len(h.ws.binaries()) == 1 })
+}
+
 func TestSessionExitZeroCodeIsSent(t *testing.T) {
 	h := startSession(t, nil)
 	h.st.endOutput()
