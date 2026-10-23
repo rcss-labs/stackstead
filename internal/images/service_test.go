@@ -107,7 +107,7 @@ func (f *fakeEngine) Push(_ context.Context, ref string, auth engine.RegistryAut
 	if hook != nil {
 		hook()
 	}
-	out("layer: Pushing as " + auth.Password)
+	out("layer: Pushing as " + auth.Password.Reveal())
 	if perr != nil {
 		return "", perr(auth)
 	}

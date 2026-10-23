@@ -80,5 +80,5 @@ func (p *HubProvider) Credentials(_ context.Context, r Registry) (engine.Registr
 	if !r.configured() {
 		return engine.RegistryAuth{}, ErrUnconfigured
 	}
-	return engine.RegistryAuth{Username: r.Hub.Username, Password: r.Hub.Token.Reveal(), ServerAddress: hubServerAddr}, nil
+	return engine.RegistryAuth{Username: r.Hub.Username, Password: r.Hub.Token, ServerAddress: hubServerAddr}, nil
 }

@@ -16,6 +16,7 @@ import (
 
 	"github.com/rcss-labs/stackstead/internal/engine"
 	"github.com/rcss-labs/stackstead/internal/registry/awsauth"
+	"github.com/rcss-labs/stackstead/internal/secret"
 )
 
 const (
@@ -262,5 +263,5 @@ func (p *ECRProvider) Credentials(ctx context.Context, r Registry) (engine.Regis
 	if err != nil {
 		return engine.RegistryAuth{}, err
 	}
-	return engine.RegistryAuth{Username: "AWS", Password: tok.password, ServerAddress: tok.host}, nil
+	return engine.RegistryAuth{Username: "AWS", Password: secret.Secret(tok.password), ServerAddress: tok.host}, nil
 }

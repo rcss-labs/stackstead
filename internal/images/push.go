@@ -225,7 +225,7 @@ func (s *Service) Push(ctx context.Context, user, slug, tag, targetID string) (s
 // and records the outcome on the push row and in the action log. It holds no
 // image lock. The returned error is already scrubbed of the credential.
 func (s *Service) pushVersion(ctx context.Context, user string, img Image, v Version, target PushTarget, reg registry.Registry, auth engine.RegistryAuth, opID string, out func(string)) error {
-	scrub := newScrubber(auth.Password)
+	scrub := newScrubber(auth.Password.Reveal())
 	emit := func(line string) { out(scrub(line)) }
 	bg := context.WithoutCancel(ctx)
 	detail := reg.Name + " " + target.Repository + ":" + v.Tag

@@ -334,7 +334,7 @@ func TestAutoPushFailureKeepsBuildSucceeded(t *testing.T) {
 	h, _ := newPushHarness(t)
 	h.create(t, "app")
 	tg := h.addTarget(t, "app", "hub", "u/auto", true)
-	h.eng.pushErr = func(a engine.RegistryAuth) error { return errors.New("denied " + a.Password) }
+	h.eng.pushErr = func(a engine.RegistryAuth) error { return errors.New("denied " + a.Password.Reveal()) }
 	v := h.build(t, "app", "1", nil)
 	if v.Status != VersionSucceeded {
 		t.Fatalf("version = %+v", v)

@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/rcss-labs/stackstead/internal/secret"
 )
 
 // BuildOptions selects how an image is built from a tar build context.
@@ -31,7 +33,11 @@ func (e *BuildError) Error() string { return "build failed: " + e.Message }
 
 // RegistryAuth is the credential Docker presents to the registry on a push.
 // It never appears in errors or logs.
-type RegistryAuth struct{ Username, Password, ServerAddress string }
+type RegistryAuth struct {
+	Username      string
+	Password      secret.Secret
+	ServerAddress string
+}
 
 // header encodes the credential as the X-Registry-Auth value.
 func (a RegistryAuth) header() string {
@@ -39,7 +45,7 @@ func (a RegistryAuth) header() string {
 		Username      string `json:"username"`
 		Password      string `json:"password"`
 		ServerAddress string `json:"serveraddress"`
-	}{a.Username, a.Password, a.ServerAddress})
+	}{a.Username, a.Password.Reveal(), a.ServerAddress})
 	return base64.URLEncoding.EncodeToString(raw)
 }
 

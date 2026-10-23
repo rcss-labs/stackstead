@@ -6,12 +6,34 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestRegistryAuthFormattingRedactsPassword(t *testing.T) {
+	const pw = "hunter2-pw"
+	auth := RegistryAuth{Username: "u", Password: pw, ServerAddress: "h"}
+
+	var logs bytes.Buffer
+	slog.New(slog.NewTextHandler(&logs, nil)).Info("push", "auth", auth)
+
+	outputs := map[string]string{
+		"%v":   fmt.Sprintf("%v", auth),
+		"%+v":  fmt.Sprintf("%+v", auth),
+		"%#v":  fmt.Sprintf("%#v", auth),
+		"slog": logs.String(),
+	}
+	for name, got := range outputs {
+		if strings.Contains(got, pw) {
+			t.Errorf("%s output leaks the password: %s", name, got)
+		}
+	}
+}
 
 func opsClient(t *testing.T, h http.HandlerFunc) *Client {
 	t.Helper()
