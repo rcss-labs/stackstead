@@ -259,6 +259,8 @@ export interface RegistryView {
   mode: string;
   profile: string;
   accountId: string;
+  /** Non-secret half of static ECR keys; absent otherwise. */
+  accessKeyId?: string;
   configured: boolean;
   lastTestAt?: string;
   lastTestOk: boolean;

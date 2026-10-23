@@ -45,3 +45,7 @@
 @media (max-width: 759px) {
   .pad button, .actionsCell button { min-height: 40px; }
 }
+
+.pushChip { display: inline-block; margin: 2px 0 0 var(--space-2); padding: 1px 7px; border: 1px solid var(--border); border-radius: 999px; font-size: 11px; color: var(--muted); }
+.pushChip[data-status='pushed'] { color: var(--success, var(--text)); }
+.pushChip[data-status='failed'] { color: var(--danger, var(--text)); }

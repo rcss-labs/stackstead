@@ -265,6 +265,7 @@ type RegistryView struct {
 	Mode            string     `json:"mode"`
 	Profile         string     `json:"profile"`
 	AccountID       string     `json:"accountId"`
+	AccessKeyID     string     `json:"accessKeyId,omitempty"`
 	Configured      bool       `json:"configured"`
 	LastTestAt      *time.Time `json:"lastTestAt,omitempty"`
 	LastTestOK      bool       `json:"lastTestOk"`
