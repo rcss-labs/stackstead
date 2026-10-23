@@ -104,10 +104,10 @@ export function createImagesApi(base: string) {
 
     buildImage: (slug: string, req: BuildRequest) =>
       call<BuildStarted>('POST', `/api/images/${seg(slug)}/builds`, req),
-    imageVersion: (slug: string, tag: string) =>
-      call<LibraryVersionDetail>('GET', `/api/images/${seg(slug)}/versions/${seg(tag)}`),
-    deleteImageVersion: (slug: string, tag: string) =>
-      call<void>('DELETE', `/api/images/${seg(slug)}/versions/${seg(tag)}`),
+    imageVersion: (slug: string, id: string) =>
+      call<LibraryVersionDetail>('GET', `/api/images/${seg(slug)}/versions/${seg(id)}`),
+    deleteImageVersion: (slug: string, id: string) =>
+      call<void>('DELETE', `/api/images/${seg(slug)}/versions/${seg(id)}`),
     pushImageVersion: (slug: string, tag: string, target: string) =>
       call<Operation>('POST', `/api/images/${seg(slug)}/versions/${seg(tag)}/push`, { target } satisfies PushRequest),
 

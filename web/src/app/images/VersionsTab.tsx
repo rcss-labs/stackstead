@@ -20,31 +20,39 @@ const sourceText = (v: LibraryVersion) => (v.commit ? v.commit.slice(0, 7) : `r$
 export function VersionsTab({ image, onChanged }: { image: LibraryImageDetail; onChanged(): void }) {
   const { api } = useServer();
   const slug = image.slug;
+  // Detail (the build log can be large, and it carries the used-by list) loads only when a row is opened.
   const [details, setDetails] = useState<Record<string, LibraryVersionDetail>>({});
+  const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
   const [open, setOpen] = useState<string>();
   const [deleting, setDeleting] = useState<LibraryVersion>();
   const [pending, setPending] = useState(false);
   const [inUse, setInUse] = useState<{ message: string; usedBy: LibraryUse[] }>();
 
-  // The list carries no usage, so each version's detail supplies the used-by count and the log.
+  // Versions are keyed by id: failed attempts can share a tag with each other and with the live version.
   useEffect(() => {
+    if (open === undefined) return;
     let cancelled = false;
-    for (const v of image.versions) {
-      api
-        .imageVersion(slug, v.tag)
-        .then((d) => !cancelled && setDetails((prev) => ({ ...prev, [v.tag]: d })))
-        .catch(() => {});
-    }
+    const id = open;
+    api
+      .imageVersion(slug, id)
+      .then((d) => {
+        if (cancelled) return;
+        setDetails((prev) => ({ ...prev, [id]: d }));
+        setDetailErrors(({ [id]: _gone, ...rest }) => rest);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setDetailErrors((prev) => ({ ...prev, [id]: e instanceof Error ? e.message : String(e) }));
+      });
     return () => {
       cancelled = true;
     };
-  }, [api, slug, image.versions]);
+  }, [api, slug, open]);
 
   async function remove(version: LibraryVersion) {
     setPending(true);
     setInUse(undefined);
     try {
-      await api.deleteImageVersion(slug, version.tag);
+      await api.deleteImageVersion(slug, version.id);
       toasts.push({ kind: 'success', message: `Deleted ${version.ref}` });
       setDeleting(undefined);
       onChanged();
@@ -78,7 +86,6 @@ export function VersionsTab({ image, onChanged }: { image: LibraryImageDetail; o
               <th>Arch</th>
               <th>Build args</th>
               <th>Status</th>
-              <th>Used by</th>
               <th>
                 <span className="visually-hidden">Actions</span>
               </th>
@@ -86,8 +93,9 @@ export function VersionsTab({ image, onChanged }: { image: LibraryImageDetail; o
           </thead>
           <tbody>
             {image.versions.map((v) => {
-              const detail = details[v.tag];
-              const isOpen = open === v.tag;
+              const detail = details[v.id];
+              const detailError = detailErrors[v.id];
+              const isOpen = open === v.id;
               return (
                 <Fragment key={v.id}>
                   <tr>
@@ -98,19 +106,18 @@ export function VersionsTab({ image, onChanged }: { image: LibraryImageDetail; o
                     <td>
                       <VersionStatus status={v.status} />
                     </td>
-                    <td>{detail ? detail.usedBy.length : '—'}</td>
                     <td className={styles.actionsCell}>
-                      <Button variant="ghost" size="xs" aria-label={`Open ${v.tag}`} aria-expanded={isOpen} onClick={() => setOpen(isOpen ? undefined : v.tag)}>
+                      <Button variant="ghost" size="xs" aria-label={`Open ${v.tag} (${v.status}, started ${v.startedAt})`} aria-expanded={isOpen} onClick={() => setOpen(isOpen ? undefined : v.id)}>
                         Open
                       </Button>
-                      <Button variant="ghost" size="xs" aria-label={`Delete ${v.tag}`} onClick={() => setDeleting(v)}>
+                      <Button variant="ghost" size="xs" aria-label={`Delete ${v.tag} (${v.status}, started ${v.startedAt})`} onClick={() => setDeleting(v)}>
                         Delete
                       </Button>
                     </td>
                   </tr>
                   {isOpen && (
                     <tr>
-                      <td colSpan={7}>
+                      <td colSpan={6}>
                         <div className={styles.form}>
                           {(detail?.error || v.error) && (
                             <Banner kind="danger" title="Build failed">
@@ -118,12 +125,31 @@ export function VersionsTab({ image, onChanged }: { image: LibraryImageDetail; o
                             </Banner>
                           )}
                           <span className={styles.mono}>{v.ref}</span>
+                          {detailError && (
+                            <Banner kind="danger" title="Could not load the version">
+                              {detailError}
+                            </Banner>
+                          )}
+                          {detail && (
+                            <p>
+                              <strong>Used by {detail.usedBy.length} service{detail.usedBy.length === 1 ? '' : 's'}</strong>
+                            </p>
+                          )}
+                          {detail && detail.usedBy.length > 0 && (
+                            <ul className={styles.usedBy}>
+                              {detail.usedBy.map((u) => (
+                                <li key={`${u.server}/${u.stack}/${u.service}`}>
+                                  {u.stack} / {u.service}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
                           {detail ? (
                             <pre className={styles.log} role="log" aria-label={`Build log for ${v.tag}`} tabIndex={0}>
                               {detail.log}
                             </pre>
                           ) : (
-                            <p role="status">Loading log…</p>
+                            !detailError && <p role="status">Loading log…</p>
                           )}
                         </div>
                       </td>

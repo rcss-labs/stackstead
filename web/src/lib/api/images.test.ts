@@ -46,3 +46,22 @@ describe('createImagesApi', () => {
     expect(fake.calls.map((c) => c.path)).toEqual(['/api/servers/p1/api/images', '/api/servers/p1/api/images/registries']);
   });
 });
+
+describe('version routes', () => {
+  it('reads and deletes a version by its id, and pushes by tag', async () => {
+    fake = installFakeFetch({
+      'GET /api/images/web/versions/v%2F1': { body: { id: 'v/1', log: '', usedBy: [] } },
+      'DELETE /api/images/web/versions/v-2': { status: 204 },
+      'POST /api/images/web/versions/1/push': { body: { id: 'op', stack: '', action: 'push', state: 'running', startedAt: '2026-10-01T00:00:00Z' } },
+    });
+    const api = createImagesApi('');
+    await api.imageVersion('web', 'v/1');
+    await api.deleteImageVersion('web', 'v-2');
+    await api.pushImageVersion('web', '1', 't1');
+    expect(fake.calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      'GET /api/images/web/versions/v%2F1',
+      'DELETE /api/images/web/versions/v-2',
+      'POST /api/images/web/versions/1/push',
+    ]);
+  });
+});
