@@ -67,7 +67,7 @@ export function ImagesScreen() {
         </Banner>
       )}
       {library?.servers
-        .filter((server) => server.status !== 'reachable')
+        .filter((server) => !server.local && server.status !== 'reachable')
         .map((server) => (
           <Banner key={server.id} kind="warning" title="Some images are missing">
             {server.status === 'old'

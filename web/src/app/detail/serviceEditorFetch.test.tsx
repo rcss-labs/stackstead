@@ -29,7 +29,7 @@ import { ServiceEditor } from './ServiceEditor';
 const local: LibraryServer = { id: 'abcdef012345ffff', name: 'Here', slug: '', local: true, status: 'reachable' };
 const peer: LibraryServer = { id: 'fedcba987654aaaa', name: 'mini-02', slug: 'mini-02', local: false, status: 'reachable' };
 const PEER_REF = 'stackstead.invalid/fedcba987654/web:2';
-const LOCAL_REF = 'stackstead.invalid/abcdef012345/web:2';
+const PEER_REF_V1 = 'stackstead.invalid/fedcba987654/web:1';
 
 const serviceWith = (ref: string): ServiceDetail => ({ name: 'app', config: { image: ref, limits: {} }, readOnly: [], containers: [] });
 const stackOf = (s: ServiceDetail): StackDetail => ({
@@ -42,7 +42,7 @@ const calls = (method: string, path: string) => fake.calls.filter((c) => c.metho
 
 function install(owner: LibraryServer, fetchAnswer: FakeResponse = { body: { id: 'op-f1', stack: 'image/fedcba987654/web', action: 'fetch', state: 'running', startedAt: '2026-10-23T10:00:00Z' } }) {
   const lib: Library = { servers: [local, peer], images: [image({ owner })] };
-  const detail = { ...image({ owner }), versions: [version({ tag: '2' })], suggestedTag: '3', tagHint: '', arch: 'amd64', revision: 1 };
+  const detail = { ...image({ owner }), versions: [version({ tag: '2', startedAt: '2026-10-21T10:00:00Z' }), version({ tag: '1', startedAt: '2026-10-20T10:00:00Z' })], suggestedTag: '3', tagHint: '', arch: 'amd64', revision: 1 };
   fake = installFakeFetch({
     'GET /api/images': { body: lib },
     'GET /api/networks': { body: [] },
@@ -57,8 +57,10 @@ function install(owner: LibraryServer, fetchAnswer: FakeResponse = { body: { id:
   });
 }
 
-async function saveWithChange() {
+/** Picks the other version of the image (when `pick` is set) and a restart policy so the form is dirty, then saves. */
+async function save(pick?: string) {
   const user = userEvent.setup();
+  if (pick) await user.click(await screen.findByRole('radio', { name: pick }));
   await user.selectOptions(await screen.findByLabelText('Restart policy'), 'always');
   await user.click(screen.getByRole('button', { name: 'Preview changes' }));
   await user.click(await screen.findByRole('button', { name: 'Save' }));
@@ -81,37 +83,46 @@ afterEach(async () => {
 });
 
 describe('ServiceEditor library fetch', () => {
-  it('posts a fetch for a peer-owned ref after saving, and the save stays successful', async () => {
+  it('posts a fetch for a changed peer ref after saving and tracks the operation', async () => {
     install(peer);
-    mount(PEER_REF);
-    await saveWithChange();
+    mount(PEER_REF_V1);
+    await save('2');
     await waitFor(() => expect(calls('POST', '/api/images/fetch')).toHaveLength(1));
     expect(calls('POST', '/api/images/fetch')[0].body).toEqual({ ref: PEER_REF });
     expect(await screen.findByRole('button', { name: 'Apply' })).toBeTruthy();
     expect(get(toasts).some((t) => t.message.includes('Saved app'))).toBe(true);
-    expect(get(toasts).some((t) => /fetch/i.test(t.message))).toBe(true);
+    await waitFor(() => expect(get(toasts).some((t) => t.pending && t.message === 'fetch · image web')).toBe(true));
   });
 
-  it('posts no fetch for a ref owned by the viewed server', async () => {
-    install(local);
-    mount(LOCAL_REF);
-    await saveWithChange();
+  it('posts nothing when the ref is unchanged', async () => {
+    install(peer);
+    mount(PEER_REF);
+    await save();
     expect(await screen.findByRole('button', { name: 'Apply' })).toBeTruthy();
     expect(calls('POST', '/api/images/fetch')).toHaveLength(0);
   });
 
+  it('tracks nothing when the server answers 204', async () => {
+    install(peer, { status: 204 });
+    mount(PEER_REF_V1);
+    await save('2');
+    await waitFor(() => expect(calls('POST', '/api/images/fetch')).toHaveLength(1));
+    expect(await screen.findByRole('button', { name: 'Apply' })).toBeTruthy();
+    expect(get(toasts).some((t) => t.pending || t.kind === 'danger')).toBe(false);
+  });
+
   it('explains an architecture mismatch without failing the save', async () => {
     install(peer, { status: 409, body: { error: 'wrong arch', code: 'arch_mismatch' } });
-    mount(PEER_REF);
-    await saveWithChange();
+    mount(PEER_REF_V1);
+    await save('2');
     expect(await screen.findByRole('button', { name: 'Apply' })).toBeTruthy();
     await waitFor(() => expect(get(toasts).some((t) => /different architecture/i.test(t.message))).toBe(true));
   });
 
   it('reports another fetch failure without failing the save', async () => {
     install(peer, { status: 500, body: { error: 'boom' } });
-    mount(PEER_REF);
-    await saveWithChange();
+    mount(PEER_REF_V1);
+    await save('2');
     expect(await screen.findByRole('button', { name: 'Apply' })).toBeTruthy();
     await waitFor(() => expect(get(toasts).some((t) => t.kind === 'danger' && t.message.includes('boom'))).toBe(true));
   });

@@ -89,14 +89,49 @@ describe('Image detail', () => {
 });
 
 describe('Image owned by a peer', () => {
-  it('redirects a slug that the library lists under another owner to the owner route', async () => {
+  const missing = { status: 404, body: { error: 'image not found' } };
+
+  it('redirects a slug listed under a direct peer to the owner route', async () => {
     backend = installImagesBackend({
-      [`GET ${IMG}`]: { status: 404, body: { error: 'image not found' } },
+      [`GET ${IMG}`]: missing,
       'GET /api/images': { body: { servers: [localOwner, peerOwner], images: [image({ owner: peerOwner })] } },
     });
     mountImages('/images/web');
     expect(await screen.findByText('peer image')).toBeTruthy();
     expect(screen.getByTestId('location').textContent).toBe('/s/mini-02/images/web');
+  });
+
+  it('shows not found when the library lists the slug nowhere', async () => {
+    backend = installImagesBackend({ [`GET ${IMG}`]: missing, 'GET /api/images': { body: { servers: [localOwner], images: [] } } });
+    mountImages('/images/web');
+    expect(await screen.findByText('Image not found')).toBeTruthy();
+    expect(screen.getByTestId('location').textContent).toBe('/images/web');
+  });
+
+  it('shows not found when the slug is listed under this same owner', async () => {
+    backend = installImagesBackend({ [`GET ${IMG}`]: missing, 'GET /api/images': { body: { servers: [localOwner], images: [image()] } } });
+    mountImages('/images/web');
+    expect(await screen.findByText('Image not found')).toBeTruthy();
+    expect(screen.getByTestId('location').textContent).toBe('/images/web');
+  });
+
+  it('shows not found for an owner that is not a direct peer', async () => {
+    backend = installImagesBackend({
+      [`GET ${IMG}`]: missing,
+      'GET /api/images': { body: { servers: [localOwner], images: [image({ owner: peerOwner })] } },
+    });
+    mountImages('/images/web');
+    expect(await screen.findByText('Image not found')).toBeTruthy();
+  });
+
+  it('does not redirect a second time after a redirect', async () => {
+    backend = installImagesBackend({
+      [`GET ${IMG}`]: missing,
+      'GET /api/images': { body: { servers: [localOwner, peerOwner], images: [image({ owner: peerOwner })] } },
+    });
+    mountImages({ pathname: '/images/web', state: { redirected: true } });
+    expect(await screen.findByText('Image not found')).toBeTruthy();
+    expect(screen.getByTestId('location').textContent).toBe('/images/web');
   });
 });
 

@@ -97,7 +97,7 @@ function Probe() {
   return <output data-testid="location">{location.pathname + location.search}</output>;
 }
 
-export function mountImages(path: string) {
+export function mountImages(path: string | { pathname: string; state: unknown }) {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Suspense fallback={<p>loading page</p>}>

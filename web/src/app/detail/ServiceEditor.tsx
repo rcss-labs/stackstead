@@ -3,7 +3,6 @@ import type { ReactNode } from 'react';
 import { ApiError } from '$lib/api/client';
 import type { Operation, ServiceDetail, StackDetail } from '$lib/api/types';
 import { defaultImageTag, type ServiceForm as Form } from '$lib/compose/form';
-import { ownerIsViewed } from '$lib/images/library';
 import { parseLibraryRef } from '$lib/images/ref';
 import { dockerfileNote } from '$lib/stacks/dockerfileNote';
 import { createServiceEdit } from '$lib/stacks/serviceEdit';
@@ -50,9 +49,11 @@ const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor, onReload, lifecycleDisabledReason, onDirtyChange, removeSlot }: ServiceEditorProps) {
   // The page keys this editor by stack and service; both are fixed for its lifetime.
-  const { api, id: serverId, refreshStatus, trackOperation, refreshRunningOps, refreshStacks } = useServer();
+  const { api, refreshStatus, trackOperation, refreshRunningOps, refreshStacks } = useServer();
   const stackName = stack.name;
   const serviceName = service.name;
+  /** The library reference saved so far; only a different one needs a fetch. */
+  const loadedRef = useRef(service.config.image ?? '');
   const reloadRef = useRef(onReload);
   reloadRef.current = onReload;
 
@@ -169,20 +170,22 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
       if (get(edit.checksPartial)) toasts.push({ kind: 'warning', message: 'Port and IP checks were partial (Docker unreachable)' });
       onSaved?.(get(edit.hash));
       const ref = formRef.current.source === 'library' ? formRef.current.library?.ref : undefined;
-      if (ref) void fetchPeerImage(ref);
+      if (ref && ref !== loadedRef.current) void fetchPeerImage(ref);
+      loadedRef.current = ref ?? '';
     }
     requestFocus('save');
   }
 
-  /** A peer-owned library version has to be on this server before Apply; started alongside the save, never blocking it. */
+  /**
+   * A library version may live on a peer; the server fetches it (202) or already has it (204). Started alongside the
+   * save, never blocking it, and only for a reference that changed since it was loaded.
+   */
   async function fetchPeerImage(ref: string) {
     const parsed = parseLibraryRef(ref);
     if (!parsed) return;
     try {
-      const library = await api.images();
-      const owned = library.images.find((i) => i.slug === parsed.slug && i.owner.id.slice(0, 12) === parsed.owner);
-      if (!owned || ownerIsViewed(owned, serverId)) return;
       const op = await api.fetchImage(ref);
+      if (!op) return;
       trackOperation({ id: op.id, stack: op.stack, action: op.action });
       void refreshRunningOps();
     } catch (e) {

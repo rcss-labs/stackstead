@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, Navigate, useParams, useSearchParams } from 'react-router';
+import { Link, Navigate, useLocation, useParams, useSearchParams } from 'react-router';
 import type { BuildStarted, LibraryImage } from '$lib/api/imageTypes';
 import { imageHref } from '$lib/images/library';
 import { Banner } from '../components/Banner';
@@ -46,14 +46,17 @@ function ImageDetail({ slug }: { slug: string }) {
 
   // A slug this server does not have may be listed under a peer: send the user to that owner.
   const [elsewhere, setElsewhere] = useState<LibraryImage>();
+  const alreadyRedirected = (useLocation().state as { redirected?: boolean } | null)?.redirected === true;
   useEffect(() => {
-    if (!notFound) return;
+    if (!notFound || alreadyRedirected) return;
     let cancelled = false;
     api
       .images()
       .then((lib) => {
         if (cancelled) return;
-        setElsewhere(lib.images.find((i) => i.slug === slug && imageHref(i, scope) !== href(`/images/${slug}`)));
+        // Only a direct peer of this server is followed; the peer's own 404 never sends the user further.
+        const peers = new Set(lib.servers.filter((server) => !server.local).map((server) => server.id));
+        setElsewhere(lib.images.find((i) => i.slug === slug && peers.has(i.owner.id) && imageHref(i, scope) !== href(`/images/${slug}`)));
       })
       .catch(() => {});
     return () => {
@@ -61,7 +64,7 @@ function ImageDetail({ slug }: { slug: string }) {
     };
     // scope and href are stable for this server; the lookup runs when the 404 arrives.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [notFound, api, slug]);
+  }, [notFound, alreadyRedirected, api, slug]);
 
   useEffect(() => {
     document.title = `${detail?.name ?? slug} · Images · Stackstead`;
@@ -75,7 +78,7 @@ function ImageDetail({ slug }: { slug: string }) {
     reload();
   }
 
-  if (notFound && elsewhere) return <Navigate to={imageHref(elsewhere, scope)} replace />;
+  if (notFound && elsewhere && !alreadyRedirected) return <Navigate to={imageHref(elsewhere, scope)} replace state={{ redirected: true }} />;
   if (notFound) {
     return (
       <div className={styles.card}>

@@ -121,7 +121,8 @@ export function createImagesApi(base: string) {
 
     imageRegistries: () => call<RegistryOption[]>('GET', '/api/images/registries'),
     githubHead: (slug: string) => call<GitHubHead>('GET', `/api/images/${seg(slug)}/github/head`),
-    fetchImage: (ref: string) => call<Operation>('POST', '/api/images/fetch', { ref } satisfies FetchRequest),
+    /** 202 starts a fetch; 204 means the image is this server's own or already present. */
+    fetchImage: (ref: string) => call<Operation | undefined>('POST', '/api/images/fetch', { ref } satisfies FetchRequest),
   };
 }
 
