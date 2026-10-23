@@ -87,10 +87,11 @@ type session struct {
 
 	stdinSeen atomic.Bool // any client input reached the process
 	// heldOutput is the output withheld while it might be Docker's "could not
-	// start" text. Only readStream and, after it ends, finishExit touch it.
+	// start" text. holdMu guards it (readStream, readClient, finishExit).
 	heldOutput  []heldChunk
-	holdMu      sync.Mutex // guards heldOutput and holdChecked
-	holdChecked bool       // the first output chunk has been classified
+	holdMu      sync.Mutex  // guards heldOutput and holdChecked
+	holdChecked bool        // the first output chunk has been classified
+	holdDone    atomic.Bool // holding is settled and flushed; skip holdMu for good
 }
 
 type heldChunk struct {
@@ -247,9 +248,17 @@ func (s *session) readStream() {
 			continue
 		}
 		s.touchActivity()
-		s.holdMu.Lock()
-		ok := s.routeOutput(kind, p)
-		s.holdMu.Unlock()
+		var ok bool
+		if s.holdDone.Load() {
+			ok = s.forward(kind, p) // settled: nothing held, no lock
+		} else {
+			s.holdMu.Lock()
+			ok = s.routeOutput(kind, p)
+			if s.holdChecked && len(s.heldOutput) == 0 {
+				s.holdDone.Store(true)
+			}
+			s.holdMu.Unlock()
+		}
 		if !ok {
 			return
 		}
@@ -279,7 +288,11 @@ func (s *session) routeOutput(kind byte, p []byte) bool {
 func (s *session) flushHeldLocked() bool {
 	held := s.heldOutput
 	s.heldOutput = nil
-	for _, h := range held {
+	return s.forwardChunks(held)
+}
+
+func (s *session) forwardChunks(chunks []heldChunk) bool {
+	for _, h := range chunks {
 		if !s.forward(h.kind, h.p) {
 			return false
 		}
@@ -290,9 +303,13 @@ func (s *session) flushHeldLocked() bool {
 // releaseHeldOutput is called once client input arrives: the process is
 // clearly running, so output held back as a possible start failure is sent now.
 func (s *session) releaseHeldOutput() {
+	if s.holdDone.Load() {
+		return // settled: no lock, so stdin never waits behind output backpressure
+	}
 	s.holdMu.Lock()
 	s.holdChecked = true
-	_ = s.flushHeldLocked()
+	_ = s.flushHeldLocked() // a false result means the writer is gone; the session is ending anyway
+	s.holdDone.Store(true)
 	s.holdMu.Unlock()
 }
 
@@ -438,18 +455,21 @@ func (s *session) finishExit() string {
 		return "error"
 	}
 	code := info.ExitCode
+	// Take the held output in one critical section so a late keystroke cannot
+	// flush it between the decision and the action.
 	s.holdMu.Lock()
-	held := len(s.heldOutput) > 0
+	held := s.heldOutput
+	s.heldOutput = nil
+	s.holdChecked = true
+	s.holdDone.Store(true)
 	s.holdMu.Unlock()
-	if held {
+	if len(held) > 0 {
 		if code == 126 || code == 127 {
 			s.sendTerminal(controlMsg{Type: "error", Message: s.cfg.MissingExecutableMessage})
 			s.shutdownConns()
 			return "error"
 		}
-		s.holdMu.Lock() // it was ordinary output after all
-		_ = s.flushHeldLocked()
-		s.holdMu.Unlock()
+		s.forwardChunks(held) // it was ordinary output after all
 	}
 	s.sendTerminal(controlMsg{Type: "exit", Code: &code})
 	s.shutdownConns()
