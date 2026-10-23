@@ -270,13 +270,51 @@ func TestServiceTestScrubsProviderError(t *testing.T) {
 	}
 }
 
+// cancelingProvider cancels the request context during its call, after the
+// service has already loaded the registry.
+type cancelingProvider struct {
+	cancel context.CancelFunc
+	res    TestResult
+	err    error
+}
+
+func (c cancelingProvider) Test(context.Context, Registry) (TestResult, error) {
+	c.cancel()
+	return c.res, c.err
+}
+func (c cancelingProvider) Credentials(context.Context, Registry) (engine.RegistryAuth, error) {
+	return engine.RegistryAuth{}, nil
+}
+
 func TestServiceTestPreservesContextError(t *testing.T) {
 	st := newTestStore(t)
-	svc := NewService(st, map[Kind]Provider{KindDockerHub: failingProvider{context.Canceled}}, nil, nil)
-	r, _ := svc.Create(context.Background(), "u", Request{Name: "hub", Kind: KindDockerHub, Hub: &Hub{Username: "a", Token: "t"}})
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	defer cancel()
+	svc := NewService(st, map[Kind]Provider{KindDockerHub: cancelingProvider{cancel: cancel, err: errors.New("connection reset")}}, nil, nil)
+	r, err := svc.Create(context.Background(), "u", Request{Name: "hub", Kind: KindDockerHub, Hub: &Hub{Username: "a", Token: "t"}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := svc.Test(ctx, r.ID); !errors.Is(err, context.Canceled) {
 		t.Fatalf("got %v, want context.Canceled", err)
+	}
+}
+
+func TestServiceTestRecordsSuccessAfterCancel(t *testing.T) {
+	st := newTestStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := cancelingProvider{cancel: cancel, res: TestResult{OK: true, Host: HubHost, Message: "ok"}}
+	svc := NewService(st, map[Kind]Provider{KindDockerHub: p}, nil, nil)
+	r, err := svc.Create(context.Background(), "u", Request{Name: "hub", Kind: KindDockerHub, Hub: &Hub{Username: "a", Token: "t"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res, err := svc.Test(ctx, r.ID); err != nil || !res.OK {
+		t.Fatalf("%+v %v", res, err)
+	}
+	got, _ := st.Get(context.Background(), r.ID)
+	if !got.LastTestOK || got.LastTestAt == nil {
+		t.Errorf("success not recorded after cancel: %+v", got)
 	}
 }
