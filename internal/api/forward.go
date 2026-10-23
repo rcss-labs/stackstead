@@ -109,6 +109,9 @@ func (s *server) handleForward(w http.ResponseWriter, r *http.Request) {
 	// open stream cannot hold srv.Shutdown past its grace period.
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	// Removing the peer here also ends the stream.
+	ctx, stopWatch := s.opts.Peers.WatchPeer(ctx, peer.InstanceID)
+	defer stopWatch()
 	go func() {
 		select {
 		case <-s.opts.Closing:

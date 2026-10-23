@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -21,15 +23,29 @@ import (
 
 const adminPassword = "correct horse battery"
 
-type fakeClock struct{ now time.Time }
+// fakeClock is safe for concurrent use: open streams read it while tests advance it.
+type fakeClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
 
-func (c *fakeClock) Now() time.Time          { return c.now }
-func (c *fakeClock) Advance(d time.Duration) { c.now = c.now.Add(d) }
+func (c *fakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *fakeClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
 
 type testEnv struct {
 	handler http.Handler
 	auth    *auth.Service
 	clock   *fakeClock
+	db      *sql.DB
 }
 
 func newTestEnv(t *testing.T, setupToken string) *testEnv {
@@ -46,7 +62,7 @@ func newEnvWith(t *testing.T, setupToken string, tweak func(*api.Options)) *test
 	}
 	t.Cleanup(func() { db.Close() })
 	clock := &fakeClock{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
-	svc, err := auth.NewService(db, clock.Now, auth.WithFastHashingForTests())
+	svc, err := auth.NewService(db, clock.Now, auth.WithFastHashingForTests(), auth.WithSessionRecheckInterval(50*time.Millisecond))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +84,7 @@ func newEnvWith(t *testing.T, setupToken string, tweak func(*api.Options)) *test
 		tweak(&opts)
 	}
 	h := api.New(opts)
-	return &testEnv{handler: h, auth: svc, clock: clock}
+	return &testEnv{handler: h, auth: svc, clock: clock, db: db}
 }
 
 func fromLoopback(r *http.Request) {

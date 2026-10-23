@@ -482,6 +482,7 @@ func (s *Service) Remove(ctx context.Context, id string) error {
 	if err := s.cfg.Store.DeletePeer(ctx, id); err != nil {
 		return err
 	}
+	s.endPeerStreams(id)
 	s.forgetRuntime(id)
 	s.clients.Forget(id)
 	s.Kick()

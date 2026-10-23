@@ -14,6 +14,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/rcss-labs/stackstead/internal/revocation"
 )
 
 const (
@@ -22,6 +24,8 @@ const (
 	maxUsernameLength = 64
 
 	maxConcurrentHashes = 2
+
+	defaultSessionRecheck = 30 * time.Second
 )
 
 var (
@@ -37,6 +41,9 @@ var (
 type User struct {
 	ID       int64
 	Username string
+	// SessionExpiresAt is when the session that authenticated this user ends;
+	// zero for users not authenticated by a session.
+	SessionExpiresAt time.Time
 }
 
 type Service struct {
@@ -49,6 +56,18 @@ type Service struct {
 	// the worst case is maxConcurrentHashes x 64 MiB however many logins arrive.
 	hashSlots chan struct{}
 	params    argonParams
+	// recheck is how often an open stream re-validates its session against
+	// the database, which catches revocations made by another process (the
+	// host-side reset command) and clock-based expiry.
+	recheck time.Duration
+	// watches holds the contexts of in-flight requests by session, so
+	// revoking a session ends its open streams immediately.
+	watches revocation.Registry[sessionKey]
+}
+
+type sessionKey struct {
+	tokenHash string
+	userID    int64
 }
 
 // Option customizes NewService.
@@ -61,8 +80,15 @@ func WithFastHashingForTests() Option {
 	return func(s *Service) { s.params = fastHashParams }
 }
 
+// WithSessionRecheckInterval sets how often an open stream re-validates its
+// session (default 30s). Revocations inside this process end streams at once;
+// this bounds the delay for ones it cannot see.
+func WithSessionRecheckInterval(d time.Duration) Option {
+	return func(s *Service) { s.recheck = d }
+}
+
 func NewService(db *sql.DB, now func() time.Time, opts ...Option) (*Service, error) {
-	s := &Service{db: db, now: now, hashSlots: make(chan struct{}, maxConcurrentHashes), params: hashParams}
+	s := &Service{db: db, now: now, hashSlots: make(chan struct{}, maxConcurrentHashes), params: hashParams, recheck: defaultSessionRecheck}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -213,6 +239,7 @@ func (s *Service) ResetPassword(ctx context.Context, username, password string) 
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("commit password reset: %w", err)
 	}
+	s.watches.Revoke(func(sessionKey) bool { return true })
 	return false, nil
 }
 
@@ -226,6 +253,7 @@ func (s *Service) RevokeAllSessions(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("delete sessions: %w", err)
 	}
+	s.watches.Revoke(func(sessionKey) bool { return true })
 	return n, nil
 }
 
@@ -293,13 +321,55 @@ func (s *Service) Authenticate(ctx context.Context, token string) (User, error) 
 		}
 		return User{}, ErrInvalidSession
 	}
+	u.SessionExpiresAt = time.Unix(expiresAt, 0)
 	return u, nil
+}
+
+// WatchSession returns a context derived from parent that ends when the
+// session behind token is revoked (logout, password change or reset) or
+// expires. Revocations in this process cancel it at once; the database is
+// re-checked every recheck interval (and at expiry) to catch the rest, such
+// as the host-side reset command. The returned stop function must be called
+// when the request ends.
+func (s *Service) WatchSession(parent context.Context, token string, user User) (context.Context, context.CancelFunc) {
+	ctx, stop := s.watches.Watch(parent, sessionKey{tokenHash: hashToken(token), userID: user.ID})
+	go func() {
+		timer := time.NewTimer(s.nextRecheck(user.SessionExpiresAt))
+		defer timer.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+			}
+			if _, err := s.Authenticate(ctx, token); errors.Is(err, ErrInvalidSession) {
+				stop()
+				return
+			}
+			timer.Reset(s.nextRecheck(user.SessionExpiresAt))
+		}
+	}()
+	return ctx, stop
+}
+
+// nextRecheck is the wait until the next look at a session: the recheck
+// interval, or less when the session expires sooner.
+func (s *Service) nextRecheck(expiresAt time.Time) time.Duration {
+	wait := s.recheck
+	if !expiresAt.IsZero() {
+		if until := expiresAt.Sub(s.now()); until < wait {
+			wait = max(until, time.Millisecond)
+		}
+	}
+	return wait
 }
 
 func (s *Service) Logout(ctx context.Context, token string) error {
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash = ?`, hashToken(token)); err != nil {
 		return fmt.Errorf("delete session: %w", err)
 	}
+	tokenHash := hashToken(token)
+	s.watches.Revoke(func(k sessionKey) bool { return k.tokenHash == tokenHash })
 	return nil
 }
 
@@ -356,6 +426,8 @@ func (s *Service) ChangePassword(ctx context.Context, userID int64, current, nex
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit password change: %w", err)
 	}
+	keepHash := hashToken(keepToken)
+	s.watches.Revoke(func(k sessionKey) bool { return k.userID == userID && k.tokenHash != keepHash })
 	return nil
 }
 

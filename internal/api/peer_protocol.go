@@ -79,21 +79,21 @@ func (s *server) denyPeerRoutes(next http.Handler) http.Handler {
 
 // authenticatePeerRequest handles a request with a peer credential: nil
 // means it was refused and the response is already written.
-func (s *server) authenticatePeerRequest(w http.ResponseWriter, r *http.Request) *auth.User {
+func (s *server) authenticatePeerRequest(w http.ResponseWriter, r *http.Request) (*auth.User, peers.Peer) {
 	if isPeerDenied(r.URL.Path) {
 		writePeerForbidden(w)
-		return nil
+		return nil, peers.Peer{}
 	}
 	peer, err := s.opts.Peers.Authenticate(r.Context(), r.Header.Get(peers.PeerHeader), false)
 	if errors.Is(err, peers.ErrNotPaired) {
 		writeNotPaired(w)
-		return nil
+		return nil, peers.Peer{}
 	}
 	if err != nil {
 		s.internalError(w, r, err)
-		return nil
+		return nil, peers.Peer{}
 	}
-	return &auth.User{ID: 0, Username: peerActor(peer.Name, r.Header.Get(peerUserHeader))}
+	return &auth.User{ID: 0, Username: peerActor(peer.Name, r.Header.Get(peerUserHeader))}, peer
 }
 
 func peerActor(peerName, rawUser string) string {

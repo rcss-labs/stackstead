@@ -17,6 +17,11 @@ access is equivalent to root. Treat the Stackstead login like a root password.
   has.
 - There is one admin account. Passwords are hashed with argon2id, sessions use
   an HTTP-only, SameSite=Strict cookie, and login is rate-limited per client address (see [Remote access](#remote-access) for proxies).
+- Open event, log and terminal streams end when their session does: at once
+  for logout, a password change (other sessions) or a reset, when the session
+  expires, and within 30 seconds for a reset run from the host command line
+  (a separate process). Removing a
+  connected server ends the streams to and from it.
 - The web UI is served with a strict Content-Security-Policy, `nosniff` on
   every response, and never renders log, compose or error text as HTML. The
   policy allows scripts from the same origin only: the theme script

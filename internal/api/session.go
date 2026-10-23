@@ -50,9 +50,12 @@ func (s *server) requireSession(next http.HandlerFunc) http.Handler {
 		cookie, err := r.Cookie(sessionCookieName)
 		if err != nil {
 			if s.usesPeerCredential(r) {
-				user := s.authenticatePeerRequest(w, r)
+				user, peer := s.authenticatePeerRequest(w, r)
 				if user != nil {
-					next(w, r.WithContext(context.WithValue(r.Context(), userKey{}, *user)))
+					// Unpairing ends the peer's open streams.
+					ctx, stop := s.opts.Peers.WatchPeer(r.Context(), peer.InstanceID)
+					defer stop()
+					next(w, r.WithContext(context.WithValue(ctx, userKey{}, *user)))
 				}
 				return
 			}
@@ -72,6 +75,10 @@ func (s *server) requireSession(next http.HandlerFunc) http.Handler {
 		if s.opts.Peers != nil {
 			s.opts.Peers.NoteSessionActivity()
 		}
-		next(w, r.WithContext(context.WithValue(r.Context(), userKey{}, user)))
+		// Long-lived streams run on this context, so ending the session
+		// (logout, password change, expiry) ends them too.
+		ctx, stop := s.opts.Auth.WatchSession(r.Context(), cookie.Value, user)
+		defer stop()
+		next(w, r.WithContext(context.WithValue(ctx, userKey{}, user)))
 	})
 }

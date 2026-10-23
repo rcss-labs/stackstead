@@ -18,6 +18,7 @@ import (
 	"unicode"
 
 	"github.com/rcss-labs/stackstead/internal/apitypes"
+	"github.com/rcss-labs/stackstead/internal/revocation"
 )
 
 // Protocol is the connected-servers protocol version this binary speaks.
@@ -69,6 +70,20 @@ type Service struct {
 	runtimeMu    sync.RWMutex
 	runtime      map[string]peerRuntime
 	clients      ClientCache
+	// watches holds the contexts of in-flight requests to or from a peer, by
+	// instance ID, so removing the peer ends its open streams.
+	watches revocation.Registry[string]
+}
+
+// WatchPeer returns a context derived from parent that ends when the peer is
+// unpaired or removed. The returned stop function must be called when the
+// request ends.
+func (s *Service) WatchPeer(parent context.Context, instanceID string) (context.Context, context.CancelFunc) {
+	return s.watches.Watch(parent, instanceID)
+}
+
+func (s *Service) endPeerStreams(instanceID string) {
+	s.watches.Revoke(func(id string) bool { return id == instanceID })
 }
 
 func NewService(cfg ServiceConfig) *Service {
@@ -319,6 +334,7 @@ func (s *Service) ApplyUpdate(ctx context.Context, from Peer, u apitypes.PeerUpd
 // AcceptUnpair forgets the calling peer.
 func (s *Service) AcceptUnpair(ctx context.Context, from Peer) error {
 	err := s.cfg.Store.DeletePeer(ctx, from.InstanceID)
+	s.endPeerStreams(from.InstanceID)
 	s.forgetRuntime(from.InstanceID)
 	s.clients.Forget(from.InstanceID)
 	s.Kick()
