@@ -101,6 +101,8 @@ export interface LibraryUse {
 export interface LibraryVersionDetail extends LibraryVersion {
   log: string;
   usedBy: LibraryUse[];
+  /** Servers that could not be asked, so the version may be in use there. */
+  unreachable: LibraryServer[];
 }
 
 export interface LibraryUsage {

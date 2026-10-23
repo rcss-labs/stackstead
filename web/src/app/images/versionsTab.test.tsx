@@ -17,8 +17,8 @@ const v2 = version({ id: 'v-2', tag: '2', status: 'failed', commit: 'abcdef12345
 function install(extra: Parameters<typeof installImagesBackend>[0] = {}) {
   backend = installImagesBackend({
     [`GET ${IMG}`]: { body: imageDetail({ versions: [v3, v2] }) },
-    [`GET ${IMG}/versions/v-3`]: { body: { ...v3, log: 'step 1\nstep 2', usedBy: USED } },
-    [`GET ${IMG}/versions/v-2`]: { body: { ...v2, log: 'boom', usedBy: [] } },
+    [`GET ${IMG}/versions/v-3`]: { body: { ...v3, log: 'step 1\nstep 2', usedBy: USED, unreachable: [] } },
+    [`GET ${IMG}/versions/v-2`]: { body: { ...v2, log: 'boom', usedBy: [], unreachable: [] } },
     ...extra,
   });
 }
@@ -46,6 +46,16 @@ describe('Versions tab', () => {
     expect(backend.calls('GET', `${IMG}/versions/v-3`)).toHaveLength(1);
   });
 
+  it('shows a notice instead of "not used" when peers could not be asked', async () => {
+    const down = { id: 'peer-9', name: 'Mini 09', slug: 'mini-09', local: false, status: 'unreachable' };
+    install({ [`GET ${IMG}/versions/v-3`]: { body: { ...v3, log: 'step 1', usedBy: [], unreachable: [down] } } });
+    mountImages('/images/web?tab=versions');
+    await userEvent.click(await screen.findByRole('button', { name: /^Open 3 / }));
+    await screen.findByRole('log', { name: 'Build log for 3' });
+    expect(screen.getByText('could not ask Mini 09')).toBeTruthy();
+    expect(screen.queryByText('Used by 0 services')).toBeNull();
+  });
+
   it('shows an inline error when the version detail cannot be loaded', async () => {
     install({ [`GET ${IMG}/versions/v-3`]: { status: 500, body: { error: 'log unreadable' } } });
     mountImages('/images/web?tab=versions');
@@ -59,7 +69,7 @@ describe('Versions tab', () => {
     const live = version({ id: 'v-c', tag: '1', status: 'succeeded', revision: 3 });
     install({
       [`GET ${IMG}`]: { body: imageDetail({ versions: [failedA, failedB, live] }) },
-      [`GET ${IMG}/versions/v-b`]: { body: { ...failedB, log: 'log of b', usedBy: [] } },
+      [`GET ${IMG}/versions/v-b`]: { body: { ...failedB, log: 'log of b', usedBy: [], unreachable: [] } },
       [`DELETE ${IMG}/versions/v-a`]: { status: 204 },
     });
     mountImages('/images/web?tab=versions');

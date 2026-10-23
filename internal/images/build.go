@@ -287,6 +287,9 @@ type VersionDetail struct {
 	Version
 	Log    string
 	UsedBy []UsedBy
+	// Unreachable lists peers that could not be asked, so the version may be
+	// in use there even when UsedBy is empty.
+	Unreachable []ServerInfo
 }
 
 func (s *Service) versionOf(ctx context.Context, slug, id string) (Image, Version, error) {
@@ -323,13 +326,13 @@ func (s *Service) VersionDetail(ctx context.Context, slug, id string) (VersionDe
 	if err != nil {
 		return VersionDetail{}, err
 	}
-	d := VersionDetail{Version: v, Log: log, UsedBy: []UsedBy{}}
+	d := VersionDetail{Version: v, Log: log, UsedBy: []UsedBy{}, Unreachable: []ServerInfo{}}
 	if v.Status == VersionSucceeded {
 		_, owner, err := s.selfInfo(ctx)
 		if err != nil {
 			return VersionDetail{}, err
 		}
-		if d.UsedBy, _, err = s.usedBy(ctx, imageref.Ref{Owner: owner, Slug: slug, Tag: v.Tag}); err != nil {
+		if d.UsedBy, d.Unreachable, err = s.usedBy(ctx, imageref.Ref{Owner: owner, Slug: slug, Tag: v.Tag}); err != nil {
 			return VersionDetail{}, err
 		}
 	}

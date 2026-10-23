@@ -50,7 +50,7 @@ describe('createImagesApi', () => {
 describe('version routes', () => {
   it('reads and deletes a version by its id, and pushes by tag', async () => {
     fake = installFakeFetch({
-      'GET /api/images/web/versions/v%2F1': { body: { id: 'v/1', log: '', usedBy: [] } },
+      'GET /api/images/web/versions/v%2F1': { body: { id: 'v/1', log: '', usedBy: [], unreachable: [] } },
       'DELETE /api/images/web/versions/v-2': { status: 204 },
       'POST /api/images/web/versions/1/push': { body: { id: 'op', stack: '', action: 'push', state: 'running', startedAt: '2026-10-01T00:00:00Z' } },
     });

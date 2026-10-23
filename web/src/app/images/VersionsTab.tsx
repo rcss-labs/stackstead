@@ -176,12 +176,23 @@ export function VersionsTab({ image, onChanged }: { image: LibraryImageDetail; o
                               {detailError}
                             </Banner>
                           )}
-                          {detail && (
+                          {detail && detail.unreachable.length > 0 && (
+                            <InUseBanner
+                              title="Use could not be checked"
+                              inUse={{
+                                message: 'Some servers could not be asked, so this version may be in use there.',
+                                usedBy: detail.usedBy,
+                                unreachable: detail.unreachable,
+                              }}
+                              localId={image.owner.id}
+                            />
+                          )}
+                          {detail && detail.unreachable.length === 0 && (
                             <p>
                               <strong>Used by {detail.usedBy.length} service{detail.usedBy.length === 1 ? '' : 's'}</strong>
                             </p>
                           )}
-                          {detail && detail.usedBy.length > 0 && (
+                          {detail && detail.unreachable.length === 0 && detail.usedBy.length > 0 && (
                             <ul className={styles.usedBy}>
                               {detail.usedBy.map((u) => (
                                 <li key={`${u.server}/${u.stack}/${u.service}`}>

@@ -124,7 +124,7 @@ func toLibraryImageDetail(d images.Detail, owner images.ServerInfo) apitypes.Lib
 func toVersionDetail(d images.VersionDetail, owner images.ServerInfo, slug string) apitypes.LibraryVersionDetail {
 	return apitypes.LibraryVersionDetail{
 		LibraryVersion: toLibraryVersion(d.Version, imageref.OwnerID(owner.ID), slug, nil, nil),
-		Log:            d.Log, UsedBy: toLibraryUses(d.UsedBy),
+		Log:            d.Log, UsedBy: toLibraryUses(d.UsedBy), Unreachable: toLibraryServers(d.Unreachable),
 	}
 }
 

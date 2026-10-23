@@ -106,6 +106,8 @@ type LibraryVersionDetail struct {
 	LibraryVersion
 	Log    string       `json:"log"`
 	UsedBy []LibraryUse `json:"usedBy"`
+	// Unreachable names the servers that could not be asked, so the version may be in use there.
+	Unreachable []LibraryServer `json:"unreachable"`
 }
 
 type LibraryUsage struct {

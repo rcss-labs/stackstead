@@ -289,6 +289,23 @@ func TestDeleteVersionRefusedWhenPeerUnreachable(t *testing.T) {
 	}
 }
 
+func TestVersionDetailListsPeersThatCouldNotBeAsked(t *testing.T) {
+	h := newHarness(t)
+	h.create(t, "app")
+	v := h.build(t, "app", "1", nil)
+	hung := newFakePeer(t, peerDID, "Host D")
+	hung.hanging.Store(true)
+	h.withPeers(t, 200*time.Millisecond, hung)
+
+	d, err := h.svc.VersionDetail(context.Background(), "app", v.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.UsedBy) != 0 || len(d.Unreachable) != 1 || d.Unreachable[0].ID != peerDID {
+		t.Fatalf("detail used %+v unreachable %+v, want the hung peer listed", d.UsedBy, d.Unreachable)
+	}
+}
+
 func TestDeleteVersionIgnoresOldPeer(t *testing.T) {
 	h := newHarness(t)
 	h.create(t, "app")

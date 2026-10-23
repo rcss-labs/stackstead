@@ -158,8 +158,13 @@ func TestImageSharedAcrossPeers(t *testing.T) {
 	if len(refused.Unreachable) != 1 || refused.Unreachable[0].ID != bInfo.ID || refused.Unreachable[0].Name != bInfo.Name {
 		t.Fatalf("unreachable = %s", body)
 	}
-	if status, _ := a.do("GET", v2, ""); status != 200 {
-		t.Fatalf("version vanished after a refused delete: %d", status)
+	status, body = a.do("GET", v2, "")
+	var shown apitypes.LibraryVersionDetail
+	if err := json.Unmarshal([]byte(body), &shown); err != nil || status != 200 {
+		t.Fatalf("version vanished after a refused delete: %d %s", status, body)
+	}
+	if len(shown.Unreachable) != 1 || shown.Unreachable[0].ID != bInfo.ID || shown.Unreachable[0].Name != bInfo.Name {
+		t.Fatalf("version detail unreachable = %s", body)
 	}
 
 	// A Stackstead 404 means B is an old server without image sharing: it
