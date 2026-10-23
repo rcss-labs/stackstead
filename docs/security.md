@@ -61,7 +61,10 @@ For access from other machines, put a TLS reverse proxy in front and make it
 forward the original Host and client address, for example with nginx:
 
 ```nginx
-proxy_set_header Host $host;
+proxy_http_version 1.1;
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection $connection_upgrade;   # map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+proxy_set_header Host $http_host;
 proxy_set_header X-Forwarded-For $remote_addr;
 ```
 
@@ -151,7 +154,7 @@ so treat it like the rest of the signed-in surface.
   and any other client still needs a valid credential.
 - **Reverse proxy.** The Origin check compares against the `Host` the server
   receives, so the proxy must forward it with its port when not on 80/443
-  (nginx: `proxy_set_header Host $http_host;`, not `$host`). An Origin equal to
+  (nginx: `proxy_set_header Host $http_host;`, not `$host`). It must also pass the WebSocket upgrade (HTTP/1.1 with `Upgrade` and `Connection` headers, as in the snippet above); without that every terminal fails with 400 "websocket upgrade required". An Origin equal to
   Host cannot stop DNS rebinding; the `SameSite=Strict` session cookie is the
   defence there.
 - **Audit.** Every session writes a `container.exec` start entry and an end
@@ -166,7 +169,7 @@ so treat it like the rest of the signed-in surface.
 - **Idle timeout.** `exec_idle_timeout` (default 30m, `0s` disables) closes a
   session with no data in either direction, after a warning. Ping and resize
   do not count as activity. The session is also re-checked every 20 s and ends
-  when the login is gone (logout, expiry, password change).
+  when the login is gone (logout, expiry, password change); for a session forwarded from another server, the remote re-checks the peer credential, not the browser's login.
 - **Best effort on disconnect.** Closing the connection sends EOF to stdin and
   SIGHUP for a TTY, which ends interactive shells. Docker has no "kill exec",
   and Stackstead cannot do more: the service runs unprivileged, and on macOS

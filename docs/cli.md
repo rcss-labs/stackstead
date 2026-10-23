@@ -62,7 +62,9 @@ Details worth knowing:
   Ctrl-C included, go to the remote program. The remote command's exit code
   becomes the exit code of `stackstead`, even where it collides with the codes
   in the table below (as with `docker compose exec`). A service with several
-  replicas needs `--index N` (the compose replica number, from 1).
+  replicas needs `--index N` (the compose replica number, from 1). A command
+  with flags of its own needs `--` before it (`stackstead exec web app -- ls -la`),
+  otherwise `stackstead` tries to parse them.
   A session with no input or output is closed after the server's idle timeout,
   with a notice shortly before and exit code 7. Without a terminal, stdin is
   sent as is and its end is forwarded, but there is no pseudo-terminal, so
