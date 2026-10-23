@@ -25,16 +25,28 @@ export function createFleet(deps: { load: () => Promise<FleetStacks>; doc?: Docu
   let timer: ReturnType<typeof setInterval> | undefined;
   let running = false;
   let seq = 0;
+  /** The generation of the request in flight, or 0. Ticks skip while the current generation is still waiting. */
+  let pending = 0;
 
   async function refresh(): Promise<void> {
     const mine = ++seq;
+    pending = mine;
     try {
       const data = await deps.load();
       if (mine === seq) state.set({ data, loading: false, error: '' });
     } catch (e) {
       if (mine === seq) state.update((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      if (pending === mine) pending = 0;
     }
   }
+
+  // A slow response would otherwise be invalidated by the next tick's request before it could land, leaving the
+  // screen stale while requests pile up. Wait for the one in flight instead.
+  const poll = () => {
+    if (pending !== 0 && pending === seq) return;
+    void refresh();
+  };
 
   const pause = () => {
     clearInterval(timer);
@@ -42,8 +54,8 @@ export function createFleet(deps: { load: () => Promise<FleetStacks>; doc?: Docu
   };
   const resume = () => {
     pause();
-    void refresh();
-    timer = setInterval(() => void refresh(), FLEET_POLL_INTERVAL_MS);
+    poll();
+    timer = setInterval(poll, FLEET_POLL_INTERVAL_MS);
   };
   const onVisibility = () => (doc.visibilityState === 'hidden' ? pause() : resume());
 

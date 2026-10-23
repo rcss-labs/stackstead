@@ -65,4 +65,44 @@ describe('fleet', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(get(fleet.state).data).toBeUndefined();
   });
+
+  it('publishes a response slower than the poll interval and does not stack requests meanwhile', async () => {
+    const resolvers: Array<(v: FleetStacks) => void> = [];
+    const load = vi.fn(() => new Promise<FleetStacks>((r) => resolvers.push(r)));
+    const fleet = createFleet({ load, doc: fakeDoc().doc });
+    fleet.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(load).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(6_000); // ticks while the first request is still pending
+    expect(load).toHaveBeenCalledTimes(1);
+
+    resolvers[0](data);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(get(fleet.state)).toEqual({ data, loading: false, error: '' });
+
+    await vi.advanceTimersByTimeAsync(5_000); // the next tick polls again once nothing is pending
+    expect(load).toHaveBeenCalledTimes(2);
+    fleet.stop();
+  });
+
+  it('after stop and restart, polls at once and ignores the old in-flight response', async () => {
+    const resolvers: Array<(v: FleetStacks) => void> = [];
+    const load = vi.fn(() => new Promise<FleetStacks>((r) => resolvers.push(r)));
+    const fleet = createFleet({ load, doc: fakeDoc().doc });
+    fleet.start();
+    fleet.stop();
+    fleet.start();
+    expect(load).toHaveBeenCalledTimes(2);
+
+    const stale: FleetStacks = { servers: [], stacks: [], events: [{ server: 'old' }] as unknown as FleetStacks['events'] };
+    resolvers[0](stale);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(get(fleet.state).data).toBeUndefined();
+
+    resolvers[1](data);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(get(fleet.state).data).toBe(data);
+    fleet.stop();
+  });
 });
