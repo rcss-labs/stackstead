@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"github.com/rcss-labs/stackstead/internal/apitypes"
@@ -102,12 +103,49 @@ func remoteHost(r *http.Request) string {
 	return host
 }
 
+// clientIP identifies the caller for rate limiting. X-Forwarded-For is read
+// only when the TCP peer is a configured trusted proxy, and then only the
+// rightmost entry that is not itself a trusted proxy counts: entries further
+// left are client-supplied and could be rotated freely. Any malformed entry
+// falls back to the peer address, so forged input can never mint new buckets.
+func (s *server) clientIP(r *http.Request) string {
+	peer := remoteHost(r)
+	peerAddr, err := netip.ParseAddr(peer)
+	if err != nil || !s.isTrustedProxy(peerAddr) {
+		return peer
+	}
+	var hops []string
+	for _, line := range r.Header.Values("X-Forwarded-For") {
+		hops = append(hops, strings.Split(line, ",")...)
+	}
+	for i := len(hops) - 1; i >= 0; i-- {
+		hop, err := netip.ParseAddr(strings.TrimSpace(hops[i]))
+		if err != nil {
+			return peer
+		}
+		if !s.isTrustedProxy(hop) {
+			return hop.Unmap().String()
+		}
+	}
+	return peer
+}
+
+func (s *server) isTrustedProxy(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	for _, prefix := range s.opts.TrustedProxies {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	ip := remoteHost(r)
+	ip := s.clientIP(r)
 	if !s.opts.Limiter.Attempt(ip) {
 		writeError(w, http.StatusTooManyRequests, "too many failed login attempts, try again later")
 		return

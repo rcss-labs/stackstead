@@ -41,8 +41,19 @@ func Template(cfg Config) ([]byte, error) {
 		}
 		allowedRoots = strings.Join(lines, "\n")
 	}
+	trustedProxies := `# trusted_proxies:
+#   - 127.0.0.1
+#   - ::1`
+	if len(cfg.TrustedProxies) > 0 {
+		lines := []string{"trusted_proxies:"}
+		for _, proxy := range cfg.TrustedProxies {
+			lines = append(lines, "  - "+yamlScalar(proxy))
+		}
+		trustedProxies = strings.Join(lines, "\n")
+	}
 	view := map[string]string{
 		"AllowedRootsBlock":     allowedRoots,
+		"TrustedProxiesBlock":   trustedProxies,
 		"Listen":                yamlScalar(cfg.Listen),
 		"StacksDir":             yamlScalar(cfg.StacksDir),
 		"DataDir":               yamlScalar(cfg.DataDir),
@@ -128,6 +139,7 @@ func Effective(cfg Config, path string, getenv func(string) string) ([]Setting, 
 		{"stacks_dir", cfg.StacksDir},
 		{"data_dir", cfg.DataDir},
 		{"allowed_roots", strings.Join(cfg.AllowedRoots, ", ")},
+		{"trusted_proxies", strings.Join(cfg.TrustedProxies, ", ")},
 		{"metrics_retention", formatDuration(cfg.MetricsRetention)},
 		{"metrics_interval", formatDuration(cfg.MetricsInterval)},
 		{"operation_timeout", formatDuration(cfg.OperationTimeout)},

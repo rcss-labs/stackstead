@@ -139,6 +139,10 @@ server {
 }
 ```
 
+Set `trusted_proxies` (for example `[127.0.0.1]`) in the Stackstead config so
+the login rate limit tells the clients behind this proxy apart; see
+[security.md](security.md#remote-access).
+
 `auth_basic` accepts a variable, so `off` skips the login for peer calls only.
 `auth_request` has no such switch. With it, have the auth service return
 success when `X-Stackstead-Peer` is present.

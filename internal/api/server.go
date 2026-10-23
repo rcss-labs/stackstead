@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -20,13 +21,17 @@ import (
 type Options struct {
 	// Storage and Actions are registered independently; action history works
 	// even when Docker is unavailable. Serve shares these with the host collector.
-	Storage    *storage.Service
-	Actions    *actionlog.Store
-	Auth       *auth.Service
-	Limiter    *auth.LoginLimiter
-	SetupToken string // empty once an admin exists
-	Static     fs.FS  // SPA build output; must contain index.html
-	Logger     *slog.Logger
+	Storage *storage.Service
+	Actions *actionlog.Store
+	Auth    *auth.Service
+	Limiter *auth.LoginLimiter
+	// TrustedProxies are the reverse proxies whose X-Forwarded-For is believed
+	// when keying the login limiter. Empty means every client is identified
+	// by its TCP peer address.
+	TrustedProxies []netip.Prefix
+	SetupToken     string // empty once an admin exists
+	Static         fs.FS  // SPA build output; must contain index.html
+	Logger         *slog.Logger
 
 	// Stacks and Operations back the /api/stacks, /api/operations, /api/fs,
 	// /api/status routes; they are not registered unless

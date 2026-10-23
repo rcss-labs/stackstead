@@ -16,7 +16,7 @@ access is equivalent to root. Treat the Stackstead login like a root password.
   trust model is unchanged: the same root-equivalent access Stackstead already
   has.
 - There is one admin account. Passwords are hashed with argon2id, sessions use
-  an HTTP-only, SameSite=Strict cookie, and login is rate-limited per IP.
+  an HTTP-only, SameSite=Strict cookie, and login is rate-limited per client address (see [Remote access](#remote-access) for proxies).
 - The web UI is served with a strict Content-Security-Policy, `nosniff` on
   every response, and never renders log, compose or error text as HTML. The
   policy allows scripts from the same origin only: the theme script
@@ -67,6 +67,19 @@ proxy_set_header Connection $connection_upgrade;   # map $http_upgrade $connecti
 proxy_set_header Host $http_host;
 proxy_set_header X-Forwarded-For $remote_addr;
 ```
+
+Login and password-change attempts are rate-limited per client address (five
+failures per 15 minutes). By default that address is the TCP peer, so every
+user behind one proxy shares a single limit and one person's failures can lock
+the others out. List the proxy in `trusted_proxies` (IP addresses or CIDR
+ranges; env `STACKSTEAD_TRUSTED_PROXIES`, comma-separated), for example
+`trusted_proxies: [127.0.0.1, "::1"]`. Stackstead then reads `X-Forwarded-For`
+only from connections that come from a listed proxy, uses the rightmost entry
+that is not itself a listed proxy, and falls back to the proxy's own address if
+the header is malformed. From any other peer the header is ignored, since a
+client can forge it. Make the proxy overwrite the header (`$remote_addr` above
+does; `$proxy_add_x_forwarded_for` appends to a client-supplied one, which
+Stackstead also handles).
 
 Each open browser tab keeps an `/api/events` stream plus the active tab's own
 stream (logs, metrics or an operation). HTTP/1.1 allows only 6 connections per

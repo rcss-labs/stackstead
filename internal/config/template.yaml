@@ -15,6 +15,13 @@ data_dir: {{.DataDir}}
 # Defaults to [stacks_dir]. Env form: comma-separated.
 {{.AllowedRootsBlock}}
 
+# Reverse proxies (IP addresses or CIDR ranges) whose X-Forwarded-For header
+# is believed. Set this when a proxy such as nginx fronts Stackstead, so the
+# login rate limit counts each client separately instead of the proxy as one.
+# Leave empty if clients connect directly: the header is then ignored, because
+# any client could forge it. Env form: comma-separated.
+{{.TrustedProxiesBlock}}
+
 metrics_retention: {{.MetricsRetention}}
 metrics_interval: {{.MetricsInterval}}
 operation_timeout: {{.OperationTimeout}}

@@ -11,14 +11,14 @@ import (
 type changePasswordRequest = apitypes.ChangePasswordRequest
 
 // handleChangePassword changes the signed-in user's password. Wrong current
-// passwords count against the same per-IP limiter as logins; it answers 403
+// passwords count against the same per-client limiter as logins; it answers 403
 // rather than 401 because the client treats 401 as "session gone".
 func (s *server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	var req changePasswordRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	ip := remoteHost(r)
+	ip := s.clientIP(r)
 	if !s.opts.Limiter.Attempt(ip) {
 		writeError(w, http.StatusTooManyRequests, "too many failed login attempts, try again later")
 		return

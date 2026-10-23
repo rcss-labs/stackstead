@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -138,6 +139,8 @@ func TestLoadRejectsInvalidConfig(t *testing.T) {
 		{name: "bare integer duration", file: "operation_timeout: 900\n", wantErr: "operation_timeout"},
 		{name: "sub-second duration", env: map[string]string{"STACKSTEAD_OPERATION_TIMEOUT": "900ns"}, wantErr: "operation_timeout must be at least 1s"},
 		{name: "unparseable duration", env: map[string]string{"STACKSTEAD_METRICS_RETENTION": "three days"}, wantErr: "STACKSTEAD_METRICS_RETENTION"},
+		{name: "bad trusted proxy", file: "trusted_proxies: [not-an-ip]\n", wantErr: "trusted_proxies"},
+		{name: "bad trusted proxy prefix", env: map[string]string{"STACKSTEAD_TRUSTED_PROXIES": "10.0.0.0/33"}, wantErr: "trusted_proxies"},
 		{name: "negative exec idle timeout", env: map[string]string{"STACKSTEAD_EXEC_IDLE_TIMEOUT": "-1s"}, wantErr: "exec_idle_timeout"},
 	}
 	for _, tt := range tests {
@@ -304,5 +307,30 @@ func TestUpdateCheckEnvRejectsOtherValues(t *testing.T) {
 	_, err := config.Load("", env(map[string]string{"STACKSTEAD_UPDATE_CHECK": "maybe"}))
 	if err == nil || !strings.Contains(err.Error(), "STACKSTEAD_UPDATE_CHECK") {
 		t.Errorf("err = %v, want error naming STACKSTEAD_UPDATE_CHECK", err)
+	}
+}
+
+func TestTrustedProxiesDefaultEmptyAndLoadFromFileOrEnv(t *testing.T) {
+	cfg, err := config.Load("", env(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.TrustedProxies) != 0 {
+		t.Errorf("default TrustedProxies = %v, want empty", cfg.TrustedProxies)
+	}
+	cfg, err = config.Load(writeConfig(t, "trusted_proxies: [127.0.0.1, 10.0.0.0/8, \"::1\"]\n"), env(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefixes := cfg.TrustedProxyPrefixes()
+	if got := fmt.Sprint(prefixes); got != "[127.0.0.1/32 10.0.0.0/8 ::1/128]" {
+		t.Errorf("prefixes = %s", got)
+	}
+	cfg, err = config.Load("", env(map[string]string{"STACKSTEAD_TRUSTED_PROXIES": "192.168.0.0/16, 172.16.0.1"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"192.168.0.0/16", "172.16.0.1"}; !reflect.DeepEqual(cfg.TrustedProxies, want) {
+		t.Errorf("TrustedProxies = %v, want %v", cfg.TrustedProxies, want)
 	}
 }

@@ -273,6 +273,7 @@ func serve(ctx context.Context, env *Env, args []string) error {
 			Actions:          actions,
 			Auth:             authSvc,
 			Limiter:          auth.NewLoginLimiter(5, 15*time.Minute, time.Now),
+			TrustedProxies:   cfg.TrustedProxyPrefixes(),
 			SetupToken:       setupToken,
 			Static:           web.Dist(),
 			Logger:           logger,

@@ -147,6 +147,7 @@ func TestEffectiveReportsSources(t *testing.T) {
 		{Key: "stacks_dir", Value: "/opt/stacks", Source: "default"},
 		{Key: "data_dir", Value: "/srv/data", Source: "env"},
 		{Key: "allowed_roots", Value: "/opt/stacks", Source: "default"},
+		{Key: "trusted_proxies", Value: "", Source: "default"},
 		{Key: "metrics_retention", Value: "72h", Source: "default"},
 		{Key: "metrics_interval", Value: "20s", Source: "file"},
 		{Key: "operation_timeout", Value: "15m", Source: "default"},
@@ -278,5 +279,21 @@ func TestTemplateUpdateCheckLine(t *testing.T) {
 	}
 	if loaded.UpdateCheck {
 		t.Errorf("rendered file loaded UpdateCheck = true, want false")
+	}
+}
+
+func TestTemplateRendersTrustedProxies(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.TrustedProxies = []string{"127.0.0.1", "10.0.0.0/8"}
+	out, err := config.Template(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.Load(writeConfig(t, string(out)), env(nil))
+	if err != nil {
+		t.Fatalf("Load: %v\n%s", err, out)
+	}
+	if !reflect.DeepEqual(loaded.TrustedProxies, cfg.TrustedProxies) {
+		t.Errorf("round trip = %v, want %v", loaded.TrustedProxies, cfg.TrustedProxies)
 	}
 }

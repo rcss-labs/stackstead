@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -21,6 +22,7 @@ type Config struct {
 	StacksDir        string        `yaml:"stacks_dir"`
 	DataDir          string        `yaml:"data_dir"`
 	AllowedRoots     []string      `yaml:"allowed_roots"`
+	TrustedProxies   []string      `yaml:"trusted_proxies"`
 	MetricsRetention time.Duration `yaml:"metrics_retention"`
 	MetricsInterval  time.Duration `yaml:"metrics_interval"`
 	OperationTimeout time.Duration `yaml:"operation_timeout"`
@@ -172,6 +174,14 @@ func applyEnv(cfg *Config, getenv func(string) string) error {
 		}
 		cfg.ExecMaxSessions = maxSessions
 	}
+	if v := getenv("STACKSTEAD_TRUSTED_PROXIES"); v != "" {
+		cfg.TrustedProxies = nil
+		for _, entry := range strings.Split(v, ",") {
+			if entry = strings.TrimSpace(entry); entry != "" {
+				cfg.TrustedProxies = append(cfg.TrustedProxies, entry)
+			}
+		}
+	}
 	if v := getenv("STACKSTEAD_ALLOWED_ROOTS"); v != "" {
 		cfg.AllowedRoots = nil
 		for _, root := range strings.Split(v, ",") {
@@ -209,6 +219,9 @@ func (c Config) validate() error {
 			return fmt.Errorf("allowed_roots entries must be absolute paths, got %q", root)
 		}
 	}
+	if _, err := parseProxyPrefixes(c.TrustedProxies); err != nil {
+		return err
+	}
 	for name, d := range map[string]time.Duration{
 		"metrics_retention":       c.MetricsRetention,
 		"metrics_interval":        c.MetricsInterval,
@@ -235,4 +248,27 @@ func (c Config) validate() error {
 		}
 	}
 	return nil
+}
+
+// TrustedProxyPrefixes returns trusted_proxies as prefixes; a bare address
+// becomes a single-host prefix. Load has already validated every entry.
+func (c Config) TrustedProxyPrefixes() []netip.Prefix {
+	prefixes, _ := parseProxyPrefixes(c.TrustedProxies)
+	return prefixes
+}
+
+func parseProxyPrefixes(entries []string) ([]netip.Prefix, error) {
+	var prefixes []netip.Prefix
+	for _, entry := range entries {
+		prefix, err := netip.ParsePrefix(entry)
+		if err != nil {
+			addr, addrErr := netip.ParseAddr(entry)
+			if addrErr != nil {
+				return nil, fmt.Errorf("trusted_proxies entries must be IP addresses or CIDR ranges, got %q", entry)
+			}
+			prefix = netip.PrefixFrom(addr, addr.BitLen())
+		}
+		prefixes = append(prefixes, prefix.Masked())
+	}
+	return prefixes, nil
 }
