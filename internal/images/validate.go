@@ -68,6 +68,9 @@ func Slugify(name string) string {
 	return strings.TrimRight(slug, "-_")
 }
 
+// reservedSlugs would collide with fixed routes under /api/images.
+var reservedSlugs = map[string]bool{"registries": true, "fetch": true}
+
 // ValidateSlug enforces the slug pattern and the 40-character maximum.
 func ValidateSlug(slug string) error {
 	switch {
@@ -77,6 +80,8 @@ func ValidateSlug(slug string) error {
 		return fieldError("slug", "slug must be at most 40 characters")
 	case !imageref.SlugPattern.MatchString(slug):
 		return fieldError("slug", "slug may contain lowercase letters, digits, and single - or _ between them")
+	case reservedSlugs[slug]:
+		return fieldError("slug", "this name is reserved")
 	}
 	return nil
 }

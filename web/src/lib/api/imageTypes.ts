@@ -267,6 +267,14 @@ export interface RegistryView {
   lastTestMessage: string;
 }
 
+/** The push-target picker's registry entry: no settings, no status. */
+export interface RegistryOption {
+  id: string;
+  name: string;
+  kind: string;
+  host: string;
+}
+
 export interface RegistryTest {
   ok: boolean;
   host: string;

@@ -171,6 +171,13 @@ func (s *server) handleDeleteRegistry(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleTestRegistry(w http.ResponseWriter, r *http.Request) {
 	res, err := s.opts.Registries.Test(r.Context(), r.PathValue("id"))
 	if err != nil {
+		if res.OK {
+			// The provider test passed but saving the result failed; the
+			// connection itself works, so report that and log the save error.
+			s.opts.Logger.Warn("record registry test failed", "registry", r.PathValue("id"), "err", err)
+			writeJSON(w, http.StatusOK, apitypes.RegistryTest{OK: true, Host: res.Host, Message: res.Message})
+			return
+		}
 		if res.Message != "" && !errors.Is(err, registry.ErrUnconfigured) {
 			writeJSON(w, http.StatusOK, apitypes.RegistryTest{OK: false, Host: res.Host, Message: res.Message})
 			return
@@ -189,9 +196,9 @@ func (s *server) handleImageRegistries(w http.ResponseWriter, r *http.Request) {
 		s.writeRegistryError(w, r, err)
 		return
 	}
-	out := make([]apitypes.RegistryView, 0, len(list))
+	out := make([]apitypes.RegistryOption, 0, len(list))
 	for _, reg := range list {
-		out = append(out, apitypes.RegistryView{ID: reg.ID, Name: reg.Name, Kind: string(reg.Kind), Host: reg.Host})
+		out = append(out, apitypes.RegistryOption{ID: reg.ID, Name: reg.Name, Kind: string(reg.Kind), Host: reg.Host})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

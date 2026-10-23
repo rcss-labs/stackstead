@@ -18,10 +18,14 @@ import (
 // fakeRegistryProvider stands in for Docker Hub and AWS: no network is used.
 type fakeRegistryProvider struct {
 	testErr error
+	onTest  func()
 	result  registry.TestResult
 }
 
 func (f *fakeRegistryProvider) Test(_ context.Context, r registry.Registry) (registry.TestResult, error) {
+	if f.onTest != nil {
+		f.onTest()
+	}
 	if f.testErr != nil {
 		return registry.TestResult{}, f.testErr
 	}
@@ -50,15 +54,34 @@ func (e *imagesEnv) createRegistry(t *testing.T, body string) apitypes.RegistryV
 
 func TestRegistryViewNeverContainsSecrets(t *testing.T) {
 	env := newImagesEnv(t)
-	hub := env.createRegistry(t, hubBody)
-	static := env.createRegistry(t, `{"name":"aws","kind":"ecr","ecr":{"region":"eu-west-1","mode":"static","accessKeyId":"AKIAEXAMPLE","secretAccessKey":"wJalrSECRETKEY","sessionToken":"SESSIONSECRET"}}`)
+	secrets := []string{"dckr_pat_SECRETVALUE", "wJalrSECRETKEY", "SESSIONSECRET"}
+	for _, body := range []string{hubBody, `{"name":"aws","kind":"ecr","ecr":{"region":"eu-west-1","mode":"static","accessKeyId":"AKIAEXAMPLE","secretAccessKey":"wJalrSECRETKEY","sessionToken":"SESSIONSECRET"}}`} {
+		rec := env.req(t, "POST", "/api/settings/registries", body)
+		if rec.Code != 201 {
+			t.Fatalf("create = %d %s", rec.Code, rec.Body)
+		}
+		for _, sec := range secrets {
+			if strings.Contains(rec.Body.String(), sec) {
+				t.Errorf("201 body contains secret %q: %s", sec, rec.Body)
+			}
+		}
+	}
+	var list0 []apitypes.RegistryView
+	decodeBody(t, env.req(t, "GET", "/api/settings/registries", ""), &list0)
+	var hub, static apitypes.RegistryView
+	for _, v := range list0 {
+		if v.Kind == "ecr" {
+			static = v
+		} else {
+			hub = v
+		}
+	}
 	if static.AccessKeyID != "AKIAEXAMPLE" || !static.Configured {
 		t.Errorf("static view = %+v, want accessKeyId and configured", static)
 	}
 	if !hub.Configured || hub.Username != "alice" {
 		t.Errorf("hub view = %+v", hub)
 	}
-	secrets := []string{"dckr_pat_SECRETVALUE", "wJalrSECRETKEY", "SESSIONSECRET"}
 	bodies := []string{
 		env.req(t, "GET", "/api/settings/registries", "").Body.String(),
 		env.req(t, "PUT", "/api/settings/registries/"+static.ID, `{"name":"aws2","kind":"ecr","ecr":{"region":"eu-west-1","mode":"static","accessKeyId":"AKIAEXAMPLE","secretAccessKey":"","sessionToken":""}}`).Body.String(),
@@ -272,4 +295,60 @@ func TestPushRouteCodes(t *testing.T) {
 		t.Errorf("busy = %d %s", rec.Code, rec.Body)
 	}
 	close(gate)
+}
+
+func TestRegistryTestSaveFailureStillReportsOK(t *testing.T) {
+	env := newImagesEnv(t)
+	hub := env.createRegistry(t, hubBody)
+	// The registry disappears while the provider test runs, so saving the
+	// result fails although the connection works.
+	env.prov.onTest = func() {
+		if err := env.regs.Delete(context.Background(), "x", hub.ID); err != nil {
+			t.Error(err)
+		}
+	}
+	rec := env.req(t, "POST", "/api/settings/registries/"+hub.ID+"/test", "")
+	var res apitypes.RegistryTest
+	decodeBody(t, rec, &res)
+	if rec.Code != 200 || !res.OK || res.Message != "ok" {
+		t.Errorf("test = %d %+v, want 200 ok:true", rec.Code, res)
+	}
+}
+
+func TestReservedImageSlugs(t *testing.T) {
+	env := newImagesEnv(t)
+	for _, name := range []string{"Registries", "fetch"} {
+		rec := env.req(t, "POST", "/api/images", `{"name":"`+name+`","source":"upload","dockerfilePath":"","buildArgs":{}}`)
+		if rec.Code != 400 || !strings.Contains(rec.Body.String(), `"slug"`) || !strings.Contains(rec.Body.String(), "reserved") {
+			t.Errorf("create %q = %d %s, want 400 reserved on slug", name, rec.Code, rec.Body)
+		}
+	}
+}
+
+func TestPushStateCarriesRegistryName(t *testing.T) {
+	env := newImagesEnv(t)
+	hub := env.createRegistry(t, hubBody)
+	env.createImage(t, "web")
+	env.buildDone(t, "web", "1")
+	rec := env.req(t, "POST", "/api/images/web/push-targets", `{"registryId":"`+hub.ID+`","repository":"alice/web","autoPush":false}`)
+	var tg apitypes.PushTarget
+	decodeBody(t, rec, &tg)
+	rec = env.req(t, "POST", "/api/images/web/versions/1/push", `{"target":"`+tg.ID+`"}`)
+	var op apitypes.Operation
+	decodeBody(t, rec, &op)
+	waitOp(t, env.ops, op.ID)
+
+	var detail apitypes.LibraryImageDetail
+	decodeBody(t, env.req(t, "GET", "/api/images/web", ""), &detail)
+	if len(detail.Versions) != 1 || len(detail.Versions[0].Pushes) != 1 || detail.Versions[0].Pushes[0].Registry != "hub" {
+		t.Fatalf("detail pushes = %+v", detail.Versions)
+	}
+	if detail.LatestVersion == nil || detail.LatestVersion.Pushes[0].Registry != "hub" {
+		t.Errorf("latest pushes = %+v", detail.LatestVersion)
+	}
+	var lib apitypes.Library
+	decodeBody(t, env.req(t, "GET", "/api/images", ""), &lib)
+	if len(lib.Images) != 1 || lib.Images[0].LatestVersion == nil || lib.Images[0].LatestVersion.Pushes[0].Registry != "hub" {
+		t.Errorf("list pushes = %+v", lib.Images)
+	}
 }

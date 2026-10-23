@@ -301,7 +301,7 @@ All routes need a session. Errors use the shape from [API overview](#api-overvie
 | `DELETE /api/images/{slug}/versions/{id}` | delete a version by ID (409 `image_in_use` if a container uses it) |
 | `GET /api/images/registries` | registries for the push-target picker: `[{id, name, kind, host}]` only; reachable with a peer credential |
 | `POST /api/images/{slug}/push-targets` | add a push target `{registryId, repository, autoPush}` (201); a registry and repository pair is unique per image |
-| `PUT`/`DELETE /api/images/{slug}/push-targets/{id}` | change or remove a target (204); a changed registry or repository clears that target's push results |
+| `PUT`/`DELETE /api/images/{slug}/push-targets/{id}` | change a target (200, the PushTarget) or remove it (204); a changed registry or repository clears that target's push results |
 | `POST /api/images/{slug}/versions/{tag}/push` | push the succeeded version with this tag (by tag, unlike the version routes) with `{target}`; 202 Operation (action `push`) |
 
 A target with `autoPush` is pushed after every successful build, inside the

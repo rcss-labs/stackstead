@@ -272,6 +272,14 @@ type RegistryView struct {
 	LastTestMessage string     `json:"lastTestMessage"`
 }
 
+// RegistryOption is the slim registry entry of the push-target picker.
+type RegistryOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+	Host string `json:"host"`
+}
+
 type RegistryTest struct {
 	OK      bool   `json:"ok"`
 	Host    string `json:"host"`

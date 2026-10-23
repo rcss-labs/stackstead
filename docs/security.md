@@ -191,9 +191,10 @@ backslash, NUL) are refused, and builds are bounded by
 `image_operation_timeout`. Build logs are capped at 8 MiB and are text only.
 Registry credentials (Docker Hub tokens, AWS keys and session tokens) are
 stored at rest in the SQLite database under the data directory, which is 0700.
-They are write-only through the API (views show only whether a secret is set,
+They are write-only through the API (a view carries a single `configured` flag,
 plus the non-secret ECR access key id), are never forwarded to peers, and are
-redacted from logs, action history, error messages and push output. The
+redacted from logs, action history, error messages and push output. `stackstead db backup` includes
+the registry credentials, so a backup is as sensitive as the database. The
 `/api/settings/registries` routes are on the peer denylist. This release stores
 no GitHub credentials. Other image data is the uploaded build context, its
 revisions, build args (not for secrets; they are saved in plain text and can

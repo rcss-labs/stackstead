@@ -21,6 +21,7 @@ import type {
   PushRequest,
   PushTarget,
   PushTargetRequest,
+  RegistryOption,
   RegistryRequest,
   RegistryTest,
   RegistryView,
@@ -118,7 +119,7 @@ export function createImagesApi(base: string) {
     deletePushTarget: (slug: string, id: string) =>
       call<void>('DELETE', `/api/images/${seg(slug)}/push-targets/${seg(id)}`),
 
-    imageRegistries: () => call<RegistryView[]>('GET', '/api/images/registries'),
+    imageRegistries: () => call<RegistryOption[]>('GET', '/api/images/registries'),
     githubHead: (slug: string) => call<GitHubHead>('GET', `/api/images/${seg(slug)}/github/head`),
     fetchImage: (ref: string) => call<Operation>('POST', '/api/images/fetch', { ref } satisfies FetchRequest),
   };

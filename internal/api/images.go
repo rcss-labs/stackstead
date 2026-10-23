@@ -159,6 +159,7 @@ func (s *server) handleListImages(w http.ResponseWriter, r *http.Request) {
 	out := toLibrary(lib)
 	for i := range out.Images {
 		s.namePushTargets(r.Context(), out.Images[i].PushTargets)
+		s.nameImagePushes(r.Context(), &out.Images[i], nil)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -175,6 +176,7 @@ func (s *server) imageView(ctx context.Context, slug string) (apitypes.LibraryIm
 	}
 	view := toLibraryImageDetail(d, owner).LibraryImage
 	s.namePushTargets(ctx, view.PushTargets)
+	s.nameImagePushes(ctx, &view, nil)
 	return view, nil
 }
 
@@ -209,6 +211,7 @@ func (s *server) handleGetImage(w http.ResponseWriter, r *http.Request) {
 	}
 	detail := toLibraryImageDetail(d, owner)
 	s.namePushTargets(r.Context(), detail.PushTargets)
+	s.nameImagePushes(r.Context(), &detail.LibraryImage, detail.Versions)
 	writeJSON(w, http.StatusOK, detail)
 }
 
@@ -610,6 +613,49 @@ func (s *server) pushTargetView(ctx context.Context, t images.PushTarget) apityp
 		}
 	}
 	return view
+}
+
+// registryNames maps registry id to name; empty when registries are unavailable.
+func (s *server) registryNames(ctx context.Context) map[string]string {
+	if s.opts.Registries == nil {
+		return nil
+	}
+	list, err := s.opts.Registries.List(ctx)
+	if err != nil {
+		return nil
+	}
+	names := make(map[string]string, len(list))
+	for _, reg := range list {
+		names[reg.ID] = reg.Name
+	}
+	return names
+}
+
+// namePushes replaces the registry id in each push state with its name. A
+// version reached twice (detail list and latest pointer) is harmless: a name
+// is not an id, so the second lookup leaves it alone.
+func namePushes(names map[string]string, versions ...*apitypes.LibraryVersion) {
+	for _, v := range versions {
+		if v == nil {
+			continue
+		}
+		for i := range v.Pushes {
+			if n, ok := names[v.Pushes[i].Registry]; ok {
+				v.Pushes[i].Registry = n
+			}
+		}
+	}
+}
+
+func (s *server) nameImagePushes(ctx context.Context, img *apitypes.LibraryImage, versions []apitypes.LibraryVersion) {
+	names := s.registryNames(ctx)
+	if len(names) == 0 {
+		return
+	}
+	for i := range versions {
+		namePushes(names, &versions[i])
+	}
+	namePushes(names, img.LatestVersion, img.LastBuild)
 }
 
 // namePushTargets fills registryName and kind in place from the registry list.

@@ -1,5 +1,5 @@
 import { useEffect, useId, useState, type FormEvent } from 'react';
-import type { LibraryImageDetail, PushTarget, RegistryView } from '$lib/api/imageTypes';
+import type { LibraryImageDetail, PushTarget, RegistryOption } from '$lib/api/imageTypes';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -14,7 +14,7 @@ function TargetDialog(props: { image: LibraryImageDetail; target?: PushTarget; o
   const { image, target, onSaved, onClose } = props;
   const { api } = useServer();
   const uid = useId();
-  const [registries, setRegistries] = useState<RegistryView[]>();
+  const [registries, setRegistries] = useState<RegistryOption[]>();
   const [registryId, setRegistryId] = useState(target?.registryId ?? '');
   const [repository, setRepository] = useState(target?.repository ?? '');
   const [autoPush, setAutoPush] = useState(target?.autoPush ?? false);
