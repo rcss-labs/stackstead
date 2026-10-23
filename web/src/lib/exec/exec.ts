@@ -12,6 +12,8 @@ export interface ExecHandlers {
   onData(bytes: Uint8Array): void;
   onIdleWarning(seconds: number): void;
   onEnd(end: ExecEnd): void;
+  /** Called once the socket is open; lets a caller tell "never connected" from "connection lost". */
+  onOpen?(): void;
 }
 
 export interface ExecOptions {
@@ -62,6 +64,7 @@ export function openExec(url: string, h: ExecHandlers, socketCtor: typeof WebSoc
   };
   const sendControl = (msg: object) => write(JSON.stringify(msg));
   ws.onopen = () => {
+    h.onOpen?.();
     for (const f of pending.splice(0)) ws.send(f);
   };
 

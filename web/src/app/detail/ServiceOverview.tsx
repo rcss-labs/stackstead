@@ -80,6 +80,11 @@ export function ServiceOverview({ service, latestCpu, cpuHour }: ServiceOverview
                       </Link>
                     </div>
                     <div className={styles.containerStatus}>{container.status}</div>
+                    {container.state === 'running' && (
+                      <Link className={styles.terminalLink} to={href(`/containers/${encodeURIComponent(container.name)}?tab=terminal`)} aria-label={`Open terminal for ${container.name}`}>
+                        Terminal
+                      </Link>
+                    )}
                   </li>
                 );
               })}

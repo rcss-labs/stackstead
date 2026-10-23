@@ -118,6 +118,18 @@ export function ContainerRow({ row, index, focused, open, peekId, mobile, onFocu
         </div>
       )}
       <div role="cell" className={styles.toggle}>
+        {row.state === 'running' && (
+          <Link
+            to={href(`/containers/${encodeURIComponent(row.name)}?tab=terminal`)}
+            className={styles.terminalLink}
+            aria-label={`Open terminal for ${row.name}`}
+            title={`Open terminal for ${row.name}`}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="m4 17 6-6-6-6M12 19h8" />
+            </svg>
+          </Link>
+        )}
         <Button
           variant="ghost"
           size="xs"

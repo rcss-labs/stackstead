@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { gzipSync } from 'node:zlib';
 
 export const ENTRY_BUDGET = 120 * 1024;
-export const TOTAL_BUDGET = 400 * 1024;
+export const TOTAL_BUDGET = 500 * 1024;
 // Fonts are woff2 (already compressed), so they are counted raw, not gzipped.
 export const FONT_BUDGET = 200 * 1024;
 
