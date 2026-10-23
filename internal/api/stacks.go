@@ -12,6 +12,8 @@ import (
 	"github.com/rcss-labs/stackstead/internal/composefile"
 	"github.com/rcss-labs/stackstead/internal/engine"
 	"github.com/rcss-labs/stackstead/internal/fsguard"
+	"github.com/rcss-labs/stackstead/internal/imageref"
+	"github.com/rcss-labs/stackstead/internal/images"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 )
 
@@ -100,9 +102,16 @@ func (s *server) handleListStacks(w http.ResponseWriter, r *http.Request) {
 		s.writeStackError(w, r, err)
 		return
 	}
+	resolved := s.resolveLibraryRefs(r.Context(), summaryRefs(list))
 	out := make([]summaryDTO, 0, len(list))
 	for _, sum := range list {
-		out = append(out, toSummary(sum))
+		dto := toSummary(sum)
+		for _, ref := range sum.LibraryRefs {
+			if res, ok := resolved[ref]; ok && res.Known && res.Newer {
+				dto.LibraryUpdates++
+			}
+		}
+		out = append(out, dto)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -199,7 +208,9 @@ func (s *server) handleGetStack(w http.ResponseWriter, r *http.Request) {
 		s.writeStackError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toDetail(d))
+	dto := toDetail(d)
+	s.enrichServiceLibraries(r.Context(), d, &dto)
+	writeJSON(w, http.StatusOK, dto)
 }
 
 func (s *server) handleGetCompose(w http.ResponseWriter, r *http.Request) {
@@ -361,7 +372,14 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		report = s.opts.Status(r.Context())
 	}
 	flags := s.statusFlags()
-	writeJSON(w, http.StatusOK, statusDTO{
+	arch := ""
+	if s.opts.Arch != nil {
+		// An unreachable engine leaves the architecture out rather than failing the status.
+		if a, err := s.opts.Arch(r.Context()); err == nil {
+			arch = a
+		}
+	}
+	writeJSON(w, http.StatusOK, statusDTO{Arch: arch,
 		Docker: report.Docker, DockerVersion: report.DockerVersion, Compose: report.Compose,
 		Events: flags.Events, MetricsDegraded: flags.MetricsDegraded, Version: s.opts.Version,
 		MetricsIntervalSeconds:  int64(s.opts.MetricsInterval / time.Second),
@@ -423,4 +441,44 @@ func (s *server) handleRemoveService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toDetail(d))
+}
+
+func summaryRefs(list []stacks.Summary) []string {
+	var refs []string
+	for _, sum := range list {
+		refs = append(refs, sum.LibraryRefs...)
+	}
+	return refs
+}
+
+// resolveLibraryRefs describes library references for the badges. A failure
+// is logged and yields no answers: stacks must list even when the library is
+// broken.
+func (s *server) resolveLibraryRefs(ctx context.Context, refs []string) map[string]images.ResolvedRef {
+	if s.opts.Images == nil || len(refs) == 0 {
+		return nil
+	}
+	resolved, err := s.opts.Images.Resolve(ctx, refs)
+	if err != nil {
+		s.opts.Logger.Warn("resolving library images failed", "err", err)
+		return nil
+	}
+	return resolved
+}
+
+// enrichServiceLibraries sets services[].library for services whose image is
+// a library reference the library could describe.
+func (s *server) enrichServiceLibraries(ctx context.Context, d stacks.Detail, dto *detailDTO) {
+	var refs []string
+	for _, sd := range d.Services {
+		if imageref.IsLibrary(sd.Config.Image) {
+			refs = append(refs, sd.Config.Image)
+		}
+	}
+	resolved := s.resolveLibraryRefs(ctx, refs)
+	for i, sd := range d.Services {
+		if res, ok := resolved[sd.Config.Image]; ok && i < len(dto.Services) {
+			dto.Services[i].Library = toServiceLibrary(sd.Config.Image, res)
+		}
+	}
 }

@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -80,6 +81,12 @@ type Options struct {
 	Peers *peers.Service
 	// Exec configures the container exec WebSocket route.
 	Exec ExecOptions
+	// Images backs the /api/images routes and the library badges on stacks;
+	// nil disables both.
+	Images ImagesAPI
+	// Arch reports this server's Docker architecture for /api/status; nil or
+	// an error leaves it out.
+	Arch func(context.Context) (string, error)
 }
 
 type server struct {
@@ -157,6 +164,9 @@ func New(opts Options) http.Handler {
 		s.registerPeerRoutes(mux)
 		s.registerFleetRoutes(mux)
 		s.registerForwardRoutes(mux)
+	}
+	if opts.Images != nil {
+		s.registerImageRoutes(mux)
 	}
 	if opts.Stacks != nil && opts.Observe != nil {
 		s.registerContainerRoutes(mux)
