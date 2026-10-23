@@ -1,0 +1,296 @@
+package images
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"maps"
+	"os"
+	"path/filepath"
+
+	"github.com/rcss-labs/stackstead/internal/engine"
+	"github.com/rcss-labs/stackstead/internal/stacks"
+)
+
+// BuildRequest asks for a new version. BuildArgs override the image defaults;
+// SaveArgs merges them into the defaults before the build. Ref is reserved for
+// building from a git ref (GitHub sources).
+type BuildRequest struct {
+	Tag       string
+	BuildArgs map[string]string
+	SaveArgs  bool
+	Ref       string
+}
+
+const maxErrorBytes = 4096
+
+// Build records a building version and starts the build as an operation. The
+// version row is written first, so a taken tag or a running build is answered
+// before any operation exists.
+func (s *Service) Build(ctx context.Context, user, slug string, req BuildRequest) (Version, stacks.Operation, error) {
+	if err := ValidateTag(req.Tag); err != nil {
+		return Version{}, stacks.Operation{}, err
+	}
+	if err := ValidateBuildArgs(req.BuildArgs); err != nil {
+		return Version{}, stacks.Operation{}, err
+	}
+	img, err := s.store.Image(ctx, slug)
+	if err != nil {
+		return Version{}, stacks.Operation{}, err
+	}
+	if img.Source != SourceUpload {
+		return Version{}, stacks.Operation{}, fieldError("source", "building from this source is not supported yet")
+	}
+	_, owner, err := s.selfInfo(ctx)
+	if err != nil {
+		return Version{}, stacks.Operation{}, err
+	}
+	args := maps.Clone(img.BuildArgs)
+	if args == nil {
+		args = map[string]string{}
+	}
+	maps.Copy(args, req.BuildArgs)
+
+	unlock := s.lockImage(slug)
+	rev, ok, err := s.store.LatestRevision(ctx, img.ID)
+	if err == nil && !ok {
+		err = errors.New("image has no source revision")
+	}
+	var v Version
+	if err == nil {
+		v, err = s.store.StartVersion(ctx, Version{ImageID: img.ID, Tag: req.Tag, Revision: rev.Number, BuildArgs: args})
+	}
+	if err == nil && req.SaveArgs {
+		img.BuildArgs = args
+		if uerr := s.store.UpdateImage(ctx, img); uerr != nil {
+			s.log.Warn("save build defaults failed", "image", slug, "err", uerr)
+		}
+	}
+	unlock()
+	if err != nil {
+		return Version{}, stacks.Operation{}, err
+	}
+
+	opReady := make(chan struct{})
+	var opID string
+	op, err := s.ops.StartTimeout(OpKey(owner, slug), "build", s.timeout, func(opCtx context.Context, out func(string)) error {
+		<-opReady
+		return s.runBuild(opCtx, user, img, v, owner, opID, args, out)
+	})
+	if err != nil {
+		s.store.DeleteVersion(context.WithoutCancel(ctx), v.ID)
+		if errors.Is(err, stacks.ErrBusy) {
+			return Version{}, stacks.Operation{}, ErrBuildRunning
+		}
+		return Version{}, stacks.Operation{}, err
+	}
+	opID = op.ID
+	v.OperationID = op.ID
+	_, uerr := s.store.db.ExecContext(ctx, `UPDATE image_versions SET operation_id = ? WHERE id = ?`, op.ID, v.ID)
+	close(opReady)
+	if uerr != nil {
+		s.log.Warn("record build operation failed", "image", slug, "err", uerr)
+	}
+	return v, op, nil
+}
+
+func (s *Service) runBuild(ctx context.Context, user string, img Image, v Version, owner, opID string, args map[string]string, out func(string)) (err error) {
+	ref := s.Ref(owner, img.Slug, v.Tag)
+	bl, lerr := openBuildLog(s.logPath(img.Slug, v.ID))
+	emit := out
+	if lerr != nil {
+		s.log.Warn("open build log failed", "image", img.Slug, "err", lerr)
+	} else {
+		defer bl.close()
+		emit = func(line string) { out(line); bl.line(line) }
+	}
+	result := VersionResult{Status: VersionFailed, Error: "build aborted"}
+	defer func() {
+		if r := recover(); r != nil {
+			result.Error = fmt.Sprintf("build panicked: %v", r)
+			s.finishAndLog(ctx, user, img, v, opID, result)
+			panic(r)
+		}
+		s.finishAndLog(ctx, user, img, v, opID, result)
+	}()
+
+	inspect, err := s.build(ctx, img, v, ref, args, emit)
+	if err != nil {
+		result.Error = buildErrorText(ctx, err)
+		emit("build failed: " + result.Error)
+		return err
+	}
+	arch := inspect.Architecture
+	result = VersionResult{Status: VersionSucceeded, Arch: arch, ImageDigest: inspect.ID, Size: inspect.Size}
+	// Auto-push (M2) and retention (M5) hooks run here after a success.
+	return nil
+}
+
+func buildErrorText(ctx context.Context, err error) string {
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		return "build timed out"
+	case ctx.Err() != nil:
+		return "build cancelled"
+	}
+	msg := err.Error()
+	if len(msg) > maxErrorBytes {
+		msg = msg[:maxErrorBytes] + "…"
+	}
+	return msg
+}
+
+func (s *Service) finishAndLog(ctx context.Context, user string, img Image, v Version, opID string, r VersionResult) {
+	bg := context.WithoutCancel(ctx)
+	if _, err := s.finishBuilding(bg, v.ID, r); err != nil {
+		s.log.Error("finish version failed", "image", img.Slug, "version", v.ID, "err", err)
+	}
+	result := "failed"
+	if r.Status == VersionSucceeded {
+		result = "succeeded"
+	}
+	detail := "tag " + v.Tag
+	if r.Error != "" {
+		detail += ": " + r.Error
+	}
+	s.record(bg, user, "image.build", img.Slug, v.Tag, detail, result, opID)
+}
+
+// build materializes the version's revision, streams it to the engine and
+// inspects the result.
+func (s *Service) build(ctx context.Context, img Image, v Version, ref string, args map[string]string, emit func(string)) (engine.ImageInspect, error) {
+	rev, err := s.store.Revision(ctx, img.ID, v.Revision)
+	if err != nil {
+		return engine.ImageInspect{}, err
+	}
+	m, err := ParseManifest(rev.ManifestJSON)
+	if err != nil {
+		return engine.ImageInspect{}, err
+	}
+	blobs, err := s.blobs(img.Slug)
+	if err != nil {
+		return engine.ImageInspect{}, err
+	}
+	tmp := filepath.Join(s.imageDir(img.Slug), "tmp-"+v.ID)
+	defer os.RemoveAll(tmp)
+	if err := Materialize(tmp, m, blobs); err != nil {
+		return engine.ImageInspect{}, fmt.Errorf("prepare build context: %w", err)
+	}
+
+	emit(fmt.Sprintf("building %s from revision %d", ref, v.Revision))
+	pr, pw := io.Pipe()
+	written := make(chan struct{})
+	go func() {
+		defer close(written)
+		pw.CloseWithError(WriteContext(pw, tmp, img.DockerfilePath))
+	}()
+	res, err := s.eng.Build(ctx, pr, engine.BuildOptions{
+		Tags:       []string{ref},
+		Dockerfile: img.DockerfilePath,
+		BuildArgs:  args,
+		Labels:     map[string]string{"stackstead.image": img.Slug, "stackstead.version": v.ID},
+	}, emit)
+	pr.Close()
+	<-written
+	if err != nil {
+		return engine.ImageInspect{}, err
+	}
+	inspect, err := s.eng.InspectImage(ctx, ref)
+	if err != nil {
+		return engine.ImageInspect{}, fmt.Errorf("inspect built image: %w", err)
+	}
+	if inspect.ID == "" {
+		inspect.ID = res.ImageID
+	}
+	return inspect, nil
+}
+
+// ---- versions ----
+
+// VersionDetail is a version with its build log and the stacks using it.
+type VersionDetail struct {
+	Version
+	Log    string
+	UsedBy []UsedBy
+}
+
+func (s *Service) versionOf(ctx context.Context, slug, id string) (Image, Version, error) {
+	img, err := s.store.Image(ctx, slug)
+	if err != nil {
+		return Image{}, Version{}, err
+	}
+	v, err := s.store.VersionByID(ctx, id)
+	if err != nil {
+		return Image{}, Version{}, err
+	}
+	if v.ImageID != img.ID {
+		return Image{}, Version{}, ErrVersionNotFound
+	}
+	return img, v, nil
+}
+
+// VersionByTag returns the live (non-failed) version with the tag.
+func (s *Service) VersionByTag(ctx context.Context, slug, tag string) (Version, error) {
+	img, err := s.store.Image(ctx, slug)
+	if err != nil {
+		return Version{}, err
+	}
+	return s.store.Version(ctx, img.ID, tag)
+}
+
+// VersionDetail returns the version with the ID, its log and its users.
+func (s *Service) VersionDetail(ctx context.Context, slug, id string) (VersionDetail, error) {
+	img, v, err := s.versionOf(ctx, slug, id)
+	if err != nil {
+		return VersionDetail{}, err
+	}
+	log, err := s.readLog(img.Slug, v.ID)
+	if err != nil {
+		return VersionDetail{}, err
+	}
+	d := VersionDetail{Version: v, Log: log, UsedBy: []UsedBy{}}
+	if v.Status == VersionSucceeded {
+		_, owner, err := s.selfInfo(ctx)
+		if err != nil {
+			return VersionDetail{}, err
+		}
+		if d.UsedBy, err = s.usedBy(ctx, owner, slug, v.Tag); err != nil {
+			return VersionDetail{}, err
+		}
+	}
+	return d, nil
+}
+
+// DeleteVersion removes a version, its Docker tag and its log. It refuses with
+// *InUseError while a stack uses the version and ErrBuildRunning while it builds.
+func (s *Service) DeleteVersion(ctx context.Context, user, slug, id string) error {
+	unlock := s.lockImage(slug)
+	defer unlock()
+	img, v, err := s.versionOf(ctx, slug, id)
+	if err != nil {
+		return err
+	}
+	if v.Status == VersionBuilding {
+		return ErrBuildRunning
+	}
+	if v.Status == VersionSucceeded {
+		_, owner, err := s.selfInfo(ctx)
+		if err != nil {
+			return err
+		}
+		if err := s.checkUnused(ctx, owner, slug, v.Tag); err != nil {
+			return err
+		}
+		// Only a live version owns its reference; a failed one may share the tag.
+		if err := s.removeDockerTag(ctx, s.Ref(owner, slug, v.Tag)); err != nil {
+			return err
+		}
+	}
+	if err := s.store.DeleteVersion(ctx, v.ID); err != nil {
+		return err
+	}
+	os.Remove(s.logPath(img.Slug, v.ID))
+	s.record(ctx, user, "image.version", slug, v.Tag, "deleted version "+v.Tag, "succeeded", "")
+	return nil
+}
