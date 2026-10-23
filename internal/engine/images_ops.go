@@ -194,6 +194,9 @@ func (c *Client) Push(ctx context.Context, ref string, auth RegistryAuth, out fu
 		}
 		return "", c.streamResult(ctx, err)
 	}
+	if digest == "" {
+		return "", errors.New("push failed: the stream ended without a digest")
+	}
 	return digest, nil
 }
 
@@ -223,7 +226,7 @@ func (b cancelOnClose) Close() error {
 // SaveImage streams ref as an image tarball. The body is bound by ctx only;
 // the caller must close it.
 func (c *Client) SaveImage(ctx context.Context, ref string) (io.ReadCloser, error) {
-	resp, cancel, err := c.openStream(ctx, "/images/"+escapedRef(ref)+"/get", c.timeout)
+	resp, cancel, err := c.openRequest(ctx, http.MethodGet, "/images/"+escapedRef(ref)+"/get", nil, "", nil, c.timeout, true)
 	if err != nil {
 		return nil, storageResult(err, ErrImageNotFound)
 	}
@@ -232,7 +235,7 @@ func (c *Client) SaveImage(ctx context.Context, ref string) (io.ReadCloser, erro
 
 // LoadImage imports an image tarball such as SaveImage produces.
 func (c *Client) LoadImage(ctx context.Context, tar io.Reader) error {
-	resp, cancel, err := c.openRequest(ctx, http.MethodPost, "/images/load?quiet=1", tar, "application/x-tar", nil, loadHeaderWait)
+	resp, cancel, err := c.openRequest(ctx, http.MethodPost, "/images/load?quiet=1", tar, "application/x-tar", nil, loadHeaderWait, true)
 	if err != nil {
 		return err
 	}

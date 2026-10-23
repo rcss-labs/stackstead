@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
@@ -62,7 +63,7 @@ type LogOptions struct {
 // client timeout still bounds version negotiation and the wait for response
 // headers. The returned cancel must be called once the body is done with.
 func (c *Client) openStream(caller context.Context, path string, headerTimeout time.Duration) (*http.Response, context.CancelFunc, error) {
-	return c.openRequest(caller, http.MethodGet, path, nil, "", nil, headerTimeout)
+	return c.openRequest(caller, http.MethodGet, path, nil, "", nil, headerTimeout, false)
 }
 
 // postStream issues a versioned POST with an optional streamed body whose
@@ -70,10 +71,12 @@ func (c *Client) openStream(caller context.Context, path string, headerTimeout t
 // timeout, counted from when the request body has been fully sent. Non-2xx
 // answers come back as *ActionError.
 func (c *Client) postStream(caller context.Context, path string, body io.Reader, contentType string, headers http.Header) (*http.Response, context.CancelFunc, error) {
-	return c.openRequest(caller, http.MethodPost, path, body, contentType, headers, c.timeout)
+	return c.openRequest(caller, http.MethodPost, path, body, contentType, headers, c.timeout, true)
 }
 
-func (c *Client) openRequest(caller context.Context, method, path string, body io.Reader, contentType string, headers http.Header, headerTimeout time.Duration) (*http.Response, context.CancelFunc, error) {
+// openRequest is the shared core. typedErrors makes a non-2xx answer an
+// *ActionError; otherwise it is a plain error, as the log and event callers expect.
+func (c *Client) openRequest(caller context.Context, method, path string, body io.Reader, contentType string, headers http.Header, headerTimeout time.Duration, typedErrors bool) (*http.Response, context.CancelFunc, error) {
 	if err := caller.Err(); err != nil {
 		return nil, nil, fmt.Errorf("docker engine request: %w", err)
 	}
@@ -89,11 +92,25 @@ func (c *Client) openRequest(caller context.Context, method, path string, body i
 	var fired atomic.Bool
 	expire := func() { fired.Store(true); cancelCause(context.DeadlineExceeded) }
 	headerTimer := time.AfterFunc(headerTimeout, expire)
+	// done is set once Do returns; a late WroteRequest (headers can arrive
+	// before the body is fully sent) must not re-arm the timer mid-stream.
+	var mu sync.Mutex
+	done := false
+	stopTimer := func() {
+		mu.Lock()
+		done = true
+		headerTimer.Stop()
+		mu.Unlock()
+	}
 	if body != nil {
 		// Uploading may take far longer than the header wait; it starts once the request is sent.
 		headerTimer.Stop()
 		ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{WroteRequest: func(httptrace.WroteRequestInfo) {
-			headerTimer.Reset(headerTimeout)
+			mu.Lock()
+			if !done {
+				headerTimer.Reset(headerTimeout)
+			}
+			mu.Unlock()
 		}})
 	}
 	req, err := http.NewRequestWithContext(ctx, method, "http://docker/v"+v+path, body)
@@ -109,15 +126,19 @@ func (c *Client) openRequest(caller context.Context, method, path string, body i
 		req.Header.Set("Content-Type", contentType)
 	}
 	resp, err := c.http.Do(req)
+	stopTimer()
 	if err != nil {
-		headerTimer.Stop()
 		cancel()
+		// The URL can carry build args, so only the cause is kept.
+		var uerr *url.Error
+		if errors.As(err, &uerr) {
+			err = fmt.Errorf("%s: %w", strings.ToLower(uerr.Op), uerr.Err)
+		}
 		if cause := context.Cause(ctx); caller.Err() == nil && errors.Is(cause, context.DeadlineExceeded) {
 			err = cause
 		}
 		return nil, nil, c.classify(caller, err)
 	}
-	headerTimer.Stop()
 	if fired.Load() { // the header deadline fired just as headers arrived
 		resp.Body.Close()
 		cancel()
@@ -129,7 +150,11 @@ func (c *Client) openRequest(caller context.Context, method, path string, body i
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		var e struct{ Message string }
 		_ = json.Unmarshal(data, &e)
-		return nil, nil, &ActionError{Status: resp.StatusCode, Message: e.Message}
+		ae := &ActionError{Status: resp.StatusCode, Message: e.Message}
+		if typedErrors {
+			return nil, nil, ae
+		}
+		return nil, nil, errors.New(ae.Error())
 	}
 	return resp, cancel, nil
 }

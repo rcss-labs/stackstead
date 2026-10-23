@@ -219,3 +219,58 @@ func TestJSONStreamLineTooLong(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// Docker may answer before it has read the whole upload. The late
+// WroteRequest callback must not re-arm the header timer mid-stream.
+func TestBuildSurvivesHeadersBeforeUploadEnds(t *testing.T) {
+	c := opsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"stream":"started\n"}`)
+		w.(http.Flusher).Flush()
+		time.Sleep(1200 * time.Millisecond)
+		io.WriteString(w, `{"aux":{"ID":"sha256:late"}}`)
+	})
+	c.timeout = 300 * time.Millisecond
+	pr, pw := io.Pipe()
+	go func() {
+		pw.Write([]byte("part"))
+		time.Sleep(600 * time.Millisecond) // longer than the header timeout
+		pw.Close()
+	}()
+	res, err := c.Build(context.Background(), pr, BuildOptions{}, nil)
+	if err != nil || res.ImageID != "sha256:late" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+}
+
+func TestBuildErrorOmitsQueryValues(t *testing.T) {
+	c := opsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			conn.Close()
+		}
+	})
+	_, err := c.Build(context.Background(), strings.NewReader("t"), BuildOptions{
+		BuildArgs: map[string]string{"TOKEN": "s3cretvalue"}, Labels: map[string]string{"l": "s3cretlabel"},
+	}, nil)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	for _, leak := range []string{"s3cretvalue", "s3cretlabel", "buildargs", "TOKEN"} {
+		if strings.Contains(err.Error(), leak) {
+			t.Errorf("error leaks %q: %v", leak, err)
+		}
+	}
+	if !errors.Is(err, ErrUnavailable) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestPushWithoutDigestFails(t *testing.T) {
+	c := opsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"status":"Pushing","id":"l1"}`)
+	})
+	digest, err := c.Push(context.Background(), "h/o/img:1", RegistryAuth{}, nil)
+	if err == nil || digest != "" {
+		t.Fatalf("digest=%q err=%v", digest, err)
+	}
+}
