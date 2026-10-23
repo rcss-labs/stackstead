@@ -14,6 +14,8 @@ const FLASH_MS = 1200;
 
 export interface LogLinesProps {
   lines: LogLine[];
+  /** The drawer is closed: keep the stream state but render no rows. */
+  collapsed: boolean;
   search: string;
   pinned: number | undefined;
   onPin: (seq: number) => void;
@@ -31,6 +33,7 @@ export interface LogLinesProps {
 
 export function LogLines({
   lines,
+  collapsed,
   search,
   pinned,
   onPin,
@@ -48,9 +51,12 @@ export function LogLines({
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
+  const savedTop = useRef(0);
   function onScroll() {
     const el = scroller.current;
-    if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_THRESHOLD;
+    // Removing the rows on collapse clamps the scroll position; that must not overwrite what the reader had.
+    if (el && !collapsed) savedTop.current = el.scrollTop;
+    if (el && !collapsed) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_THRESHOLD;
   }
 
   const wasPaused = useRef(paused);
@@ -61,6 +67,14 @@ export function LogLines({
     wasPaused.current = paused;
     if (el && stick.current && !paused) el.scrollTop = el.scrollHeight;
   }, [lines, paused]);
+
+  // Reopening brings the rows back: restore the reader's position unless the view was following the tail.
+  const wasCollapsed = useRef(collapsed);
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (wasCollapsed.current && !collapsed && el) el.scrollTop = stick.current && !paused ? el.scrollHeight : savedTop.current;
+    wasCollapsed.current = collapsed;
+  }, [collapsed]);
 
   // Only lines newer than anything shown so far flash; rows revealed by a filter or a remount do not.
   const maxSeen = useRef(0);
@@ -116,7 +130,7 @@ export function LogLines({
         </div>
       ))}
       <div ref={scroller} className={styles.scroller} role="log" aria-live="off" aria-label="Log output" tabIndex={0} onScroll={onScroll}>
-        {lines.map((line) => {
+        {(collapsed ? [] : lines).map((line) => {
           const tone = lineTone(line.text);
           const isPinned = pinned === line.seq;
           return (

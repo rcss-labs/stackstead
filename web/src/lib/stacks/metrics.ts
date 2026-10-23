@@ -29,6 +29,11 @@ export function serviceColorIndex(service: string, all: string[]): number {
   return (i < 0 ? 0 : i) % COLOR_SLOTS;
 }
 
+/** Colour slot of every service, computed once per service list (same slots as serviceColorIndex). */
+export function serviceColorIndexes(all: string[]): ReadonlyMap<string, number> {
+  return new Map([...all].sort().map((service, i) => [service, i % COLOR_SLOTS]));
+}
+
 export interface MetricsDeps {
   history: (q: { from: string; to: string; step: string }, signal?: AbortSignal) => Promise<MetricsHistory>;
   open?: typeof openSSE;

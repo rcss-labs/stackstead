@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MetricPoint, Sample } from '../api/types';
 import type { SSEOptions } from '../sse/client';
 import { createStackLiveMetrics } from './liveMetrics';
-import { createMetricsController, serviceColorIndex } from './metrics';
+import { createMetricsController, serviceColorIndex, serviceColorIndexes } from './metrics';
 
 const NOW = new Date('2026-10-14T10:03:47Z');
 const T0 = Date.parse('2026-10-14T10:00:00Z');
@@ -240,5 +240,17 @@ describe('serviceColorIndex', () => {
     expect(serviceColorIndex('web', ['api', 'db', 'web'])).toBe(2);
     const many = Array.from({ length: 10 }, (_, i) => `s${i}`);
     expect(serviceColorIndex('s9', many)).toBe(1);
+  });
+});
+
+describe('serviceColorIndexes', () => {
+  it('maps every service to the slot serviceColorIndex gives it, whatever the input order, without touching the input', () => {
+    const all = ['web', 'db', 'api', ...Array.from({ length: 9 }, (_, i) => `x${i}`)];
+    const before = [...all];
+    const map = serviceColorIndexes(all);
+    expect(all).toEqual(before);
+    for (const name of all) expect(map.get(name)).toBe(serviceColorIndex(name, all));
+    expect(serviceColorIndexes([...all].reverse()).get('web')).toBe(map.get('web'));
+    expect(map.get('api')).toBe(0);
   });
 });

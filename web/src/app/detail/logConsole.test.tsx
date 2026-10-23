@@ -133,7 +133,8 @@ describe('LogConsole stream', () => {
     fake = installFakeStream({ [PATH]: [logEvent(C_A, 1, 1, 'first'), logEvent(C_A, 2, 1, 'second line')] });
     mount({ open: false });
     await tick(200);
-    // The lines stay mounted (inert) behind the collapsed drawer; the inline line is the header's.
+    // No rows are rendered behind the collapsed drawer; the inline line is the header's.
+    expect(screen.queryAllByTestId('log-row')).toHaveLength(0);
     const header = screen.getByTestId('log-console-header');
     expect(within(header).getByText('second line').parentElement!.textContent).toMatch(/^\d\d:\d\d:\d\d {2}api {2}second line$/);
     expect(within(header).queryByText('first')).toBeNull();

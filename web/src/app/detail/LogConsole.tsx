@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import type { LogLine } from '$lib/logs/buffer';
 import {
   consoleStatus,
@@ -7,7 +7,7 @@ import {
   type LogLevel,
 } from '$lib/stacks/console';
 import type { LogSource } from '$lib/stacks/logs';
-import { serviceColorIndex } from '$lib/stacks/metrics';
+import { serviceColorIndexes } from '$lib/stacks/metrics';
 import styles from './LogConsole.module.css';
 import { LogChips } from './LogChips';
 import { LogConsoleHeader } from './LogConsoleHeader';
@@ -80,6 +80,8 @@ export function LogConsole({ source, services, service, onService, open, onOpenC
   const newCount = paused ? newLinesSince(stream.lines, frozenSeq) : 0;
   const status = consoleStatus({ status: stream.status, ended: stream.ended, paused, sourceKind: source.kind });
   const sortedServices = useMemo(() => [...services].sort(), [services]);
+  const colorSlots = useMemo(() => serviceColorIndexes(services), [services]);
+  const colorIndex = useCallback((name: string) => colorSlots.get(name) ?? 0, [colorSlots]);
   const visibleErrors = stream.errors.filter((e) => !dismissed.has(errorKey(e)));
 
   function togglePause() {
@@ -173,11 +175,12 @@ export function LogConsole({ source, services, service, onService, open, onOpenC
             services={sortedServices}
             selected={serverService}
             onSelect={onService}
-            colorIndex={(name) => serviceColorIndex(name, sortedServices)}
+            colorIndex={colorIndex}
           />
         )}
         <LogLines
           lines={visible}
+          collapsed={!open}
           search={appliedSearch}
           pinned={pinned}
           onPin={(seq) => setPinned((current) => (current === seq ? undefined : seq))}
@@ -189,7 +192,7 @@ export function LogConsole({ source, services, service, onService, open, onOpenC
           errors={visibleErrors}
           onDismissError={(e) => setDismissed((current) => new Set(current).add(errorKey(e)))}
           onReconnect={reconnect}
-          colorIndex={(name) => serviceColorIndex(name, sortedServices)}
+          colorIndex={colorIndex}
           empty={view.length > 0 && visible.length === 0}
         />
       </div>
