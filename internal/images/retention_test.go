@@ -3,6 +3,7 @@ package images
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -42,7 +43,7 @@ func TestKeepTable(t *testing.T) {
 		{ID: "e", Status: VersionSucceeded, StartedAt: daysAgo(now, 40)},
 		{ID: "d", Status: VersionSucceeded, StartedAt: daysAgo(now, 20)},
 		{ID: "c", Status: VersionSucceeded, StartedAt: daysAgo(now, 10)},
-		{ID: "b", Status: VersionFailed, StartedAt: daysAgo(now, 2)},
+		{ID: "b", Status: VersionFailed, StartedAt: daysAgo(now, 25)},
 		{ID: "a", Status: VersionSucceeded, StartedAt: daysAgo(now, 1)},
 	}
 	cases := []struct {
@@ -50,7 +51,7 @@ func TestKeepTable(t *testing.T) {
 		policy Retention
 		want   []string
 	}{
-		{"keep last 3", Retention{KeepLast: 3}, []string{"a", "b", "c", "g"}},
+		{"keep last 3", Retention{KeepLast: 3}, []string{"a", "c", "d", "g"}},
 		{"keep 30 days", Retention{KeepDays: 30}, []string{"a", "b", "c", "d", "g"}},
 		{"either limit keeps", Retention{KeepLast: 3, KeepDays: 30}, []string{"a", "b", "c", "d", "g"}},
 		{"no limit keeps all", Retention{}, []string{"a", "b", "c", "d", "e", "f", "g"}},
@@ -61,6 +62,23 @@ func TestKeepTable(t *testing.T) {
 				t.Fatalf("kept %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+func TestKeepFailedBurstDoesNotEvictGoodVersions(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	versions := []Version{
+		{ID: "s1", Status: VersionSucceeded, StartedAt: daysAgo(now, 10)},
+		{ID: "s2", Status: VersionSucceeded, StartedAt: daysAgo(now, 9)},
+		{ID: "old-fail", Status: VersionFailed, StartedAt: daysAgo(now, 20)},
+	}
+	for i := 0; i < 5; i++ {
+		versions = append(versions, Version{ID: "f" + string(rune('1'+i)), Status: VersionFailed, StartedAt: daysAgo(now, 4-i/2)})
+	}
+	got := keptIDs(Keep(Retention{KeepLast: 2}, versions, now))
+	want := []string{"f1", "f2", "f3", "f4", "f5", "s1", "s2"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("kept %v, want %v", got, want)
 	}
 }
 
@@ -381,7 +399,8 @@ func TestSweepSurvivesPanic(t *testing.T) {
 	asked := make(chan time.Duration)
 	fire := make(chan time.Time)
 	var buf bytes.Buffer
-	sw := &Sweeper{Service: h.svc, Logger: slog.New(slog.NewTextHandler(&buf, nil)),
+	h.svc.log = slog.New(slog.NewTextHandler(&buf, nil))
+	sw := &Sweeper{Service: h.svc,
 		After: func(d time.Duration) <-chan time.Time { asked <- d; return fire }}
 	ctx, cancel := context.WithCancel(context.Background())
 	finished := make(chan struct{})
@@ -395,5 +414,136 @@ func TestSweepSurvivesPanic(t *testing.T) {
 	<-finished
 	if !strings.Contains(buf.String(), "level=WARN") || !strings.Contains(buf.String(), "panicked") {
 		t.Fatalf("panic not logged: %s", buf.String())
+	}
+}
+
+func TestRetentionRemovingFailedRowKeepsSameTagSucceeded(t *testing.T) {
+	h := newHarness(t)
+	h.create(t, "app")
+	h.eng.buildErr = &engine.BuildError{Message: "boom"}
+	failed := h.build(t, "app", "1", nil)
+	h.eng.buildErr = nil
+	good := h.build(t, "app", "1", nil)
+	h.build(t, "app", "2", nil)
+	h.setRetention(t, "app", Retention{KeepLast: 2})
+
+	res, err := h.svc.ApplyRetention(context.Background(), SweepUser, "app")
+	if err != nil || len(res.Removed) != 1 || res.Removed[0].ID != failed.ID {
+		t.Fatalf("res %+v err %v", res, err)
+	}
+	if !h.eng.present[libRef("1")] || len(h.eng.engineRemoved()) != 0 {
+		t.Fatalf("succeeded 1 was untagged: present=%v removed=%v", h.eng.present, h.eng.engineRemoved())
+	}
+	if _, err := h.svc.store.VersionByID(context.Background(), good.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRetentionDeferredWhenImageBusy(t *testing.T) {
+	h := newHarness(t)
+	h.create(t, "app")
+	h.build(t, "app", "1", nil)
+	h.build(t, "app", "2", nil)
+	h.setRetention(t, "app", Retention{KeepLast: 1})
+	release := make(chan struct{})
+	if _, err := h.ops.StartTimeout(OpKey(testOwner, "app"), "push", time.Minute, func(ctx context.Context, _ func(string)) error {
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer close(release)
+
+	res, err := h.svc.ApplyRetention(context.Background(), SweepUser, "app")
+	if err != nil || len(res.Removed) != 0 || res.Skipped != "" {
+		t.Fatalf("res %+v err %v", res, err)
+	}
+	if got := h.tags(t, "app"); !reflect.DeepEqual(got, []string{"1", "2"}) {
+		t.Fatalf("tags = %v", got)
+	}
+}
+
+func TestRetentionUntagFailureKeepsRowAndWarns(t *testing.T) {
+	h := newHarness(t)
+	h.create(t, "app")
+	h.build(t, "app", "1", nil)
+	h.build(t, "app", "2", nil)
+	h.setRetention(t, "app", Retention{KeepLast: 1})
+	h.eng.removeFn = func(context.Context, string) error { return errors.New("daemon down") }
+	var buf bytes.Buffer
+	h.svc.log = slog.New(slog.NewTextHandler(&buf, nil))
+
+	res, err := h.svc.ApplyRetention(context.Background(), SweepUser, "app")
+	if err != nil || len(res.Removed) != 0 {
+		t.Fatalf("res %+v err %v", res, err)
+	}
+	if got := h.tags(t, "app"); !reflect.DeepEqual(got, []string{"1", "2"}) {
+		t.Fatalf("tags = %v", got)
+	}
+	if _, ok := h.log.last("image.retain"); ok {
+		t.Fatal("retain logged for a failed removal")
+	}
+	if !strings.Contains(buf.String(), "level=WARN") || !strings.Contains(buf.String(), "daemon down") {
+		t.Fatalf("warn missing: %s", buf.String())
+	}
+}
+
+func TestRetentionUntagBlockedDoesNotHoldImageLockAndHonoursCtx(t *testing.T) {
+	h := newHarness(t)
+	h.create(t, "app")
+	h.build(t, "app", "1", nil)
+	h.build(t, "app", "2", nil)
+	h.setRetention(t, "app", Retention{KeepLast: 1})
+	started := make(chan struct{})
+	h.eng.removeFn = func(ctx context.Context, _ string) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() {
+		_, err := h.svc.ApplyRetention(ctx, SweepUser, "app")
+		finished <- err
+	}()
+	<-started
+
+	updated := make(chan error, 1)
+	go func() {
+		_, err := h.svc.Update(context.Background(), "bob", "app", UpdateRequest{Name: "Renamed", BuildArgs: map[string]string{"A": "1"}, Retention: Retention{KeepLast: 1}})
+		updated <- err
+	}()
+	select {
+	case err := <-updated:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("image lock is held while the untag blocks")
+	}
+	cancel()
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ApplyRetention did not return after ctx was cancelled")
+	}
+	if got := h.tags(t, "app"); !reflect.DeepEqual(got, []string{"1", "2"}) {
+		t.Fatalf("tags = %v", got)
+	}
+}
+
+func TestRunExclusiveReturnsPanic(t *testing.T) {
+	h := newHarness(t)
+	err := h.svc.runExclusive(context.Background(), "app", testOwner, func(context.Context) error { panic("boom") })
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("err = %v", err)
+	}
+	want := errors.New("plain")
+	if err := h.svc.runExclusive(context.Background(), "app", testOwner, func(context.Context) error { return want }); !errors.Is(err, want) {
+		t.Fatalf("err = %v", err)
 	}
 }

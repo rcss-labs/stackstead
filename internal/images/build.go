@@ -362,6 +362,11 @@ func (s *Service) removeVersionLocked(ctx context.Context, slug, owner string, v
 			return err
 		}
 	}
+	return s.deleteVersionRow(ctx, slug, v)
+}
+
+// deleteVersionRow removes a version's row (pushes cascade) and its log file.
+func (s *Service) deleteVersionRow(ctx context.Context, slug string, v Version) error {
 	if err := s.store.DeleteVersion(ctx, v.ID); err != nil {
 		return err
 	}

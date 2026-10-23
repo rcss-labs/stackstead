@@ -40,6 +40,8 @@ type fakeEngine struct {
 	pushDigest string
 	pushHook   func() // runs inside Push, before it returns
 
+	removeFn func(ctx context.Context, ref string) error // runs in RemoveImage; a non-nil error is returned
+
 	saveData string   // bytes SaveImage streams; empty makes it fail
 	saved    []string // refs SaveImage was asked for
 
@@ -157,7 +159,15 @@ func (f *fakeEngine) InspectImage(_ context.Context, ref string) (engine.ImageIn
 	}
 	return engine.ImageInspect{Image: engine.Image{ID: id, Size: 4321}, Architecture: "arm64"}, nil
 }
-func (f *fakeEngine) RemoveImage(_ context.Context, ref string) (engine.ImageDeleteResult, error) {
+func (f *fakeEngine) RemoveImage(ctx context.Context, ref string) (engine.ImageDeleteResult, error) {
+	f.mu.Lock()
+	fn := f.removeFn
+	f.mu.Unlock()
+	if fn != nil {
+		if err := fn(ctx, ref); err != nil {
+			return engine.ImageDeleteResult{}, err
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.removed = append(f.removed, ref)
