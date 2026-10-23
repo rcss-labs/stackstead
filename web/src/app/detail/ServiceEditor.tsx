@@ -18,7 +18,7 @@ import { BROWSE_TITLES, ServiceForm, type BrowsePurpose, type ServiceFormHandle 
 import { OperationPanel } from './OperationPanel';
 import styles from './ServiceEditor.module.css';
 
-import { useServer } from '../servers/ServerContext';
+import { FEATURE_MANAGED_DOCKERFILE, useServer } from '../servers/ServerContext';
 export interface ServiceEditorProps {
   stack: StackDetail;
   service: ServiceDetail;
@@ -49,7 +49,8 @@ const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor, onReload, lifecycleDisabledReason, onDirtyChange, removeSlot }: ServiceEditorProps) {
   // The page keys this editor by stack and service; both are fixed for its lifetime.
-  const { api, refreshStatus, trackOperation, refreshRunningOps, refreshStacks } = useServer();
+  const { api, refreshStatus, trackOperation, refreshRunningOps, refreshStacks, features } = useServer();
+  const managedDockerfile = features.includes(FEATURE_MANAGED_DOCKERFILE);
   const stackName = stack.name;
   const serviceName = service.name;
   /** The library reference saved so far; only a different one needs a fetch. */
@@ -69,7 +70,7 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
           return { hash: res.data.hash, checksPartial: res.checksPartial, dockerfileHash: res.data.dockerfileHash };
         },
         compose: () => api.compose(stackName),
-        loadDockerfile: () => api.dockerfile(stackName, serviceName),
+        loadDockerfile: managedDockerfile ? () => api.dockerfile(stackName, serviceName) : undefined,
         reloadDetail: () => reloadRef.current(),
       },
     ),

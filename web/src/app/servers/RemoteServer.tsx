@@ -58,6 +58,7 @@ function createScope(peer: Pick<PeerView, 'id' | 'slug' | 'name'>) {
     id: peer.id,
     slug: peer.slug,
     name: peer.name,
+    features: [],
     api: scopedApi,
     open,
     live: liveStore.live,
@@ -99,7 +100,9 @@ function createScope(peer: Pick<PeerView, 'id' | 'slug' | 'name'>) {
 
 function ConnectedServer({ peer }: { peer: PeerView }) {
   const { scope, start } = useMemo(() => createScope(peer), [peer.id, peer.slug]); // eslint-disable-line react-hooks/exhaustive-deps
-  const value = useMemo(() => ({ ...scope, name: peer.name }), [scope, peer.name]);
+  // The scope stays put (its streams keep running) while the peer's advertised features follow each hello.
+  const featureKey = (peer.features ?? []).join(',');
+  const value = useMemo(() => ({ ...scope, name: peer.name, features: peer.features ?? [] }), [scope, peer.name, featureKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const reachable = peer.status === 'reachable';
 
   // The shell describes this server too, even while it is unreachable and no screen is shown.

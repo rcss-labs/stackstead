@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"sync"
 	"time"
 
@@ -33,8 +34,9 @@ const (
 // peerRuntime is the last known outcome of a hello. It lives in memory so
 // that Usable is cheap; the durable parts are mirrored into the peer row.
 type peerRuntime struct {
-	status  string
-	message string
+	status   string
+	message  string
+	features []string // from the last hello; kept across failed checks
 }
 
 // maxReportedText caps peer-supplied text kept in the record.
@@ -142,7 +144,16 @@ func (s *Service) CheckNow(ctx context.Context, id string) (apitypes.PeerView, e
 
 func (s *Service) setRuntime(id, status, message string) {
 	s.runtimeMu.Lock()
-	s.runtime[id] = peerRuntime{status: status, message: message}
+	s.runtime[id] = peerRuntime{status: status, message: message, features: s.runtime[id].features}
+	s.runtimeMu.Unlock()
+}
+
+// setFeatures records what a peer advertised in its last hello.
+func (s *Service) setFeatures(id string, features []string) {
+	s.runtimeMu.Lock()
+	r := s.runtime[id]
+	r.features = slices.Clone(features)
+	s.runtime[id] = r
 	s.runtimeMu.Unlock()
 }
 
@@ -267,6 +278,7 @@ func (s *Service) recordHello(ctx context.Context, p Peer, hello apitypes.PeerHe
 		cur.LastError = message
 	}) {
 		s.setRuntime(p.InstanceID, status, message)
+		s.setFeatures(p.InstanceID, hello.Features)
 	}
 }
 

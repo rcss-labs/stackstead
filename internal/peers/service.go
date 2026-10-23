@@ -530,9 +530,15 @@ func (s *Service) viewOf(p Peer) apitypes.PeerView {
 			status = r.status
 		}
 	}
+	features := []string{}
+	if p.State == StateActive {
+		if r, ok := s.runtimeOf(p.InstanceID); ok {
+			features = append(features, r.features...)
+		}
+	}
 	return apitypes.PeerView{
 		ID: p.InstanceID, Name: p.Name, Slug: p.Slug, URL: p.URL, Version: p.Version, Status: status,
 		StackCount: p.StackCount, LastSeenAt: p.LastSeenAt, LastError: p.LastError,
-		Compatible: status != statusIncompatible, Plaintext: p.TLS.Plaintext,
+		Compatible: status != statusIncompatible, Plaintext: p.TLS.Plaintext, Features: features,
 	}
 }

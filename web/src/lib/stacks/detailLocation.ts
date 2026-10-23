@@ -28,6 +28,8 @@ export function missingComposeFile(parseError: string | undefined): boolean {
 export function resolveDetailLocation(
   query: URLSearchParams,
   detail: Pick<StackDetail, 'services' | 'parseError'> | undefined,
+  /** False for a server that cannot serve managed Dockerfiles: a deep link to the tab falls back to Overview. */
+  managedDockerfile = true,
 ): DetailLocation {
   if (!detail) return { item: { kind: 'none' }, serviceTab: 'overview', logsRequested: false, logService: undefined, op: undefined };
 
@@ -50,7 +52,7 @@ export function resolveDetailLocation(
     serviceTab:
       tab === 'metrics' || tab === 'config'
         ? tab
-        : tab === 'dockerfile' && item.kind === 'service' && hasBuild(detail.services.find((s) => s.name === item.name))
+        : tab === 'dockerfile' && managedDockerfile && item.kind === 'service' && hasBuild(detail.services.find((s) => s.name === item.name))
           ? tab
           : 'overview',
     logsRequested: tab === 'logs' && !detail.parseError,

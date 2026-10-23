@@ -5,6 +5,7 @@ import { serviceState } from '$lib/stacks/summary';
 import { Button } from '../components/Button';
 import { Led } from '../components/Led';
 import { Tabs } from '../components/Tabs';
+import { FEATURE_MANAGED_DOCKERFILE, useServerFeature } from '../servers/ServerContext';
 import styles from './ServicePane.module.css';
 import { ServiceOverview } from './ServiceOverview';
 
@@ -35,7 +36,8 @@ const DOCKERFILE_TAB = { id: 'dockerfile' as const, label: 'Dockerfile' };
 export function ServicePane({ service, tab, onTab, onLogs, latestCpu, cpuHour, onEdit, onCloseEditor, editor, children }: ServicePaneProps) {
   const state = serviceState(service);
   const hasBuild = serviceHasBuild(service);
-  const tabs = hasBuild ? [...TABS, DOCKERFILE_TAB] : TABS;
+  const managedDockerfile = useServerFeature(FEATURE_MANAGED_DOCKERFILE);
+  const tabs = hasBuild && managedDockerfile ? [...TABS, DOCKERFILE_TAB] : TABS;
   return (
     <div className={styles.pane}>
       <header className={styles.header}>

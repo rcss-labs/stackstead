@@ -23,6 +23,13 @@ import (
 // Protocol is the connected-servers protocol version this binary speaks.
 const Protocol = 1
 
+// Optional capabilities a server advertises in its hello. A peer that does
+// not list one must not be sent requests that need it.
+const (
+	FeatureYAMLCreate        = "yaml-create"
+	FeatureManagedDockerfile = "managed-dockerfile"
+)
+
 // PeerHeader carries a connection token (pairing) or a peer credential.
 const PeerHeader = "X-Stackstead-Peer"
 
@@ -113,7 +120,8 @@ func (s *Service) Hello(ctx context.Context) (apitypes.PeerHello, error) {
 	if err != nil {
 		return apitypes.PeerHello{}, err
 	}
-	return apitypes.PeerHello{Protocol: Protocol, InstanceID: id.InstanceID, Name: id.Name, Version: s.cfg.Version, URL: id.AdvertisedURL}, nil
+	return apitypes.PeerHello{Protocol: Protocol, InstanceID: id.InstanceID, Name: id.Name, Version: s.cfg.Version, URL: id.AdvertisedURL,
+		Features: []string{FeatureYAMLCreate, FeatureManagedDockerfile}}, nil
 }
 
 // Authenticate resolves the peer a credential belongs to. Pending peers (a

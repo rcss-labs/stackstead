@@ -12,9 +12,10 @@ import { usePortCheck } from './usePortCheck';
 import { YamlMode } from './YamlMode';
 import styles from './StackCreateScreen.module.css';
 
-import { useServer } from '../servers/ServerContext';
+import { FEATURE_YAML_CREATE, useServer } from '../servers/ServerContext';
 export function StackCreateScreen() {
-  const { href } = useServer();
+  const { href, features } = useServer();
+  const yamlCreate = features.includes(FEATURE_YAML_CREATE);
   const form = useCreateForm();
   const { cards, browser, pending } = form;
   const frozen = pending || browser !== null;
@@ -55,6 +56,7 @@ export function StackCreateScreen() {
               {form.formError}
             </div>
           )}
+          {yamlCreate && (
           <div className={styles.modeRow}>
             <div className={styles.modeSwitch} role="radiogroup" aria-label="Editor mode">
               {(['form', 'yaml'] as const).map((value) => (
@@ -65,6 +67,7 @@ export function StackCreateScreen() {
               ))}
             </div>
           </div>
+          )}
           {form.mode === 'yaml' && (
             <YamlMode text={form.yamlText} onChange={form.setYamlText} error={form.yamlError} fieldErrors={form.yamlFieldErrors} disabled={pending} />
           )}

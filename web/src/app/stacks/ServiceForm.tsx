@@ -10,7 +10,7 @@ import { useStore } from '../hooks/useStore';
 import { Button } from '../components/Button';
 import { Field } from '../components/Field';
 import { ListEditor } from '../components/ListEditor';
-import { useServer } from '../servers/ServerContext';
+import { FEATURE_MANAGED_DOCKERFILE, useServer } from '../servers/ServerContext';
 import { LibraryPicker } from './LibraryPicker';
 import { YamlEditor } from './YamlEditor';
 import styles from './ServiceForm.module.css';
@@ -141,7 +141,8 @@ export function ServiceForm({
   ref,
 }: ServiceFormProps) {
   const radioName = useId();
-  const { api, live, id: serverId } = useServer();
+  const { api, live, id: serverId, features } = useServer();
+  const managedDockerfile = features.includes(FEATURE_MANAGED_DOCKERFILE);
   const liveState = useStore(live);
   const root = useRef<HTMLDivElement>(null);
   const [pickedCustom, setPickedCustom] = useState(false);
@@ -472,7 +473,7 @@ export function ServiceForm({
         {readonlyNote(ro('build') ? 'build' : 'image')}
         {sourceNote && form.source === 'build' && !sourceReadOnly && <p className={styles.note}>{sourceNote}</p>}
         <div className={styles.segmented} role="radiogroup" aria-label="Source type">
-          {SOURCES.map(([value, text]) => (
+          {SOURCES.filter(([value]) => value !== 'dockerfile' || managedDockerfile || form.source === 'dockerfile').map(([value, text]) => (
             <label key={value} className={styles.seg}>
               <input type="radio" name={radioName} value={value} checked={form.source === value} disabled={sourceReadOnly} onChange={() => selectSource(value)} />
               {(value === 'image' || value === 'build') && <span className="visually-hidden">From</span>}

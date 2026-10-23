@@ -449,6 +449,9 @@ type PeerHello struct {
 	Version    string `json:"version"`
 	URL        string `json:"url"`
 	StackCount int    `json:"stackCount"`
+	// Features lists the optional capabilities this server supports. Servers
+	// that predate a feature omit it, so absence means unsupported.
+	Features []string `json:"features"`
 }
 
 type PeerUpdate struct {
@@ -515,6 +518,9 @@ type PeerView struct {
 	LastError  string     `json:"lastError"`
 	Compatible bool       `json:"compatible"`
 	Plaintext  bool       `json:"plaintext"`
+	// Features is what the peer advertised in its last hello; empty until one
+	// arrives and for peers that predate capability reporting.
+	Features []string `json:"features"`
 }
 
 // FleetServer is one server in GET /api/fleet/stacks. Status is reachable for

@@ -14,6 +14,11 @@ import { operationsRefresh, refreshRunningOps, refreshStacks, stacks } from '$li
 import type { StacksState } from '$lib/stores/stacks';
 import type { TrackedOperation } from '$lib/stores/operationTracker';
 
+/** Optional capabilities a server advertises in its hello; the names match the Go side. */
+export const FEATURE_YAML_CREATE = 'yaml-create';
+export const FEATURE_MANAGED_DOCKERFILE = 'managed-dockerfile';
+export const ALL_FEATURES: readonly string[] = [FEATURE_YAML_CREATE, FEATURE_MANAGED_DOCKERFILE];
+
 /** Everything a screen needs to show one server: its API, live streams and stores, and how to link inside it. */
 export interface ServerScope {
   local: boolean;
@@ -22,6 +27,8 @@ export interface ServerScope {
   /** URL slug under /s/; '' for this server. */
   slug: string;
   name: string;
+  /** What this server supports beyond the basics. This server has them all; a peer has only what it advertised, so never assume the gateway's own. */
+  features: readonly string[];
   /** Scoped to this server's endpoints; the local-only peering members live on `api` from `$lib/api/client`. */
   api: Api;
   open: typeof openSSE;
@@ -48,6 +55,7 @@ export const localScope: ServerScope = {
   id: 'local',
   slug: '',
   name: 'this server',
+  features: ALL_FEATURES,
   api,
   open: openSSE,
   live,
@@ -70,4 +78,9 @@ export const ServerContext = createContext<ServerScope>(localScope);
 
 export function useServer(): ServerScope {
   return useContext(ServerContext);
+}
+
+/** Whether the viewed server supports a feature. */
+export function useServerFeature(feature: string): boolean {
+  return useServer().features.includes(feature);
 }

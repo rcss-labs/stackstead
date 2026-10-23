@@ -780,6 +780,8 @@ export interface PeerView {
   lastError: string;
   compatible: boolean;
   plaintext: boolean;
+  /** Optional capabilities the server advertised in its last hello; absent or empty for older servers. */
+  features?: string[];
 }
 
 export interface FleetServer {
