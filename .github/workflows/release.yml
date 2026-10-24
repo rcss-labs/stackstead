@@ -29,6 +29,12 @@ on:
 permissions:
   contents: read
 
+# An explicit `shell: bash` is what turns on pipefail; without it `cmd | tee log` reports tee's
+# status and a failing test run passes.
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: release
   cancel-in-progress: false

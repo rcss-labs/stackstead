@@ -21,6 +21,12 @@ on:
 permissions:
   contents: read
 
+# An explicit `shell: bash` is what turns on pipefail; without it `cmd | tee log` reports tee's
+# status and a failing test run passes.
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   # workflow_call runs share the caller's ref; the distinct prefix keeps a release from cancelling
   # (or being cancelled by) the main-branch run of the same commit.
@@ -74,7 +80,7 @@ jobs:
           fi
 
       # Verbose output is kept as an artifact when the run fails so an intermittent failure
-      # names the test that failed (issue #64). pipefail (the default shell here) keeps go
+      # names the test that failed (issue #64). pipefail (from `defaults.run.shell`) keeps go
       # test's exit status through tee.
       - name: go test
         run: go test -race -timeout 600s -v ./... 2>&1 | tee go-test.log
