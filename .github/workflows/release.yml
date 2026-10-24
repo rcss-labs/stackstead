@@ -1,0 +1,186 @@
+# Manual release: tag, build, verify and publish a Stackstead release from main.
+#
+# Who can run it: the job guard below allows only the maintainer (pavel-rcss), and the `publish`
+# job runs in the `release` environment, which requires the maintainer's approval and accepts only
+# the main branch. A copy of this workflow edited on another branch therefore cannot publish.
+#
+# What it runs, in deploy/release/RELEASING.md order: every CI suite (ci.yml) on the commit, then
+# `make dist` on macOS (binaries, deb/rpm, the unsigned .pkg, tarballs and SHA256SUMS), then
+# `make verify-release` and `make package-lint` on Linux, then `gh release create`, which also
+# creates the tag. The real .pkg install (RELEASING.md step 7) needs sudo on a Mac and stays manual.
+#
+# Releases are unsigned (see "Signing policy" in RELEASING.md); no job uses a secret besides the
+# workflow token, and only `publish` gets `contents: write`.
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Tag to release, vX.Y.Z or vX.Y.Z-rc.N (a -rc tag is published as a prerelease)"
+        required: true
+        type: string
+      draft:
+        description: "Create the release as a draft (edit the Changes section, then publish it on GitHub)"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+# An explicit `shell: bash` is what turns on pipefail; without it `cmd | tee log` reports tee's
+# status and a failing test run passes.
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  VERSION: ${{ inputs.version }}
+
+jobs:
+  authorize:
+    name: authorize
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.actor == 'pavel-rcss' && github.triggering_actor == 'pavel-rcss' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Check the version and that the tag is new
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          printf '%s' "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$' \
+            || { echo "::error::version must be vX.Y.Z or vX.Y.Z-rc.N, got '$VERSION'"; exit 1; }
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$VERSION" >/dev/null 2>&1; then
+            echo "::error::tag $VERSION already exists"; exit 1
+          fi
+          echo "Releasing $VERSION from $GITHUB_SHA"
+
+  tests:
+    name: tests
+    needs: authorize
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: build
+    needs: [authorize, tests]
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # VERSION is passed explicitly, so the tag only has to exist in the publish step.
+      - name: Build the release (make dist)
+        run: |
+          test -z "$(git status --porcelain)" || { git status --porcelain; echo "::error::checkout is not clean"; exit 1; }
+          make dist VERSION="$VERSION"
+
+      - name: Verify checksums
+        run: make verify-release
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  check:
+    name: check
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+
+      - name: Verify checksums and the asset list
+        run: |
+          make verify-release
+          ver=${VERSION#v}
+          for f in install.sh SHA256SUMS \
+            "stackstead_${ver}_linux_amd64.tar.gz" "stackstead_${ver}_linux_arm64.tar.gz" \
+            "stackstead_${ver}_darwin_amd64.tar.gz" "stackstead_${ver}_darwin_arm64.tar.gz" \
+            "stackstead_${ver}_darwin.pkg"; do
+            test -s "dist/$f" || { echo "::error::missing dist/$f"; exit 1; }
+          done
+          ls dist/*.deb dist/*.rpm
+
+      - name: Lint the packages
+        run: make package-lint
+
+      - name: Check the Linux binary
+        run: |
+          ver=${VERSION#v}
+          mkdir -p "$RUNNER_TEMP/linux"
+          tar -xzf "dist/stackstead_${ver}_linux_amd64.tar.gz" -C "$RUNNER_TEMP/linux"
+          got=$("$RUNNER_TEMP/linux/stackstead" version --short)
+          echo "binary reports $got"
+          [ "$got" = "$VERSION" ] || [ "$got" = "$ver" ] || { echo "::error::binary reports $got, want $VERSION"; exit 1; }
+          go version "$RUNNER_TEMP/linux/stackstead"
+
+  publish:
+    name: publish
+    needs: [build, check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: release
+      url: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ inputs.version }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+
+      - name: Write the release notes header
+        run: deploy/release/notes-header.sh "$VERSION" dist/SHA256SUMS > "$RUNNER_TEMP/notes.md"
+
+      # --target creates the tag on the tested commit. --generate-notes appends the merged pull
+      # requests since the previous release under the header.
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRAFT: ${{ inputs.draft }}
+        run: |
+          flags=()
+          [ "$DRAFT" = "true" ] && flags+=(--draft)
+          case "$VERSION" in *-rc.*) flags+=(--prerelease);; esac
+          gh release create "$VERSION" dist/* \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Stackstead ${VERSION#v}" \
+            --notes-file "$RUNNER_TEMP/notes.md" --generate-notes \
+            "${flags[@]}"

@@ -268,7 +268,13 @@ captured output for the password, session and tokens. With Docker it also runs
 a throwaway `e2e-cli-*` stack through `stacks up|show|down|rm`, `logs` and
 `metrics`. It never touches other containers, and uses its own ports.
 
-**CI: deferred.** There is no CI configuration yet. `make test` needs no
+**CI.** `.github/workflows/ci.yml` runs on every pull request and on `main`:
+`verify` (UI checks and build, vet, gofmt, `go test -race`, govulncheck),
+`integration`, `e2e`, `installer-linux` (`make installer-test`: host tests under
+sh and dash, the container suites and the package lint), `systemd-smoke` and
+`installer-macos` (install.sh and the `.pkg` structure). `all-checks` passes only
+when all of them do; it is the check that branch protection requires, so `main`
+accepts changes only through pull requests that pass it. `make test` needs no
 Node; `make build` does. `make e2e` does not run Node itself but needs the UI
 to be built already (`make ui`); without it the web smoke test skips (the CLI
 tests do not need it).

@@ -203,25 +203,28 @@ func TestIntegrationLoadNeverCreatesForeignTags(t *testing.T) {
 	}
 
 	// A nested index blob under blobs/ that names another tag is not read by
-	// the inspector. Docker (containerd store) must not tag it either; this is
-	// the regression guard for that assumption. The load succeeds and only the
-	// root index's own name appears.
+	// the inspector. Docker must not tag it either; this is the regression
+	// guard for that assumption. What Docker does with the archive depends on
+	// its image store: the containerd store loads it and applies only the root
+	// index's own name, while the classic overlay2 store cannot read a nested
+	// OCI index and rejects the load. Both are safe, so the property asserted
+	// is that no foreign tag ever appears.
 	nested := newTarInspector(bytes.NewReader(nestedIndexArchive(t, own, foreign)), own)
 	nctx, ncancel := context.WithTimeout(ctx, 30*time.Second)
 	nerr := eng.LoadImage(nctx, nested)
 	ncancel()
 	nested.close()
-	if nerr != nil {
-		t.Fatalf("nested-index archive refused: %v", nerr)
-	}
+	t.Logf("nested-index load result (depends on the daemon's image store): %v", nerr)
 	if _, err := docker("image", "inspect", foreign); err == nil {
 		t.Errorf("docker tagged %s from a nested index: the inspector must parse nested index blobs", foreign)
 	}
 	if listed, _ := docker("images", "--format", "{{.Repository}}:{{.Tag}}"); strings.Contains(listed, "stackstead-probe-"+id) {
 		t.Errorf("docker listed a foreign probe image after the nested-index load:\n%s", listed)
 	}
-	if _, err := docker("image", "inspect", own); err != nil {
-		t.Errorf("nested-index archive did not create %s", own)
+	if nerr == nil {
+		if _, err := docker("image", "inspect", own); err != nil {
+			t.Errorf("nested-index archive loaded but did not create %s", own)
+		}
 	}
 	docker("rmi", own)
 

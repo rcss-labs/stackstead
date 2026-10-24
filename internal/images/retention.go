@@ -175,9 +175,10 @@ func (s *Service) applyRetention(ctx context.Context, user, slug string, inOp bo
 }
 
 // runExclusive runs fn as an operation on the image, so no build, push or
-// fetch of it runs meanwhile, and waits for it to finish. fn gets the
-// operation's context, which ends on its timeout or when ctx is cancelled. It
-// returns fn's error, or an error for a panic in fn.
+// fetch of it runs meanwhile, and waits for the operation to finish, slot
+// released included, so the caller's next operation on the image is not
+// refused as busy. fn gets the operation's context, which ends on its timeout
+// or when ctx is cancelled. It returns fn's error, or an error for a panic in fn.
 func (s *Service) runExclusive(ctx context.Context, slug, owner string, fn func(context.Context) error) error {
 	done := make(chan struct{})
 	var fnErr error
@@ -203,6 +204,7 @@ func (s *Service) runExclusive(ctx context.Context, slug, owner string, fn func(
 		s.ops.Cancel(op.ID)
 		<-done
 	}
+	s.ops.Wait(op.ID)
 	return fnErr
 }
 

@@ -273,6 +273,9 @@ func TestPackagesRefuseDevVersion(t *testing.T) {
 	if entries, _ := os.ReadDir(d.dist); len(entries) != 0 {
 		t.Errorf("no package may be produced for a dev version: %v", entries)
 	}
+	// Binaries built for the dev version report it verbatim (abc1234), not the normalised
+	// 0.0.0-dev.abc1234; a host that can run them must still accept them as current.
+	buildBinaries(t, d, "abc1234", "linux/amd64")
 	out, err := lintMake(t, d.args("packages", "VERSION=abc1234", "ALLOW_DEV_RELEASE=1", "PKG_ARCHES=amd64")...)
 	if err != nil {
 		t.Fatalf("ALLOW_DEV_RELEASE=1 must permit a dev package: %v\n%s", err, out)
