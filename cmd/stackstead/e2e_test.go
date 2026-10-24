@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image/color"
 	"image/png"
@@ -55,7 +56,13 @@ func (s *syncBuffer) String() string {
 func dockerOutput(args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	return exec.CommandContext(ctx, "docker", args...).Output()
+	out, err := exec.CommandContext(ctx, "docker", args...).Output()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		// Output() keeps stderr only inside the error; callers print out, so fold it in.
+		out = append(out, exit.Stderr...)
+	}
+	return out, err
 }
 
 // redact hides the first-run setup token, which the server logs at startup.
@@ -1198,14 +1205,18 @@ func storageCleanup(t *testing.T, c *client, bin string) {
 		}
 	}
 	assertAction(op, name, "deleted")
-	if out, err := dockerOutput("tag", "busybox:latest", tag); err != nil {
+	// docker tag does not pull; a fresh host has no busybox, so fetch the tag the other subtests pin.
+	if out, err := dockerOutput("pull", "busybox:1.36"); err != nil {
+		t.Fatalf("pull busybox: %v: %s", err, out)
+	}
+	if out, err := dockerOutput("tag", "busybox:1.36", tag); err != nil {
 		t.Fatalf("tag busybox: %v: %s", err, out)
 	}
 	op = confirm(plan(apitypes.StoragePlanRequest{Kind: "image", Ref: tag}))
 	if _, err := dockerOutput("image", "inspect", tag); err == nil {
 		t.Fatal("throwaway tag remains")
 	}
-	if _, err := dockerOutput("image", "inspect", "busybox:latest"); err != nil {
+	if _, err := dockerOutput("image", "inspect", "busybox:1.36"); err != nil {
 		t.Fatal("busybox removed with throwaway tag")
 	}
 	assertAction(op, tag, "untagged")
