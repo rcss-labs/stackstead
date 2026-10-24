@@ -91,6 +91,40 @@ func TestStartBusyOnSameStackOnly(t *testing.T) {
 	}
 }
 
+// Wait returns only once the operation is recorded as finished, so the slot
+// is free for the next operation on the same stack.
+func TestWaitReturnsAfterTheSlotIsFree(t *testing.T) {
+	o := NewOps(time.Minute, fixedNow)
+	release := make(chan struct{})
+	op, err := o.Start("a", "up", func(context.Context, func(string)) error {
+		<-release
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waited := make(chan struct{})
+	go func() {
+		o.Wait(op.ID)
+		close(waited)
+	}()
+	select {
+	case <-waited:
+		t.Fatal("Wait returned while the operation was running")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-waited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Wait did not return after the operation finished")
+	}
+	if _, err := o.Start("a", "down", func(context.Context, func(string)) error { return nil }); err != nil {
+		t.Fatalf("slot still busy after Wait: %v", err)
+	}
+	o.Wait("unknown") // an operation that is not known has finished
+}
+
 func TestStateMapping(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -350,6 +350,19 @@ func (o *Ops) lookup(id string) (*op, error) {
 	return rec, nil
 }
 
+// Wait blocks until the operation has finished: its final state is recorded
+// and the stack's slot is free. An operation that is no longer known has
+// finished.
+func (o *Ops) Wait(id string) {
+	o.mu.Lock()
+	rec, err := o.lookup(id)
+	o.mu.Unlock()
+	if err != nil {
+		return
+	}
+	<-rec.finished
+}
+
 // Get returns a snapshot of the operation.
 func (o *Ops) Get(id string) (Operation, error) {
 	o.mu.Lock()
