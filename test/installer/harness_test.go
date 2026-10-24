@@ -367,7 +367,8 @@ func stubLog(dir, name string) string {
 }
 
 // minimalPath returns a directory of symlinks to the host tools install.sh
-// may use, minus the excluded ones, for tests of "tool X is missing".
+// may use, minus the excluded ones, for tests of "tool X is missing". gzip is
+// listed because GNU tar runs it for -z; bsdtar on macOS does not need it.
 func minimalPath(t *testing.T, exclude ...string) string {
 	t.Helper()
 	skip := map[string]bool{}
@@ -376,7 +377,7 @@ func minimalPath(t *testing.T, exclude ...string) string {
 	}
 	dir := t.TempDir()
 	for _, name := range strings.Fields(`awk basename cat chmod chown cp cut date dirname env find grep head id ln ls mkdir
-		mktemp mv openssl readlink rm rmdir sed sha256sum shasum sleep sort ssh-keygen tail tar tee touch tr wc curl wget`) {
+		mktemp mv openssl readlink rm rmdir sed sha256sum shasum sleep sort ssh-keygen tail tar tee touch tr wc curl wget gzip`) {
 		if skip[name] {
 			continue
 		}

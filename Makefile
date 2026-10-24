@@ -215,10 +215,12 @@ MACOS_INSTALLER_IDENTITY ?=
 NOTARY_PROFILE ?=
 
 # CHECK_BIN_VERSION defines chk FILE VERSION for a recipe: refuse a stale bin/. A binary this host
-# cannot run (another OS or architecture, or an old CLI without version --short) is skipped.
+# cannot run (another OS or architecture, or an old CLI without version --short) is skipped. The
+# binary reports VERSION as given (a dev build says abc1234, not the normalised 0.0.0-dev.abc1234),
+# so the raw RELEASE_VERSION is accepted too.
 define CHECK_BIN_VERSION
 chk() { got=$$("$$1" version --short 2>/dev/null </dev/null) || return 0; \
-	case $$got in v$$2|$$2) ;; *) echo "stale binary $$1 reports $$got but the release is $$2: run make binaries"; exit 1;; esac; }
+	case $$got in v$$2|$$2|'$(RELEASE_VERSION)') ;; *) echo "stale binary $$1 reports $$got but the release is $$2: run make binaries"; exit 1;; esac; }
 endef
 
 pkg-skip:
