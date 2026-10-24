@@ -267,11 +267,11 @@ progress. Full reference: [docs/cli.md](docs/cli.md).
 ## Status
 
 Stackstead is young and under active development; the current release is
-[0.3.0](https://github.com/rcss-labs/stackstead/releases/tag/v0.3.0). The web UI, stack management, logs, metrics,
+[0.5.0](https://github.com/rcss-labs/stackstead/releases/tag/v0.5.0). The web UI, stack management, logs, metrics,
 a command-line client, installers for Linux (amd64, arm64) and macOS (universal),
-and in-place upgrades with `stackstead upgrade` are in place. Releases are built
-and published by hand: they are unsigned and verified with `SHA256SUMS`, and there
-is no CI yet. Designs for the next features are in
+and in-place upgrades with `stackstead upgrade` are in place. Every pull request
+runs the full test suite in GitHub Actions, and releases are built there by a
+manual workflow: they are unsigned and verified with `SHA256SUMS`. Designs for the next features are in
 [`docs/superpowers/specs/`](docs/superpowers/specs/).
 
 ## Licence

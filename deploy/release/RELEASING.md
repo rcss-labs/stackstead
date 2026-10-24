@@ -1,8 +1,31 @@
 # Releasing Stackstead
 
-Everything is built locally by Makefile targets (CI is deferred) and published by hand with
-`gh release create`. Releases are **unsigned**: they ship `SHA256SUMS` only. The flow below never
-needs a key, a certificate or a notarization profile.
+Releases are **unsigned**: they ship `SHA256SUMS` only, and no step needs a key, a certificate or a
+notarization profile. The normal path is the manual `release` workflow; the Makefile steps further down
+are what it runs, and remain the way to rehearse or to release by hand if Actions is unavailable.
+
+## With the release workflow (normal path)
+
+1. Merge everything for the release into `main` (through pull requests; `main` accepts nothing else).
+2. Actions → **release** → Run workflow, on `main`, with `version` `vX.Y.Z` (or `vX.Y.Z-rc.N`, published as a
+   prerelease) and `draft` (default on).
+3. The run checks the version and that the tag is new, runs every CI suite on the commit (`ci.yml`), builds
+   with `make dist` on macOS (so the `.pkg` is included), runs `make verify-release` and `make package-lint` on
+   Linux, and checks the Linux binary's version.
+4. The `publish` job waits for approval in the `release` environment. Approve it; it runs
+   `gh release create`, which creates the tag on the tested commit and uploads `dist/`. The notes are the
+   fixed header from `deploy/release/notes-header.sh` (install, Gatekeeper note, checksums) followed by
+   GitHub's generated list of merged pull requests.
+5. With `draft` on, edit the notes on the release page (add an upgrade-notes section when needed) and publish.
+6. Still manual: step 7 below (installing the `.pkg` for real needs `sudo`) and the post-release checks in step 8.
+
+Only the maintainer (`pavel-rcss`) can run it: the workflow refuses any other actor, and the `release`
+environment accepts only `main` and needs the maintainer's approval.
+
+## By hand
+
+The rest of this file is the local flow: prerequisites, version strings, the steps, the `.pkg`, a dry run and
+the signing policy.
 
 ## Prerequisites
 

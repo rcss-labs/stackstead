@@ -97,7 +97,7 @@ For contributors.
 - [Build](development.md#build) and [Make targets](development.md#make-targets) (including the UI bundle budgets).
 - [Fonts and theme](development.md#fonts-and-theme)
 - [Dev loop](development.md#dev-loop): backend plus the Vite dev server.
-- [Tests](development.md#tests): unit, integration (needs Docker), `make e2e`, and the lack of CI.
+- [Tests](development.md#tests): unit, integration (needs Docker), `make e2e`, and CI.
 - [Design documents](development.md#design-documents)
 
 ### Designs for features not built yet
@@ -124,7 +124,7 @@ Authoritative sources, not copies:
 ## Versioning and releases
 
 - Releases use semantic-version git tags `vX.Y.Z` (release candidates `vX.Y.Z-rc.N`); the artifact version drops the `v`. See "Version strings" in [`RELEASING.md`](../deploy/release/RELEASING.md).
-- Each release page carries the binaries, the `.deb`, `.rpm` and macOS `.pkg`, `install.sh` and `SHA256SUMS`. Release notes live on the [GitHub releases page](https://github.com/rcss-labs/stackstead/releases); the latest is [v0.3.0](https://github.com/rcss-labs/stackstead/releases/tag/v0.3.0).
+- Each release page carries the binaries, the `.deb`, `.rpm` and macOS `.pkg`, `install.sh` and `SHA256SUMS`. Release notes live on the [GitHub releases page](https://github.com/rcss-labs/stackstead/releases); the latest is [v0.5.0](https://github.com/rcss-labs/stackstead/releases/tag/v0.5.0).
 - Releases are **unsigned**. `SHA256SUMS` guards against corrupt or wrong downloads, not a compromised publisher ([details](install.md#verifying-a-download-by-hand)).
-- Releases are built and published by hand; there is no CI yet. The runbook is [`deploy/release/RELEASING.md`](../deploy/release/RELEASING.md).
+- Releases are built and published by the manual `release` workflow in GitHub Actions. The runbook is [`deploy/release/RELEASING.md`](../deploy/release/RELEASING.md).
 - `stackstead version` and `/api/status` show the running version and commit.

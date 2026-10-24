@@ -1,33 +1,34 @@
-# Pull request and main-branch verification. Mirrors `make check` (the Makefile stays the
-# local entry point) and adds govulncheck.
+# Pull request and main-branch verification: every test suite the repository has. The Makefile
+# stays the local entry point; each job names the target or command it mirrors.
 #
 # Security posture: the workflow uses `pull_request` (never `pull_request_target`), so code from
 # forks runs without secrets and with a read-only token; no job uses any secret. Every third-party
 # action is pinned to a full commit SHA (the tag is in the trailing comment).
 #
-# Execution policy for the heavier suites (issue #37):
-#   - `verify` is the required check: unit tests, vet, gofmt, UI type-check and tests, govulncheck.
-#   - `installer-host` runs the installer suite that needs no Docker or booted systemd. It is a
-#     separate job on purpose: it exercises install.sh and packaging scripts, not the unit tests.
-#   - The Docker container suites (`make installer-test` with Docker images), the booted-systemd
-#     checks, `make e2e` and `make package-lint` are NOT run here. Run them by hand on a Docker
-#     host before tagging a release (see deploy/release/RELEASING.md) and whenever install.sh,
-#     deploy/ or the packaging changes.
+# Branch protection requires the `all-checks` job only. It fails unless every other job passed, so
+# adding or renaming a job here never needs a settings change.
+#
+# The release workflow (release.yml) calls this file through `workflow_call`, so a release is built
+# only from a commit that passes the same suites.
 name: ci
 
 on:
   pull_request:
   push:
     branches: [main]
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # workflow_call runs share the caller's ref; the distinct prefix keeps a release from cancelling
+  # (or being cancelled by) the main-branch run of the same commit.
+  group: ci-${{ github.event_name == 'workflow_dispatch' && 'release' || github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # make check + govulncheck: UI type-check, build and tests, vet, gofmt, Go unit tests (race).
   verify:
     name: verify
     runs-on: ubuntu-latest
@@ -89,10 +90,72 @@ jobs:
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
-  installer-host:
-    name: installer-host
+  # go test -tags integration: the store, engine and stacks tests against the runner's Docker.
+  integration:
+    name: integration
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Integration tests
+        run: go test -tags integration -race -timeout 900s -v ./... 2>&1 | tee integration-test.log
+
+      - name: Upload integration test log
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-test-log
+          path: integration-test.log
+          retention-days: 14
+
+  # make e2e: the real binary driven over HTTP and as a CLI, with Docker for the throwaway stacks
+  # and the runner's Chrome for the login render.
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the UI
+        run: make ui
+
+      - name: End-to-end tests
+        run: make e2e 2>&1 | tee e2e-test.log
+
+      - name: Upload e2e test log
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-test-log
+          path: e2e-test.log
+          retention-days: 14
+
+  # make installer-test: install.sh, deploy/ and packaging host tests (sh and dash), the Docker
+  # container suites (Debian, Ubuntu, Rocky, Alpine) and the lintian/rpmlint package lint.
+  installer-linux:
+    name: installer-linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -105,16 +168,83 @@ jobs:
       - name: Install shells for the script tests
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends dash shellcheck
 
-      # -skip InContainer: the container suites need prebuilt Docker images and are run by hand.
-      - name: Installer host suite
-        run: |
-          go vet -tags installer ./...
-          go test -tags installer -count=1 -timeout 1200s -v -skip InContainer ./test/installer/ ./deploy/... ./tools/... 2>&1 | tee installer-test.log
+      - name: Installer tests
+        run: make installer-test 2>&1 | tee installer-test.log
 
       - name: Upload installer test log
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: installer-test-log
+          name: installer-linux-log
           path: installer-test.log
           retention-days: 14
+
+  # The booted-systemd smoke: install.sh and the real .deb in a privileged container whose PID 1
+  # is systemd (the runners are cgroup v2 hosts).
+  systemd-smoke:
+    name: systemd-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: systemd smoke
+        env:
+          STACKSTEAD_SYSTEMD_TEST: "1"
+        run: go test -tags installer -count=1 -run SystemdSmoke -timeout 900s -v ./test/installer/ 2>&1 | tee systemd-test.log
+
+      - name: Upload systemd test log
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: systemd-smoke-log
+          path: systemd-test.log
+          retention-days: 14
+
+  # The macOS side of make installer-test: install.sh under the system sh and the .pkg structure
+  # (pkgbuild, universal binary, scripts, ownership). Installing the .pkg needs sudo and stays manual.
+  installer-macos:
+    name: installer-macos
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Installer tests
+        run: |
+          go vet -tags installer ./...
+          go test -tags installer -count=1 -timeout 1800s -v -skip InContainer ./test/installer/ ./deploy/... ./tools/... 2>&1 | tee installer-test.log
+
+      - name: Upload installer test log
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installer-macos-log
+          path: installer-test.log
+          retention-days: 14
+
+  all-checks:
+    name: all-checks
+    if: always()
+    needs: [verify, integration, e2e, installer-linux, systemd-smoke, installer-macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "$RESULTS"
+          echo "$RESULTS" | jq -e 'all(. == "success")' >/dev/null
