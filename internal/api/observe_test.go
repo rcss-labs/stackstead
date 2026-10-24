@@ -553,7 +553,7 @@ func TestLogsStalledClientIsCutByWriteDeadline(t *testing.T) {
 	fake := newFakeObserve()
 	fake.containers = []engine.Container{container("c-app", "web-app-1", "web", "app")}
 	big := strings.Repeat("x", 4096)
-	lines := make([]engine.LogLine, 30000) // ~120MB, far beyond any socket buffer
+	lines := make([]engine.LogLine, 30000) // ~120MB, far beyond any socket buffer; read with tail=all
 	for i := range lines {
 		lines[i] = engine.LogLine{Stream: "stdout", Time: t0, Text: big}
 	}
@@ -578,7 +578,7 @@ func TestLogsStalledClientIsCutByWriteDeadline(t *testing.T) {
 	if tc, ok := conn.(*net.TCPConn); ok {
 		_ = tc.SetReadBuffer(4096)
 	}
-	fmt.Fprintf(conn, "GET /api/stacks/web/logs?follow=1 HTTP/1.1\r\nHost: x\r\nCookie: %s=%s\r\n\r\n", cookie.Name, cookie.Value)
+	fmt.Fprintf(conn, "GET /api/stacks/web/logs?follow=1&tail=all HTTP/1.1\r\nHost: x\r\nCookie: %s=%s\r\n\r\n", cookie.Name, cookie.Value)
 	// Never read: the connection stays open but stalled.
 
 	deadline := time.Now().Add(5 * time.Second)
