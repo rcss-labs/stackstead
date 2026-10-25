@@ -1,0 +1,84 @@
+.inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-5);
+}
+
+.header { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-3); }
+.identity { flex: 1 1 260px; min-width: 0; }
+.titleLine { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.titleLine h2 { font-family: var(--mono); font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
+.idLine { display: flex; align-items: center; gap: var(--space-1); margin-top: 2px; font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* Each cell draws its right and bottom divider; the card clips the ones on its outer edge, whatever the column count. */
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  margin: 0;
+  overflow: hidden;
+}
+.fact { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; box-shadow: 1px 0 0 var(--border), 0 1px 0 var(--border); }
+.fact dd { margin: 0; font-family: var(--mono); font-size: 12.5px; color: var(--text); overflow-wrap: anywhere; }
+
+.section { display: flex; flex-direction: column; gap: var(--space-2); }
+.sectionHead { display: flex; align-items: baseline; gap: var(--space-2); }
+.hint { margin-left: auto; font-size: 12px; color: var(--faint); }
+.sectionCount { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+
+.tableScroll { overflow-x: auto; }
+.table { min-width: 700px; }
+.tr {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.4fr) minmax(90px, 1fr) minmax(110px, 1fr) minmax(150px, 1.2fr) 100px 70px;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.tr:last-child { border-bottom: 0; }
+.body .tr { cursor: pointer; }
+.body .tr:hover { background: var(--hover); }
+.body .tr[aria-selected='true'] { background: var(--accent-soft); }
+.cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cellName {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.stack { color: var(--muted); }
+.mono { font-family: var(--mono); font-size: 12px; }
+.muted { color: var(--muted); }
+.end { display: flex; justify-content: flex-end; }
+
+/* Phones: each row becomes a card (name and status, then stack · IP and Detach, then the full MAC) instead of a sideways-scrolling table. */
+@media (max-width: 759px) {
+  .inner { padding: var(--space-4) 14px; }
+  .tableScroll { overflow-x: visible; }
+  .table { min-width: 0; }
+  .head { display: none; }
+  .tr {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: 'name name status' 'stack ip action' 'mac mac mac';
+    gap: 4px var(--space-2);
+    padding: 10px 12px;
+  }
+  .colName { grid-area: name; }
+  .colStatus { grid-area: status; justify-self: end; }
+  .colStack { grid-area: stack; font-size: 12px; }
+  .colIp { grid-area: ip; }
+  .colMac { grid-area: mac; }
+  .colAction { grid-area: action; }
+}

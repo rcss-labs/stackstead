@@ -258,7 +258,7 @@ describe('build shape', () => {
 
     // As above: eager code is one merged chunk, so unique strings are what reveal folded-in code. Login and Setup are
     // mounted by App from the session state but through lazy() routes, so they are lazy too. AuthCard, PasswordForm,
-    // UpdateCard, networkSummary and CreateNetworkDialog may sit in shared lazy chunks, so only their absence from the
+    // UpdateCard, the networks lib and CreateNetworkDialog may sit in shared lazy chunks, so only their absence from the
     // eager files is asserted.
     const read = (file: string) => readFileSync(join(dist, file), 'utf8');
     const screens = [
@@ -277,7 +277,7 @@ describe('build shape', () => {
       { name: 'AuthCard', marker: 'Localhost only. For remote access use a TLS reverse proxy.' },
       { name: 'PasswordForm', marker: 'Password changed. Other sessions were signed out.' },
       { name: 'UpdateCard', marker: 'Could not load the update status' },
-      { name: 'networkSummary', marker: 'owned by stacks' },
+      { name: 'networks lib', marker: 'no external route · internal' },
       { name: 'CreateNetworkDialog', marker: 'The Docker host itself cannot reach containers on this network.' },
     ];
     for (const { name, marker } of shared) {

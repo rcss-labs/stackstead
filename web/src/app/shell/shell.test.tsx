@@ -96,7 +96,7 @@ describe('Sidebar', () => {
     expect(current('Containers')).toBeNull();
   });
 
-  it('places Networks after Containers and marks only its exact route current', () => {
+  it('places Networks after Containers and marks it current on the list and a selected network', () => {
     const { rerender } = renderIn(<Sidebar {...sidebarProps} current="/networks" />);
     const names = screen.getAllByRole('link').map((a) => a.getAttribute('aria-label'));
     expect(names.indexOf('Networks')).toBe(names.indexOf('Containers') + 1);
@@ -105,7 +105,13 @@ describe('Sidebar', () => {
     expect(item.getAttribute('title')).toBe('Networks');
     expect(current('Networks')).toBe('page');
     expect(item.querySelector('path')?.getAttribute('d')).toBeTruthy();
-    for (const path of ['/networks/other', '/containers', '/']) {
+    rerender(
+      <MemoryRouter>
+        <Sidebar {...sidebarProps} current="/networks/other" />
+      </MemoryRouter>,
+    );
+    expect(current('Networks')).toBe('page');
+    for (const path of ['/networksx', '/containers', '/']) {
       rerender(
         <MemoryRouter>
           <Sidebar {...sidebarProps} current={path} />

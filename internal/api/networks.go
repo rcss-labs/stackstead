@@ -21,6 +21,9 @@ type NetworkEngineAPI interface {
 	InspectNetwork(context.Context, string) (engine.Network, error)
 	CreateNetwork(context.Context, engine.NetworkSpec) (string, error)
 	RemoveNetwork(context.Context, string) error
+	ConnectNetwork(ctx context.Context, networkID, container string) error
+	DisconnectNetwork(ctx context.Context, networkID, container string) error
+	PruneNetworks(context.Context) ([]string, error)
 }
 
 const (
@@ -33,6 +36,9 @@ func (s *server) registerNetworkRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/networks", s.requireSession(s.handleNetworkList))
 	mux.Handle("POST /api/networks", s.requireSession(s.handleNetworkCreate))
 	mux.Handle("DELETE /api/networks/{id}", s.requireSession(s.handleNetworkDelete))
+	mux.Handle("POST /api/networks/prune", s.requireSession(s.handleNetworkPrune))
+	mux.Handle("POST /api/networks/{id}/connect", s.requireSession(s.handleNetworkConnect))
+	mux.Handle("POST /api/networks/{id}/disconnect", s.requireSession(s.handleNetworkDisconnect))
 }
 
 func (s *server) handleNetworkList(w http.ResponseWriter, r *http.Request) {
@@ -56,6 +62,7 @@ func (s *server) computeNetworkList(ctx context.Context) ([]apitypes.Network, er
 		// This is a registry failure, independently of any Docker error it contains.
 		return nil, fmt.Errorf("list registered stacks: %v", err)
 	}
+	containers := s.containersByShortID(ctx)
 	// Each worker owns its input index; aggregation happens after all finish.
 	rows := make([]apitypes.Network, len(networks))
 	keep := make([]bool, len(networks))
@@ -86,7 +93,7 @@ func (s *server) computeNetworkList(ctx context.Context) ([]apitypes.Network, er
 				return
 			}
 			n.Containers = inspected.Containers
-			rows[i] = networkRow(n, projects)
+			rows[i] = networkRow(n, projects, containers)
 			keep[i] = true
 		})
 	}
@@ -104,14 +111,36 @@ func (s *server) computeNetworkList(ctx context.Context) ([]apitypes.Network, er
 	return out, nil
 }
 
+// containersByShortID indexes the cached container list for joining onto network endpoints.
+// A failure only costs the joined fields, never the network list.
+func (s *server) containersByShortID(ctx context.Context) map[string]apitypes.ContainerRow {
+	if s.opts.ContainerEngine == nil && s.opts.Observe == nil {
+		return nil
+	}
+	list, err := s.containerList(ctx)
+	if err != nil {
+		s.opts.Logger.Warn("network list: container join skipped", "err", err)
+		return nil
+	}
+	index := make(map[string]apitypes.ContainerRow, len(list))
+	for _, c := range list {
+		index[c.ID] = c
+	}
+	return index
+}
+
 func isBuiltinNetwork(n engine.Network) bool {
 	return n.Name == "bridge" && n.Driver == "bridge" || n.Name == "host" && n.Driver == "host" || n.Name == "none" && n.Driver == "null"
 }
 
-func networkRow(n engine.Network, projects map[string]string) apitypes.Network {
+func networkRow(n engine.Network, projects map[string]string, containers map[string]apitypes.ContainerRow) apitypes.Network {
 	row := apitypes.Network{ID: shortID(n.ID), Name: n.Name, Driver: n.Driver, Scope: n.Scope,
 		Subnets: make([]string, 0, len(n.Subnets)), Gateways: make([]string, 0, len(n.Subnets)),
-		Parent: n.Parent(), IPvlanMode: n.IPvlanMode(), Internal: n.Internal, Builtin: isBuiltinNetwork(n), Project: n.Project(), Stack: projects[n.Project()], Containers: make([]apitypes.NetworkContainer, 0, len(n.Containers))}
+		Parent: n.Parent(), IPvlanMode: n.IPvlanMode(), Internal: n.Internal, Builtin: isBuiltinNetwork(n), Project: n.Project(), Stack: projects[n.Project()], Containers: make([]apitypes.NetworkContainer, 0, len(n.Containers)),
+		FullID: n.ID, Attachable: n.Attachable, IPv6: n.IPv6}
+	if !n.Created.IsZero() {
+		row.Created = n.Created.UTC().Format(time.RFC3339)
+	}
 	for _, subnet := range n.Subnets {
 		row.Subnets = append(row.Subnets, subnet.Prefix.String())
 		gateway := ""
@@ -124,7 +153,14 @@ func networkRow(n engine.Network, projects map[string]string) apitypes.Network {
 		row.IPRange = n.Subnets[0].IPRange.String()
 	}
 	for _, c := range n.Containers {
-		row.Containers = append(row.Containers, apitypes.NetworkContainer{Name: c.Name, IPv4: c.IPv4})
+		nc := apitypes.NetworkContainer{Name: c.Name, IPv4: c.IPv4, ID: shortID(c.ID), MAC: c.MAC}
+		if info, ok := containers[nc.ID]; ok {
+			nc.Stack, nc.State, nc.Health, nc.ExitCode = info.Stack, info.State, info.Health, info.ExitCode
+			if nc.Stack == "" {
+				nc.Stack = info.Project
+			}
+		}
+		row.Containers = append(row.Containers, nc)
 	}
 	sort.Slice(row.Containers, func(i, j int) bool { return row.Containers[i].Name < row.Containers[j].Name })
 	return row
@@ -183,7 +219,7 @@ func (s *server) handleNetworkCreate(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, networkRow(n, projects))
+	writeJSON(w, http.StatusCreated, networkRow(n, projects, nil))
 }
 
 var networkIDPrefixRe = regexp.MustCompile(`^[a-fA-F0-9]{12,64}$`)
@@ -280,4 +316,74 @@ func (s *server) handleNetworkDelete(w http.ResponseWriter, r *http.Request) {
 	s.invalidateNetworkLists()
 	s.opts.Logger.Info("network removed", "name", n.Name)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleNetworkMembership resolves the network and container, then runs connect or disconnect.
+func (s *server) handleNetworkMembership(w http.ResponseWriter, r *http.Request, verb string) {
+	var req apitypes.NetworkContainerRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.Container == "" {
+		writeError(w, http.StatusBadRequest, "container is required")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	n, found, err := s.resolveNetwork(ctx, r.PathValue("id"))
+	if err != nil {
+		s.writeNetworkError(w, r, err)
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "network not found")
+		return
+	}
+	if verb == "connect" {
+		if n.Driver == "host" || n.Driver == "null" {
+			writeError(w, http.StatusConflict, fmt.Sprintf("containers can't join the %s network at runtime", n.Name))
+			return
+		}
+		err = s.opts.NetworkEngine.ConnectNetwork(ctx, n.ID, req.Container)
+	} else {
+		err = s.opts.NetworkEngine.DisconnectNetwork(ctx, n.ID, req.Container)
+	}
+	if err != nil {
+		var action *engine.ActionError
+		switch {
+		case errors.As(err, &action) && action.Status == http.StatusNotFound:
+			writeError(w, http.StatusNotFound, action.Message)
+		case errors.As(err, &action):
+			writeError(w, http.StatusConflict, action.Message)
+		default:
+			s.writeEngineError(w, r, err)
+		}
+		return
+	}
+	s.invalidateNetworkLists()
+	s.opts.Logger.Info("network "+verb, "network", n.Name, "container", req.Container)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) handleNetworkConnect(w http.ResponseWriter, r *http.Request) {
+	s.handleNetworkMembership(w, r, "connect")
+}
+
+func (s *server) handleNetworkDisconnect(w http.ResponseWriter, r *http.Request) {
+	s.handleNetworkMembership(w, r, "disconnect")
+}
+
+func (s *server) handleNetworkPrune(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	removed, err := s.opts.NetworkEngine.PruneNetworks(ctx)
+	if err != nil {
+		s.writeEngineError(w, r, err)
+		return
+	}
+	removed = append([]string{}, removed...)
+	sort.Strings(removed)
+	s.invalidateNetworkLists()
+	s.opts.Logger.Info("networks pruned", "count", len(removed))
+	writeJSON(w, http.StatusOK, apitypes.NetworkPruneResult{Removed: removed})
 }

@@ -145,11 +145,31 @@ type Network struct {
 	Project    string             `json:"project"`
 	Stack      string             `json:"stack"`
 	Containers []NetworkContainer `json:"containers"`
+	FullID     string             `json:"fullId"`
+	Attachable bool               `json:"attachable"`
+	IPv6       bool               `json:"ipv6"`
+	Created    string             `json:"created"` // RFC3339 UTC, "" when unknown
 }
 
 type NetworkContainer struct {
-	Name string `json:"name"`
-	IPv4 string `json:"ipv4"`
+	Name     string `json:"name"`
+	IPv4     string `json:"ipv4"`
+	ID       string `json:"id"` // first 12 hex
+	MAC      string `json:"mac"`
+	Stack    string `json:"stack"` // registered stack, else compose project, else ""
+	State    string `json:"state"`
+	Health   string `json:"health"`
+	ExitCode *int   `json:"exitCode"`
+}
+
+// NetworkContainerRequest names the container to connect to or disconnect from a network.
+type NetworkContainerRequest struct {
+	Container string `json:"container"`
+}
+
+// NetworkPruneResult lists the networks Docker removed; never null.
+type NetworkPruneResult struct {
+	Removed []string `json:"removed"`
 }
 
 type FSEntry struct {

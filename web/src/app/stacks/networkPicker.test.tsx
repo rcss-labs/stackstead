@@ -14,7 +14,7 @@ afterEach(() => {
 
 const renderPicker = (props: NetworkPickerProps) => render(<NetworkPicker {...props} />);
 
-const networkDefaults = { scope: 'local', gateways: [], ipRange: '', parent: '', ipvlanMode: '', internal: false, builtin: false, project: '', stack: '', containers: [] };
+const networkDefaults = { fullId: '', scope: 'local', gateways: [], ipRange: '', parent: '', ipvlanMode: '', internal: false, attachable: false, ipv6: false, created: '', builtin: false, project: '', stack: '', containers: [] };
 const nets: Network[] = [
   { ...networkDefaults, id: 'frontend-id', name: 'frontend', driver: 'bridge', subnets: ['172.20.0.0/16'] },
   { ...networkDefaults, id: 'backend-id', name: 'backend', driver: 'bridge', subnets: [] },

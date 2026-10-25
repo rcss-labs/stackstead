@@ -502,7 +502,7 @@ func (c *Client) InspectNetwork(ctx context.Context, id string) (Network, error)
 	n.Containers = make([]NetworkEndpoint, 0, len(raw.Containers))
 	for id, endpoint := range raw.Containers {
 		ip, _, _ := strings.Cut(endpoint.IPv4Address, "/")
-		n.Containers = append(n.Containers, NetworkEndpoint{ID: id, Name: endpoint.Name, IPv4: ip})
+		n.Containers = append(n.Containers, NetworkEndpoint{ID: id, Name: endpoint.Name, IPv4: ip, MAC: endpoint.MacAddress})
 	}
 	sort.Slice(n.Containers, func(i, j int) bool {
 		if n.Containers[i].Name == n.Containers[j].Name {
@@ -580,6 +580,55 @@ func (c *Client) RemoveNetwork(ctx context.Context, id string) error {
 	}
 	_, err = c.request(ctx, reqCtx, http.MethodDelete, "/v"+v+"/networks/"+url.PathEscape(id))
 	return networkResult(err)
+}
+
+// ConnectNetwork attaches a container (name or ID) to a network.
+func (c *Client) ConnectNetwork(ctx context.Context, networkID, container string) error {
+	return c.networkMembership(ctx, networkID, "connect", map[string]any{"Container": container})
+}
+
+// DisconnectNetwork detaches a container (name or ID) from a network without force.
+func (c *Client) DisconnectNetwork(ctx context.Context, networkID, container string) error {
+	return c.networkMembership(ctx, networkID, "disconnect", map[string]any{"Container": container, "Force": false})
+}
+
+func (c *Client) networkMembership(ctx context.Context, networkID, action string, payload map[string]any) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("docker engine request: %w", err)
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, c.callerBound(ctx))
+	defer cancel()
+	v, err := c.apiVersion(ctx, reqCtx)
+	if err != nil {
+		return err
+	}
+	_, err = c.postJSON(ctx, reqCtx, "/v"+v+"/networks/"+url.PathEscape(networkID)+"/"+action, payload)
+	return networkResult(err)
+}
+
+// PruneNetworks removes every unused network and returns their names.
+func (c *Client) PruneNetworks(ctx context.Context) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("docker engine request: %w", err)
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, c.callerBound(ctx))
+	defer cancel()
+	v, err := c.apiVersion(ctx, reqCtx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.request(ctx, reqCtx, http.MethodPost, "/v"+v+"/networks/prune")
+	if err != nil {
+		return nil, err
+	}
+	var result struct{ NetworksDeleted []string }
+	if err := json.Unmarshal(resp.body, &result); err != nil {
+		return nil, fmt.Errorf("decode pruned networks: %w", err)
+	}
+	if result.NetworksDeleted == nil {
+		return []string{}, nil
+	}
+	return result.NetworksDeleted, nil
 }
 
 func networkResult(err error) error {

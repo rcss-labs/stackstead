@@ -1,14 +1,14 @@
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StrictMode } from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, expect, it, vi } from 'vitest';
 import { get } from '$lib/store';
 import { toasts } from '$lib/stores/toasts';
-import { installFakeFetch, type FakeFetch, type FakeResponse, type RouteHandler } from '../../vitest-setup';
+import { installFakeFetch, type FakeFetch, type FakeResponse, type RouteHandler, type Routes as FakeRoutes } from '../../vitest-setup';
 import { findRoute } from '../routes';
 import { NetworksScreen } from './NetworksScreen';
-import { cards, mountAt, routes, row } from './networksTestKit';
+import { member, mountAt, routes, row } from './networksTestKit';
 
 vi.mock('$lib/stores/live', async (orig) => {
   const { writable } = await import('$lib/store');
@@ -25,111 +25,240 @@ vi.mock('$lib/stores/live', async (orig) => {
 });
 
 let fake: FakeFetch;
-function mount(response: FakeResponse | RouteHandler) {
-  fake = installFakeFetch(routes(response));
-  return { ...mountAt('/networks'), user: userEvent.setup() };
+function mount(response: FakeResponse | RouteHandler, path = '/networks', extra: FakeRoutes = {}) {
+  fake = installFakeFetch(routes(response, extra));
+  return { ...mountAt(path), user: userEvent.setup() };
 }
 afterEach(() => {
   cleanup();
   fake?.restore();
   toasts.reset();
 });
-const names = () => cards().map((card) => within(card).getByRole('heading', { level: 2 }).textContent);
 
-it('lists sorted networks, the summary, fields and owner tags', async () => {
-  mount({ body: [row('z'), row('d', { project: 'legacy' }), row('c', { stack: 'my stack' }), row('bridge', { builtin: true, driver: 'macvlan', subnets: ['10.0.0.0/24', '10.1.0.0/24'], gateways: ['10.0.0.1'], parent: 'eth0' })] });
-  await screen.findByText('4 networks');
-  expect(names()).toEqual(['bridge', 'c', 'd', 'z']);
-  const lead = screen.getByText('4 networks').closest('p')!;
-  for (const part of ['1 owned by stacks', '1 LAN network', '1 built-in']) expect(lead.textContent).toContain(part);
-  const first = within(cards()[0]);
-  for (const text of ['macvlan', '10.0.0.0/24', '+1', '10.0.0.1', 'eth0', 'built-in', 'No containers attached']) expect(first.getByText(text)).toBeTruthy();
-  expect(first.getByText('+1').getAttribute('title')).toBe('10.0.0.0/24, 10.1.0.0/24');
-  expect(screen.getByRole('link', { name: 'stack my stack' }).getAttribute('href')).toBe('/stacks/my%20stack');
-  expect(screen.getByText('compose legacy')).toBeTruthy();
-  expect(screen.getByText('unmanaged')).toBeTruthy();
-  expect(within(cards()[3]).getAllByText('—')).toHaveLength(3);
-  expect(cards()[3].textContent).toContain('No containers attached');
+const options = () => screen.queryAllByRole('option');
+const optionNames = () => options().map((o) => o.querySelector('span span')?.textContent);
+const location = () => screen.getByTestId('location').textContent;
+const calls = (method: string, path: string) => fake.calls.filter((c) => c.method === method && c.path === path);
+
+const shop = row('shop_default', {
+  fullId: 'abcdef0123456789abcdef',
+  subnets: ['172.20.0.0/16'],
+  gateways: ['172.20.0.1'],
+  attachable: true,
+  created: '2026-03-14T09:12:00Z',
+  containers: [
+    member('web', { stack: 'shop', ipv4: '172.20.0.2', mac: '02:42:ac:14:00:02' }),
+    member('db', { stack: 'shop', ipv4: '172.20.0.3', state: 'exited', exitCode: 1 }),
+    member('cache', { stack: 'media', ipv4: '172.20.0.4' }),
+  ],
+});
+const fleet = [
+  row('bridge', { builtin: true, subnets: ['172.17.0.0/16'], gateways: ['172.17.0.1'], containers: [member('probe')] }),
+  row('host', { builtin: true, driver: 'host' }),
+  row('vault', { internal: true, subnets: ['10.9.0.0/24'] }),
+  shop,
+  row('spare'),
+];
+
+it('lists networks with health, tags, counts and the summary, and asks for a selection', async () => {
+  mount({ body: fleet });
+  await screen.findByText('5 networks · 2 in use');
+  expect(optionNames()).toEqual(['bridge', 'host', 'shop_default', 'spare', 'vault']);
+  const bridge = within(options()[0]);
+  expect(bridge.getByText('system')).toBeTruthy();
+  expect(bridge.getByText('bridge · 172.17.0.0/16')).toBeTruthy();
+  expect(bridge.getByLabelText('1 containers').textContent).toBe('1');
+  expect(within(options()[4]).getByText('internal')).toBeTruthy();
+  expect(within(options()[3]).getByText('bridge · no subnet')).toBeTruthy();
+  const leds = options().map((o) => o.querySelector('[data-tone]')?.getAttribute('data-tone'));
+  expect(leds).toEqual(['success', 'faint', 'danger', 'faint', 'faint']);
+  expect(screen.getByRole('heading', { name: 'Select a network' })).toBeTruthy();
 });
 
-it('lists attached containers with encoded links and IP fallback', async () => {
-  mount({ body: [row('lan', { containers: [{ name: 'my db', ipv4: '10.0.0.2' }, { name: '<web>', ipv4: '' }] })] });
-  await screen.findByText('1 network');
-  const card = within(cards()[0]);
-  expect(card.getByRole('link', { name: 'my db' }).getAttribute('href')).toBe('/containers/my%20db');
-  expect(card.getByRole('link', { name: '<web>' }).getAttribute('href')).toBe('/containers/%3Cweb%3E');
-  expect(card.getByText('10.0.0.2')).toBeTruthy();
-  expect(within(card.getByRole('link', { name: '<web>' }).parentElement!).getByText('—')).toBeTruthy();
-  expect(card.queryByRole('button', { name: 'Show containers on lan' })).toBeNull();
+it('filters by chip and query, keeping the selection and the filter across selections', async () => {
+  const { user } = mount({ body: fleet });
+  await screen.findByText('5 networks · 2 in use');
+  const chip = (name: string) => screen.getByRole('button', { name: new RegExp(`^${name}`) });
+  expect(chip('All').textContent).toBe('All5');
+  expect(chip('In use').textContent).toBe('In use2');
+  expect(chip('Internal').textContent).toBe('Internal1');
+  expect(chip('Unused').textContent).toBe('Unused2');
+
+  await user.click(chip('In use'));
+  expect(optionNames()).toEqual(['bridge', 'shop_default']);
+  await user.click(options()[1]);
+  expect(location()).toBe('/networks/shop_default');
+  expect(chip('In use').getAttribute('aria-pressed')).toBe('true');
+  expect(options()[1].getAttribute('aria-selected')).toBe('true');
+
+  await user.click(chip('Unused'));
+  expect(optionNames()).toEqual(['spare', 'vault']);
+  expect(screen.getByRole('heading', { level: 2, name: 'shop_default' })).toBeTruthy();
+
+  await user.click(chip('All'));
+  await user.type(screen.getByRole('searchbox', { name: 'Filter networks' }), '10.9');
+  expect(optionNames()).toEqual(['vault']);
+  await user.type(screen.getByRole('searchbox'), 'x');
+  expect(screen.getByText('No networks match this filter.')).toBeTruthy();
 });
 
-it('built-in networks fold their containers behind today\'s toggle', async () => {
-  const { user } = mount({ body: [row('bridge', { builtin: true, containers: [{ name: 'my db', ipv4: '10.0.0.2' }] })] });
-  const toggle = await screen.findByRole('button', { name: 'Show containers on bridge' });
-  expect(toggle.getAttribute('title')).toBe('Show containers on bridge');
-  expect(toggle.getAttribute('aria-expanded')).toBe('false');
-  expect(cards()[0].querySelector('dl')).toBeNull();
-  expect(screen.queryByRole('link', { name: 'my db' })).toBeNull();
-  await user.click(toggle);
-  expect(toggle.getAttribute('aria-expanded')).toBe('true');
-  const list = document.getElementById(toggle.getAttribute('aria-controls')!)!;
-  expect(within(list).getByRole('link', { name: 'my db' })).toBeTruthy();
-  expect(list.textContent).toContain('10.0.0.2');
-  await user.click(toggle);
-  expect(screen.queryByRole('link', { name: 'my db' })).toBeNull();
+it('shows the selected network configuration, topology and containers', async () => {
+  mount({ body: fleet }, '/networks/shop_default');
+  const heading = await screen.findByRole('heading', { level: 2, name: 'shop_default' });
+  const header = heading.closest('header')!;
+  expect(within(header).getByText('abcdef012345')).toBeTruthy();
+  expect(within(header).getByRole('button', { name: 'Copy network ID' })).toBeTruthy();
+
+  const facts = within(document.querySelector<HTMLElement>('dl[aria-label="Configuration"]')!);
+  const fact = (key: string) => facts.getByText(key).closest('div')!.querySelector('dd')!.textContent;
+  expect([fact('Driver'), fact('Scope'), fact('Subnet'), fact('Gateway'), fact('Internal'), fact('Attachable'), fact('IPv6'), fact('Created')]).toEqual([
+    'bridge', 'local', '172.20.0.0/16', '172.20.0.1', 'no', 'yes', 'disabled', '2026-03-14',
+  ]);
+
+  expect(screen.getByText('host · eth0 · NAT')).toBeTruthy();
+  expect(screen.getByText('172.20.0.0/16 · gw 172.20.0.1')).toBeTruthy();
+  const groups = screen.getAllByRole('group').filter((g) => g.closest('[class*="diagram"]'));
+  expect(groups.map((g) => [g.getAttribute('aria-label'), within(g).getAllByRole('button').map((b) => b.textContent)])).toEqual([
+    ['media', ['cache172.20.0.4']],
+    ['shop', ['db172.20.0.3', 'web172.20.0.2']],
+  ]);
+
+  const table = within(screen.getByRole('table', { name: 'Connected containers' }));
+  const rows = table.getAllByRole('row').slice(1);
+  expect(rows.map((r) => within(r).getAllByRole('cell').slice(0, 5).map((c) => c.textContent))).toEqual([
+    ['web', 'shop', '172.20.0.2', '02:42:ac:14:00:02', 'running'],
+    ['db', 'shop', '172.20.0.3', '—', 'failed'],
+    ['cache', 'media', '172.20.0.4', '—', 'running'],
+  ]);
 });
 
-it('soft-disables removal with discoverable reasons', async () => {
-  const { user } = mount({ body: [row('a', { builtin: true }), row('b', { stack: 'shop' }), row('c', { containers: [{ name: 'web', ipv4: '' }] })] });
-  await screen.findByText('3 networks');
-  for (const [i, reason] of ['Built-in networks cannot be removed', 'Owned by stack shop', 'In use by 1 container'].entries()) {
-    const button = within(cards()[i]).getByRole('button', { name: 'Remove' });
-    expect(button.getAttribute('aria-disabled')).toBe('true');
-    expect(button.getAttribute('title')).toBe(reason);
-    expect(document.getElementById(button.getAttribute('aria-describedby')!)?.textContent).toBe(reason);
-    await user.click(button);
-  }
-  expect(screen.queryByRole('alertdialog')).toBeNull();
-  expect(fake.calls.some((c) => c.method === 'DELETE')).toBe(false);
+it('highlights a container in both the topology and the table, and clears it on a new selection', async () => {
+  const { user } = mount({ body: fleet }, '/networks/shop_default');
+  await screen.findByRole('heading', { level: 2, name: 'shop_default' });
+  const node = () => screen.getAllByRole('button', { name: /^web/ }).find((b) => b.textContent === 'web172.20.0.2')!;
+  const tableRow = () => within(screen.getByRole('table')).getAllByRole('row')[1];
+
+  await user.click(node());
+  expect(node().getAttribute('aria-pressed')).toBe('true');
+  expect(tableRow().getAttribute('aria-selected')).toBe('true');
+  await user.click(within(tableRow()).getAllByRole('cell')[2]);
+  expect(node().getAttribute('aria-pressed')).toBe('false');
+  expect(tableRow().getAttribute('aria-selected')).toBe('false');
+
+  await user.click(within(tableRow()).getByRole('button', { name: 'web' }));
+  expect(node().getAttribute('aria-pressed')).toBe('true');
+  await user.click(options().find((o) => o.textContent?.includes('bridge'))!);
+  await user.click(options().find((o) => o.textContent?.includes('shop_default'))!);
+  expect(node().getAttribute('aria-pressed')).toBe('false');
 });
 
-it.each([204, 409])('confirms and deletes once, then toasts and refreshes (%s)', async (status) => {
-  const { user } = mount({ body: [row('free')] });
-  await screen.findByText('1 network');
-  fake.restore();
-  let release!: (res: FakeResponse) => void;
-  fake = installFakeFetch({
-    'DELETE /api/networks/free': () => new Promise((resolve) => { release = resolve; }),
-    'GET /api/networks': { body: status === 204 ? [] : [row('free', { containers: [{ name: 'web', ipv4: '' }] })] },
+it('labels the route and empty states of system, internal and unused networks', async () => {
+  const { goTo } = mount({ body: fleet }, '/networks/host');
+  await screen.findByRole('heading', { level: 2, name: 'host' });
+  expect(screen.getByText('host network stack')).toBeTruthy();
+  expect(screen.getByText('No containers attached')).toBeTruthy();
+  expect(screen.getByText('Containers started with this network mode appear here.')).toBeTruthy();
+  const connect = screen.getByRole('button', { name: 'Connect container' });
+  expect(connect.getAttribute('title')).toBe("Containers can't join the host network at runtime");
+  expect(screen.getByRole('button', { name: 'Remove' }).getAttribute('title')).toBe("System networks can't be removed");
+
+  goTo('/networks/vault');
+  await screen.findByRole('heading', { level: 2, name: 'vault' });
+  expect(screen.getByText('no external route · internal').getAttribute('data-warning')).toBe('true');
+  expect(screen.getByText('This network is unused and can be removed.')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Remove' }).getAttribute('aria-disabled')).toBeNull();
+
+  goTo('/networks/shop_default');
+  await screen.findByRole('heading', { level: 2, name: 'shop_default' });
+  expect(screen.getByRole('button', { name: 'Remove' }).getAttribute('title')).toBe('Detach 3 containers first');
+
+  goTo('/networks/gone');
+  expect(await screen.findByRole('heading', { name: 'Network not found' })).toBeTruthy();
+});
+
+it('confirms and removes a network once, then returns to the list', async () => {
+  let remaining = fleet;
+  const { user } = mount(() => ({ body: remaining }), '/networks/spare', {
+    'DELETE /api/networks/spare': () => {
+      remaining = fleet.filter((n) => n.name !== 'spare');
+      return { status: 204 };
+    },
   });
-  await user.click(screen.getByRole('button', { name: 'Remove' }));
-  const dialog = screen.getByRole('alertdialog', { name: 'Remove network `free`?' });
-  expect(dialog.textContent).toContain('Docker deletes the network. Containers can only attach again once it is recreated.');
+  await user.click(await screen.findByRole('button', { name: 'Remove' }));
+  const dialog = screen.getByRole('alertdialog', { name: 'Remove network `spare`?' });
   const confirm = within(dialog).getByRole('button', { name: 'Remove' });
-  // Both clicks hit the same mounted button inside one act, before React can re-render the dialog away.
   act(() => {
     confirm.click();
     confirm.click();
   });
-  expect(fake.calls.filter((c) => c.method === 'DELETE')).toHaveLength(1);
-  release(status === 204 ? { status: 204 } : { status: 409, body: { error: 'has active endpoints <web>' } });
-  await waitFor(() =>
-    expect(get(toasts)).toEqual([expect.objectContaining({ kind: status === 204 ? 'success' : 'danger', message: status === 204 ? 'Network `free` removed' : 'has active endpoints <web>' })]),
-  );
-  await waitFor(() => expect(fake.calls.some((c) => c.method === 'GET')).toBe(true));
-  if (status === 409) await waitFor(() => expect(screen.getByRole('button', { name: 'Remove' }).getAttribute('title')).toBe('In use by 1 container'));
-  else await screen.findByText('No networks');
+  await waitFor(() => expect(get(toasts)).toEqual([expect.objectContaining({ kind: 'success', message: 'Network `spare` removed' })]));
+  expect(calls('DELETE', '/api/networks/spare')).toHaveLength(1);
+  await waitFor(() => expect(location()).toBe('/networks'));
+  await waitFor(() => expect(optionNames()).not.toContain('spare'));
+});
+
+it('reports a refused removal and keeps the network selected', async () => {
+  const { user } = mount({ body: fleet }, '/networks/spare', { 'DELETE /api/networks/spare': { status: 409, body: { error: 'has active endpoints' } } });
+  await user.click(await screen.findByRole('button', { name: 'Remove' }));
+  await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Remove' }));
+  await waitFor(() => expect(get(toasts)).toEqual([expect.objectContaining({ kind: 'danger', message: 'has active endpoints' })]));
+  expect(location()).toBe('/networks/spare');
+});
+
+it('detaches a container after confirmation', async () => {
+  const { user } = mount({ body: fleet }, '/networks/shop_default', { 'POST /api/networks/shop_default/disconnect': { status: 204 } });
+  await screen.findByRole('heading', { level: 2, name: 'shop_default' });
+  const before = calls('GET', '/api/networks').length;
+  await user.click(screen.getByRole('button', { name: 'Detach db' }));
+  expect(screen.getByRole('table').querySelector('[aria-selected="true"]')).toBeNull();
+  await user.click(within(screen.getByRole('alertdialog', { name: 'Detach `db`?' })).getByRole('button', { name: 'Detach' }));
+  await waitFor(() => expect(get(toasts)).toEqual([expect.objectContaining({ kind: 'success', message: 'Detached `db` from `shop_default`' })]));
+  expect(calls('POST', '/api/networks/shop_default/disconnect').map((c) => c.body)).toEqual([{ container: 'db' }]);
+  await waitFor(() => expect(calls('GET', '/api/networks').length).toBeGreaterThan(before));
+});
+
+it('connects a container that is not yet on the network', async () => {
+  const containers = ['web', 'worker', 'api'].map((name) => ({ id: `${name}-id`, name }));
+  const { user } = mount({ body: fleet }, '/networks/shop_default', {
+    'GET /api/containers': { body: containers },
+    'POST /api/networks/shop_default/connect': { status: 204 },
+  });
+  await user.click(await screen.findByRole('button', { name: 'Connect container' }));
+  const dialog = within(screen.getByRole('dialog', { name: 'Connect a container to `shop_default`' }));
+  const select = await dialog.findByLabelText('Container');
+  expect([...select.querySelectorAll('option')].map((o) => o.textContent)).toEqual(['api', 'worker']);
+  await user.selectOptions(select, 'worker');
+  await user.click(dialog.getByRole('button', { name: 'Connect' }));
+  await waitFor(() => expect(get(toasts)).toEqual([expect.objectContaining({ kind: 'success', message: 'Connected `worker` to `shop_default`' })]));
+  expect(calls('POST', '/api/networks/shop_default/connect').map((c) => c.body)).toEqual([{ container: 'worker' }]);
+  expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+it('prunes unused networks after confirmation and leaves a pruned selection', async () => {
+  const { user } = mount({ body: fleet }, '/networks/spare', { 'POST /api/networks/prune': { body: { removed: ['spare', 'vault'] } } });
+  await screen.findByRole('heading', { level: 2, name: 'spare' });
+  await user.click(screen.getByRole('button', { name: 'Prune unused' }));
+  await user.click(within(screen.getByRole('alertdialog', { name: 'Prune unused networks?' })).getByRole('button', { name: 'Prune' }));
+  await waitFor(() => expect(get(toasts)).toEqual([expect.objectContaining({ kind: 'success', message: 'Removed 2 unused networks' })]));
+  await waitFor(() => expect(location()).toBe('/networks'));
+});
+
+it('inspects the selected network as JSON', async () => {
+  const { user } = mount({ body: fleet }, '/networks/vault');
+  await user.click(await screen.findByRole('button', { name: 'Inspect' }));
+  const dialog = screen.getByRole('dialog', { name: 'Inspect `vault`' });
+  expect(JSON.parse(dialog.querySelector('pre')!.textContent!)).toMatchObject({ name: 'vault', internal: true });
 });
 
 it('opens creation and owns its notification and refresh', async () => {
   const { user } = mount({ body: [] });
-  await screen.findByText('No networks');
+  await screen.findByText('0 networks · 0 in use');
   await user.click(screen.getByRole('button', { name: 'Create network' }));
   const dialog = screen.getByRole('dialog', { name: 'Create network' });
   await user.type(within(dialog).getByLabelText('Name'), 'new');
   await user.click(within(dialog).getByRole('button', { name: 'Create network' }));
   await waitFor(() => expect(get(toasts)).toEqual([expect.objectContaining({ kind: 'success', message: 'Network `new` created' })]));
-  await waitFor(() => expect(fake.calls.filter((c) => c.path === '/api/networks' && c.method === 'GET')).toHaveLength(2));
+  await waitFor(() => expect(calls('GET', '/api/networks')).toHaveLength(2));
   expect(screen.queryByRole('dialog')).toBeNull();
 });
 
@@ -164,33 +293,12 @@ it('fetches the list once under StrictMode', async () => {
       </MemoryRouter>
     </StrictMode>,
   );
-  await screen.findByText('No networks');
+  await screen.findByText('0 networks · 0 in use');
   await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(fake.calls.filter((c) => c.path === '/api/networks' && c.method === 'GET')).toHaveLength(1);
+  expect(calls('GET', '/api/networks')).toHaveLength(1);
 });
 
-it('the route table titles /networks as Networks', () => {
+it('the route table titles both network paths as Networks', () => {
   expect(findRoute('/networks')?.title).toBe('Networks');
-});
-
-it.each([
-  ['moves focus to the next card heading', ['a', 'b'], 'a', 'b'],
-  ['moves focus to the Networks heading when no card follows', ['a', 'b'], 'b', 'Networks'],
-])('after a confirmed removal it %s', async (_name, all, removed, expected) => {
-  let remaining = all;
-  const { user } = mount(() => ({ body: remaining.map((n) => row(n)) }));
-  await screen.findByText(`${all.length} networks`);
-  fake.restore();
-  fake = installFakeFetch({
-    [`DELETE /api/networks/${removed}`]: () => {
-      remaining = remaining.filter((n) => n !== removed);
-      return { status: 204 };
-    },
-    'GET /api/networks': () => ({ body: remaining.map((n) => row(n)) }),
-  });
-  const card = cards().find((c) => within(c).queryByRole('heading', { level: 2, name: removed }))!;
-  await user.click(within(card).getByRole('button', { name: 'Remove' }));
-  await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Remove' }));
-  await waitFor(() => expect(cards()).toHaveLength(all.length - 1));
-  expect(document.activeElement).toBe(screen.getByRole('heading', { name: expected }));
+  expect(findRoute('/networks/shop')?.title).toBe('Networks');
 });

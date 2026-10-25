@@ -19,7 +19,7 @@ interface BaseEntry extends Omit<NavEntry, 'href' | 'match'> {
 const BASE: BaseEntry[] = [
   { path: '/', label: 'Stacks', icon: 'stacks', match: (p) => p === '/' || /^\/stacks\/(?!new$|import$)[^/]+$/.test(p), group: 'main' },
   { path: '/containers', label: 'Containers', icon: 'box', match: (p) => p === '/containers' || p.startsWith('/containers/'), group: 'main' },
-  { path: '/networks', label: 'Networks', icon: 'network', match: (p) => p === '/networks', group: 'main' },
+  { path: '/networks', label: 'Networks', icon: 'network', match: (p) => p === '/networks' || p.startsWith('/networks/'), group: 'main' },
   { path: '/storage', label: 'Storage', icon: 'disk', match: (p) => p === '/storage' || p.startsWith('/storage/'), group: 'main' },
   { path: '/images', label: 'Images', icon: 'image', match: (p) => p === '/images' || p.startsWith('/images/'), group: 'main' },
   { path: '/stacks/new', label: 'New stack', icon: 'plus', match: (p) => p === '/stacks/new', group: 'create' },

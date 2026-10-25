@@ -12,6 +12,7 @@ describe('breadcrumb', () => {
     ['/settings', [{ label: 'Settings' }]],
     ['/containers', [{ label: 'Containers' }]],
     ['/networks', [{ label: 'Networks' }]],
+    ['/networks/my%20net', [{ label: 'Networks', href: '/networks' }, { label: 'my net', mono: true }]],
     ['/containers/redis', [{ label: 'Containers', href: '/containers' }, { label: 'redis', mono: true }]],
     ['/containers/my%20db', [{ label: 'Containers', href: '/containers' }, { label: 'my db', mono: true }]],
     ['/nope', [{ label: 'Stacks', href: '/' }, { label: 'Not found' }]],

@@ -10,6 +10,9 @@ export interface AppRoute {
   screen: LazyExoticComponent<ComponentType> | ComponentType;
 }
 
+// Shared by both network paths so moving between them keeps the screen mounted.
+const NetworkList = lazy(() => import('./routes/NetworkList'));
+
 // Only the overview is in the entry chunk; every other screen loads on first visit.
 export const ROUTES: AppRoute[] = [
   { path: '/', title: 'Stacks', screen: Overview },
@@ -18,7 +21,8 @@ export const ROUTES: AppRoute[] = [
   { path: '/stacks/:name', screen: lazy(() => import('./routes/StackDetail')) },
   { path: '/containers', title: 'Containers', screen: lazy(() => import('./routes/ContainerList')) },
   { path: '/containers/:name', screen: lazy(() => import('./routes/ContainerDetail')) },
-  { path: '/networks', title: 'Networks', screen: lazy(() => import('./routes/NetworkList')) },
+  { path: '/networks', title: 'Networks', screen: NetworkList },
+  { path: '/networks/:name', title: 'Networks', screen: NetworkList },
   { path: '/storage', title: 'Storage', screen: lazy(() => import('./routes/Storage')) },
   { path: '/storage/images/:id', title: 'Storage', screen: lazy(() => import('./routes/StorageImage')) },
   { path: '/storage/volumes/:name', title: 'Storage', screen: lazy(() => import('./routes/StorageVolume')) },

@@ -183,12 +183,22 @@ export interface FSEntry {
 }
 
 export interface NetworkContainer {
+  /** Short container ID. */
+  id: string;
   name: string;
   ipv4: string;
+  mac: string;
+  /** Registered stack, else the compose project, else ''. */
+  stack: string;
+  /** Docker state; '' when the container list had no matching row. */
+  state: string;
+  health: string;
+  exitCode: number | null;
 }
 
 export interface Network {
   id: string;
+  fullId: string;
   name: string;
   driver: string;
   scope: string;
@@ -198,10 +208,18 @@ export interface Network {
   parent: string;
   ipvlanMode: string;
   internal: boolean;
+  attachable: boolean;
+  ipv6: boolean;
+  /** RFC 3339, or '' when Docker reports none. */
+  created: string;
   builtin: boolean;
   project: string;
   stack: string;
   containers: NetworkContainer[];
+}
+
+export interface NetworkPruneResult {
+  removed: string[];
 }
 
 export type NetworkDriver = 'bridge' | 'macvlan' | 'ipvlan';

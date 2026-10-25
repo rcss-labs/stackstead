@@ -26,6 +26,9 @@ type fakeNetworkEngine struct {
 	createErr, removeErr                error
 	created                             []engine.NetworkSpec
 	removed                             []string
+	connectErr, disconnectErr, pruneErr error
+	connected, disconnected             [][2]string
+	pruned                              []string
 	deadline                            time.Duration
 	inspectErr                          map[string]error
 	calls, active, maxActive, inspected int
@@ -108,6 +111,23 @@ func (f *fakeNetworkEngine) RemoveNetwork(_ context.Context, id string) error {
 	}
 	return engine.ErrNetworkNotFound
 }
+func (f *fakeNetworkEngine) ConnectNetwork(_ context.Context, id, container string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.connected = append(f.connected, [2]string{id, container})
+	return f.connectErr
+}
+func (f *fakeNetworkEngine) DisconnectNetwork(_ context.Context, id, container string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.disconnected = append(f.disconnected, [2]string{id, container})
+	return f.disconnectErr
+}
+func (f *fakeNetworkEngine) PruneNetworks(context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.pruned, f.pruneErr
+}
 func lanNetworkEngine() *fakeNetworkEngine {
 	return &fakeNetworkEngine{list: []engine.Network{{ID: "n1", Name: "lan", Driver: "bridge", Subnets: []engine.Subnet{{Prefix: netip.MustParsePrefix("10.0.0.0/24")}}}}}
 }
@@ -149,7 +169,7 @@ func TestNetworkListJoinsSources(t *testing.T) {
 		o.Stacks = st
 	})
 	r := get("/api/networks")
-	want := `[{"id":"aaaaaaaaaaaa","name":"bridge","driver":"bridge","scope":"local","subnets":[],"gateways":[],"ipRange":"","parent":"","ipvlanMode":"","internal":false,"builtin":true,"project":"","stack":"","containers":[]},{"id":"bbbbbbbbbbbb","name":"dns_default","driver":"bridge","scope":"local","subnets":["10.0.0.0/24"],"gateways":["10.0.0.1"],"ipRange":"","parent":"","ipvlanMode":"","internal":false,"builtin":false,"project":"dns-project","stack":"dns","containers":[{"name":"a","ipv4":"10.0.0.2/24"},{"name":"z","ipv4":"10.0.0.3/24"}]},{"id":"cccccccccccc","name":"lan","driver":"macvlan","scope":"local","subnets":[],"gateways":[],"ipRange":"","parent":"eth0","ipvlanMode":"","internal":false,"builtin":false,"project":"","stack":"","containers":[{"name":"router","ipv4":"192.168.1.2/24"}]}]`
+	want := `[{"id":"aaaaaaaaaaaa","name":"bridge","driver":"bridge","scope":"local","subnets":[],"gateways":[],"ipRange":"","parent":"","ipvlanMode":"","internal":false,"builtin":true,"project":"","stack":"","containers":[],"fullId":"aaaaaaaaaaaamore","attachable":false,"ipv6":false,"created":""},{"id":"bbbbbbbbbbbb","name":"dns_default","driver":"bridge","scope":"local","subnets":["10.0.0.0/24"],"gateways":["10.0.0.1"],"ipRange":"","parent":"","ipvlanMode":"","internal":false,"builtin":false,"project":"dns-project","stack":"dns","containers":[{"name":"a","ipv4":"10.0.0.2/24","id":"","mac":"","stack":"","state":"","health":"","exitCode":null},{"name":"z","ipv4":"10.0.0.3/24","id":"","mac":"","stack":"","state":"","health":"","exitCode":null}],"fullId":"bbbbbbbbbbbbmore","attachable":false,"ipv6":false,"created":""},{"id":"cccccccccccc","name":"lan","driver":"macvlan","scope":"local","subnets":[],"gateways":[],"ipRange":"","parent":"eth0","ipvlanMode":"","internal":false,"builtin":false,"project":"","stack":"","containers":[{"name":"router","ipv4":"192.168.1.2/24","id":"","mac":"","stack":"","state":"","health":"","exitCode":null}],"fullId":"ccccccccccccmore","attachable":false,"ipv6":false,"created":""}]`
 	if r.Code != 200 || strings.TrimSpace(string(r.Body)) != want {
 		t.Fatalf("%d %s\nwant %s", r.Code, r.Body, want)
 	}
@@ -332,7 +352,7 @@ func TestNetworkCreateHappyPath(t *testing.T) {
 	if err := json.Unmarshal(r.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	want := apitypes.Network{ID: strings.Repeat("a", 12), Name: "new-lan", Driver: "macvlan", Scope: "local", Subnets: []string{"192.168.1.0/24"}, Gateways: []string{"192.168.1.1"}, IPRange: "192.168.1.128/25", Parent: "eth0", Internal: true, Containers: []apitypes.NetworkContainer{}}
+	want := apitypes.Network{ID: strings.Repeat("a", 12), FullID: strings.Repeat("a", 64), Name: "new-lan", Driver: "macvlan", Scope: "local", Subnets: []string{"192.168.1.0/24"}, Gateways: []string{"192.168.1.1"}, IPRange: "192.168.1.128/25", Parent: "eth0", Internal: true, Containers: []apitypes.NetworkContainer{}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("%+v want %+v", got, want)
 	}
@@ -651,5 +671,146 @@ func TestNetworkDeleteRefusalOrder(t *testing.T) {
 		}
 		n.Driver = "macvlan"
 		f.inspect[n.ID] = n
+	}
+}
+
+func containerExit(code int) *int { return &code }
+
+func TestNetworkListCarriesExtraFieldsAndJoinsContainers(t *testing.T) {
+	obs := containerObserve()
+	n := engine.Network{ID: strings.Repeat("e", 64), Name: "web_default", Driver: "bridge", Attachable: true, IPv6: true, Created: time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC),
+		Containers: []engine.NetworkEndpoint{
+			{ID: idWeb, Name: "web-web-1", IPv4: "172.18.0.2", MAC: "02:42:ac:12:00:02"},
+			{ID: idDB, Name: "adhoc-db", IPv4: "172.18.0.3"},
+			{ID: idCron, Name: "other-cron-1"},
+			{ID: strings.Repeat("9", 64), Name: "ghost"},
+		}}
+	f := &fakeNetworkEngine{list: []engine.Network{n}, inspect: map[string]engine.Network{n.ID: n}}
+	_, get := containersEnv(t, obs, func(o *api.Options) {
+		o.NetworkEngine = f
+		st := newFakeStacks()
+		st.summary.Name = "webstack"
+		st.summary.Project = "web"
+		o.Stacks = st
+	})
+	rows := networkRows(t, get("/api/networks"))
+	if len(rows) != 1 || rows[0].FullID != n.ID || !rows[0].Attachable || !rows[0].IPv6 || rows[0].Created != "2026-10-01T08:00:00Z" {
+		t.Fatalf("%+v", rows)
+	}
+	want := []apitypes.NetworkContainer{
+		{Name: "adhoc-db", IPv4: "172.18.0.3", ID: idDB[:12], State: "exited", Health: "none", ExitCode: containerExit(137)},
+		{Name: "ghost", ID: strings.Repeat("9", 12)},
+		{Name: "other-cron-1", ID: idCron[:12], Stack: "other", State: "running", Health: "none"},
+		{Name: "web-web-1", IPv4: "172.18.0.2", ID: idWeb[:12], MAC: "02:42:ac:12:00:02", Stack: "webstack", State: "running", Health: "unhealthy"},
+	}
+	if !reflect.DeepEqual(rows[0].Containers, want) {
+		got, _ := json.Marshal(rows[0].Containers)
+		t.Fatalf("containers %s", got)
+	}
+}
+
+func TestNetworkListSurvivesContainerListFailure(t *testing.T) {
+	obs := containerObserve()
+	obs.containersErr = errors.New("docker down")
+	n := engine.Network{ID: "n1", Name: "lan", Containers: []engine.NetworkEndpoint{{ID: idWeb, Name: "web-web-1", MAC: "m"}}}
+	f := &fakeNetworkEngine{list: []engine.Network{n}, inspect: map[string]engine.Network{"n1": n}}
+	_, get := containersEnv(t, obs, func(o *api.Options) { o.NetworkEngine = f })
+	rows := networkRows(t, get("/api/networks"))
+	want := apitypes.NetworkContainer{Name: "web-web-1", ID: idWeb[:12], MAC: "m"}
+	if len(rows) != 1 || !reflect.DeepEqual(rows[0].Containers, []apitypes.NetworkContainer{want}) {
+		t.Fatalf("%+v", rows)
+	}
+}
+
+func membershipEnv(t *testing.T, driver string) (*fakeNetworkEngine, *testEnv, *http.Cookie) {
+	t.Helper()
+	n := engine.Network{ID: strings.Repeat("b", 64), Name: "lan", Driver: driver}
+	f := &fakeNetworkEngine{list: []engine.Network{n}, inspect: map[string]engine.Network{n.ID: n}}
+	env, _ := networksEnv(t, f, nil)
+	return f, env, env.login(t)
+}
+
+func TestNetworkConnectAndDisconnect(t *testing.T) {
+	for _, action := range []string{"connect", "disconnect"} {
+		t.Run(action, func(t *testing.T) {
+			f, env, c := membershipEnv(t, "bridge")
+			r := env.do(t, "POST", "/api/networks/lan/"+action, `{"container":"web-1"}`, withCookie(c))
+			if r.Code != 204 || r.Body.Len() != 0 {
+				t.Fatalf("%d %s", r.Code, r.Body)
+			}
+			got := f.connected
+			if action == "disconnect" {
+				got = f.disconnected
+			}
+			if !reflect.DeepEqual(got, [][2]string{{strings.Repeat("b", 64), "web-1"}}) {
+				t.Fatalf("%v", got)
+			}
+		})
+	}
+}
+
+func TestNetworkConnectRefusedForHostAndNull(t *testing.T) {
+	for _, driver := range []string{"host", "null"} {
+		f, env, c := membershipEnv(t, driver)
+		r := env.do(t, "POST", "/api/networks/lan/connect", `{"container":"web-1"}`, withCookie(c))
+		if r.Code != 409 || !strings.Contains(r.Body.String(), "containers can't join the lan network at runtime") || len(f.connected) > 0 {
+			t.Fatalf("%s: %d %s", driver, r.Code, r.Body)
+		}
+	}
+}
+
+func TestNetworkMembershipValidationAndErrors(t *testing.T) {
+	for _, action := range []string{"connect", "disconnect"} {
+		f, env, c := membershipEnv(t, "bridge")
+		if r := env.do(t, "POST", "/api/networks/nope/"+action, `{"container":"x"}`, withCookie(c)); r.Code != 404 || !strings.Contains(r.Body.String(), "network not found") {
+			t.Fatalf("%s unknown: %d %s", action, r.Code, r.Body)
+		}
+		if r := env.do(t, "POST", "/api/networks/lan/"+action, `{"container":""}`, withCookie(c)); r.Code != 400 {
+			t.Fatalf("%s empty: %d %s", action, r.Code, r.Body)
+		}
+		f.connectErr = &engine.ActionError{Status: 409, Message: "already attached"}
+		f.disconnectErr = f.connectErr
+		if r := env.do(t, "POST", "/api/networks/lan/"+action, `{"container":"x"}`, withCookie(c)); r.Code != 409 || !strings.Contains(r.Body.String(), "already attached") {
+			t.Fatalf("%s action error: %d %s", action, r.Code, r.Body)
+		}
+		f.connectErr = fmt.Errorf("%w: %w", engine.ErrNetworkNotFound, &engine.ActionError{Status: 404, Message: "No such container: x"})
+		f.disconnectErr = f.connectErr
+		if r := env.do(t, "POST", "/api/networks/lan/"+action, `{"container":"x"}`, withCookie(c)); r.Code != 404 || !strings.Contains(r.Body.String(), "No such container: x") {
+			t.Fatalf("%s missing container: %d %s", action, r.Code, r.Body)
+		}
+	}
+}
+
+func TestNetworkPruneReturnsSortedAndInvalidates(t *testing.T) {
+	f := lanNetworkEngine()
+	f.inspect = map[string]engine.Network{"n1": f.list[0]}
+	f.pruned = []string{"zeta", "alpha"}
+	env, get := networksEnv(t, f, nil)
+	c := env.login(t)
+	get("/api/networks")
+	before := f.calls
+	r := env.do(t, "POST", "/api/networks/prune", "", withCookie(c))
+	if r.Code != 200 || strings.TrimSpace(r.Body.String()) != `{"removed":["alpha","zeta"]}` {
+		t.Fatalf("%d %s", r.Code, r.Body)
+	}
+	get("/api/networks")
+	if f.calls != before+1 {
+		t.Fatalf("calls %d -> %d: list not re-read", before, f.calls)
+	}
+	f.pruned = nil
+	if r := env.do(t, "POST", "/api/networks/prune", "", withCookie(c)); strings.TrimSpace(r.Body.String()) != `{"removed":[]}` {
+		t.Fatalf("%d %s", r.Code, r.Body)
+	}
+}
+
+func TestNetworkNewRoutesRequireSession(t *testing.T) {
+	f, env, _ := membershipEnv(t, "bridge")
+	for _, path := range []string{"/api/networks/lan/connect", "/api/networks/lan/disconnect", "/api/networks/prune"} {
+		if r := env.do(t, "POST", path, `{"container":"x"}`); r.Code != 401 {
+			t.Fatalf("%s: %d", path, r.Code)
+		}
+	}
+	if len(f.connected)+len(f.disconnected) > 0 {
+		t.Fatal("unauthenticated engine call")
 	}
 }
