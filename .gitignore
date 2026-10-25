@@ -40,3 +40,11 @@ dist/
 
 # Local tool state (brainstorming companion, SDD ledgers)
 .superpowers/
+
+# design-sync (claude.ai/design) build state
+web/.ds-sync/
+web/.ds-pkg/
+web/ds-bundle/
+web/.design-sync/.cache/
+web/.design-sync/learnings/
+web/.design-sync/node_modules
