@@ -1,0 +1,49 @@
+{
+  "projectId": "997b8d94-3ffc-4daf-9d5e-60d9a594cab6",
+  "shape": "package",
+  "pkg": "stackstead-ui",
+  "globalName": "Stackstead",
+  "buildCmd": "node .design-sync/build-pkg.mjs",
+  "srcDir": "../src/app/components",
+  "tsconfig": "../tsconfig.json",
+  "cssEntry": "global.css",
+  "extraFonts": [
+    "../src/app/styles/fonts.css"
+  ],
+  "componentSrcMap": {
+    "ErrorBoundary": null
+  },
+  "docsMap": {
+    "Button": "../.design-sync/groups/actions.md",
+    "CopyButton": "../.design-sync/groups/actions.md",
+    "Chip": "../.design-sync/groups/actions.md",
+    "Segmented": "../.design-sync/groups/actions.md",
+    "Banner": "../.design-sync/groups/feedback.md",
+    "Spinner": "../.design-sync/groups/feedback.md",
+    "EmptyState": "../.design-sync/groups/feedback.md",
+    "Led": "../.design-sync/groups/feedback.md",
+    "StatusBadge": "../.design-sync/groups/feedback.md",
+    "Field": "../.design-sync/groups/forms.md",
+    "ListEditor": "../.design-sync/groups/forms.md",
+    "Dialog": "../.design-sync/groups/overlays.md",
+    "ConfirmDialog": "../.design-sync/groups/overlays.md",
+    "Tabs": "../.design-sync/groups/navigation.md",
+    "Pager": "../.design-sync/groups/navigation.md",
+    "Tag": "../.design-sync/groups/data-display.md",
+    "PanelLabel": "../.design-sync/groups/data-display.md",
+    "RelativeTime": "../.design-sync/groups/data-display.md",
+    "ServiceCells": "../.design-sync/groups/data-display.md",
+    "Sparkline": "../.design-sync/groups/data-display.md"
+  },
+  "overrides": {
+    "Dialog": {
+      "cardMode": "single",
+      "viewport": "720x420"
+    },
+    "ConfirmDialog": {
+      "cardMode": "single",
+      "viewport": "720x360"
+    }
+  },
+  "readmeHeader": ".design-sync/conventions.md"
+}
