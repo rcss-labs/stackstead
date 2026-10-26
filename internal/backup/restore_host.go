@@ -541,7 +541,11 @@ func (h *hostRestore) entry(hdr *tar.Header, body io.Reader) error {
 		}
 		return nil
 	}
-	// Stack files are done: networks come next, before any container data.
+	if !strings.HasPrefix(name, volumesPrefix) && !strings.HasPrefix(name, imagesPrefix) {
+		return damaged(fmt.Errorf("unexpected entry %q", name))
+	}
+	// Only volumes/ and images/ get here, which needsDatabase gated on the
+	// staged database. Stack files are done: networks come next.
 	if !h.pastStacks {
 		h.pastStacks = true
 		h.createNetworks()
@@ -864,6 +868,9 @@ func extractEntry(root *os.Root, prefix, rel string, hdr *tar.Header, body io.Re
 // existing network is kept as it is. A failure is reported and does not stop
 // the restore.
 func (h *hostRestore) createNetworks() {
+	if !h.dbStaged {
+		return // nothing changes on the host before the database is verified
+	}
 	var pending []engine.NetworkSpec
 	for _, s := range h.networks {
 		if !h.networksDone[s.Name] {
@@ -1016,7 +1023,52 @@ func (h *hostRestore) prepareBind(source string) (resolved, skip string, err err
 	if !underAnyRoot(resolved, resolvedRoots(h.env.AllowedRoots)) {
 		return "", "bind source resolves to " + resolved + ", " + reasonOutsideRoots, nil
 	}
+	if reason := h.bindCovers(resolved); reason != "" {
+		return "", reason, nil
+	}
 	return resolved, "", nil
+}
+
+// bindCovers explains why emptying the resolved bind source would destroy
+// more than that bind's data: it is an allowed root, holds a stack directory
+// being restored, or holds the data dir. "" means it is safe.
+func (h *hostRestore) bindCovers(resolved string) string {
+	for _, r := range append(slices.Clone(h.env.AllowedRoots), resolvedRoots(h.env.AllowedRoots)...) {
+		if filepath.Clean(r) == resolved {
+			return "bind source is an allowed root"
+		}
+	}
+	for _, name := range h.order {
+		t := h.stacks[name]
+		if t.skipped != "" || t.dir == "" {
+			continue
+		}
+		for _, dir := range withResolved(t.dir) {
+			if underRoot(dir, resolved) {
+				return "bind source contains the stack directory " + t.dir
+			}
+		}
+	}
+	for _, dir := range withResolved(h.env.DataDir) {
+		if underRoot(dir, resolved) {
+			return "bind source contains the Stackstead data directory"
+		}
+	}
+	return ""
+}
+
+// withResolved returns p (made absolute) and, when it exists, p with
+// symlinks resolved.
+func withResolved(p string) []string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		abs = filepath.Clean(p)
+	}
+	out := []string{abs}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil && resolved != abs {
+		out = append(out, resolved)
+	}
+	return out
 }
 
 func (h *hostRestore) ensureHelper() error {

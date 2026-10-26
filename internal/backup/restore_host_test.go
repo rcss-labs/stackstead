@@ -935,3 +935,73 @@ func TestHostRestoreAcceptsBaseFilesBeforeDatabase(t *testing.T) {
 		t.Errorf("networks were not created: %v", s.eng.changes())
 	}
 }
+
+func TestHostRestoreCreatesNoNetworksBeforeDatabase(t *testing.T) {
+	for _, odd := range []string{"images", "volumes", "junk"} {
+		t.Run(odd, func(t *testing.T) {
+			s := newHostSetup(t)
+			var buf bytes.Buffer
+			gz := gzip.NewWriter(&buf)
+			tw := tar.NewWriter(gz)
+			nets, _ := json.Marshal(s.fixture.networks)
+			tw.WriteHeader(&tar.Header{Name: "base/networks.json", Typeflag: tar.TypeReg, Mode: 0o600, Size: int64(len(nets))})
+			tw.Write(nets)
+			tw.WriteHeader(&tar.Header{Name: odd, Typeflag: tar.TypeReg, Mode: 0o600})
+			tw.Flush()
+			gz.Flush() // truncated: no database, no manifest
+			path := filepath.Join(t.TempDir(), "odd.tar.gz")
+			os.WriteFile(path, buf.Bytes(), 0o600)
+			writeSidecar(t, path, s.fixture.manifest())
+
+			if _, err := s.restore(t, path); err == nil {
+				t.Fatal("restore succeeded")
+			}
+			s.assertHostUntouched(t)
+		})
+	}
+}
+
+func TestHostRestoreRefusesBindCoveringRootsStacksOrData(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		bind func(s *hostSetup, extra string) string
+	}{
+		{"allowed root itself", func(s *hostSetup, extra string) string { return extra }},
+		{"ancestor of a stack dir", func(s *hostSetup, _ string) string { return filepath.Join(s.rootB, "deep") }},
+		{"stack dir itself", func(s *hostSetup, _ string) string { return filepath.Join(s.rootA, "web") }},
+		{"ancestor of the data dir", func(s *hostSetup, extra string) string { return filepath.Join(extra, "state") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newHostSetup(t)
+			extra := filepath.Join(filepath.Dir(s.rootA), "extra")
+			s.env.AllowedRoots = append(s.env.AllowedRoots, extra)
+			s.env.DataDir = filepath.Join(extra, "state", "data")
+			if err := os.MkdirAll(s.env.DataDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			bind := tc.bind(s, extra)
+			m := stacks.Mount{Kind: "bind", Source: bind}
+			s.fixture.volumes["web"] = append(s.fixture.volumes["web"], ManifestVolume{Key: VolumeKey(m), Kind: "bind", Name: bind, Target: "/x"})
+			s.fixture.volData["web/"+VolumeKey(m)] = map[string]string{"data/": "", "data/f": "x"}
+			path := s.fixture.build(t, t.TempDir(), true)
+
+			report, err := s.restore(t, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolved, _ := filepath.EvalSymlinks(bind)
+			for _, spec := range s.eng.specs {
+				for _, mt := range spec.Mounts {
+					if mt.Source == bind || mt.Source == resolved {
+						t.Errorf("the bind %s was emptied and refilled", bind)
+					}
+				}
+			}
+			if !slices.ContainsFunc(report.Items, func(it ItemResult) bool {
+				return it.Kind == "volume" && it.Name == bind && it.Status == "skipped"
+			}) {
+				t.Errorf("no skipped item for %s: %+v", bind, report.Items)
+			}
+		})
+	}
+}
