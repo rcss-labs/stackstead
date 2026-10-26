@@ -21,8 +21,6 @@ import (
 )
 
 var (
-	// ErrArchiveNewer refuses an archive written by a newer Stackstead.
-	ErrArchiveNewer = errors.New("backup: archive is from a newer Stackstead version")
 	// ErrArchiveDamaged reports an archive that is truncated or malformed.
 	ErrArchiveDamaged = errors.New("backup: archive is damaged or incomplete")
 	// ErrRestorePending refuses a restore while an earlier one awaits a restart.
@@ -147,10 +145,7 @@ func checkManifest(m Manifest, installed string) error {
 	if m.Format > ManifestFormat {
 		return fmt.Errorf("%w: archive format %d, this version reads up to %d", ErrArchiveNewer, m.Format, ManifestFormat)
 	}
-	if archiveNewer(m.StacksteadVersion, installed) {
-		return fmt.Errorf("%w: archive was written by %s, this is %s", ErrArchiveNewer, m.StacksteadVersion, installed)
-	}
-	return nil
+	return checkArchiveVersion(m.StacksteadVersion, installed)
 }
 
 func damaged(err error) error {

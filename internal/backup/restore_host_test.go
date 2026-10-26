@@ -422,28 +422,6 @@ func TestHostRestoreRefusesFirstEntryNotDatabase(t *testing.T) {
 	s.assertHostUntouched(t)
 }
 
-func TestArchiveNewer(t *testing.T) {
-	for _, tc := range []struct {
-		archive, installed string
-		want               bool
-	}{
-		{"1.5.0", "1.4.0", true},
-		{"v1.4.1", "1.4.0", true},
-		{"1.4.0", "1.4.0", false},
-		{"1.3.9", "1.4.0", false},
-		{"1.10.0", "1.9.0", true},
-		{"1.4.0", "1.4.0-rc1", true},
-		{"1.4.0-rc1", "1.4.0", false},
-		{"dev", "1.4.0", false},
-		{"9.9.9", "dev", false},
-		{"", "1.4.0", false},
-	} {
-		if got := archiveNewer(tc.archive, tc.installed); got != tc.want {
-			t.Errorf("archiveNewer(%q, %q) = %v, want %v", tc.archive, tc.installed, got, tc.want)
-		}
-	}
-}
-
 func TestHostRestoreWritesOriginalPaths(t *testing.T) {
 	s := newHostSetup(t)
 	path := s.fixture.build(t, t.TempDir(), false)
