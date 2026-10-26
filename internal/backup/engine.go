@@ -26,6 +26,9 @@ type Engine interface {
 	CreateVolume(ctx context.Context, name string, labels map[string]string) error
 	InspectContainer(ctx context.Context, id string) (engine.ContainerInspect, error)
 	Containers(ctx context.Context) ([]engine.Container, error)
+	// ContainerAction starts or stops a container; a host restore stops the
+	// containers whose volumes it replaces.
+	ContainerAction(ctx context.Context, id, action string, stopTimeout int) error
 }
 
 var _ Engine = (*engine.Client)(nil)

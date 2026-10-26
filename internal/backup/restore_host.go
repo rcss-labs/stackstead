@@ -66,6 +66,15 @@ const (
 	actionOverwrite   = "overwrite"
 	actionRecreate    = "recreate"
 	actionKeep        = "keep"
+	// actionStopped is a running container whose project's volumes are
+	// replaced: it is stopped first and its stack starts after the restart.
+	actionStopped = "stopped during restore"
+
+	// containerStopGrace is Docker's stop timeout, in seconds.
+	containerStopGrace = 10
+	// containerStartTimeout bounds starting the stopped containers again
+	// after a failed restore.
+	containerStartTimeout = 2 * time.Minute
 )
 
 // HostSource is where a whole-host archive comes from. For S3, Key is the full
@@ -101,8 +110,9 @@ type Conflict struct {
 	Kind string `json:"kind"`
 	Name string `json:"name"`
 	// Action is "overwrite" (volume contents, stack files), "recreate"
-	// (containers, by compose at start) or "keep" (an existing network is
-	// used as it is).
+	// (containers, by compose at start), "stopped during restore" (a running
+	// container whose project's volumes are replaced) or "keep" (an existing
+	// network is used as it is).
 	Action string `json:"action"`
 }
 
@@ -346,8 +356,14 @@ func hostConflicts(ctx context.Context, env HostEnv, m Manifest, specs []engine.
 	if err != nil {
 		return nil, fmt.Errorf("list containers: %w", err)
 	}
+	replaced := projectsWithReplacedVolumes(m, env.AllowedRoots)
 	for _, c := range containers {
-		if p := c.Project(); p != "" && projects[p] {
+		p := c.Project()
+		switch {
+		case p == "" || !projects[p]:
+		case replaced[p] && containerActive(c):
+			out = append(out, Conflict{Kind: conflictContainer, Name: c.Name, Action: actionStopped})
+		default:
 			out = append(out, Conflict{Kind: conflictContainer, Name: c.Name, Action: actionRecreate})
 		}
 	}
@@ -364,6 +380,31 @@ func hostConflicts(ctx context.Context, env HostEnv, m Manifest, specs []engine.
 		}
 	}
 	return out, nil
+}
+
+// projectsWithReplacedVolumes returns the compose projects whose volumes a
+// host restore of m refills: stacks inside the allowed roots with a volume,
+// or a bind inside the roots, whose backup did not fail.
+func projectsWithReplacedVolumes(m Manifest, roots []string) map[string]bool {
+	out := map[string]bool{}
+	for _, s := range m.Stacks {
+		if s.Project == "" || !filepath.IsAbs(s.ComposePath) || !underAnyRoot(filepath.Dir(s.ComposePath), roots) {
+			continue
+		}
+		for _, v := range s.Volumes {
+			if failedInManifest(m, conflictVolume, s.Name, v.Name) || (v.Kind == volumeKindBind && !pathInsideRoots(v.Name, roots)) {
+				continue
+			}
+			out[s.Project] = true
+			break
+		}
+	}
+	return out
+}
+
+// containerActive reports a container that may be writing to its volumes.
+func containerActive(c engine.Container) bool {
+	return c.State == "running" || c.State == "restarting"
 }
 
 // failedInManifest reports whether the backup recorded the item as failed.
@@ -427,16 +468,20 @@ func RestoreHost(ctx context.Context, src HostSource, env HostEnv, startStacks b
 		ctx: ctx, env: env, r: r, manifest: sum.Manifest, dir: dir,
 		stacks: map[string]*stackTarget{}, rs: newRootSet(env.AllowedRoots, env.DataDir),
 		volumesSeen: map[string]bool{}, networksDone: map[string]bool{},
+		stoppedProjects: map[string]bool{}, stopFailed: map[string]bool{},
 	}
 	defer h.closeRoots()
 	if err := h.run(); err != nil {
+		h.startStopped()
 		return HostReport{Items: h.report()}, err
 	}
 	p := Pending{StagedDB: filepath.Join(dir, stagedDBName), PauseSchedule: true}
 	if startStacks {
 		p.StartStacks = h.stacksToStart()
 	}
+	p.StartStacks = h.withStoppedStacks(p.StartStacks)
 	if err := writePending(env.DataDir, p); err != nil {
+		h.startStopped()
 		return HostReport{Items: h.report()}, fmt.Errorf("record pending restore: %w", err)
 	}
 	finished = true
@@ -499,6 +544,13 @@ type hostRestore struct {
 	volumesSeen  map[string]bool
 	items        []ItemResult
 	sawManifest  bool
+
+	// R36: running containers of projects whose volumes are replaced are
+	// stopped before the first volume; see stopForVolumes.
+	stopTried       bool
+	stopped         []engine.Container
+	stoppedProjects map[string]bool
+	stopFailed      map[string]bool
 }
 
 func (h *hostRestore) out(line string) {
@@ -801,6 +853,7 @@ func (h *hostRestore) volume(hdr *tar.Header, body io.Reader) error {
 	stack, key := parts[0], parts[1]
 	prefix := volumesPrefix + stack + "/" + key + "/"
 	stream := TarStreamUnder(h.r, prefix, hdr, body)
+	h.stopForVolumes()
 	t := h.target(stack)
 	if t.skipped != "" || h.volumesSeen[prefix] {
 		return drain(stream)
@@ -813,6 +866,10 @@ func (h *hostRestore) volume(hdr *tar.Header, body io.Reader) error {
 		return drain(stream)
 	}
 	mv := ms.Volumes[i]
+	if h.stopFailed[ms.Project] {
+		h.items = append(h.items, ItemResult{Kind: conflictVolume, Stack: stack, Name: mv.Name, Status: itemSkipped, Note: "a container of the stack could not be stopped; the volume is left as it was"})
+		return drain(stream)
+	}
 	source := mv.Name
 	if mv.Kind == volumeKindBind {
 		if archivedAsFile(hdr, prefix) {
@@ -841,6 +898,79 @@ func (h *hostRestore) volume(hdr *tar.Header, body io.Reader) error {
 	}
 	h.items = append(h.items, ItemResult{Kind: conflictVolume, Stack: stack, Name: mv.Name, Status: itemOK})
 	return nil
+}
+
+// stopForVolumes stops, once and before any volume is emptied, the running
+// containers of the restored projects whose volumes are replaced (R36). A
+// project with a container that would not stop keeps its volumes.
+func (h *hostRestore) stopForVolumes() {
+	if h.stopTried {
+		return
+	}
+	h.stopTried = true
+	replaced := projectsWithReplacedVolumes(h.manifest, h.env.AllowedRoots)
+	want := map[string]bool{}
+	for _, s := range h.manifest.Stacks {
+		if t, ok := h.stacks[s.Name]; ok && t.skipped == "" && replaced[s.Project] {
+			want[s.Project] = true
+		}
+	}
+	if len(want) == 0 {
+		return
+	}
+	containers, err := h.env.Engine.Containers(h.ctx)
+	if err != nil {
+		for p := range want {
+			h.stopFailed[p] = true
+		}
+		h.items = append(h.items, ItemResult{Kind: conflictContainer, Status: itemFailed, Note: "list containers: " + err.Error()})
+		return
+	}
+	for _, c := range containers {
+		p := c.Project()
+		if !want[p] || !containerActive(c) {
+			continue
+		}
+		h.out("stopping container " + c.Name)
+		if err := h.env.Engine.ContainerAction(h.ctx, c.ID, "stop", containerStopGrace); err != nil {
+			h.stopFailed[p] = true
+			h.items = append(h.items, ItemResult{Kind: conflictContainer, Name: c.Name, Status: itemFailed, Note: "stop failed: " + err.Error()})
+			continue
+		}
+		h.stopped = append(h.stopped, c)
+		h.stoppedProjects[p] = true
+		h.items = append(h.items, ItemResult{Kind: conflictContainer, Name: c.Name, Status: itemOK, Note: actionStopped})
+	}
+}
+
+// withStoppedStacks adds to start the restored stacks whose containers were
+// stopped here, so they come back after the restart.
+func (h *hostRestore) withStoppedStacks(start []string) []string {
+	for _, s := range h.manifest.Stacks {
+		t, ok := h.stacks[s.Name]
+		if ok && t.skipped == "" && h.stoppedProjects[s.Project] && !slices.Contains(start, s.Name) {
+			start = append(start, s.Name)
+		}
+	}
+	return start
+}
+
+// startStopped starts the containers stopped here again when the restore
+// fails: no pending marker will start their stacks. It runs even when the
+// restore was cancelled.
+func (h *hostRestore) startStopped() {
+	if len(h.stopped) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(h.ctx), containerStartTimeout)
+	defer cancel()
+	for _, c := range h.stopped {
+		h.out("starting container " + c.Name)
+		if err := h.env.Engine.ContainerAction(ctx, c.ID, "start", containerStopGrace); err != nil {
+			h.items = append(h.items, ItemResult{Kind: conflictContainer, Name: c.Name, Status: itemFailed, Note: "left stopped: start failed: " + err.Error()})
+		}
+	}
+	h.stopped = nil
 }
 
 // restoredStackDirs lists the directories of the stacks being restored.

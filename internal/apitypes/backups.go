@@ -246,7 +246,8 @@ type HostRestoreStarted struct {
 }
 
 // HostRestoreConflict is existing state the restore meets. Kind is volume,
-// network, container or stack-dir; Action is overwrite, recreate or keep.
+// network, container or stack-dir; Action is overwrite, recreate,
+// "stopped during restore" or keep.
 type HostRestoreConflict struct {
 	Kind   string `json:"kind"`
 	Name   string `json:"name"`

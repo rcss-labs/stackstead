@@ -188,7 +188,8 @@ func (f *fakeEngine) CreateVolume(context.Context, string, map[string]string) er
 func (f *fakeEngine) InspectContainer(context.Context, string) (engine.ContainerInspect, error) {
 	return engine.ContainerInspect{}, nil
 }
-func (f *fakeEngine) Containers(context.Context) ([]engine.Container, error) { return nil, nil }
+func (f *fakeEngine) Containers(context.Context) ([]engine.Container, error)     { return nil, nil }
+func (f *fakeEngine) ContainerAction(context.Context, string, string, int) error { return nil }
 
 func TestCollectNetworksOnlyStacksteadCreated(t *testing.T) {
 	eng := &fakeEngine{networks: []engine.Network{

@@ -36,7 +36,8 @@ type restoreEngine struct {
 	waitCode   int
 	putErr     error
 	volLabels  map[string]map[string]string
-	onCreate   func() // runs at the start of every CreateContainer
+	onCreate   func()           // runs at the start of every CreateContainer
+	actionErr  map[string]error // "<action> <container id>" -> error
 }
 
 func (f *restoreEngine) record(c string) {
@@ -1140,5 +1141,116 @@ func TestPrepareBindRefusesExistingFile(t *testing.T) {
 	_, skip, err := rs.prepareBind(conf, nil)
 	if err != nil || skip == "" {
 		t.Fatalf("skip = %q, err = %v; want the file refused", skip, err)
+	}
+}
+
+func (f *restoreEngine) ContainerAction(_ context.Context, id, action string, _ int) error {
+	f.record("container-" + action + ":" + id)
+	return f.actionErr[action+" "+id]
+}
+
+// webContainers gives the setup a running and an exited container of web
+// (whose volume the archive replaces) and a running one of api (no volumes).
+func (s *hostSetup) webContainers() {
+	project := func(p string) map[string]string { return map[string]string{"com.docker.compose.project": p} }
+	s.eng.containers = []engine.Container{
+		{ID: "c1", Name: "web-app-1", State: "running", Labels: project("web")},
+		{ID: "c2", Name: "web-old-1", State: "exited", Labels: project("web")},
+		{ID: "c3", Name: "api-api-1", State: "running", Labels: project("api")},
+	}
+}
+
+// R36: the running containers of a project whose volumes are replaced are
+// stopped before the first volume is emptied, and the project is started
+// again after the restart even when the user did not ask to start stacks.
+func TestHostRestoreStopsContainersWhoseVolumesAreReplaced(t *testing.T) {
+	s := newHostSetup(t)
+	s.webContainers()
+	path := s.fixture.build(t, t.TempDir(), true)
+
+	sum, err := InspectHost(context.Background(), pathSource(path), s.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []Conflict{
+		{Kind: "container", Name: "web-app-1", Action: "stopped during restore"},
+		{Kind: "container", Name: "web-old-1", Action: "recreate"},
+		{Kind: "container", Name: "api-api-1", Action: "recreate"},
+	} {
+		if !slices.Contains(sum.Conflicts, want) {
+			t.Errorf("conflicts lack %+v: %+v", want, sum.Conflicts)
+		}
+	}
+	if _, err := RestoreHost(context.Background(), pathSource(path), s.env, false, sum.ConflictsDigest); err != nil {
+		t.Fatal(err)
+	}
+	calls := s.eng.changes()
+	stop, fill := indexOf(calls, "container-stop:c1"), indexOf(calls, "create:find /data")
+	if stop < 0 || fill < 0 || stop > fill {
+		t.Errorf("calls = %v, want web-app-1 stopped before the volume is emptied", calls)
+	}
+	for _, other := range []string{"container-stop:c2", "container-stop:c3"} {
+		if slices.Contains(calls, other) {
+			t.Errorf("calls = %v, want only running containers of web stopped", calls)
+		}
+	}
+	if p := readPending(t, s.env.DataDir); !slices.Equal(p.StartStacks, []string{"web"}) {
+		t.Errorf("start stacks = %v, want web (its containers were stopped)", p.StartStacks)
+	}
+}
+
+// A container that cannot be stopped keeps its volumes: they are not emptied
+// under it.
+func TestHostRestoreSkipsVolumesWhenAContainerWillNotStop(t *testing.T) {
+	s := newHostSetup(t)
+	s.webContainers()
+	s.eng.actionErr = map[string]error{"stop c1": errors.New("stuck")}
+	path := s.fixture.build(t, t.TempDir(), true)
+
+	report, err := s.restore(t, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls := s.eng.changes(); indexOf(calls, "create:find /data") >= 0 {
+		t.Errorf("calls = %v, want web_data left alone", calls)
+	}
+	if !slices.ContainsFunc(report.Items, func(it ItemResult) bool {
+		return it.Kind == "volume" && it.Name == "web_data" && it.Status == "skipped"
+	}) {
+		t.Errorf("no skipped item for web_data: %+v", report.Items)
+	}
+	if !slices.ContainsFunc(report.Items, func(it ItemResult) bool {
+		return it.Kind == "container" && it.Name == "web-app-1" && it.Status == "failed"
+	}) {
+		t.Errorf("no failed item for web-app-1: %+v", report.Items)
+	}
+}
+
+// A restore that fails after stopping containers starts them again: no
+// pending marker will bring them back.
+func TestHostRestoreStartsStoppedContainersWhenItFails(t *testing.T) {
+	s := newHostSetup(t)
+	s.webContainers()
+	path := s.fixture.build(t, t.TempDir(), true)
+	sum, err := InspectHost(context.Background(), pathSource(path), s.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The archive's own manifest, read last, no longer matches the sidecar.
+	other := s.fixture.manifest()
+	other.CreatedAt = other.CreatedAt.Add(time.Hour)
+	writeSidecar(t, path, other)
+	sum2, err := InspectHost(context.Background(), pathSource(path), s.env)
+	if err != nil || sum2.ConflictsDigest != sum.ConflictsDigest {
+		t.Fatalf("inspect again: %v", err)
+	}
+
+	if _, err := RestoreHost(context.Background(), pathSource(path), s.env, true, sum2.ConflictsDigest); err == nil {
+		t.Fatal("restore succeeded although the sidecar does not match")
+	}
+	calls := s.eng.changes()
+	stop, start := indexOf(calls, "container-stop:c1"), indexOf(calls, "container-start:c1")
+	if stop < 0 || start < stop {
+		t.Errorf("calls = %v, want web-app-1 stopped and started again", calls)
 	}
 }

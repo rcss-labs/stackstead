@@ -338,7 +338,7 @@ export function RestoreFromBackup({ pollMs = 2000, deadlineMs = 5 * 60_000 }: { 
           <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
           {conflicts.length === 0
             ? 'I understand this replaces the state of this host.'
-            : 'I understand the items above are overwritten, recreated or kept as shown.'}
+            : 'I understand the items above are overwritten, recreated, stopped or kept as shown.'}
         </label>
         <div className={styles.actions}>
           <Button

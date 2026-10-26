@@ -255,10 +255,15 @@ else exit 2), `--no-start` leaves the stacks that were running stopped,
 S3-compatible store. S3 keys are read only from `AWS_ACCESS_KEY_ID` and
 `AWS_SECRET_ACCESS_KEY`, never from flags, and are never printed. The command
 prints the archive summary and the existing volumes, networks, containers and
-stack directories it would overwrite, recreate or keep, asks once, restores, and
+stack directories it would overwrite, recreate, stop or keep, asks once, restores, and
 installs the restored database right away (the old one is kept as
-`stackstead.db.bak-<UTC timestamp>`). The stacks start when the server next
-starts. The backup schedule is turned off in the restored database, and the UI
+`stackstead.db.bak-<UTC timestamp>`). Running containers of the restored
+projects whose volumes are replaced are stopped before their volumes are
+emptied and refilled (shown as "stopped during restore"); a project whose
+container will not stop keeps its volumes, which are reported as skipped. The
+stacks start when the server next starts, including those stopped here even
+with `--no-start`; if the restore fails, the stopped containers are started
+again right away. The backup schedule is turned off in the restored database, and the UI
 says so until you turn it back on. Exit codes: 5 while the server runs (or a
 restore is already pending), 6 for an archive from a newer Stackstead or a
 damaged one, 9 when some items failed to restore (the database is still
