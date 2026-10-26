@@ -51,6 +51,7 @@ type fakeStackControl struct {
 	summaries []stacks.Summary
 	mounts    map[string][]stacks.Mount
 	refs      map[string][]string
+	buildOnly map[string][]string
 	actErr    map[string]error // "<action> <stack>" -> error
 	listGate  chan struct{}    // when set, List blocks until it is closed
 	ops       *stacks.Ops      // when set, ActWait goes through it like stacks.Service does
@@ -68,11 +69,11 @@ func (f *fakeStackControl) Mounts(_ context.Context, stack string) ([]stacks.Mou
 	return f.mounts[stack], nil
 }
 
-func (f *fakeStackControl) ImageRefs(_ context.Context, stack string) ([]string, error) {
+func (f *fakeStackControl) ImageRefs(_ context.Context, stack string) ([]string, []string, error) {
 	if stack == f.panicOn {
 		panic("image refs exploded")
 	}
-	return f.refs[stack], nil
+	return f.refs[stack], f.buildOnly[stack], nil
 }
 
 func (f *fakeStackControl) ActWait(_ context.Context, stack, action string, out func(string)) error {
@@ -804,5 +805,22 @@ func TestRunnerPanicIsRecordedAndAborted(t *testing.T) {
 	entries, err := actionlog.NewStore(env.db, time.Now).Recent(context.Background(), actionlog.Filter{})
 	if err != nil || len(entries) != 1 || entries[0].Result != "failed" {
 		t.Errorf("action log = %+v err=%v", entries, err)
+	}
+}
+
+func TestRunnerReportsBuildOnlyServicesWithoutImage(t *testing.T) {
+	env := newRunnerEnv(t, localOnly(t))
+	env.addStack(t, "web", stacks.StatusStopped)
+	env.stacks.buildOnly = map[string][]string{"web": {"api"}}
+	env.selectStack(t, StackSelection{Stack: "web", Images: true})
+
+	run := env.run(t)
+	_, data := env.local.only(t)
+	_, m := readArchive(t, data)
+	for _, items := range [][]ItemResult{run.Items, m.Items} {
+		it, ok := findItem(items, "image", "web")
+		if !ok || it.Status != "skipped" || it.Note != "image for build-only service api not present" {
+			t.Errorf("image item = %+v (found %v) in %+v", it, ok, items)
+		}
 	}
 }

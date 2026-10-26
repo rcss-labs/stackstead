@@ -20,7 +20,8 @@ type Mount struct {
 
 type resolvedConfig struct {
 	Services map[string]struct {
-		Image   string `json:"image"`
+		Image   string          `json:"image"`
+		Build   json.RawMessage `json:"build"`
 		Volumes []struct {
 			Type   string `json:"type"`
 			Source string `json:"source"`
@@ -90,15 +91,16 @@ func (s *Service) Mounts(ctx context.Context, stack string) ([]Mount, error) {
 }
 
 // ImageRefs returns the image IDs of the stack's containers, sorted and unique.
-// With no containers it falls back to the image references the compose file declares.
-func (s *Service) ImageRefs(ctx context.Context, stack string) ([]string, error) {
+// With no containers it falls back to the image references the compose file
+// declares, and buildOnly names the services that only build an image.
+func (s *Service) ImageRefs(ctx context.Context, stack string) (refs, buildOnly []string, err error) {
 	e, cfg, err := s.resolvedConfig(ctx, stack)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	containers, err := s.engine.Containers(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	seen := map[string]bool{}
 	for _, c := range containers {
@@ -107,16 +109,20 @@ func (s *Service) ImageRefs(ctx context.Context, stack string) ([]string, error)
 		}
 	}
 	if len(seen) == 0 {
-		for _, def := range cfg.Services {
-			if def.Image != "" {
+		for name, def := range cfg.Services {
+			switch {
+			case def.Image != "":
 				seen[def.Image] = true
+			case len(def.Build) > 0 && string(def.Build) != "null":
+				buildOnly = append(buildOnly, name)
 			}
 		}
+		sort.Strings(buildOnly)
 	}
 	out := make([]string, 0, len(seen))
 	for ref := range seen {
 		out = append(out, ref)
 	}
 	sort.Strings(out)
-	return out, nil
+	return out, buildOnly, nil
 }

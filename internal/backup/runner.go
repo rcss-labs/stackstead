@@ -50,7 +50,8 @@ const (
 type StackControl interface {
 	List(ctx context.Context) ([]stacks.Summary, error)
 	Mounts(ctx context.Context, stack string) ([]stacks.Mount, error)
-	ImageRefs(ctx context.Context, stack string) ([]string, error)
+	// ImageRefs also names the services that only build, when no container shows their image.
+	ImageRefs(ctx context.Context, stack string) (refs, buildOnly []string, err error)
 	ActWait(ctx context.Context, stack, action string, out func(string)) error
 	// StartAfterBackup starts a stack the backup stopped, without going
 	// through the operations manager, so it works during shutdown.
@@ -678,9 +679,12 @@ func (j *job) copyMounts(aw *Writer, stack string, mounts []stacks.Mount) error 
 }
 
 func (j *job) saveImages(aw *Writer, stack string) error {
-	refs, err := j.r.d.Stacks.ImageRefs(j.ctx, stack)
+	refs, buildOnly, err := j.r.d.Stacks.ImageRefs(j.ctx, stack)
 	if err != nil {
 		return j.failItem(ItemResult{Kind: "image", Stack: stack, Note: "resolve images: " + err.Error()})
+	}
+	for _, svc := range buildOnly {
+		j.item(ItemResult{Kind: "image", Stack: stack, Name: svc, Status: itemSkipped, Note: "image for build-only service " + svc + " not present"})
 	}
 	ms := j.stacks[stack]
 	for _, ref := range refs {
