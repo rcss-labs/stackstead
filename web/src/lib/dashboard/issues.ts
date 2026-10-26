@@ -49,6 +49,10 @@ function alertTitle(alert: Alert): string {
       return 'Override file ignored';
     case 'parse_error':
       return 'Compose file cannot be parsed';
+    case 'backup_failed':
+      return 'Backup failed';
+    case 'backup_partial':
+      return 'Backup partially failed';
     default:
       return alert.kind.replace(/_/g, ' ');
   }

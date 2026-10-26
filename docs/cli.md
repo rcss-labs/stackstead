@@ -150,6 +150,23 @@ registry or GitHub token (`tag_taken`, `build_running`, `image_in_use`,
 7 when GitHub or the owning peer is unreachable (502). The server's message is
 printed.
 
+### Backups
+
+`stackstead backup run [--detach]` starts a backup now and streams its output
+like `stacks up`. It exits 9 when the run failed, and also when it finished
+`partial` (some items failed), printing `backup partial: N item(s) failed`.
+`--detach` prints the operation ID and returns. A run already in progress is
+exit 5.
+
+`stackstead backup list [-o table|json]` lists archives found at the configured
+destinations: HOST, TIME, SIZE and DESTINATION (`local` or `s3`). JSON prints
+the API response.
+
+```bash
+stackstead backup run
+stackstead backup list
+```
+
 ### Contexts and credentials
 
 `login` saves the server URL and the session cookie in

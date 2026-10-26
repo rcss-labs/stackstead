@@ -21,6 +21,7 @@ type Engine struct {
 	restarts   RestartCounts
 	conn       Connectivity
 	metrics    MetricsHealth
+	backups    BackupHealth // nil: no backup alerts
 	now        func() time.Time
 
 	mu       sync.Mutex
@@ -45,8 +46,8 @@ type flight struct {
 	err    error
 }
 
-func NewEngine(st StackDetails, cs ContainerSource, rc RestartCounts, conn Connectivity, mh MetricsHealth, now func() time.Time) *Engine {
-	return &Engine{stacks: st, containers: cs, restarts: rc, conn: conn, metrics: mh, now: now, seen: map[string]seenEntry{}}
+func NewEngine(st StackDetails, cs ContainerSource, rc RestartCounts, conn Connectivity, mh MetricsHealth, now func() time.Time, bh BackupHealth) *Engine {
+	return &Engine{stacks: st, containers: cs, restarts: rc, conn: conn, metrics: mh, backups: bh, now: now, seen: map[string]seenEntry{}}
 }
 
 // Alerts returns the current alerts, most urgent first. Concurrent calls share
@@ -115,6 +116,7 @@ func (e *Engine) compute(ctx context.Context) ([]Alert, error) {
 		restarts = e.restarts.RestartCounts()
 	}
 	items := evaluate(details, containers, restarts, e.conn.Connected(), e.metrics.Degraded())
+	items = append(items, e.backupAlerts(ctx)...)
 
 	now := e.now()
 	e.mu.Lock()
@@ -126,6 +128,9 @@ func (e *Engine) compute(ctx context.Context) ([]Alert, error) {
 		since := now
 		if old, ok := e.seen[k]; ok {
 			since = old.since
+		}
+		if !it.startedAt.IsZero() {
+			since = it.startedAt
 		}
 		current[k] = seenEntry{since, it.fromContainer}
 		out[i] = it.Alert

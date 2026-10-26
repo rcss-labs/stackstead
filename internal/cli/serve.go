@@ -300,7 +300,7 @@ func serve(ctx context.Context, env *Env, args []string) error {
 		Docker: dockerEngine, Sampler: sampler, Containers: cache, Volumes: storageSvc,
 		Statfs: host.OSStatfs{}, Now: time.Now, Hostname: os.Hostname, GOOS: runtime.GOOS,
 	})
-	alertsEngine := alerts.NewEngine(stackSvc, cache, collector, cache, sampler, time.Now)
+	alertsEngine := alerts.NewEngine(stackSvc, cache, collector, cache, sampler, time.Now, backupRunner)
 
 	if !web.Built() {
 		logger.Warn("web UI not built; serving placeholder page (run make ui)")
