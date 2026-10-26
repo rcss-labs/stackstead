@@ -30,15 +30,16 @@ func topLevel(name string) string {
 // Writer writes a gzip-compressed tar archive in the fixed section order
 // base/ -> volumes/ -> images/ -> manifest.json.
 type Writer struct {
-	gz   *gzip.Writer
-	tw   *tar.Writer
-	rank int
+	gz    *gzip.Writer
+	tw    *tar.Writer
+	rank  int
+	guard pathGuard
 }
 
 // NewWriter returns a Writer streaming to w. Close does not close w.
 func NewWriter(w io.Writer) *Writer {
 	gz := gzip.NewWriter(w)
-	return &Writer{gz: gz, tw: tar.NewWriter(gz)}
+	return &Writer{gz: gz, tw: tar.NewWriter(gz), guard: newPathGuard()}
 }
 
 func (w *Writer) enter(name string) error {
@@ -54,28 +55,23 @@ func (w *Writer) enter(name string) error {
 	return nil
 }
 
-// AddFile writes one entry. hdr.Size must be set when hdr is given; with a nil
-// hdr, r is read fully into memory and written as a regular 0644 file.
+// AddFile writes one entry. hdr.Size must be set; name overrides hdr.Name.
 func (w *Writer) AddFile(name string, hdr *tar.Header, r io.Reader) error {
+	if hdr == nil {
+		return errors.New("backup: AddFile needs a header")
+	}
 	if err := w.enter(name); err != nil {
 		return err
 	}
-	var h tar.Header
-	if hdr != nil {
-		h = *hdr
-	} else {
-		data, err := io.ReadAll(r)
-		if err != nil {
-			return err
-		}
-		h = tar.Header{Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(data))}
-		r = bytes.NewReader(data)
-	}
+	h := *hdr
 	h.Name = name
+	if err := w.guard.check(&h); err != nil {
+		return err
+	}
 	if err := w.tw.WriteHeader(&h); err != nil {
 		return err
 	}
-	if h.Size > 0 && h.Typeflag == tar.TypeReg {
+	if h.Size > 0 {
 		if _, err := io.Copy(w.tw, r); err != nil {
 			return err
 		}
@@ -112,6 +108,9 @@ func (w *Writer) AddTarStream(prefix string, r io.Reader) (int64, error) {
 		}
 		if hdr.Typeflag == tar.TypeLink {
 			out.Linkname = prefix + path.Clean(hdr.Linkname)
+		}
+		if err := w.guard.check(&out); err != nil {
+			return written, err
 		}
 		if err := w.tw.WriteHeader(&out); err != nil {
 			return written, err
@@ -154,6 +153,7 @@ type Reader struct {
 	tr       *tar.Reader
 	lastName string
 	pending  *pendingEntry
+	guard    pathGuard
 }
 
 type pendingEntry struct {
@@ -167,7 +167,7 @@ func NewReader(r io.Reader) (*Reader, error) {
 	if err != nil {
 		return nil, fmt.Errorf("backup: not a gzip archive: %w", err)
 	}
-	return &Reader{gz: gz, tr: tar.NewReader(gz)}, nil
+	return &Reader{gz: gz, tr: tar.NewReader(gz), guard: newPathGuard()}, nil
 }
 
 // Next returns the next entry, or io.EOF at the end of the archive. A damaged
@@ -183,9 +183,9 @@ func (r *Reader) Next() (*tar.Header, io.Reader, error) {
 		return nil, nil, io.EOF
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("backup: archive damaged or truncated after %q: %w", r.lastName, err)
+		return nil, nil, fmt.Errorf("backup: archive damaged or truncated in or after %q: %w", r.lastName, err)
 	}
-	if err := validateEntry(hdr); err != nil {
+	if err := r.guard.check(hdr); err != nil {
 		return nil, nil, err
 	}
 	r.lastName = hdr.Name
@@ -198,31 +198,78 @@ func (r *Reader) Unread(hdr *tar.Header, body io.Reader) {
 	r.pending = &pendingEntry{hdr: hdr, body: body}
 }
 
-func validateEntry(hdr *tar.Header) error {
+// pathGuard validates entry names and link targets. Links must stay inside the
+// extraction root of their entry, and nothing may be written below a symlink
+// seen earlier in the archive.
+type pathGuard struct {
+	symlinks map[string]bool
+}
+
+func newPathGuard() pathGuard { return pathGuard{symlinks: map[string]bool{}} }
+
+// extractionRoot returns the directory (with trailing "/") that an entry's
+// links must stay within, or "" if the entry may not be a link.
+func extractionRoot(name string) string {
+	parts := strings.Split(name, "/")
+	depth := 0
+	switch parts[0] {
+	case "volumes": // volumes/<stack>/<key>/
+		depth = 3
+	case "images": // images/<stack>/
+		depth = 2
+	case "base":
+		switch {
+		case len(parts) > 1 && parts[1] == "stacks":
+			depth = 3 // base/stacks/<stack>/
+		case len(parts) > 1 && parts[1] == "images-library":
+			depth = 2
+		default:
+			return ""
+		}
+	default:
+		return ""
+	}
+	if len(parts) <= depth {
+		return ""
+	}
+	return strings.Join(parts[:depth], "/") + "/"
+}
+
+func within(root, target string) bool {
+	return root != "" && (strings.HasPrefix(target, root) || target+"/" == root)
+}
+
+func (g *pathGuard) check(hdr *tar.Header) error {
 	name := hdr.Name
 	if name == "" || strings.HasPrefix(name, "/") || hasDotDot(name) {
 		return fmt.Errorf("%w: entry name %q", ErrUnsafePath, name)
 	}
 	clean := path.Clean(name)
-	top := topLevel(clean)
+	if _, ok := sectionRank[topLevel(clean)]; !ok {
+		return fmt.Errorf("%w: unexpected top-level entry %q", ErrUnsafePath, name)
+	}
+	for dir := path.Dir(clean); dir != "."; dir = path.Dir(dir) {
+		if g.symlinks[dir] {
+			return fmt.Errorf("%w: %q lies below symlink %q", ErrUnsafePath, name, dir)
+		}
+	}
 	switch hdr.Typeflag {
 	case tar.TypeLink:
 		// Hardlink targets are archive-relative.
-		target := path.Clean(hdr.Linkname)
-		if strings.HasPrefix(hdr.Linkname, "/") || target == ".." || strings.HasPrefix(target, "../") || topLevel(target) != top {
+		if strings.HasPrefix(hdr.Linkname, "/") || !within(extractionRoot(clean), path.Clean(hdr.Linkname)) {
 			return fmt.Errorf("%w: hardlink %q -> %q", ErrUnsafePath, name, hdr.Linkname)
 		}
 	case tar.TypeSymlink:
+		g.symlinks[clean] = true
 		if strings.HasPrefix(hdr.Linkname, "/") {
 			// Volume contents are extracted by Docker inside the container, where an
-			// absolute target is resolved in the container; elsewhere it would hit the host.
-			if top == "volumes" {
+			// absolute target resolves in the container; elsewhere it would hit the host.
+			if topLevel(clean) == "volumes" && extractionRoot(clean) != "" {
 				return nil
 			}
 			return fmt.Errorf("%w: symlink %q -> %q", ErrUnsafePath, name, hdr.Linkname)
 		}
-		target := path.Join(path.Dir(clean), hdr.Linkname)
-		if target == ".." || strings.HasPrefix(target, "../") || topLevel(target) != top {
+		if !within(extractionRoot(clean), path.Join(path.Dir(clean), hdr.Linkname)) {
 			return fmt.Errorf("%w: symlink %q -> %q", ErrUnsafePath, name, hdr.Linkname)
 		}
 	}
@@ -262,6 +309,7 @@ type tarUnder struct {
 	done      bool
 	err       error
 	scratch   [32 << 10]byte
+	peakBuf   int // largest buffered output, for tests
 }
 
 func (s *tarUnder) Read(p []byte) (int, error) {
@@ -270,6 +318,9 @@ func (s *tarUnder) Read(p []byte) (int, error) {
 			return 0, s.err
 		}
 		s.step()
+	}
+	if n := s.buf.Len(); n > s.peakBuf {
+		s.peakBuf = n
 	}
 	return s.buf.Read(p)
 }
@@ -288,6 +339,7 @@ func (s *tarUnder) finish(err error) {
 func (s *tarUnder) step() {
 	if s.body != nil {
 		n, err := s.body.Read(s.scratch[:])
+		_ = n
 		if n > 0 {
 			if _, werr := s.tw.Write(s.scratch[:n]); werr != nil {
 				s.finish(werr)
@@ -324,9 +376,12 @@ func (s *tarUnder) step() {
 	out := *hdr
 	out.Name = rel
 	if hdr.Typeflag == tar.TypeLink {
-		if linkRel, ok := stripPrefix(hdr.Linkname, s.prefix); ok {
-			out.Linkname = linkRel
+		linkRel, ok := stripPrefix(hdr.Linkname, s.prefix)
+		if !ok {
+			s.finish(fmt.Errorf("%w: hardlink %q -> %q leaves %q", ErrUnsafePath, hdr.Name, hdr.Linkname, s.prefix))
+			return
 		}
+		out.Linkname = linkRel
 	}
 	if err := s.tw.WriteHeader(&out); err != nil {
 		s.finish(err)

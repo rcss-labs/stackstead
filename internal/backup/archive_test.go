@@ -137,13 +137,14 @@ func TestWriterRejectsOutOfOrder(t *testing.T) {
 	}
 }
 
-func archiveWithEntry(t *testing.T, h *tar.Header) *Reader {
+func archiveWithEntries(t *testing.T, hdrs ...*tar.Header) *Reader {
 	t.Helper()
 	var buf bytes.Buffer
-	// Write raw through a Writer's internals-free path: build gzip+tar directly.
 	w := NewWriter(&buf)
-	if err := w.tw.WriteHeader(h); err != nil {
-		t.Fatal(err)
+	for _, h := range hdrs {
+		if err := w.tw.WriteHeader(h); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := w.tw.Close(); err != nil {
 		t.Fatal(err)
@@ -158,36 +159,227 @@ func archiveWithEntry(t *testing.T, h *tar.Header) *Reader {
 	return r
 }
 
-func TestReaderRejectsPathEscape(t *testing.T) {
-	cases := map[string]*tar.Header{
-		"dotdot":                   {Name: "../evil", Typeflag: tar.TypeDir},
-		"nested dotdot":            {Name: "base/../../evil", Typeflag: tar.TypeDir},
-		"absolute":                 {Name: "/etc/passwd", Typeflag: tar.TypeDir},
-		"escaping symlink":         {Name: "volumes/a/x", Typeflag: tar.TypeSymlink, Linkname: "../../../etc"},
-		"cross-section symlink":    {Name: "volumes/a/x", Typeflag: tar.TypeSymlink, Linkname: "../../base/stackstead.db"},
-		"absolute symlink in base": {Name: "base/x", Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd"},
-		"escaping hardlink":        {Name: "volumes/a/x", Typeflag: tar.TypeLink, Linkname: "base/stackstead.db"},
+func nextAll(r *Reader) error {
+	for {
+		if _, _, err := r.Next(); err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
+		}
 	}
-	for name, h := range cases {
+}
+
+func sym(name, target string) *tar.Header {
+	return &tar.Header{Name: name, Typeflag: tar.TypeSymlink, Linkname: target}
+}
+func hard(name, target string) *tar.Header {
+	return &tar.Header{Name: name, Typeflag: tar.TypeLink, Linkname: target}
+}
+func file(name string) *tar.Header { return &tar.Header{Name: name, Typeflag: tar.TypeReg} }
+
+func TestReaderRejectsPathEscape(t *testing.T) {
+	cases := map[string][]*tar.Header{
+		"dotdot":                    {{Name: "../evil", Typeflag: tar.TypeDir}},
+		"nested dotdot":             {{Name: "base/../../evil", Typeflag: tar.TypeDir}},
+		"absolute":                  {{Name: "/etc/passwd", Typeflag: tar.TypeDir}},
+		"unknown top level":         {file("etc/passwd")},
+		"escaping symlink":          {sym("volumes/a/k/x", "../../../etc")},
+		"symlink out of volume key": {sym("volumes/a/k/x", "../other")},
+		"cross-section symlink":     {sym("volumes/a/k/x", "../../../base/stackstead.db")},
+		"absolute symlink in base":  {sym("base/stacks/web/x", "/etc/passwd")},
+		"escaping hardlink":         {hard("volumes/a/k/x", "base/stackstead.db")},
+		"hardlink to other volume":  {hard("volumes/a/k/x", "volumes/a/k2/y")},
+		"base symlink to /etc":      {sym("base/stacks/web/d", "../../etc")},
+		"cross-stack symlink":       {sym("base/stacks/a/x", "../b/y")},
+		"cross-stack hardlink":      {hard("base/stacks/a/x", "base/stacks/b/y")},
+		"top-level base file link":  {sym("base/stackstead.db", "config.yaml")},
+		"image symlink to sibling":  {sym("images/web/x", "../other/y")},
+		"write through symlink":     {sym("base/stacks/web/d", "real"), file("base/stacks/web/d/cron.d/evil")},
+		"dir under symlink":         {sym("volumes/a/k/d", "/etc"), file("volumes/a/k/d/evil")},
+	}
+	for name, hdrs := range cases {
 		t.Run(name, func(t *testing.T) {
-			r := archiveWithEntry(t, h)
-			if _, _, err := r.Next(); !errors.Is(err, ErrUnsafePath) {
+			if err := nextAll(archiveWithEntries(t, hdrs...)); !errors.Is(err, ErrUnsafePath) {
 				t.Fatalf("err = %v, want ErrUnsafePath", err)
 			}
 		})
 	}
-	t.Run("safe links pass", func(t *testing.T) {
-		for _, h := range []*tar.Header{
-			{Name: "volumes/a/x", Typeflag: tar.TypeSymlink, Linkname: "y"},
-			{Name: "volumes/a/x", Typeflag: tar.TypeSymlink, Linkname: "../b/y"},
-			{Name: "volumes/a/x", Typeflag: tar.TypeSymlink, Linkname: "/abs/in/container"},
-			{Name: "volumes/a/x", Typeflag: tar.TypeLink, Linkname: "volumes/a/y"},
-		} {
-			if _, _, err := archiveWithEntry(t, h).Next(); err != nil {
-				t.Fatalf("%+v: %v", h, err)
+	t.Run("safe entries pass", func(t *testing.T) {
+		safe := [][]*tar.Header{
+			{sym("volumes/a/k/x", "y")},
+			{sym("volumes/a/k/sub/x", "../y")},
+			{sym("volumes/a/k/x", "/abs/in/container")},
+			{hard("volumes/a/k/x", "volumes/a/k/y")},
+			{sym("base/stacks/web/sub/x", "../compose.yaml")},
+			{sym("base/images-library/a/x", "../b")},
+			{sym("images/web/x", "y")},
+			{file("base/stacks/web/d"), file("base/stacks/web/d2/x")},
+		}
+		for _, hdrs := range safe {
+			if err := nextAll(archiveWithEntries(t, hdrs...)); err != nil {
+				t.Fatalf("%+v: %v", hdrs[0], err)
 			}
 		}
 	})
+}
+
+func TestAddTarStreamRejectsUnsafeInner(t *testing.T) {
+	bad := buildLinkTar(t, []*tar.Header{{Name: "x", Typeflag: tar.TypeSymlink, Linkname: "../../etc"}})
+	w := NewWriter(io.Discard)
+	if _, err := w.AddTarStream("volumes/web/data/", bytes.NewReader(bad)); !errors.Is(err, ErrUnsafePath) {
+		t.Fatalf("err = %v, want ErrUnsafePath", err)
+	}
+}
+
+func buildLinkTar(t *testing.T, hdrs []*tar.Header) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	for _, h := range hdrs {
+		if err := tw.WriteHeader(h); err != nil {
+			t.Fatal(err)
+		}
+		if h.Size > 0 {
+			if _, err := tw.Write(bytes.Repeat([]byte("x"), int(h.Size))); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+type linkInfo struct {
+	name, link, body string
+	typ              byte
+}
+
+func readLinks(t *testing.T, r io.Reader) []linkInfo {
+	t.Helper()
+	var out []linkInfo
+	tr := tar.NewReader(r)
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return out
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(tr)
+		out = append(out, linkInfo{h.Name, h.Linkname, string(b), h.Typeflag})
+	}
+}
+
+func TestLinksRoundTripThroughArchive(t *testing.T) {
+	inner := buildLinkTar(t, []*tar.Header{
+		{Name: "file.txt", Typeflag: tar.TypeReg, Mode: 0o600, Size: 5},
+		{Name: "hard.txt", Typeflag: tar.TypeLink, Linkname: "file.txt"},
+		{Name: "soft", Typeflag: tar.TypeSymlink, Linkname: "file.txt"},
+	})
+	want := readLinks(t, bytes.NewReader(inner))
+
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	if _, err := w.AddTarStream("volumes/web/data/", bytes.NewReader(inner)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(Manifest{}); err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewReader(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, body, err := r.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.Name != "volumes/web/data/file.txt" {
+		t.Fatalf("first entry %q", h.Name)
+	}
+	got := readLinks(t, TarStreamUnder(r, "volumes/web/data/", h, body))
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestArchiveStoresHardlinkTargetWithPrefix(t *testing.T) {
+	inner := buildLinkTar(t, []*tar.Header{
+		{Name: "file.txt", Typeflag: tar.TypeReg, Mode: 0o600, Size: 5},
+		{Name: "hard.txt", Typeflag: tar.TypeLink, Linkname: "file.txt"},
+	})
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	if _, err := w.AddTarStream("volumes/web/data/", bytes.NewReader(inner)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(Manifest{}); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := NewReader(&buf)
+	for {
+		h, _, err := r.Next()
+		if err != nil {
+			t.Fatal("hardlink entry not found")
+		}
+		if h.Typeflag == tar.TypeLink {
+			if h.Linkname != "volumes/web/data/file.txt" {
+				t.Fatalf("linkname = %q", h.Linkname)
+			}
+			return
+		}
+	}
+}
+
+func TestTarStreamUnderRejectsHardlinkOutsidePrefix(t *testing.T) {
+	r := archiveWithEntries(t,
+		file("volumes/web/data/a"),
+		hard("volumes/web/data/b", "volumes/web/other/c"),
+	)
+	h, body, err := r.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = io.Copy(io.Discard, TarStreamUnder(r, "volumes/web/data/", h, body))
+	if !errors.Is(err, ErrUnsafePath) {
+		t.Fatalf("err = %v, want ErrUnsafePath", err)
+	}
+}
+
+func TestTarStreamUnderBoundsMemory(t *testing.T) {
+	const size = 8 << 20
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	hdr := &tar.Header{Typeflag: tar.TypeReg, Mode: 0o600, Size: size}
+	if err := w.AddFile("volumes/web/data/big", hdr, bytes.NewReader(make([]byte, size))); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(Manifest{}); err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewReader(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, body, err := r.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream := TarStreamUnder(r, "volumes/web/data/", h, body)
+	n, err := io.Copy(io.Discard, stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n < size {
+		t.Fatalf("streamed %d bytes, want >= %d", n, size)
+	}
+	if peak := stream.(*tarUnder).peakBuf; peak > 33<<10 {
+		t.Fatalf("internal buffer grew to %d bytes", peak)
+	}
 }
 
 func TestReaderTruncatedArchive(t *testing.T) {
@@ -207,7 +399,7 @@ func TestReaderTruncatedArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r, err := NewReader(bytes.NewReader(buf.Bytes()[:buf.Len()/2]))
+	r, err := NewReader(bytes.NewReader(buf.Bytes()[:buf.Len()*3/4]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,6 +424,9 @@ func TestReaderTruncatedArchive(t *testing.T) {
 	}
 	if lastGood == "" {
 		t.Fatal("no entry was read before the cut")
+	}
+	if lastGood != "base/second.bin" {
+		t.Fatalf("lastGood = %q, want base/second.bin", lastGood)
 	}
 	if want := `"` + lastGood + `"`; !bytes.Contains([]byte(last.Error()), []byte(want)) {
 		t.Fatalf("err %q does not name last good entry %s", last, want)
