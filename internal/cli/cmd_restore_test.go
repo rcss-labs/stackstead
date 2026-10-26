@@ -185,8 +185,14 @@ func TestHostRestoreAsRootRefusesToCreateDataDir(t *testing.T) {
 	}
 	geteuid = func() int { return 0 } // newLocalHost restores it on cleanup
 	calls := fakeRestoreSeams(t, nil)
-	wantCode(t, runRestore(newTestEnv(t, nil), "/tmp/a.tar.gz", "--yes", "--config", h.cfgPath), ExitAuth)
+	err := runRestore(newTestEnv(t, nil), "/tmp/a.tar.gz", "--yes", "--config", h.cfgPath)
+	wantCode(t, err, ExitAuth)
 	if _, err := os.Stat(h.dataDir); err == nil || calls.restored.Kind != "" {
 		t.Error("root created the data dir or restored")
+	}
+	// The service user usually cannot create a directory under /var/lib, so
+	// the hint must be the root command that creates it with the right owner.
+	if want := "install -d -o stackstead -m 0700 " + h.dataDir; !strings.Contains(err.Error(), want) {
+		t.Errorf("hint = %q, want it to suggest %q", err, want)
 	}
 }

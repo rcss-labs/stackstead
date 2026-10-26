@@ -262,7 +262,11 @@ starts. The backup schedule is turned off in the restored database, and the UI
 says so until you turn it back on. Exit codes: 5 while the server runs (or a
 restore is already pending), 6 for an archive from a newer Stackstead or a
 damaged one, 9 when some items failed to restore (the database is still
-installed; the failed items are listed), 2 for a bad source or missing S3 keys.
+installed; the failed items are listed), 2 for a bad source or missing S3 keys,
+3 when run as root and the data directory does not exist (root does not create
+it, so the service user is not locked out; create it with
+`sudo install -d -o stackstead -m 0700 <data_dir>` and run the restore as the
+service user).
 
 Known issue (Docker Desktop on macOS): a bind directory that was deleted and
 re-created at the same path may not be visible to Docker for a short while, so
