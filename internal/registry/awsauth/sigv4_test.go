@@ -161,3 +161,31 @@ func TestSignV4MergesCaseVariantHeaders(t *testing.T) {
 		t.Error("first variant was overwritten")
 	}
 }
+
+func TestSignV4S3SetsContentSHA(t *testing.T) {
+	body := []byte("hello")
+	req, _ := http.NewRequest("PUT", "https://b.s3.us-east-1.amazonaws.com/a b/c.txt", nil)
+	if err := SignV4(req, body, vectorCreds(), "us-east-1", "s3", vectorTime); err != nil {
+		t.Fatal(err)
+	}
+	const want = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+	if got := req.Header.Get("X-Amz-Content-Sha256"); got != want {
+		t.Fatalf("x-amz-content-sha256 = %q, want %q", got, want)
+	}
+	if !strings.Contains(req.Header.Get("Authorization"), "x-amz-content-sha256") {
+		t.Errorf("content sha header not signed: %s", req.Header.Get("Authorization"))
+	}
+}
+
+func TestSignV4ECRUnchanged(t *testing.T) {
+	req, _ := http.NewRequest("POST", "https://api.ecr.us-east-1.amazonaws.com/", nil)
+	if err := SignV4(req, []byte("{}"), vectorCreds(), "us-east-1", "ecr", vectorTime); err != nil {
+		t.Fatal(err)
+	}
+	if got := req.Header.Get("X-Amz-Content-Sha256"); got != "" {
+		t.Errorf("ECR request must not carry x-amz-content-sha256, got %q", got)
+	}
+	if strings.Contains(req.Header.Get("Authorization"), "x-amz-content-sha256") {
+		t.Errorf("ECR signed headers changed: %s", req.Header.Get("Authorization"))
+	}
+}
