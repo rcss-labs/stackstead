@@ -1,0 +1,28 @@
+.page { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.title { margin: 0; font-size: 20px; font-weight: 600; }
+.stack { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+
+.form { display: flex; flex-direction: column; gap: var(--space-3); }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-3); }
+.group { display: flex; flex-direction: column; gap: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--border); }
+.groupTitle { margin: 0; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); }
+.check { display: flex; align-items: center; gap: var(--space-2); font-size: 12.5px; }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
+.result { font-size: 12px; overflow-wrap: anywhere; }
+.muted { color: var(--muted); }
+.mono { font-family: var(--mono); overflow-wrap: anywhere; }
+
+.scroll { overflow-x: auto; }
+.table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.table th { padding: 8px 12px; text-align: left; font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); border-bottom: 1px solid var(--border); }
+.table td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; overflow-wrap: anywhere; }
+.table tr:last-child td { border-bottom: 0; }
+.detail td { background: var(--bg); }
+.expand { background: none; border: 0; color: var(--text); cursor: pointer; font: inherit; font-weight: 500; padding: 0; }
+.mounts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.mounts li { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+
+.host { display: flex; flex-direction: column; gap: var(--space-2); }
+.hostTitle { margin: 0; font-size: 14px; font-weight: 600; }

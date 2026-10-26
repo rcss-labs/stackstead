@@ -1,0 +1,49 @@
+import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
+import { afterEach, describe, expect, it } from 'vitest';
+import type { BackupArchive } from '$lib/api/backupTypes';
+import { installFakeFetch, type FakeFetch } from '../../vitest-setup';
+import { ServerContext, localScope } from '../servers/ServerContext';
+import { BackupsScreen } from './BackupsScreen';
+
+let fake: FakeFetch;
+afterEach(() => fake.restore());
+
+const archive = (hostSlug: string, name: string): BackupArchive => ({
+  dest: 'local',
+  name,
+  hostSlug,
+  createdAt: '2026-10-26T03:00:00Z',
+  size: 1024,
+});
+
+describe('BackupsScreen', () => {
+  it('reads archives through the peer base', async () => {
+    fake = installFakeFetch({ 'GET /api/servers/p1/api/backups/archives': { body: [] } });
+    render(
+      <MemoryRouter>
+        <ServerContext.Provider value={{ ...localScope, local: false, id: 'p1', slug: 'p1' }}>
+          <BackupsScreen />
+        </ServerContext.Provider>
+      </MemoryRouter>,
+    );
+    await screen.findByText(/No archives/);
+    expect(fake.calls.some((c) => c.path === '/api/servers/p1/api/backups/archives')).toBe(true);
+  });
+
+  it('groups archives by host with this host first', async () => {
+    fake = installFakeFetch({
+      'GET /api/backups/archives': { body: [archive('alpha', 'a1.tar.gz'), archive('mine', 'm1.tar.gz')] },
+      'GET /api/peers/self': { body: { name: 'Mine', slug: 'mine' } },
+    });
+    render(
+      <MemoryRouter>
+        <BackupsScreen />
+      </MemoryRouter>,
+    );
+    await screen.findByText('m1.tar.gz');
+    const headings = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent);
+    expect(headings.slice(0, 2)).toEqual(['mine (this host)', 'alpha']);
+    expect((screen.getAllByRole('button', { name: 'Restore' })[0] as HTMLButtonElement).getAttribute('aria-disabled')).toBe('true');
+  });
+});
