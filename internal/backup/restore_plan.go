@@ -60,7 +60,12 @@ type PlannedVolume struct {
 // StackRestorePlan is the preview of a single-stack restore.
 type StackRestorePlan struct {
 	Stack, TargetName, TargetDir string
-	Origin                       stacks.Origin
+	// ComposePath is the compose file the restore writes: the existing
+	// stack's file when overwriting, else the archived file name in TargetDir.
+	ComposePath string
+	// Project is the compose project the restored stack is registered with.
+	Project string
+	Origin  stacks.Origin
 	// Overwrites means a stack named TargetName already exists here.
 	Overwrites      bool
 	FileDiffs       []FileDiff
@@ -134,15 +139,29 @@ func PlanStackRestore(ctx context.Context, m Manifest, archivedEntry stacks.Entr
 	if err != nil {
 		return StackRestorePlan{}, err
 	}
+	archivedProject := archivedEntry.Project
+	if archivedProject == "" {
+		archivedProject = ms.Project
+	}
+	// R17: an overwrite writes the archived compose content into the existing
+	// stack's compose file, whatever it is called.
+	plan.ComposePath = filepath.Join(plan.TargetDir, filepath.Base(composePath))
 	switch {
 	case existing != nil:
 		plan.Origin = existing.Origin
-	case relocated:
+		plan.ComposePath = existing.ComposePath
+		plan.Project = existing.Project
+	case req.NewName != "" || archivedProject == "":
+		plan.Project = plan.TargetName
+	default:
+		plan.Project = archivedProject
+	}
+	if existing == nil && relocated {
 		plan.Origin = stacks.OriginManaged
 	}
 
 	if req.Files {
-		diff, err := composeDiff(filepath.Join(plan.TargetDir, filepath.Base(composePath)), env)
+		diff, err := composeDiff(plan.ComposePath, filepath.Base(composePath), env)
 		if err != nil {
 			return StackRestorePlan{}, err
 		}
@@ -153,6 +172,7 @@ func PlanStackRestore(ctx context.Context, m Manifest, archivedEntry stacks.Entr
 		if err != nil {
 			return StackRestorePlan{}, err
 		}
+		renameProjectVolumes(plan.Volumes, archivedProject, plan.Project)
 		for _, v := range plan.Volumes {
 			if !v.Skip {
 				plan.Warnings = append(plan.Warnings, warnVolumesReplaced)
@@ -279,7 +299,9 @@ func underRoot(path, root string) bool {
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-func composeDiff(target string, env PlanEnv) (FileDiff, error) {
+// composeDiff pairs the current content of target with the archived compose
+// file archivedRel (relative to the archived stack directory).
+func composeDiff(target, archivedRel string, env PlanEnv) (FileDiff, error) {
 	diff := FileDiff{Path: target}
 	if env.ReadCurrent != nil {
 		old, err := env.ReadCurrent(target)
@@ -289,10 +311,9 @@ func composeDiff(target string, env PlanEnv) (FileDiff, error) {
 		diff.Old = string(old)
 	}
 	if env.ReadArchived != nil {
-		rel := filepath.Base(target)
-		archived, err := env.ReadArchived(rel)
+		archived, err := env.ReadArchived(archivedRel)
 		if err != nil {
-			return FileDiff{}, fmt.Errorf("read archived %s: %w", rel, err)
+			return FileDiff{}, fmt.Errorf("read archived %s: %w", archivedRel, err)
 		}
 		diff.New = string(archived)
 	}
@@ -333,6 +354,24 @@ func planVolumes(vols []ManifestVolume, keys, roots []string, originalDir, targe
 		return nil, fmt.Errorf("volumes not in this archive: %s", strings.Join(missing, ", "))
 	}
 	return out, nil
+}
+
+// renameProjectVolumes moves the named volumes compose made for the archived
+// project (<project>_<name>) to the target project, so a restore under a new
+// name never writes into the original stack's volumes. Volumes with explicit
+// names are shared by design and keep them.
+func renameProjectVolumes(vols []PlannedVolume, from, to string) {
+	if from == "" || from == to {
+		return
+	}
+	for i, v := range vols {
+		if v.Kind != "volume" {
+			continue
+		}
+		if short, ok := strings.CutPrefix(v.Name, from+"_"); ok && short != "" {
+			vols[i].Name = to + "_" + short
+		}
+	}
 }
 
 // missingNetworks returns the archived specs of networks the stack uses that

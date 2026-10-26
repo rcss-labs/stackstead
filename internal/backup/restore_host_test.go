@@ -34,6 +34,9 @@ type restoreEngine struct {
 	volumes    map[string]bool
 	containers []engine.Container
 	waitCode   int
+	putErr     error
+	volLabels  map[string]map[string]string
+	onCreate   func() // runs at the start of every CreateContainer
 }
 
 func (f *restoreEngine) record(c string) {
@@ -49,6 +52,9 @@ func (f *restoreEngine) changes() []string {
 }
 
 func (f *restoreEngine) CreateContainer(_ context.Context, spec engine.HelperSpec) (string, error) {
+	if f.onCreate != nil {
+		f.onCreate()
+	}
 	f.mu.Lock()
 	f.specs = append(f.specs, spec)
 	f.mu.Unlock()
@@ -72,6 +78,9 @@ func (f *restoreEngine) GetArchive(context.Context, string, string) (io.ReadClos
 }
 func (f *restoreEngine) PutArchive(_ context.Context, id, path string, r io.Reader) error {
 	f.record("put:" + id + ":" + path)
+	if f.putErr != nil {
+		return f.putErr
+	}
 	got := map[string]string{}
 	tr := tar.NewReader(r)
 	for {
@@ -128,8 +137,14 @@ func (f *restoreEngine) InspectVolume(_ context.Context, name string) (engine.Vo
 	}
 	return engine.VolumeInspect{}, engine.ErrVolumeNotFound
 }
-func (f *restoreEngine) CreateVolume(_ context.Context, name string, _ map[string]string) error {
+func (f *restoreEngine) CreateVolume(_ context.Context, name string, labels map[string]string) error {
 	f.record("volume:" + name)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.volLabels == nil {
+		f.volLabels = map[string]map[string]string{}
+	}
+	f.volLabels[name] = labels
 	return nil
 }
 func (f *restoreEngine) InspectContainer(context.Context, string) (engine.ContainerInspect, error) {

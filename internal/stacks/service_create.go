@@ -597,3 +597,28 @@ func hasNonPathScheme(value string) bool {
 	}
 	return false
 }
+
+// RegisterRestored registers a stack whose files a backup restore has just
+// written. The name and project are validated, and the project is claimed
+// under the project lock like any other registration.
+func (s *Service) RegisterRestored(ctx context.Context, e Entry) error {
+	if err := ValidateName(e.Name); err != nil {
+		return err
+	}
+	if !filepath.IsAbs(e.ComposePath) {
+		return fmt.Errorf("restored compose path %q is not absolute", e.ComposePath)
+	}
+	if e.Project == "" {
+		e.Project = e.Name
+	}
+	s.projectMu.Lock() // see Service for lock order
+	defer s.projectMu.Unlock()
+	owner, taken, err := s.projectOwner(ctx, e.Project, e.Name)
+	if err != nil {
+		return err
+	}
+	if taken {
+		return fmt.Errorf("%w: compose project %q is already used by stack %s", ErrProjectTaken, e.Project, owner)
+	}
+	return s.reg.Add(ctx, e)
+}

@@ -3,7 +3,9 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +25,39 @@ type fakeBackups struct {
 	trigger  string
 	selected backup.StackSelection
 	unknown  bool
+
+	restoreReq  backup.StackRestoreRequest
+	restoreUser string
+	restoreErr  error
+	planErr     error
+	manifestRef [2]string
+}
+
+func (f *fakeBackups) PlanRestore(_ context.Context, req backup.StackRestoreRequest) (backup.StackRestorePlan, error) {
+	f.restoreReq = req
+	if f.planErr != nil {
+		return backup.StackRestorePlan{}, f.planErr
+	}
+	return backup.StackRestorePlan{
+		Stack: req.Stack, TargetName: req.Stack, TargetDir: "/srv/stacks/web", ComposePath: "/srv/stacks/web/compose.yaml",
+		Project: "web", Origin: stacks.OriginManaged, Overwrites: true,
+		FileDiffs: []backup.FileDiff{{Path: "/srv/stacks/web/compose.yaml", Old: "a", New: "b"}},
+		Volumes:   []backup.PlannedVolume{{Key: "b-1", Kind: "bind", Name: "/etc", Target: "/x", Skip: true, Reason: "outside allowed roots"}},
+		Images:    []string{"nginx:1.27"},
+		Warnings:  []string{"volume contents are replaced and not kept"},
+	}, nil
+}
+func (f *fakeBackups) Restore(_ context.Context, req backup.StackRestoreRequest, user string) (stacks.Operation, error) {
+	f.restoreReq, f.restoreUser = req, user
+	if f.restoreErr != nil {
+		return stacks.Operation{}, f.restoreErr
+	}
+	return stacks.Operation{ID: "op2", Stack: req.Stack, Action: "restore", State: stacks.OpRunning, StartedAt: time.Unix(1, 0).UTC(), ExitCode: -1}, nil
+}
+func (f *fakeBackups) ArchiveManifest(_ context.Context, dest, name string) (backup.Manifest, error) {
+	f.manifestRef = [2]string{dest, name}
+	return backup.Manifest{Format: 1, StacksteadVersion: "1.3.0", HostSlug: "old",
+		Stacks: []backup.ManifestStack{{Name: "web", Volumes: []backup.ManifestVolume{{Key: "v-web_data", Kind: "volume", Name: "web_data"}}}}}, nil
 }
 
 func (f *fakeBackups) Config(context.Context) (backup.Config, error) { return f.cfg, nil }
@@ -200,5 +235,110 @@ func TestBackupStacksRunsArchivesAndSelection(t *testing.T) {
 	fake.unknown = true
 	if rec = env.do(t, "PUT", "/api/backups/stacks/nope", `{}`, withCookie(cookie)); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown stack status = %d", rec.Code)
+	}
+}
+
+const testArchive = "stackstead-old-20261001T030000Z.tar.gz"
+
+func restoreBody(extra string) string {
+	return `{"archive":{"dest":"local","name":"` + testArchive + `"},"stack":"web","files":true,"volumes":true,"images":false,"volumeKeys":["v-web_data"]` + extra + `}`
+}
+
+func errorCode(t *testing.T, body []byte) string {
+	t.Helper()
+	var e apitypes.ErrorBody
+	if err := json.Unmarshal(body, &e); err != nil {
+		t.Fatalf("error body %s: %v", body, err)
+	}
+	return e.Code
+}
+
+func TestRestoreAPIRejectsNewerArchive(t *testing.T) {
+	fake := &fakeBackups{cfg: validBackupConfig(), restoreErr: backup.ErrArchiveNewer, planErr: backup.ErrArchiveNewer}
+	env, cookie := newBackupEnv(t, fake)
+	for _, path := range []string{"/api/backups/restore", "/api/backups/restore/plan"} {
+		rec := env.do(t, "POST", path, restoreBody(""), withCookie(cookie))
+		if rec.Code != http.StatusBadRequest || errorCode(t, rec.Body.Bytes()) != "archive_newer" {
+			t.Errorf("%s: status = %d: %s, want 400 archive_newer", path, rec.Code, rec.Body)
+		}
+	}
+}
+
+func TestRestoreAPIConflicts(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		code string
+	}{
+		{stacks.ErrBusy, "stack_busy"},
+		{fmt.Errorf("wrapped: %w", backup.ErrTargetOccupied), "target_occupied"},
+	} {
+		fake := &fakeBackups{cfg: validBackupConfig(), restoreErr: tc.err}
+		env, cookie := newBackupEnv(t, fake)
+		rec := env.do(t, "POST", "/api/backups/restore", restoreBody(""), withCookie(cookie))
+		if rec.Code != http.StatusConflict || errorCode(t, rec.Body.Bytes()) != tc.code {
+			t.Errorf("%v: status = %d: %s, want 409 %s", tc.err, rec.Code, rec.Body, tc.code)
+		}
+	}
+}
+
+func TestRestoreAPIStartsOperation(t *testing.T) {
+	fake := &fakeBackups{cfg: validBackupConfig()}
+	env, cookie := newBackupEnv(t, fake)
+	rec := env.do(t, "POST", "/api/backups/restore", restoreBody(`,"newName":"web2"`), withCookie(cookie))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	var got apitypes.BackupRestoreStarted
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.Operation.ID != "op2" || got.Operation.Action != "restore" {
+		t.Errorf("body = %s (%v)", rec.Body, err)
+	}
+	want := backup.StackRestoreRequest{Archive: backup.ArchiveRef{Dest: "local", Name: testArchive}, Stack: "web", NewName: "web2",
+		Files: true, Volumes: true, VolumeKeys: []string{"v-web_data"}}
+	if !reflect.DeepEqual(fake.restoreReq, want) || fake.restoreUser != "admin" {
+		t.Errorf("request = %+v as %q, want %+v as admin", fake.restoreReq, fake.restoreUser, want)
+	}
+}
+
+func TestRestoreAPIValidatesArchiveRef(t *testing.T) {
+	fake := &fakeBackups{cfg: validBackupConfig()}
+	env, cookie := newBackupEnv(t, fake)
+	for _, body := range []string{
+		`{"archive":{"dest":"ftp","name":"` + testArchive + `"},"stack":"web","files":true}`,
+		`{"archive":{"dest":"local","name":"../etc/passwd"},"stack":"web","files":true}`,
+	} {
+		if rec := env.do(t, "POST", "/api/backups/restore", body, withCookie(cookie)); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d", body, rec.Code)
+		}
+	}
+	for _, path := range []string{"/api/backups/archives/ftp/" + testArchive + "/manifest", "/api/backups/archives/local/notes.txt/manifest"} {
+		if rec := env.do(t, "GET", path, "", withCookie(cookie)); rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d", path, rec.Code)
+		}
+	}
+	if fake.manifestRef != [2]string{} || fake.restoreReq.Stack != "" {
+		t.Error("an invalid archive reference reached the service")
+	}
+}
+
+func TestRestorePlanAndManifestAPI(t *testing.T) {
+	fake := &fakeBackups{cfg: validBackupConfig()}
+	env, cookie := newBackupEnv(t, fake)
+	rec := env.do(t, "POST", "/api/backups/restore/plan", restoreBody(""), withCookie(cookie))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("plan status = %d: %s", rec.Code, rec.Body)
+	}
+	var plan apitypes.BackupRestorePlan
+	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil || !plan.Overwrites || plan.FileDiffs[0].New != "b" ||
+		!plan.Volumes[0].Skip || plan.MissingNetworks == nil || plan.Origin != "managed" {
+		t.Errorf("plan = %s (%v)", rec.Body, err)
+	}
+
+	rec = env.do(t, "GET", "/api/backups/archives/s3/"+testArchive+"/manifest", "", withCookie(cookie))
+	var m apitypes.BackupManifest
+	if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil || rec.Code != http.StatusOK || m.Stacks[0].Volumes[0].Key != "v-web_data" || m.Items == nil {
+		t.Errorf("manifest = %d %s (%v)", rec.Code, rec.Body, err)
+	}
+	if fake.manifestRef != [2]string{"s3", testArchive} {
+		t.Errorf("manifest ref = %v", fake.manifestRef)
 	}
 }

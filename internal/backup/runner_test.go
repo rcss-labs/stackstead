@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -217,7 +218,17 @@ func (d *memDest) Open(_ context.Context, archive string) (io.ReadCloser, error)
 	defer d.mu.Unlock()
 	return io.NopCloser(bytes.NewReader(d.archives[archive])), nil
 }
-func (d *memDest) ReadSidecar(context.Context, string) (Manifest, error) { return Manifest{}, nil }
+func (d *memDest) ReadSidecar(_ context.Context, archive string) (Manifest, error) {
+	d.mu.Lock()
+	raw, ok := d.sidecars[archive]
+	d.mu.Unlock()
+	if !ok {
+		return Manifest{}, fs.ErrNotExist
+	}
+	var m Manifest
+	err := json.Unmarshal(raw, &m)
+	return m, err
+}
 func (d *memDest) Abort(_ context.Context, archive string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
