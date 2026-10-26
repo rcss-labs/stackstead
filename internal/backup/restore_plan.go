@@ -159,6 +159,13 @@ func PlanStackRestore(ctx context.Context, m Manifest, archivedEntry stacks.Entr
 	if existing == nil && relocated {
 		plan.Origin = stacks.OriginManaged
 	}
+	if existing == nil {
+		// A new stack's volumes are <project>_x: restoring them into a
+		// project another stack owns would overwrite that stack's data.
+		if err := checkProjectFree(ctx, env.Registry, plan.Project); err != nil {
+			return StackRestorePlan{}, err
+		}
+	}
 
 	if req.Files {
 		diff, err := composeDiff(plan.ComposePath, filepath.Base(composePath), env)
@@ -255,6 +262,21 @@ func targetDir(original, name string, existing *stacks.Entry, env PlanEnv) (stri
 		return "", false, fmt.Errorf("%w: %s", ErrTargetOccupied, fallback)
 	}
 	return fallback, true, nil
+}
+
+// checkProjectFree fails with stacks.ErrProjectTaken when a registered stack
+// uses project.
+func checkProjectFree(ctx context.Context, reg *stacks.Registry, project string) error {
+	entries, err := reg.List(ctx)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.Project == project {
+			return fmt.Errorf("%w: compose project %q is already used by stack %s", stacks.ErrProjectTaken, project, e.Name)
+		}
+	}
+	return nil
 }
 
 // dirFree reports whether dir does not exist or is empty.

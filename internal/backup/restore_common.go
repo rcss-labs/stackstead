@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/rcss-labs/stackstead/internal/engine"
 )
@@ -154,6 +155,26 @@ func withResolved(p string) []string {
 		out = append(out, resolved)
 	}
 	return out
+}
+
+// verifyArchiveManifest checks the manifest found at the end of the archive:
+// it must be readable by this version, and when a sidecar drove the restore
+// it must describe the same archive.
+func verifyArchiveManifest(inArchive, driving Manifest, fromSidecar bool, installed string) error {
+	if err := checkManifest(inArchive, installed); err != nil {
+		return err
+	}
+	if !fromSidecar {
+		return nil
+	}
+	if !inArchive.CreatedAt.Equal(driving.CreatedAt) || inArchive.InstanceID != driving.InstanceID ||
+		inArchive.StacksteadVersion != driving.StacksteadVersion || inArchive.Format != driving.Format {
+		return fmt.Errorf("%w: archive created %s by instance %q with version %s (format %d), sidecar says %s by %q with version %s (format %d)",
+			ErrManifestMismatch,
+			inArchive.CreatedAt.UTC().Format(time.RFC3339), inArchive.InstanceID, inArchive.StacksteadVersion, inArchive.Format,
+			driving.CreatedAt.UTC().Format(time.RFC3339), driving.InstanceID, driving.StacksteadVersion, driving.Format)
+	}
+	return nil
 }
 
 // trackedReader remembers a read error, so a damaged archive is told apart

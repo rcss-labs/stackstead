@@ -18,10 +18,11 @@ import (
 // restoreCtl is a fake RestoreControl that records into the engine's call
 // log, so stack and Docker steps can be ordered against each other.
 type restoreCtl struct {
-	eng      *restoreEngine
-	reg      *stacks.Registry
-	onStop   func()
-	startErr error
+	eng         *restoreEngine
+	reg         *stacks.Registry
+	onStop      func()
+	startErr    error
+	registerErr error
 }
 
 func (c *restoreCtl) StopForRestore(_ context.Context, stack string, out func(string)) error {
@@ -39,6 +40,9 @@ func (c *restoreCtl) StartRestored(_ context.Context, stack string, out func(str
 
 func (c *restoreCtl) RegisterRestored(ctx context.Context, e stacks.Entry) error {
 	c.eng.record("register:" + e.Name)
+	if c.registerErr != nil {
+		return c.registerErr
+	}
 	return c.reg.Add(ctx, e)
 }
 
@@ -443,5 +447,170 @@ func TestArchiveManifestValidatesName(t *testing.T) {
 		if _, err := e.runner.ArchiveManifest(context.Background(), bad[0], bad[1]); !errors.Is(err, ErrBadArchiveRef) {
 			t.Errorf("ArchiveManifest(%q, %q) err = %v, want ErrBadArchiveRef", bad[0], bad[1], err)
 		}
+	}
+}
+
+// A bind whose source is another registered stack's directory would empty
+// that stack: it is skipped and never mounted.
+func TestRestoreStackSkipsBindCoveringAnotherStack(t *testing.T) {
+	e := newRestoreEnv(t)
+	compose := e.existingStack(t, "web", "compose.yaml", "services: {}\n", false)
+	other := e.existingStack(t, "other", "compose.yaml", "services: {}\n", false)
+	otherDir := filepath.Dir(other)
+	f := webFixture(compose, false)
+	key := VolumeKey(stacks.Mount{Kind: "bind", Source: otherDir})
+	f.volumes = map[string][]ManifestVolume{"web": {{Key: key, Kind: "bind", Name: otherDir, Target: "/data"}}}
+	f.volData = map[string]map[string]string{"web/" + key: {"x": "1"}}
+	ref := e.addArchive(t, f)
+
+	e.run(t, StackRestoreRequest{Archive: ref, Stack: "web", Volumes: true})
+	if calls := e.eng.changes(); indexOf(calls, "create:") >= 0 || indexOf(calls, "put:") >= 0 {
+		t.Errorf("calls = %v, want the bind over stack other left alone", calls)
+	}
+	if got := readFile(t, other); got != "services: {}\n" {
+		t.Errorf("other stack's compose = %q", got)
+	}
+}
+
+// A new stack whose project another stack owns is refused before anything
+// changes.
+func TestRestoreStackRefusesTakenProject(t *testing.T) {
+	e := newRestoreEnv(t)
+	if err := e.reg.Add(context.Background(), stacks.Entry{Name: "owner", ComposePath: filepath.Join(e.stacksDir, "owner", "compose.yaml"), Origin: stacks.OriginManaged, Project: "web2"}); err != nil {
+		t.Fatal(err)
+	}
+	ref := e.addArchive(t, webFixture(filepath.Join(e.outside, "web", "compose.yaml"), false))
+	_, err := e.runner.RestoreStack(context.Background(), StackRestoreRequest{Archive: ref, Stack: "web", NewName: "web2", Files: true, Volumes: true}, "alice")
+	if !errors.Is(err, stacks.ErrProjectTaken) {
+		t.Fatalf("err = %v, want ErrProjectTaken", err)
+	}
+	if calls := e.eng.changes(); len(calls) != 0 {
+		t.Errorf("the host was changed: %v", calls)
+	}
+}
+
+// When registering a new stack fails anyway, its volumes and images are not
+// touched: they could belong to the stack that owns the project.
+func TestRestoreStackSkipsDataWhenRegistrationFails(t *testing.T) {
+	e := newRestoreEnv(t)
+	e.ctl.registerErr = stacks.ErrProjectTaken
+	ref := e.addArchive(t, webFixture(filepath.Join(e.outside, "web", "compose.yaml"), true))
+
+	op := e.run(t, StackRestoreRequest{Archive: ref, Stack: "web", Files: true, Volumes: true, Images: true})
+	if op.State != stacks.OpFailed {
+		t.Fatalf("state = %s, want failed", op.State)
+	}
+	if calls := e.eng.changes(); indexOf(calls, "create:") >= 0 || indexOf(calls, "put:") >= 0 || indexOf(calls, "load") >= 0 || indexOf(calls, "stack-start") >= 0 {
+		t.Errorf("calls = %v, want no volume, image or start", calls)
+	}
+}
+
+// The in-archive manifest is checked like the sidecar and must agree with it.
+func TestRestoreStackChecksInArchiveManifest(t *testing.T) {
+	e := newRestoreEnv(t)
+	compose := e.existingStack(t, "web", "compose.yaml", "services: {}\n", false)
+	f := webFixture(compose, false)
+	f.version = "9.0.0"
+	ref := e.addArchive(t, f)
+	f.version = "1.3.0"
+	sidecar, _ := json.Marshal(f.manifest())
+	e.local.sidecars[ref.Name] = sidecar // the sidecar claims an older version
+
+	op := e.run(t, StackRestoreRequest{Archive: ref, Stack: "web", Files: true})
+	if op.State != stacks.OpFailed || !strings.Contains(op.Error, "newer") {
+		t.Errorf("operation = %+v, want failed as newer", op)
+	}
+}
+
+// R29: an existing stack registered outside the allowed roots is
+// overwritten in place.
+func TestRestoreStackOverwritesRegisteredStackOutsideRoots(t *testing.T) {
+	e := newRestoreEnv(t)
+	dir := filepath.Join(e.outside, "live", "web")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	compose := filepath.Join(dir, "compose.yaml")
+	if err := os.WriteFile(compose, []byte("services: {old: {}}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.reg.Add(context.Background(), stacks.Entry{Name: "web", ComposePath: compose, Origin: stacks.OriginExternal, Project: "web"}); err != nil {
+		t.Fatal(err)
+	}
+	ref := e.addArchive(t, webFixture(compose, false))
+	if op := e.run(t, StackRestoreRequest{Archive: ref, Stack: "web", Files: true}); op.State != stacks.OpSucceeded {
+		t.Fatalf("operation = %+v", op)
+	}
+	if got := readFile(t, compose); got != "services: {app: {image: new}}\n" {
+		t.Errorf("compose = %q", got)
+	}
+}
+
+func TestRestoreStackPreRestoreCopiesDoNotCollide(t *testing.T) {
+	e := newRestoreEnv(t)
+	compose := e.existingStack(t, "web", "compose.yaml", "services: {app: {image: old}}\n", false)
+	ref := e.addArchive(t, webFixture(compose, false))
+	for range 2 {
+		if op := e.run(t, StackRestoreRequest{Archive: ref, Stack: "web", Files: true}); op.State != stacks.OpSucceeded {
+			t.Fatalf("operation = %+v", op)
+		}
+	}
+	base := filepath.Join(e.dataDir, "backups", "pre-restore", "web-20261026T030000Z")
+	if got := readFile(t, filepath.Join(base+"-2", "compose.yaml")); got != "services: {app: {image: new}}\n" {
+		t.Errorf("second pre-restore copy = %q", got)
+	}
+}
+
+func TestRestoreStackActionLogKeepsRestartFailure(t *testing.T) {
+	e := newRestoreEnv(t)
+	compose := e.existingStack(t, "web", "compose.yaml", "services: {}\n", true)
+	f := webFixture(compose, true)
+	raw, _ := os.ReadFile(truncatedAfterDB(t, t.TempDir(), f, true)) // fails fatally as damaged
+	name := ArchiveName("old", f.manifest().CreatedAt)
+	sidecar, _ := json.Marshal(f.manifest())
+	e.local.archives[name], e.local.sidecars[name] = raw, sidecar
+	e.ctl.startErr = errors.New("port in use")
+
+	e.run(t, StackRestoreRequest{Archive: ArchiveRef{Dest: destLocal, Name: name}, Stack: "web", Files: true})
+	if acts := e.restoreActions(t); len(acts) != 1 || !strings.Contains(acts[0].Detail, "left stopped") {
+		t.Errorf("action log = %+v, want the failed restart in the detail", acts)
+	}
+}
+
+func TestNewRunnerSweepsStaleRestoreStaging(t *testing.T) {
+	e := newRestoreEnv(t)
+	stale := filepath.Join(e.dataDir, "restore-stack-123")
+	if err := os.MkdirAll(stale, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	e.newRunner()
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("stale staging dir left: %v", err)
+	}
+}
+
+// Without the registry the stack directories a bind must not cover are
+// unknown, so no bind is mounted.
+func TestRestoreStackFailsBindWhenRegistryUnreadable(t *testing.T) {
+	e := newRestoreEnv(t)
+	compose := e.existingStack(t, "web", "compose.yaml", "services: {}\n", true)
+	data := filepath.Join(e.root, "data", "web")
+	f := webFixture(compose, true)
+	key := VolumeKey(stacks.Mount{Kind: "bind", Source: data})
+	f.volumes = map[string][]ManifestVolume{"web": {{Key: key, Kind: "bind", Name: data, Target: "/data"}}}
+	f.volData = map[string]map[string]string{"web/" + key: {"x": "1"}}
+	ref := e.addArchive(t, f)
+	e.ctl.onStop = func() {
+		if _, err := e.db.Exec(`DROP TABLE stacks`); err != nil {
+			t.Error(err)
+		}
+	}
+
+	op := e.run(t, StackRestoreRequest{Archive: ref, Stack: "web", Volumes: true})
+	if op.State != stacks.OpFailed {
+		t.Errorf("state = %s, want failed", op.State)
+	}
+	if calls := e.eng.changes(); indexOf(calls, "create:") >= 0 || indexOf(calls, "put:") >= 0 {
+		t.Errorf("calls = %v, want the bind not mounted", calls)
 	}
 }

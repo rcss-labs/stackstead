@@ -11,9 +11,12 @@ import (
 )
 
 const (
-	codeArchiveNewer   = "archive_newer"
 	codeStackBusy      = "stack_busy"
 	codeTargetOccupied = "target_occupied"
+	codeProjectTaken   = "project_taken"
+	codeFilesRequired  = "files_required"
+	codeNothingToDo    = "nothing_to_restore"
+	codeBadArchiveRef  = "bad_archive_ref"
 )
 
 func (s *server) registerBackupRestoreRoutes(mux *http.ServeMux) {
@@ -36,7 +39,7 @@ func decodeRestoreRequest(w http.ResponseWriter, r *http.Request) (backup.StackR
 		return backup.StackRestoreRequest{}, false
 	}
 	if !validArchiveRef(dto.Archive.Dest, dto.Archive.Name) {
-		writeError(w, http.StatusBadRequest, "archive.dest must be local or s3 and archive.name an archive file name")
+		writeCodedError(w, http.StatusBadRequest, "archive.dest must be local or s3 and archive.name an archive file name", codeBadArchiveRef)
 		return backup.StackRestoreRequest{}, false
 	}
 	if dto.Stack == "" {
@@ -61,9 +64,15 @@ func (s *server) writeRestoreError(w http.ResponseWriter, r *http.Request, err e
 		writeCodedError(w, http.StatusConflict, "the stack is busy with another operation", codeStackBusy)
 	case errors.Is(err, backup.ErrTargetOccupied):
 		writeCodedError(w, http.StatusConflict, err.Error(), codeTargetOccupied)
-	case errors.Is(err, backup.ErrBadArchiveRef), errors.Is(err, backup.ErrNothingToRestore),
-		errors.Is(err, backup.ErrFilesRequired), errors.Is(err, backup.ErrArchiveDamaged),
-		errors.Is(err, backup.ErrManifestMismatch):
+	case errors.Is(err, stacks.ErrProjectTaken):
+		writeCodedError(w, http.StatusConflict, err.Error(), codeProjectTaken)
+	case errors.Is(err, backup.ErrBadArchiveRef):
+		writeCodedError(w, http.StatusBadRequest, err.Error(), codeBadArchiveRef)
+	case errors.Is(err, backup.ErrNothingToRestore):
+		writeCodedError(w, http.StatusBadRequest, err.Error(), codeNothingToDo)
+	case errors.Is(err, backup.ErrFilesRequired):
+		writeCodedError(w, http.StatusBadRequest, err.Error(), codeFilesRequired)
+	case errors.Is(err, backup.ErrArchiveDamaged), errors.Is(err, backup.ErrManifestMismatch):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, backup.ErrStackNotInArchive):
 		writeError(w, http.StatusNotFound, err.Error())
@@ -103,7 +112,7 @@ func (s *server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleBackupArchiveManifest(w http.ResponseWriter, r *http.Request) {
 	dest, name := r.PathValue("dest"), r.PathValue("name")
 	if !validArchiveRef(dest, name) {
-		writeError(w, http.StatusBadRequest, "dest must be local or s3 and name an archive file name")
+		writeCodedError(w, http.StatusBadRequest, "dest must be local or s3 and name an archive file name", codeBadArchiveRef)
 		return
 	}
 	m, err := s.opts.Backups.ArchiveManifest(r.Context(), dest, name)

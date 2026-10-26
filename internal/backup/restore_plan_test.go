@@ -536,3 +536,15 @@ func TestPlanNewNameRenamesProjectVolumes(t *testing.T) {
 		t.Errorf("Volumes = %+v, want app_data renamed to app2_data and shared kept", plan.Volumes)
 	}
 }
+
+func TestPlanRefusesProjectOwnedByAnotherStack(t *testing.T) {
+	f := newPlanFixture(t)
+	if err := f.reg.Add(context.Background(), stacks.Entry{Name: "owner", ComposePath: filepath.Join(f.stacksDir, "owner", "compose.yaml"), Origin: stacks.OriginManaged, Project: "app"}); err != nil {
+		t.Fatal(err)
+	}
+	st := ManifestStack{Name: "app", ComposePath: filepath.Join(f.outside, "app", "compose.yaml"), Origin: "managed", Project: "app"}
+	_, err := PlanStackRestore(context.Background(), planManifest("other-host", st), entryFor(st), StackRestoreRequest{Stack: "app", Files: true}, f.env)
+	if !errors.Is(err, stacks.ErrProjectTaken) {
+		t.Errorf("err = %v, want ErrProjectTaken", err)
+	}
+}

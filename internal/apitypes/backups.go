@@ -191,6 +191,72 @@ type BackupManifestStack struct {
 	LiveCopy    bool                   `json:"liveCopy"`
 }
 
+// Whole-host restore from the setup screen (/api/setup/restore/...).
+
+// HostRestoreS3 locates an archive in S3. Key is the full object key; the
+// secret key is only ever sent, never returned.
+type HostRestoreS3 struct {
+	Bucket      string `json:"bucket"`
+	Key         string `json:"key"`
+	Region      string `json:"region"`
+	Endpoint    string `json:"endpoint"`
+	PathStyle   bool   `json:"pathStyle"`
+	AccessKeyID string `json:"accessKeyId"`
+	SecretKey   string `json:"secretKey,omitempty"`
+}
+
+// HostRestoreSource is where the archive comes from. Kind is s3, path or
+// upload; Path is used for path, S3 for s3, and upload means the archive
+// sent to POST /api/setup/restore/upload.
+type HostRestoreSource struct {
+	Kind string         `json:"kind"`
+	Path string         `json:"path,omitempty"`
+	S3   *HostRestoreS3 `json:"s3,omitempty"`
+}
+
+// HostRestoreUploaded is the body of a finished upload.
+type HostRestoreUploaded struct {
+	Source HostRestoreSource `json:"source"`
+}
+
+// HostRestoreInspectRequest asks what an archive holds and what it would
+// overwrite. SetupToken is needed unless the request comes from this machine.
+type HostRestoreInspectRequest struct {
+	Source     HostRestoreSource `json:"source"`
+	SetupToken string            `json:"setupToken"`
+}
+
+// HostRestoreStartRequest starts the restore. ConfirmedDigest is the
+// conflictsDigest of the inspection the user confirmed.
+type HostRestoreStartRequest struct {
+	Source          HostRestoreSource `json:"source"`
+	StartStacks     bool              `json:"startStacks"`
+	ConfirmedDigest string            `json:"confirmedDigest"`
+	SetupToken      string            `json:"setupToken"`
+}
+
+// HostRestoreStarted is the 202 body of POST /api/setup/restore/start.
+// RestoreToken authorises GET /api/setup/restore/progress.
+type HostRestoreStarted struct {
+	RestoreToken string    `json:"restoreToken"`
+	Operation    Operation `json:"operation"`
+}
+
+// HostRestoreConflict is existing state the restore meets. Kind is volume,
+// network, container or stack-dir; Action is overwrite, recreate or keep.
+type HostRestoreConflict struct {
+	Kind   string `json:"kind"`
+	Name   string `json:"name"`
+	Action string `json:"action"`
+}
+
+// HostRestoreSummary is the answer of POST /api/setup/restore/inspect.
+type HostRestoreSummary struct {
+	Manifest        BackupManifest        `json:"manifest"`
+	Conflicts       []HostRestoreConflict `json:"conflicts"`
+	ConflictsDigest string                `json:"conflictsDigest"`
+}
+
 // BackupManifest is an archive's manifest, as GET
 // /api/backups/archives/{dest}/{name}/manifest returns it.
 type BackupManifest struct {

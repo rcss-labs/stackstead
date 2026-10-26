@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/rcss-labs/stackstead/internal/actionlog"
 	"github.com/rcss-labs/stackstead/internal/engine"
@@ -26,6 +25,8 @@ const (
 	restoreActionKind = "backup.restore"
 	// preRestoreDir, under <DataDir>/backups, keeps the files a restore replaced.
 	preRestoreDir = "pre-restore"
+	// restoreStagingPattern names the temp dirs staging an archived database.
+	restoreStagingPattern = "restore-stack-*"
 	// maxArchivedCompose bounds the archived compose file read for a preview diff.
 	maxArchivedCompose = 4 << 20
 )
@@ -133,6 +134,9 @@ func (r *Runner) restore(ctx context.Context, req StackRestoreRequest, target, u
 	switch {
 	case err != nil:
 		result, detail = runStatusFailed, err.Error()
+		if len(failed) > 0 {
+			detail += "; " + restoreDetail(failed)
+		}
 	case len(failed) > 0:
 		result = runStatusFailed
 		err = fmt.Errorf("restore of %s finished with %d failed item(s): %s", target, len(failed), detail)
@@ -270,6 +274,9 @@ type stackRestore struct {
 	pastFiles   bool
 	stopped     bool
 	registered  bool
+	// dataBlocked stops volume and image restores for a new stack that was
+	// not registered: its project may belong to another stack.
+	dataBlocked bool
 	helperTried bool
 	helperErr   error
 	volumesDone map[string]bool
@@ -351,7 +358,7 @@ func (sr *stackRestore) stageDatabase() error {
 	if hdr.Name != entryDB {
 		return damaged(fmt.Errorf("the first entry is %q, not %s", hdr.Name, entryDB))
 	}
-	if sr.stageDir, err = os.MkdirTemp(sr.r.d.DataDir, "restore-stack-"); err != nil {
+	if sr.stageDir, err = os.MkdirTemp(sr.r.d.DataDir, restoreStagingPattern); err != nil {
 		return fmt.Errorf("stage database: %w", err)
 	}
 	staged := filepath.Join(sr.stageDir, stagedDBName)
@@ -576,13 +583,19 @@ func (sr *stackRestore) startAgain() {
 // data, to <DataDir>/backups/pre-restore/<stack>-<UTC ts>/.
 func (sr *stackRestore) preRestoreCopy() error {
 	name := sr.plan.TargetName
-	dst := filepath.Join(sr.r.d.DataDir, "backups", preRestoreDir, name+"-"+sr.r.d.Now().UTC().Format(archiveTimeLayout))
+	dst, err := freeDir(filepath.Join(sr.r.d.DataDir, "backups", preRestoreDir, name+"-"+sr.r.d.Now().UTC().Format(archiveTimeLayout)))
+	if err != nil {
+		return err
+	}
 	var skip []string
-	if mounts, err := sr.r.d.Stacks.Mounts(sr.ctx, name); err == nil {
-		for _, m := range mounts {
-			if m.Kind == volumeKindBind {
-				skip = append(skip, filepath.Clean(m.Source))
-			}
+	mounts, err := sr.r.d.Stacks.Mounts(sr.ctx, name)
+	if err != nil {
+		sr.item(ItemResult{Kind: "stack-files", Stack: name, Name: "pre-restore copy", Status: itemSkipped,
+			Note: "bind mounts unknown, so their data may be copied too: " + err.Error()})
+	}
+	for _, m := range mounts {
+		if m.Kind == volumeKindBind {
+			skip = append(skip, filepath.Clean(m.Source))
 		}
 	}
 	sr.out("copying the current files of " + name + " to " + dst)
@@ -590,6 +603,23 @@ func (sr *stackRestore) preRestoreCopy() error {
 		return fmt.Errorf("copy current files to %s: %w", dst, err)
 	}
 	return nil
+}
+
+// freeDir returns base, or base-2, base-3, ... when it is taken, so two
+// restores within one second keep both copies.
+func freeDir(base string) (string, error) {
+	for n := 1; n < 1000; n++ {
+		p := base
+		if n > 1 {
+			p = fmt.Sprintf("%s-%d", base, n)
+		}
+		if _, err := os.Lstat(p); errors.Is(err, fs.ErrNotExist) {
+			return p, nil
+		} else if err != nil {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("no free pre-restore directory for %s", base)
 }
 
 // copyTree copies regular files, directories and symlinks (as links) from
@@ -687,9 +717,8 @@ func (sr *stackRestore) checkArchiveManifest(body io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if sr.fromSidecar && (!m.CreatedAt.Equal(sr.manifest.CreatedAt) || m.InstanceID != sr.manifest.InstanceID) {
-		return fmt.Errorf("%w: archive created %s by instance %q, sidecar says %s by %q", ErrManifestMismatch,
-			m.CreatedAt.UTC().Format(time.RFC3339), m.InstanceID, sr.manifest.CreatedAt.UTC().Format(time.RFC3339), sr.manifest.InstanceID)
+	if err := verifyArchiveManifest(m, sr.manifest, sr.fromSidecar, sr.r.d.Version); err != nil {
+		return err
 	}
 	sr.sawManifest = true
 	return nil
@@ -704,6 +733,9 @@ func (sr *stackRestore) openFiles() (*os.Root, error) {
 		return sr.rs.openUnder(dir)
 	}
 	if sr.plan.Overwrites {
+		// R29: the stack is already registered and run from this directory
+		// (the plan keeps an existing stack's directory, R14), so overwriting
+		// it in place is allowed. os.Root still keeps every write inside it.
 		return os.OpenRoot(dir)
 	}
 	return nil, fmt.Errorf("%s is %s", dir, reasonOutsideRoots)
@@ -761,6 +793,9 @@ func (sr *stackRestore) finishFiles() {
 			}
 		}
 	}
+	if !sr.plan.Overwrites && !sr.registered {
+		sr.dataBlocked = true
+	}
 	for _, it := range createNetworkSpecs(sr.ctx, sr.r.d.Engine, sr.plan.MissingNetworks, sr.out) {
 		sr.item(it)
 	}
@@ -783,7 +818,10 @@ func archiveKey(name, prefix string) string {
 	return key
 }
 
-const noteBackupFailed = "its backup failed; the archived data is incomplete"
+const (
+	noteBackupFailed  = "its backup failed; the archived data is incomplete"
+	noteNotRegistered = "not restored: the stack could not be registered"
+)
 
 func (sr *stackRestore) volume(hdr *tar.Header, body io.Reader) error {
 	key := archiveKey(hdr.Name, sr.volumePrefix)
@@ -793,6 +831,10 @@ func (sr *stackRestore) volume(hdr *tar.Header, body io.Reader) error {
 		return drain(stream)
 	}
 	sr.volumesDone[key] = true
+	if sr.dataBlocked {
+		sr.item(ItemResult{Kind: conflictVolume, Stack: sr.plan.TargetName, Name: sr.plan.Volumes[i].Name, Status: itemFailed, Note: noteNotRegistered})
+		return drain(stream)
+	}
 	pv := sr.plan.Volumes[i]
 	j := slices.IndexFunc(sr.ms.Volumes, func(v ManifestVolume) bool { return v.Key == key })
 	switch {
@@ -805,7 +847,12 @@ func (sr *stackRestore) volume(hdr *tar.Header, body io.Reader) error {
 	}
 	source := pv.Name
 	if pv.Kind == volumeKindBind {
-		resolved, skip, err := sr.rs.prepareBind(pv.Name, []string{sr.plan.TargetDir})
+		// Without the stack list the bind cannot be vetted, so it is not mounted.
+		protected, err := sr.protectedDirs()
+		var resolved, skip string
+		if err == nil {
+			resolved, skip, err = sr.rs.prepareBind(pv.Name, protected)
+		}
 		if skip != "" || err != nil {
 			it := ItemResult{Kind: conflictVolume, Stack: sr.plan.TargetName, Name: pv.Name, Status: itemSkipped, Note: skip}
 			if err != nil {
@@ -833,6 +880,20 @@ func (sr *stackRestore) volume(hdr *tar.Header, body io.Reader) error {
 	return nil
 }
 
+// protectedDirs lists the directories a bind source must not contain: the
+// target's and every registered stack's, so emptying a bind never wipes a stack.
+func (sr *stackRestore) protectedDirs() ([]string, error) {
+	entries, err := sr.r.d.Registry.List(sr.ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list registered stacks: %w", err)
+	}
+	dirs := []string{sr.plan.TargetDir}
+	for _, e := range entries {
+		dirs = append(dirs, filepath.Dir(e.ComposePath))
+	}
+	return dirs, nil
+}
+
 func (sr *stackRestore) ensureHelper() error {
 	if !sr.helperTried {
 		sr.helperTried = true
@@ -852,6 +913,10 @@ func (sr *stackRestore) image(hdr *tar.Header, body io.Reader) error {
 	}
 	sr.imagesDone[key] = true
 	ref := sr.plan.Images[i]
+	if sr.dataBlocked {
+		sr.item(ItemResult{Kind: "image", Stack: sr.plan.TargetName, Name: ref, Status: itemFailed, Note: noteNotRegistered})
+		return drain(stream)
+	}
 	if failedInManifest(sr.manifest, "image", sr.req.Stack, ref) {
 		sr.item(ItemResult{Kind: "image", Stack: sr.plan.TargetName, Name: ref, Status: itemSkipped, Note: noteBackupFailed})
 		return drain(stream)
