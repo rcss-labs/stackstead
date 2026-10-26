@@ -177,3 +177,16 @@ func TestHostRestoreCreatesMissingDataDir(t *testing.T) {
 		t.Errorf("data dir not created: %v", err)
 	}
 }
+
+func TestHostRestoreAsRootRefusesToCreateDataDir(t *testing.T) {
+	h := newLocalHost(t, false)
+	if err := os.Remove(h.dataDir); err != nil {
+		t.Fatal(err)
+	}
+	geteuid = func() int { return 0 } // newLocalHost restores it on cleanup
+	calls := fakeRestoreSeams(t, nil)
+	wantCode(t, runRestore(newTestEnv(t, nil), "/tmp/a.tar.gz", "--yes", "--config", h.cfgPath), ExitAuth)
+	if _, err := os.Stat(h.dataDir); err == nil || calls.restored.Kind != "" {
+		t.Error("root created the data dir or restored")
+	}
+}

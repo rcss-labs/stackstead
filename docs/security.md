@@ -368,9 +368,10 @@ do not leave a fresh install exposed.
   to `/api/setup/restore/upload`. Raise the reverse proxy's body limit for that
   route (nginx `client_max_body_size`, and `proxy_request_buffering off` to
   stream it) or the proxy rejects it. Upload progress is only determinate over
-  HTTPS with HTTP/2 or newer. Over plain HTTP, or behind a proxy that speaks
-  HTTP/1.1 to the browser, the browser cannot stream the body: the page retries
-  by sending the file as a whole, with no progress bar.
+  HTTPS with HTTP/2 or newer. Over plain HTTP the browser sends the file directly
+  with no progress bar. Over HTTPS behind a proxy that speaks HTTP/1.1 to the
+  browser, streaming fails and the page retries by sending the whole file, also
+  without progress.
 - **A paired peer can read and change this host's backup settings**: the
   `/api/backups` routes are forwardable like the rest of the API, so a connection
   is as powerful over backups (destinations, S3 keys it can overwrite, restores)

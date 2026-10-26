@@ -34,6 +34,7 @@ describe('setupRestore.upload', () => {
 
     await setupRestore.upload(file, 'token', (n) => progress.push(n));
 
+    expect(progress.at(-1)).toBe(0); // reset before the retry that reports no progress
     expect(bodies).toHaveLength(2);
     expect(bodies[0]).not.toBe(file);
     expect(bodies[1]).toBe(file);

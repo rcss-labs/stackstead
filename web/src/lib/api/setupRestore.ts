@@ -54,6 +54,7 @@ async function uploadRestoreArchive(
       } catch (err) {
         // A streamed body needs HTTP/2; a proxy that speaks HTTP/1.1 to the browser makes fetch throw a TypeError.
         if (!(err instanceof TypeError) || signal?.aborted) throw err;
+        onProgress(0); // no progress without a stream
         res = await send({ ...base, body: file });
       }
     } else {

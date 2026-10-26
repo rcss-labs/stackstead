@@ -391,8 +391,7 @@ func planVolumes(vols []ManifestVolume, keys, roots []string, originalDir, targe
 		delete(unmatched, v.Key)
 		pv := PlannedVolume{Key: v.Key, Kind: v.Kind, Name: v.Name, Target: v.Target, Bytes: v.Bytes}
 		if v.Kind == volumeKindBind && filepath.IsAbs(v.Name) {
-			if underRoot(v.Name, originalDir) {
-				rel, _ := filepath.Rel(originalDir, filepath.Clean(v.Name))
+			if rel, ok := relUnder(v.Name, originalDir); ok {
 				pv.Name = filepath.Join(targetDir, rel)
 			} else if !underAnyRoot(v.Name, roots) {
 				pv.Skip, pv.Reason = true, reasonOutsideRoots

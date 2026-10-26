@@ -568,3 +568,24 @@ func TestCheckArchiveVersionTreatsUnparsableInstalledAsUnknown(t *testing.T) {
 		}
 	}
 }
+
+// A bind recorded under the resolved path of a symlinked stack directory must
+// be rebased onto the new target, never left pointing at the original stack.
+func TestPlanVolumesRebasesBindThroughSymlinkedDir(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "stacks-link")
+	symlinkOrFatal(t, real, link)
+	if err := os.MkdirAll(filepath.Join(real, "app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	vols := []ManifestVolume{{Key: "b-1", Kind: "bind", Name: filepath.Join(real, "app", "data"), Target: "/d"}}
+	target := filepath.Join(link, "app2")
+
+	got, err := planVolumes(vols, nil, []string{link}, filepath.Join(link, "app"), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(target, "data"); len(got) != 1 || got[0].Name != want || got[0].Skip {
+		t.Errorf("planned volumes = %+v, want bind rebased to %s", got, want)
+	}
+}
