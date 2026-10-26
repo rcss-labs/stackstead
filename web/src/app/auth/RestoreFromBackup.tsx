@@ -93,6 +93,12 @@ export function RestoreFromBackup({ pollMs = 2000 }: { pollMs?: number }) {
     if (err instanceof ApiError && err.status === 403) {
       return 'A setup token is required unless you open this page from the machine itself. Enter the token shown in the server log.';
     }
+    if (err instanceof ApiError && err.code === 'upload_running') {
+      return 'Another upload is already in progress. Wait for it to finish, or reload the page and try again.';
+    }
+    if (err instanceof ApiError && err.code === 'restore_running') {
+      return 'A restore is already running or waiting for Stackstead to restart. Wait for the restart, then reload this page.';
+    }
     if (err instanceof ApiError && err.status === 409 && err.code === undefined) return 'Setup is already complete. Sign in instead.';
     return messageOf(err);
   }

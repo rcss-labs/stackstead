@@ -146,4 +146,24 @@ describe('Restore from backup', () => {
     await waitFor(() => expect(currentPath()).toBe('/login'), { timeout: 6000 });
     expect(polls).toBeGreaterThanOrEqual(2);
   });
+
+  it('explains a 409 upload_running and a 409 restore_running', async () => {
+    const user = await mountRestore({
+      'POST /api/setup/restore/upload': { status: 409, body: { error: 'x', code: 'upload_running' } },
+    });
+    await user.click(screen.getByRole('tab', { name: 'Upload' }));
+    await user.upload(screen.getByLabelText('Archive file'), new File(['x'], 'a.tar.gz'));
+    await user.click(screen.getByRole('button', { name: 'Upload and inspect' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/Another upload is already in progress/);
+  });
+
+  it('explains restore_running when starting', async () => {
+    const user = await mountRestore({
+      'POST /api/setup/restore/start': { status: 409, body: { error: 'x', code: 'restore_running' } },
+    });
+    await inspectPath(user);
+    await user.click(screen.getByLabelText(/I understand/));
+    await user.click(screen.getByRole('button', { name: 'Start restore' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/already running or waiting/);
+  });
 });
