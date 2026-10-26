@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	noteEscapingSymlink = "symlink points outside the stack directory"
+	noteEscapingSymlink = "symlink points outside the archived directory"
 	createdLabel        = "dev.stackstead.created"
 )
 
@@ -32,7 +32,7 @@ func CollectStackFiles(w *Writer, e stacks.Entry, skip []string) ([]ItemResult, 
 	if _, err := os.Stat(src); err != nil {
 		return nil, err
 	}
-	items, err := collectTree(w, src, "base/stacks/"+e.Name, skip)
+	items, err := collectTree(w, src, "base/stacks/"+e.Name, effectiveSkips(e, src, skip))
 	for i := range items {
 		items[i].Stack = e.Name
 	}
@@ -56,7 +56,14 @@ func collectTree(w *Writer, root, prefix string, skip []string) ([]ItemResult, e
 	}
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return walkErr
+			if p == root {
+				return walkErr
+			}
+			items = append(items, ItemResult{Kind: "base", Name: prefix + "/" + filepath.ToSlash(strings.TrimPrefix(p, root+string(filepath.Separator))), Status: "failed", Note: walkErr.Error()})
+			if d != nil && d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
 		}
 		if skipped[p] {
 			if d.IsDir() {
@@ -115,6 +122,29 @@ func collectTree(w *Writer, root, prefix string, skip []string) ([]ItemResult, e
 		}
 	})
 	return items, err
+}
+
+// effectiveSkips drops skip entries that would lose the stack's definition:
+// the stack directory itself or an ancestor (a `.:/app` bind), the compose
+// files and .env.
+func effectiveSkips(e stacks.Entry, root string, skip []string) []string {
+	protected := map[string]bool{filepath.Clean(e.ComposePath): true, filepath.Join(root, ".env"): true}
+	for _, pattern := range []string{"compose*.y*ml", "docker-compose*.y*ml"} {
+		matches, _ := filepath.Glob(filepath.Join(root, pattern))
+		for _, m := range matches {
+			protected[m] = true
+		}
+	}
+	root = filepath.Clean(root)
+	var out []string
+	for _, s := range skip {
+		s = filepath.Clean(s)
+		if s == root || strings.HasPrefix(root, s+string(filepath.Separator)) || protected[s] {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 func dirSuffix(name string) string {

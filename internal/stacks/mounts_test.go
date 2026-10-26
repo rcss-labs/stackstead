@@ -2,6 +2,7 @@ package stacks_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -65,5 +66,19 @@ func TestServiceImageRefsPrefersRunningContainers(t *testing.T) {
 	got, err = h.svc.ImageRefs(context.Background(), "web")
 	if err != nil || !reflect.DeepEqual(got, []string{"sha256:aaa", "sha256:bbb"}) {
 		t.Fatalf("running: %v %v", got, err)
+	}
+}
+
+func TestServiceMountsReportsConfigFailures(t *testing.T) {
+	h := newHarness(t)
+	addStack(t, h, "web")
+	h.compose.configJSONErr = errors.New("compose broke")
+	if _, err := h.svc.Mounts(context.Background(), "web"); err == nil {
+		t.Fatal("want error when compose config fails")
+	}
+	h.compose.configJSONErr = nil
+	h.compose.configJSON = "{not json"
+	if _, err := h.svc.Mounts(context.Background(), "web"); err == nil {
+		t.Fatal("want error for malformed config JSON")
 	}
 }

@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -113,7 +115,7 @@ func TestCollectStackFilesSymlinks(t *testing.T) {
 		t.Fatalf("want 2 skipped symlinks, got %+v", items)
 	}
 	for _, it := range items {
-		if it.Status != "skipped" || it.Note != "symlink points outside the stack directory" {
+		if it.Status != "skipped" || it.Note != "symlink points outside the archived directory" {
 			t.Fatalf("item %+v", it)
 		}
 	}
@@ -222,5 +224,68 @@ func TestCollectDBSnapshotAndCleanup(t *testing.T) {
 	cleanup()
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatal("cleanup left the snapshot")
+	}
+}
+
+func TestCollectStackFilesKeepsComposeAndEnvDespiteBinds(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"compose.yaml": "x", "compose.override.yml": "y", "docker-compose.yaml": "z", ".env": "A=1", "data/big": "xxxx", "other": "o"})
+	entry := stacks.Entry{Name: "web", ComposePath: filepath.Join(dir, "compose.yaml")}
+	skip := []string{dir, filepath.Join(dir, ".env"), filepath.Join(dir, "compose.yaml"), filepath.Join(dir, "data")}
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	items, err := CollectStackFiles(w, entry, skip)
+	if err != nil || len(items) != 0 {
+		t.Fatalf("items=%v err=%v", items, err)
+	}
+	got := archiveNames(t, w, &buf)
+	for _, must := range []string{"base/stacks/web/compose.yaml", "base/stacks/web/compose.override.yml", "base/stacks/web/docker-compose.yaml", "base/stacks/web/.env"} {
+		if !slices.Contains(got, must) {
+			t.Fatalf("%s missing: %v", must, got)
+		}
+	}
+	for _, n := range got {
+		if strings.HasPrefix(n, "base/stacks/web/data") {
+			t.Fatalf("bind source archived: %v", got)
+		}
+	}
+}
+
+func TestCollectStackFilesUnreadableDirIsRecorded(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads everything")
+	}
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"compose.yaml": "x", "locked/f": "1"})
+	if err := os.Chmod(filepath.Join(dir, "locked"), 0); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(filepath.Join(dir, "locked"), 0o755)
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	items, err := CollectStackFiles(w, stacks.Entry{Name: "web", ComposePath: filepath.Join(dir, "compose.yaml")}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Status != "failed" || items[0].Note == "" {
+		t.Fatalf("items = %+v", items)
+	}
+	if !slices.Contains(archiveNames(t, w, &buf), "base/stacks/web/compose.yaml") {
+		t.Fatal("compose.yaml lost")
+	}
+}
+
+func TestCollectDBFailureLeavesNoTempDir(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "live.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	tmp := t.TempDir()
+	if _, _, err := CollectDB(context.Background(), db, tmp); err == nil {
+		t.Fatal("want error from a closed db")
+	}
+	if entries, _ := os.ReadDir(tmp); len(entries) != 0 {
+		t.Fatalf("temp dir left behind: %v", entries)
 	}
 }

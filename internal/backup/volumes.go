@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"time"
 
 	"github.com/rcss-labs/stackstead/internal/engine"
 	"github.com/rcss-labs/stackstead/internal/stacks"
@@ -37,7 +38,9 @@ func CopyVolume(ctx context.Context, eng Engine, w *Writer, stack string, m stac
 	}
 	defer func() {
 		// The caller's context may be cancelled; the helper must still go.
-		_ = eng.RemoveContainer(context.WithoutCancel(ctx), id, true)
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		_ = eng.RemoveContainer(cleanupCtx, id, true)
 	}()
 	body, err := eng.GetArchive(ctx, id, "/data")
 	if err != nil {
