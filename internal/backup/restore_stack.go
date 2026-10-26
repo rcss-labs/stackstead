@@ -847,7 +847,12 @@ func (sr *stackRestore) volume(hdr *tar.Header, body io.Reader) error {
 	}
 	source := pv.Name
 	if pv.Kind == volumeKindBind {
-		resolved, skip, err := sr.rs.prepareBind(pv.Name, sr.protectedDirs())
+		// Without the stack list the bind cannot be vetted, so it is not mounted.
+		protected, err := sr.protectedDirs()
+		var resolved, skip string
+		if err == nil {
+			resolved, skip, err = sr.rs.prepareBind(pv.Name, protected)
+		}
 		if skip != "" || err != nil {
 			it := ItemResult{Kind: conflictVolume, Stack: sr.plan.TargetName, Name: pv.Name, Status: itemSkipped, Note: skip}
 			if err != nil {
@@ -877,17 +882,16 @@ func (sr *stackRestore) volume(hdr *tar.Header, body io.Reader) error {
 
 // protectedDirs lists the directories a bind source must not contain: the
 // target's and every registered stack's, so emptying a bind never wipes a stack.
-func (sr *stackRestore) protectedDirs() []string {
-	dirs := []string{sr.plan.TargetDir}
+func (sr *stackRestore) protectedDirs() ([]string, error) {
 	entries, err := sr.r.d.Registry.List(sr.ctx)
 	if err != nil {
-		// Unknown stacks cannot be protected; refuse every bind instead.
-		return append(dirs, sr.r.d.AllowedRoots...)
+		return nil, fmt.Errorf("list registered stacks: %w", err)
 	}
+	dirs := []string{sr.plan.TargetDir}
 	for _, e := range entries {
 		dirs = append(dirs, filepath.Dir(e.ComposePath))
 	}
-	return dirs
+	return dirs, nil
 }
 
 func (sr *stackRestore) ensureHelper() error {

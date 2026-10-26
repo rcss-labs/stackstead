@@ -588,3 +588,29 @@ func TestNewRunnerSweepsStaleRestoreStaging(t *testing.T) {
 		t.Errorf("stale staging dir left: %v", err)
 	}
 }
+
+// Without the registry the stack directories a bind must not cover are
+// unknown, so no bind is mounted.
+func TestRestoreStackFailsBindWhenRegistryUnreadable(t *testing.T) {
+	e := newRestoreEnv(t)
+	compose := e.existingStack(t, "web", "compose.yaml", "services: {}\n", true)
+	data := filepath.Join(e.root, "data", "web")
+	f := webFixture(compose, true)
+	key := VolumeKey(stacks.Mount{Kind: "bind", Source: data})
+	f.volumes = map[string][]ManifestVolume{"web": {{Key: key, Kind: "bind", Name: data, Target: "/data"}}}
+	f.volData = map[string]map[string]string{"web/" + key: {"x": "1"}}
+	ref := e.addArchive(t, f)
+	e.ctl.onStop = func() {
+		if _, err := e.db.Exec(`DROP TABLE stacks`); err != nil {
+			t.Error(err)
+		}
+	}
+
+	op := e.run(t, StackRestoreRequest{Archive: ref, Stack: "web", Volumes: true})
+	if op.State != stacks.OpFailed {
+		t.Errorf("state = %s, want failed", op.State)
+	}
+	if calls := e.eng.changes(); indexOf(calls, "create:") >= 0 || indexOf(calls, "put:") >= 0 {
+		t.Errorf("calls = %v, want the bind not mounted", calls)
+	}
+}
