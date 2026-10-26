@@ -5,12 +5,14 @@ import { toasts } from '$lib/stores/toasts';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { Field } from '../components/Field';
-import { RelativeTime } from '../components/RelativeTime';
 import { Segmented } from '../components/Segmented';
 import { Pill, SettingsCard } from '../settings/SettingsCard';
 import styles from './backups.module.css';
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+const formatNextRun = (iso: string) =>
+  new Date(iso).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' });
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const FREQUENCIES = [
@@ -113,9 +115,7 @@ export function BackupScheduleCard({ api, onRunStarted }: { api: BackupsApi; onR
       title="Backups"
       headerEnd={
         schedule.enabled && config.nextRun ? (
-          <Pill tone="info">
-            Next run <RelativeTime iso={config.nextRun} />
-          </Pill>
+          <Pill tone="info">{`Next run ${formatNextRun(config.nextRun)}`}</Pill>
         ) : (
           <Pill tone="muted">Schedule off</Pill>
         )
@@ -173,9 +173,9 @@ export function BackupScheduleCard({ api, onRunStarted }: { api: BackupsApi; onR
             <Field label="Path" id={`${uid}-path`} mono>
               {({ readOnly: _, ...c }) => <input {...c} value={local.path} onChange={(e) => patch({ local: { ...local, path: e.target.value } })} />}
             </Field>
-            <Field label="Keep last" id={`${uid}-keep`} hint="0 keeps everything">
+            <Field label="Keep last" id={`${uid}-keep`} hint="1 to 1000 archives">
               {({ readOnly: _, ...c }) => (
-                <input {...c} type="number" min={0} value={local.keepLast} onChange={(e) => patch({ local: { ...local, keepLast: Number(e.target.value) } })} />
+                <input {...c} type="number" min={1} max={1000} value={local.keepLast} onChange={(e) => patch({ local: { ...local, keepLast: Number(e.target.value) } })} />
               )}
             </Field>
           </div>

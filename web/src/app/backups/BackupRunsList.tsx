@@ -26,7 +26,13 @@ export function BackupRunsList({ api, refreshKey = 0 }: { api: BackupsApi; refre
   const [open, setOpen] = useState<Set<number>>(new Set());
 
   const load = useCallback(() => {
-    api.runs().then(setRuns, (e: unknown) => setError(messageOf(e)));
+    api.runs().then(
+      (list) => {
+        setRuns(list);
+        setError(undefined);
+      },
+      (e: unknown) => setError(messageOf(e)),
+    );
   }, [api]);
   useEffect(load, [load, refreshKey]);
 

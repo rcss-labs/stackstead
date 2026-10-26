@@ -14,6 +14,7 @@ const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export function BackupStacksTable({ api }: { api: BackupsApi }) {
   const [rows, setRows] = useState<BackupStack[]>();
   const [error, setError] = useState<string>();
+  const [pending, setPending] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<Set<string>>(new Set());
 
   const load = useCallback(() => {
@@ -28,11 +29,18 @@ export function BackupStacksTable({ api }: { api: BackupsApi }) {
       stopDuring: row.stopDuring,
       ...change,
     };
+    setPending((p) => new Set(p).add(row.stack));
     try {
       await api.setStack(row.stack, next);
       setRows((current) => current?.map((r) => (r.stack === row.stack ? { ...r, ...next } : r)));
     } catch (e) {
       toasts.push({ kind: 'danger', message: `Could not save ${row.stack}: ${messageOf(e)}` });
+    } finally {
+      setPending((p) => {
+        const next = new Set(p);
+        next.delete(row.stack);
+        return next;
+      });
     }
   }
 
@@ -80,17 +88,17 @@ export function BackupStacksTable({ api }: { api: BackupsApi }) {
                   </button>
                 </td>
                 <td>
-                  <input type="checkbox" aria-label={`Volumes ${row.stack}`} checked={row.volumes} onChange={(e) => void toggle(row, { volumes: e.target.checked })} />
+                  <input type="checkbox" aria-label={`Volumes ${row.stack}`} checked={row.volumes} disabled={pending.has(row.stack)} onChange={(e) => void toggle(row, { volumes: e.target.checked })} />
                 </td>
                 <td>
-                  <input type="checkbox" aria-label={`Images ${row.stack}`} checked={row.images} onChange={(e) => void toggle(row, { images: e.target.checked })} />
+                  <input type="checkbox" aria-label={`Images ${row.stack}`} checked={row.images} disabled={pending.has(row.stack)} onChange={(e) => void toggle(row, { images: e.target.checked })} />
                 </td>
                 <td>
                   <input
                     type="checkbox"
                     aria-label={`Stop while backing up ${row.stack}`}
                     checked={row.stopDuring}
-                    disabled={!row.volumes}
+                    disabled={!row.volumes || pending.has(row.stack)}
                     title={row.volumes ? undefined : 'Tick Volumes first'}
                     onChange={(e) => void toggle(row, { stopDuring: e.target.checked })}
                   />

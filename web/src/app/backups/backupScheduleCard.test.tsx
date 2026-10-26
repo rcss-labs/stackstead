@@ -47,6 +47,33 @@ describe('BackupScheduleCard', () => {
     expect(screen.getByLabelText('Weekday')).toBeTruthy();
   });
 
+  it('shows the next run as an absolute local time, not a relative one', async () => {
+    mount();
+    await screen.findByText('Secret set');
+    const expected = new Date(sampleConfig.nextRun!).toLocaleString(undefined, {
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    expect(screen.getByText(`Next run ${expected}`)).toBeTruthy();
+    expect(screen.queryByText(/just now/)).toBeNull();
+  });
+
+  it('limits Keep last to 1..1000', async () => {
+    mount();
+    const keep = (await screen.findByLabelText('Keep last')) as HTMLInputElement;
+    expect(keep.min).toBe('1');
+    expect(keep.max).toBe('1000');
+    expect(screen.queryByText(/0 keeps everything/)).toBeNull();
+  });
+
+  it('clears the stored secret with a DELETE', async () => {
+    mount({ 'DELETE /api/backups/config/s3-secret': { status: 204 } });
+    await userEvent.click(await screen.findByRole('button', { name: 'Clear secret' }));
+    await waitFor(() => expect(calls('DELETE', '/api/backups/config/s3-secret')).toHaveLength(1));
+    expect(await screen.findByText('Secret not set')).toBeTruthy();
+  });
+
   it('posts a run now and toasts the error on 409', async () => {
     mount({ 'POST /api/backups/run': { status: 409, body: { error: 'a backup is already running', code: 'backup_running' } } });
     const seen: string[] = [];

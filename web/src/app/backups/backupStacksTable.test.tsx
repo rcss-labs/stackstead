@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createBackupsApi } from '$lib/api/backups';
 import type { BackupStack } from '$lib/api/backupTypes';
+import { toasts } from '$lib/stores/toasts';
 import { installFakeFetch, type FakeFetch } from '../../vitest-setup';
 import { BackupStacksTable } from './BackupStacksTable';
 
@@ -46,5 +47,26 @@ describe('BackupStacksTable', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Show mounts of web' }));
     expect(screen.getByText('2.0 KiB')).toBeTruthy();
     expect(screen.getByText('—')).toBeTruthy();
+  });
+
+  it('toasts when saving fails and disables the row while a save is pending', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    fake = installFakeFetch({
+      'GET /api/backups/stacks': { body: [web] },
+      'PUT /api/backups/stacks/web': async () => {
+        await gate;
+        return { status: 500, body: { error: 'disk full' } };
+      },
+    });
+    render(<BackupStacksTable api={createBackupsApi('')} />);
+    const seen: string[] = [];
+    const off = toasts.subscribe((list) => seen.push(...list.map((t) => t.message)));
+    await userEvent.click(await screen.findByLabelText('Volumes web'));
+    expect((screen.getByLabelText('Images web') as HTMLInputElement).disabled).toBe(true);
+    release();
+    await waitFor(() => expect(seen.some((m) => m.includes('disk full'))).toBe(true));
+    expect((screen.getByLabelText('Images web') as HTMLInputElement).disabled).toBe(false);
+    off();
   });
 });

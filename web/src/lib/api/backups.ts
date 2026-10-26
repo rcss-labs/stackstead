@@ -9,6 +9,8 @@ import type {
   BackupStackSettings,
 } from './backupTypes';
 
+import type { ServerSelf } from './types';
+
 type Verb = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
 /** Backup routes on a server; `base` is '' for this server or '/api/servers/{id}' for a connected one. */
@@ -17,6 +19,8 @@ export function createBackupsApi(base: string) {
     request<T>(method, `${base}/api/backups${path}`, body).then((r) => r.data);
 
   return {
+    /** This server's identity; the slug is what its archives are tagged with. */
+    self: () => request<ServerSelf>('GET', `${base}/api/peers/self`).then((r) => r.data),
     config: () => call<BackupConfig>('GET', '/config'),
     saveConfig: (config: BackupConfig) => call<BackupConfig>('PUT', '/config', config),
     clearS3Secret: () => call<void>('DELETE', '/config/s3-secret'),

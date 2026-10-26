@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api as localApi } from '$lib/api/client';
 import { createBackupsApi } from '$lib/api/backups';
 import type { BackupArchive } from '$lib/api/backupTypes';
 import { formatBytes } from '$lib/format';
@@ -93,20 +92,16 @@ export function BackupsScreen() {
   const api = useMemo(() => createBackupsApi(base), [base]);
   const [tab, setTab] = useState('archives');
   const [runsKey, setRunsKey] = useState(0);
-  const [ownSlug, setOwnSlug] = useState(scope.slug);
+  const [ownSlug, setOwnSlug] = useState('');
 
   useEffect(() => {
     document.title = 'Backups · Stackstead';
   }, []);
 
-  // Only this server's own slug is readable here; a connected server is identified by its URL slug.
+  // Archives are tagged with the identity slug, which can differ from the URL slug a peer is opened under.
   useEffect(() => {
-    if (!scope.local) {
-      setOwnSlug(scope.slug);
-      return;
-    }
-    localApi.serverSelf().then((s) => setOwnSlug(s.slug), () => undefined);
-  }, [scope.local, scope.slug]);
+    api.self().then((self) => setOwnSlug(self.slug), () => undefined);
+  }, [api]);
 
   return (
     <section className={styles.page} aria-labelledby="backups-heading">
