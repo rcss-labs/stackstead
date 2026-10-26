@@ -21,6 +21,7 @@ The hub for everything under `docs/`. Back to the [project README](../README.md)
 | Finish first-run setup or fix the setup token | [First run](install.md#first-run), [First-run setup](security.md#first-run-setup) |
 | Upgrade | [Upgrade](install.md#upgrade); flags and exit codes in [Upgrading](cli.md#upgrading) |
 | Back up or restore the database | [Host administration](cli.md#host-administration) (the "Backup and restore" paragraph); back up before an [upgrade](install.md#upgrade) |
+| Schedule backups, run one now, or restore a host or a stack | [Backups](cli.md#backups), [Whole-host restore](cli.md#host-administration), [Backups and restore](security.md#backups-and-restore) (what an archive holds, S3 policy, trust) |
 | Reset a forgotten admin password | [Host administration](cli.md#host-administration) ("Forgot the admin password") |
 | Change the password from the UI | [Password change](security.md#password-change) |
 | Configure Stackstead (config keys and environment) | [`deploy/config.example.yaml`](../deploy/config.example.yaml); `stackstead config show` lists every key and its source ([Host administration](cli.md#host-administration)); see also [Quick reference](#quick-reference) |
@@ -89,6 +90,7 @@ What Stackstead exposes and how to run it safely.
 - [Storage cleanup](security.md#storage-cleanup): permanent volume deletion, protections and action logging.
 - [Remote access](security.md#remote-access): TLS reverse proxy settings and the HTTP/1.1 connection limit.
 - [First-run setup](security.md#first-run-setup) and [Password change](security.md#password-change).
+- [Backups and restore](security.md#backups-and-restore): unencrypted archives, S3 policy, restore confinement, whole-host restore.
 
 ### [Building and development](development.md)
 
@@ -118,6 +120,7 @@ For contributors.
 Authoritative sources, not copies:
 
 - **Config keys:** [`deploy/config.example.yaml`](../deploy/config.example.yaml) lists every key; each can also be set as `STACKSTEAD_<KEY>` (for example `STACKSTEAD_UPDATE_CHECK`, see [security.md](security.md#the-short-version)). `stackstead config show` prints the effective values and where each came from ([Host administration](cli.md#host-administration)).
+- **Backups:** [cli.md#backups](cli.md#backups) for the commands, [security.md#backups-and-restore](security.md#backups-and-restore) for what archives hold and how to protect them.
 - **CLI exit codes:** [cli.md#exit-codes](cli.md#exit-codes).
 - **`install.sh` exit codes:** [install.md#exit-codes](install.md#exit-codes).
 

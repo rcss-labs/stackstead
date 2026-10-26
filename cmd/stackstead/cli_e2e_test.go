@@ -19,6 +19,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/rcss-labs/stackstead/internal/apitypes"
 )
 
 // cliRig drives the real binary the way a user and the Plan 7 installers do:
@@ -36,11 +38,13 @@ type cliRig struct {
 }
 
 // buildCLI compiles the binary with a known version stamp.
-func buildCLI(t *testing.T) string {
+func buildCLI(t *testing.T) string { return buildCLIVersion(t, "e2e-test") }
+
+func buildCLIVersion(t *testing.T, stamp string) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "stackstead")
 	build := exec.Command("go", "build",
-		"-ldflags", "-X github.com/rcss-labs/stackstead/internal/version.Version=e2e-test",
+		"-ldflags", "-X github.com/rcss-labs/stackstead/internal/version.Version="+stamp,
 		"-o", bin, ".")
 	build.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := build.CombinedOutput(); err != nil {
@@ -581,6 +585,165 @@ func TestE2ECLIDocker(t *testing.T) {
 	r.want(0, "", "stacks", "rm", name, "--volumes", "--yes")
 	if left := projectContainers(name); len(left) > 0 {
 		t.Errorf("containers of %s remain after rm: %v", name, left)
+	}
+}
+
+// TestE2EBackupRestore backs a stack up through the CLI, wipes the host's data
+// and stack directories, restores the archive with the server stopped, and
+// proves the next serve starts the stack with its volume and bind data intact.
+// It only touches its own e2e-backup-* project and volume.
+func TestE2EBackupRestore(t *testing.T) {
+	socket := dockerSocket()
+	if socket == "" {
+		t.Skip("docker or docker compose unavailable")
+	}
+	r := newCLIRig(t, socket)
+	// Restore compares archive and installed versions, so it needs a release-shaped stamp.
+	r.bin = buildCLIVersion(t, "v1.0.0")
+	// Restore compares stack paths with allowed_roots after resolving symlinks
+	// (macOS temp dirs live behind /var -> /private/var), so configure resolved paths.
+	resolved, err := filepath.EvalSymlinks(r.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.dir, r.cfg = resolved, filepath.Join(resolved, "config.yaml")
+	r.initHost()
+	// The bind source lives outside the stack directory, under a second allowed
+	// root: restore only writes binds inside allowed_roots.
+	bindRoot := filepath.Join(r.dir, "binds")
+	bindDir := filepath.Join(bindRoot, "data")
+	if err := os.MkdirAll(bindDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgFile, err := os.OpenFile(r.cfg, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fmt.Fprintf(cfgFile, "\nallowed_roots:\n  - %s\n  - %s\n", filepath.Join(r.dir, "stacks"), bindRoot)
+	if err := errors.Join(err, cfgFile.Close()); err != nil {
+		t.Fatal(err)
+	}
+	srv := r.startServer()
+	password := rand.Text() + rand.Text()
+	r.want(0, password+"\n", "admin", "set-password", "--config", r.cfg, "--password-stdin")
+	r.want(0, password+"\n", "login", r.base, "--context", "e2e", "--password-stdin")
+
+	var rnd [3]byte
+	_, _ = rand.Read(rnd[:])
+	name := fmt.Sprintf("e2e-backup-%x", rnd)
+	volume := name + "_data"
+	removeResources := func() {
+		for _, id := range projectContainers(name) {
+			_, _ = dockerOutput("rm", "-f", id)
+		}
+		_, _ = dockerOutput("network", "rm", name+"_default")
+		_, _ = dockerOutput("volume", "rm", "-f", volume)
+	}
+	t.Cleanup(removeResources)
+
+	api := newClient(t, r.base)
+	api.expect(204, "POST", "/api/login", map[string]string{"username": "admin", "password": password})
+	api.expect(201, "POST", "/api/stacks", map[string]any{
+		"name": name, "service": "web",
+		"config": map[string]any{
+			"image": "nginx:alpine", "limits": map[string]string{"memory": "64m"},
+			"volumes": []string{bindDir + ":/bind"},
+		},
+	})
+	var compose apitypes.RawCompose
+	if err := json.Unmarshal(api.expect(200, "GET", "/api/stacks/"+name+"/compose", nil), &compose); err != nil {
+		t.Fatal(err)
+	}
+	withVolume := strings.Replace(compose.Content, bindDir+":/bind", bindDir+":/bind\n      - data:/vol", 1) + "\nvolumes:\n  data: {}\n"
+	api.expect(200, "PUT", "/api/stacks/"+name+"/compose", map[string]string{"content": withVolume, "hash": compose.Hash})
+
+	bindContent := "bind-" + rand.Text()
+	volumeContent := "volume-" + rand.Text()
+	if err := os.WriteFile(filepath.Join(bindDir, "bind.txt"), []byte(bindContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r.want(0, "", "stacks", "up", name)
+	if out, err := dockerOutput("run", "--rm", "-v", volume+":/vol", "--entrypoint", "sh", "nginx:alpine",
+		"-c", "printf %s '"+volumeContent+"' > /vol/vol.txt"); err != nil {
+		t.Fatalf("write volume data: %v\n%s", err, out)
+	}
+
+	// Backups go to a local folder outside the data and stacks directories.
+	archives := filepath.Join(r.dir, "archives")
+	api.expect(200, "PUT", "/api/backups/config", apitypes.BackupConfig{
+		Schedule: apitypes.BackupSchedule{Frequency: "daily", Time: "03:00"},
+		Local:    apitypes.BackupLocal{Enabled: true, Path: archives, KeepLast: 3},
+	})
+	api.expect(204, "PUT", "/api/backups/stacks/"+name, apitypes.BackupStackSettings{Volumes: true, StopDuring: false})
+	r.want(0, "", "backup", "run")
+
+	entries, err := os.ReadDir(archives)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var archive string
+	sidecar := false
+	for _, e := range entries {
+		switch {
+		case strings.HasSuffix(e.Name(), ".tar.gz") || strings.HasSuffix(e.Name(), ".tar.zst") || strings.HasSuffix(e.Name(), ".tar"):
+			archive = filepath.Join(archives, e.Name())
+		case strings.HasSuffix(e.Name(), ".json"):
+			sidecar = true
+		}
+	}
+	if archive == "" || !sidecar {
+		t.Fatalf("backup folder has no archive and sidecar: %v", entries)
+	}
+	var listed []apitypes.BackupArchive
+	r.jsonOf(0, "", &listed, "backup", "list", "-o", "json")
+	if len(listed) != 1 {
+		t.Fatalf("backup list = %+v, want one archive", listed)
+	}
+
+	// Lose the host: stop the server, remove its data, its stacks and the Docker resources.
+	srv.stop(t)
+	removeResources()
+	// The bind source is host data outside both directories; empty it rather than
+	// remove it so the restore has something to bring back.
+	if err := os.Remove(filepath.Join(bindDir, "bind.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(r.dir, "data")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(r.dir, "stacks")); err != nil {
+		t.Fatal(err)
+	}
+	// A fresh host has empty directories, which restore requires.
+	for _, d := range []string{"data", "stacks"} {
+		if err := os.Mkdir(filepath.Join(r.dir, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.want(0, "", "restore", archive, "--yes", "--config", r.cfg)
+
+	r.startServer()
+	api = newClient(t, r.base)
+	api.expect(204, "POST", "/api/login", map[string]string{"username": "admin", "password": password})
+	deadline := time.Now().Add(120 * time.Second)
+	for {
+		var detail apitypes.StackDetail
+		code, body := api.do("GET", "/api/stacks/"+name, nil)
+		if code == 200 && json.Unmarshal(body, &detail) == nil && detail.Running > 0 && detail.Running == detail.ServiceCount {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("restored stack %s is not running after serve: %d %.300s", name, code, body)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	got, err := os.ReadFile(filepath.Join(bindDir, "bind.txt"))
+	if err != nil || string(got) != bindContent {
+		t.Errorf("restored bind file = %q, %v; want %q", got, err, bindContent)
+	}
+	out, err := dockerOutput("run", "--rm", "-v", volume+":/vol", "--entrypoint", "cat", "nginx:alpine", "/vol/vol.txt")
+	if err != nil || string(out) != volumeContent {
+		t.Errorf("restored volume file = %q, %v; want %q", out, err, volumeContent)
 	}
 }
 
