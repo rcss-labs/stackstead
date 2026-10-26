@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rcss-labs/stackstead/internal/alerts"
+	"github.com/rcss-labs/stackstead/internal/backup"
 	"github.com/rcss-labs/stackstead/internal/engine"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 )
@@ -113,7 +114,7 @@ func newRig() *rig {
 	}
 	r.connected.v.Store(true)
 	r.det.details = []stacks.Detail{stack("s", "s", svc("web", ""))}
-	r.engine = alerts.NewEngine(r.det, r.cont, r.restarts, r.connected, r.degraded, r.clock.now)
+	r.engine = alerts.NewEngine(r.det, r.cont, r.restarts, r.connected, r.degraded, r.clock.now, nil)
 	return r
 }
 
@@ -386,5 +387,51 @@ func TestPanickingComputeBecomesErrorAndEngineRecovers(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("later Alerts call hung: the failed flight was never cleared")
+	}
+}
+
+type fakeBackupHealth struct {
+	run backup.Run
+	ok  bool
+}
+
+func (f fakeBackupHealth) LastRun(context.Context) (backup.Run, bool, error) { return f.run, f.ok, nil }
+
+func backupAlerts(t *testing.T, src alerts.BackupHealth) []alerts.Alert {
+	t.Helper()
+	r := newRig()
+	r.engine = alerts.NewEngine(r.det, r.cont, r.restarts, r.connected, r.degraded, r.clock.now, src)
+	return r.get(t)
+}
+
+func TestAlertBackupFailed(t *testing.T) {
+	ended := time.Date(2026, 10, 15, 3, 0, 0, 0, time.UTC)
+	got := backupAlerts(t, fakeBackupHealth{ok: true, run: backup.Run{Status: "failed", Error: "disk full", EndedAt: ended}})
+	if len(got) != 1 || got[0].Kind != alerts.KindBackupFailed || got[0].Severity != alerts.SeverityDanger ||
+		got[0].Message != "Last backup failed: disk full" || !got[0].Since.Equal(ended) {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestAlertBackupPartial(t *testing.T) {
+	ended := time.Date(2026, 10, 15, 3, 0, 0, 0, time.UTC)
+	run := backup.Run{Status: "partial", EndedAt: ended, Items: []backup.ItemResult{
+		{Status: "ok"}, {Status: "failed"}, {Status: "failed"}, {Status: "skipped"}}}
+	got := backupAlerts(t, fakeBackupHealth{ok: true, run: run})
+	if len(got) != 1 || got[0].Kind != alerts.KindBackupPartial || got[0].Severity != alerts.SeverityWarning ||
+		got[0].Message != "Last backup was partial: 2 item(s) failed" || !got[0].Since.Equal(ended) {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestNoBackupAlertWhenSuccessOrNoRuns(t *testing.T) {
+	for name, src := range map[string]alerts.BackupHealth{
+		"success": fakeBackupHealth{ok: true, run: backup.Run{Status: "success"}},
+		"no runs": fakeBackupHealth{},
+		"nil":     nil,
+	} {
+		if got := backupAlerts(t, src); len(got) != 0 {
+			t.Errorf("%s: unexpected alerts %+v", name, got)
+		}
 	}
 }
