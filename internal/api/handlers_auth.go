@@ -50,6 +50,7 @@ func (s *server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		s.internalError(w, r, err)
 	default:
+		s.removeRestoreUpload()
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

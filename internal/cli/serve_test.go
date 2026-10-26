@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -351,8 +352,10 @@ func TestServeAppliesPendingBeforeOpen(t *testing.T) {
 	if strings.Contains(te.Err.String(), "no admin account yet") {
 		t.Error("serve opened the old database: the restored admin was not there")
 	}
-	if _, err := os.Stat(filepath.Join(data, "restore", "pending.json")); !errors.Is(err, os.ErrNotExist) {
-		t.Error("the pending marker is still there")
+	for _, marker := range []string{"pending.json", "post-apply.json"} {
+		if _, err := os.Stat(filepath.Join(data, "restore", marker)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s is still there", marker)
+		}
 	}
 	db, err := store.Open(filepath.Join(data, "stackstead.db"))
 	if err != nil {
@@ -438,5 +441,76 @@ func TestServeRestartShutsDownThenReexecs(t *testing.T) {
 	}
 	if !lockFreeAtExec.Load() {
 		t.Error("the server lock was still held when the new process image would start")
+	}
+}
+
+// serveUntil runs serve until every wanted line is logged, then stops it.
+func serveUntil(t *testing.T, te *testEnv, wants ...string) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- serve(ctx, te.Env, nil) }()
+	for _, want := range wants {
+		waitForLog(t, te, done, want)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func scheduleEnabled(t *testing.T, data string) bool {
+	t.Helper()
+	db, err := store.Open(filepath.Join(data, "stackstead.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	cfg, err := backup.NewConfigStore(db).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg.Schedule.Enabled
+}
+
+func TestServeRetriesAFailedSchedulePause(t *testing.T) {
+	te, data := serveTestEnv(t)
+	stageHostRestore(t, data, filepath.Join(filepath.Dir(data), "stacks"))
+	orig := pauseSchedule
+	t.Cleanup(func() { pauseSchedule = orig })
+	pauseSchedule = func(context.Context, *sql.DB) error { return errors.New("database is locked") }
+
+	serveUntil(t, te, "stackstead listening", "start restored stack")
+	post, err := backup.ReadPostApply(data)
+	if err != nil || post == nil || !post.PauseSchedule || len(post.StartStacks) != 0 {
+		t.Fatalf("after a failed pause: post-apply = %+v, %v; want only the pause left", post, err)
+	}
+
+	pauseSchedule = orig
+	te.Err.Reset()
+	serveUntil(t, te, "stackstead listening", "paused the restored backup schedule")
+	if scheduleEnabled(t, data) {
+		t.Error("the pause was not retried on the next start")
+	}
+	if post, _ := backup.ReadPostApply(data); post != nil {
+		t.Errorf("post-apply = %+v after everything was done", post)
+	}
+}
+
+func TestServeFinishesPostApplyWorkAfterACrash(t *testing.T) {
+	te, data := serveTestEnv(t)
+	stageHostRestore(t, data, filepath.Join(filepath.Dir(data), "stacks"))
+	// The previous start installed the database and died before doing anything else.
+	if _, err := backup.ApplyPending(data, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	serveUntil(t, te, "stackstead listening", "start restored stack")
+	if scheduleEnabled(t, data) {
+		t.Error("the schedule was not paused")
+	}
+	if post, _ := backup.ReadPostApply(data); post != nil {
+		t.Errorf("post-apply = %+v, want it gone", post)
 	}
 }

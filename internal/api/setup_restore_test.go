@@ -184,7 +184,8 @@ func (r *diskCheckingReader) Read(p []byte) (int, error) {
 func TestSetupRestoreUploadStreamsToDisk(t *testing.T) {
 	env := newRestoreEnv(t, "")
 	const size = 64 << 20
-	body := &diskCheckingReader{t: t, path: env.fake.upload, size: size, readSize: 64 << 10}
+	// The upload is written under a temporary name and renamed when complete.
+	body := &diskCheckingReader{t: t, path: env.fake.upload + ".partial", size: size, readSize: 64 << 10}
 	req := httptest.NewRequest(http.MethodPost, "/api/setup/restore/upload", body)
 	req.Header.Set("Content-Type", "application/gzip")
 	fromLoopback(req)
@@ -338,4 +339,75 @@ func (e *restoreEnv) drainRestarts(t *testing.T) {
 			}
 		}
 	}()
+}
+
+// startSlowUpload begins an upload whose body waits for release; it returns
+// once the handler has started writing and a channel with the final response.
+func (e *restoreEnv) startSlowUpload(t *testing.T) (release func(), result <-chan *httptest.ResponseRecorder) {
+	t.Helper()
+	pr, pw := io.Pipe()
+	req := httptest.NewRequest(http.MethodPost, "/api/setup/restore/upload", pr)
+	req.Header.Set("Content-Type", "application/gzip")
+	fromLoopback(req)
+	out := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		e.handler.ServeHTTP(rec, req)
+		out <- rec
+	}()
+	if _, err := pw.Write([]byte("first part ")); err != nil { // returns once the handler reads it
+		t.Fatal(err)
+	}
+	return func() {
+		_, _ = pw.Write([]byte("of the first upload"))
+		pw.Close()
+	}, out
+}
+
+func TestSetupRestoreOverlappingUploads(t *testing.T) {
+	env := newRestoreEnv(t, "")
+	release, first := env.startSlowUpload(t)
+
+	rec := env.do(t, http.MethodPost, "/api/setup/restore/upload", "second", fromLoopback, withHeader("Content-Type", "application/gzip"))
+	if rec.Code != http.StatusConflict {
+		t.Errorf("an upload during another = %d %s, want 409", rec.Code, rec.Body)
+	}
+	if _, err := os.Stat(env.fake.upload); !errors.Is(err, os.ErrNotExist) {
+		t.Error("a half-written upload is visible under the final name")
+	}
+
+	release()
+	if rec := <-first; rec.Code != http.StatusOK {
+		t.Fatalf("first upload = %d %s", rec.Code, rec.Body)
+	}
+	if got, _ := os.ReadFile(env.fake.upload); string(got) != "first part of the first upload" {
+		t.Errorf("upload = %q, want the first body intact", got)
+	}
+}
+
+func TestSetupRestoreStartRefusesAnUploadInProgress(t *testing.T) {
+	env := newRestoreEnv(t, "")
+	release, first := env.startSlowUpload(t)
+	rec := env.do(t, http.MethodPost, "/api/setup/restore/start", `{"source":{"kind":"upload"},"confirmedDigest":"digest-1"}`, fromLoopback)
+	if rec.Code != http.StatusConflict {
+		t.Errorf("start from an upload in progress = %d %s, want 409", rec.Code, rec.Body)
+	}
+	release()
+	<-first
+	if env.fake.gotDigest != "" {
+		t.Error("the restore ran against a half-written upload")
+	}
+}
+
+func TestSetupRemovesALeftoverUpload(t *testing.T) {
+	env := newRestoreEnv(t, "")
+	if rec := env.do(t, http.MethodPost, "/api/setup/restore/upload", "archive", fromLoopback, withHeader("Content-Type", "application/gzip")); rec.Code != http.StatusOK {
+		t.Fatalf("upload = %d", rec.Code)
+	}
+	if rec := env.do(t, http.MethodPost, "/api/setup", setupBody(""), fromLoopback); rec.Code != http.StatusNoContent {
+		t.Fatalf("setup = %d %s", rec.Code, rec.Body)
+	}
+	if _, err := os.Stat(env.fake.upload); !errors.Is(err, os.ErrNotExist) {
+		t.Error("the uploaded archive outlived a normal setup")
+	}
 }
