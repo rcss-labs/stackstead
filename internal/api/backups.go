@@ -26,6 +26,7 @@ type BackupAPI interface {
 	Runs(ctx context.Context, limit int) ([]backup.Run, error)
 	Archives(ctx context.Context) ([]backup.ArchiveRef, error)
 	NextRun(ctx context.Context) (time.Time, bool)
+	PausedAfterRestore(ctx context.Context) (bool, error)
 }
 
 var _ BackupAPI = (*backup.Service)(nil)
@@ -50,7 +51,11 @@ func (s *server) registerBackupRoutes(mux *http.ServeMux) {
 	route("GET /api/backups/archives", s.handleBackupArchives)
 }
 
-func (s *server) backupConfigDTO(ctx context.Context, cfg backup.Config) apitypes.BackupConfig {
+func (s *server) backupConfigDTO(ctx context.Context, cfg backup.Config) (apitypes.BackupConfig, error) {
+	paused, err := s.opts.Backups.PausedAfterRestore(ctx)
+	if err != nil {
+		return apitypes.BackupConfig{}, err
+	}
 	dto := apitypes.BackupConfig{
 		Schedule: apitypes.BackupSchedule{
 			Enabled: cfg.Schedule.Enabled, Frequency: cfg.Schedule.Frequency,
@@ -62,11 +67,12 @@ func (s *server) backupConfigDTO(ctx context.Context, cfg backup.Config) apitype
 			Endpoint: cfg.S3.Endpoint, PathStyle: cfg.S3.PathStyle, AccessKeyID: cfg.S3.AccessKeyID,
 			SecretKeySet: cfg.S3.SecretKey != "",
 		},
+		PausedAfterRestore: paused,
 	}
 	if next, ok := s.opts.Backups.NextRun(ctx); ok {
 		dto.NextRun = &next
 	}
-	return dto
+	return dto, nil
 }
 
 func backupConfigFromDTO(dto apitypes.BackupConfig) backup.Config {
@@ -94,7 +100,12 @@ func (s *server) handleBackupConfig(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.backupConfigDTO(r.Context(), cfg))
+	dto, err := s.backupConfigDTO(r.Context(), cfg)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, dto)
 }
 
 func (s *server) handleBackupSaveConfig(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +127,12 @@ func (s *server) handleBackupSaveConfig(w http.ResponseWriter, r *http.Request) 
 		s.internalError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.backupConfigDTO(r.Context(), saved))
+	dto, err := s.backupConfigDTO(r.Context(), saved)
+	if err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, dto)
 }
 
 func (s *server) handleBackupClearSecret(w http.ResponseWriter, r *http.Request) {

@@ -178,7 +178,7 @@ func TestJSONTagsMatchContract(t *testing.T) {
 		{"BackupSchedule", populated[apitypes.BackupSchedule](), "enabled,frequency,time,weekday"},
 		{"BackupLocal", populated[apitypes.BackupLocal](), "enabled,keepLast,path"},
 		{"BackupS3", populated[apitypes.BackupS3](), "accessKeyId,bucket,enabled,endpoint,pathStyle,prefix,region,secretKey,secretKeySet"},
-		{"BackupConfig", populated[apitypes.BackupConfig](), "local,nextRun,s3,schedule"},
+		{"BackupConfig", populated[apitypes.BackupConfig](), "local,nextRun,pausedAfterRestore,s3,schedule"},
 		{"BackupMount", populated[apitypes.BackupMount](), "bytes,kind,name,target"},
 		{"BackupStackSettings", populated[apitypes.BackupStackSettings](), "images,stopDuring,volumes"},
 		{"BackupStack", populated[apitypes.BackupStack](), "images,mounts,stack,stopDuring,volumes"},

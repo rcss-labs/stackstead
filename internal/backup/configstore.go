@@ -110,6 +110,13 @@ func (s *ConfigStore) SetSelection(ctx context.Context, sel StackSelection) erro
 	return nil
 }
 
+func (s *ConfigStore) clearPausedAfterRestore(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, settingPausedAfterRestore); err != nil {
+		return fmt.Errorf("clear setting %s: %w", settingPausedAfterRestore, err)
+	}
+	return nil
+}
+
 func (s *ConfigStore) get(ctx context.Context, key string) (string, error) {
 	var v string
 	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&v)

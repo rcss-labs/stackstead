@@ -122,6 +122,9 @@ export function BackupScheduleCard({ api, onRunStarted }: { api: BackupsApi; onR
       }
       footer="Archives hold this server's database, settings and stack files, plus the volumes and images you choose per stack."
     >
+      {config.pausedAfterRestore && (
+        <Banner kind="warning" title="Backups were paused after a restore. Check the destination, then turn the schedule back on." />
+      )}
       {error && (
         <Banner kind="danger" title="Backups">
           {error}

@@ -35,6 +35,8 @@ export interface BackupConfig {
   s3: BackupS3;
   /** When the schedule fires next; absent when it is off. Ignored on PUT. */
   nextRun?: string;
+  /** A host restore turned the schedule off; saving it enabled clears this. Ignored on PUT. */
+  pausedAfterRestore: boolean;
 }
 
 export interface BackupMount {
@@ -88,5 +90,54 @@ export interface BackupArchive {
 
 /** The 202 body of POST /api/backups/run. */
 export interface BackupRunStarted {
+  operation: Operation;
+}
+
+// Whole-host restore from the setup screen (/api/setup/restore/...).
+
+export interface HostRestoreS3 {
+  bucket: string;
+  /** Full object key. */
+  key: string;
+  region: string;
+  endpoint: string;
+  pathStyle: boolean;
+  accessKeyId: string;
+  /** Sent, never returned. */
+  secretKey?: string;
+}
+
+export interface HostRestoreSource {
+  kind: 's3' | 'path' | 'upload';
+  path?: string;
+  s3?: HostRestoreS3;
+}
+
+export interface HostRestoreConflict {
+  kind: 'volume' | 'network' | 'container' | 'stack-dir';
+  name: string;
+  action: 'overwrite' | 'recreate' | 'keep';
+}
+
+export interface BackupManifestStack {
+  name: string;
+  wasRunning: boolean;
+}
+
+export interface HostRestoreSummary {
+  manifest: {
+    stacksteadVersion: string;
+    host: string;
+    createdAt: string;
+    status: string;
+    stacks: BackupManifestStack[];
+    networks: number;
+  };
+  conflicts: HostRestoreConflict[];
+  conflictsDigest: string;
+}
+
+export interface HostRestoreStarted {
+  restoreToken: string;
   operation: Operation;
 }

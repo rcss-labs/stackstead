@@ -88,6 +88,12 @@ func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
 	if err := s.Settings.Save(ctx, cfg); err != nil {
 		return err
 	}
+	if cfg.Schedule.Enabled {
+		// The user has reviewed the destination and re-enabled the schedule.
+		if err := s.Settings.clearPausedAfterRestore(ctx); err != nil {
+			return err
+		}
+	}
 	if s.Scheduler != nil {
 		s.Scheduler.Reload()
 	}
@@ -234,4 +240,11 @@ func (s *Service) NextRun(ctx context.Context) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return NextRun(cfg.Schedule, s.now(), s.loc())
+}
+
+// PausedAfterRestore reports whether a host restore turned the schedule off
+// and nobody has turned it back on.
+func (s *Service) PausedAfterRestore(ctx context.Context) (bool, error) {
+	v, err := s.Settings.get(ctx, settingPausedAfterRestore)
+	return v == "true", err
 }

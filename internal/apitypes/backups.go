@@ -41,6 +41,9 @@ type BackupConfig struct {
 	S3       BackupS3       `json:"s3"`
 	// NextRun is when the schedule fires next; absent when it is off. Ignored on PUT.
 	NextRun *time.Time `json:"nextRun,omitempty"`
+	// PausedAfterRestore is set when a host restore turned the schedule off;
+	// saving the schedule enabled clears it. Ignored on PUT.
+	PausedAfterRestore bool `json:"pausedAfterRestore"`
 }
 
 type BackupMount struct {

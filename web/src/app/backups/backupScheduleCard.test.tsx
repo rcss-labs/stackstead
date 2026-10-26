@@ -83,4 +83,22 @@ describe('BackupScheduleCard', () => {
     await waitFor(() => expect(seen.some((m) => m.includes('already running'))).toBe(true));
     off();
   });
+
+  it('shows the paused-after-restore banner until the schedule is saved on', async () => {
+    const paused = { ...sampleConfig, schedule: { ...sampleConfig.schedule, enabled: false }, pausedAfterRestore: true };
+    mount({ 'PUT /api/backups/config': { body: { ...sampleConfig, pausedAfterRestore: false } } }, paused);
+    expect(
+      await screen.findByText('Backups were paused after a restore. Check the destination, then turn the schedule back on.'),
+    ).toBeTruthy();
+    await userEvent.click(screen.getByLabelText('Enabled'));
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByText(/Backups were paused after a restore/)).toBeNull());
+    expect((calls('PUT', '/api/backups/config')[0].body as { schedule: { enabled: boolean } }).schedule.enabled).toBe(true);
+  });
+
+  it('shows no banner when the schedule was not paused by a restore', async () => {
+    mount();
+    await screen.findByText('Secret set');
+    expect(screen.queryByText(/Backups were paused after a restore/)).toBeNull();
+  });
 });

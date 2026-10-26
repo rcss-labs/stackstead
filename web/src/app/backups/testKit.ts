@@ -14,4 +14,5 @@ export const sampleConfig: BackupConfig = {
     secretKeySet: true,
   },
   nextRun: '2026-10-27T03:00:00Z',
+  pausedAfterRestore: false,
 };
