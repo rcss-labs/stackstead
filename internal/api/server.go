@@ -94,6 +94,12 @@ type Options struct {
 	Registries RegistriesAPI
 	// Backups backs the /api/backups routes; nil disables them.
 	Backups BackupAPI
+	// HostRestore and RestoreOps back the /api/setup/restore routes, which
+	// exist only when both are set. Restart is called once a whole-host
+	// restore has been staged; serve re-executes the server from it.
+	HostRestore HostRestoreAPI
+	RestoreOps  RestoreOperations
+	Restart     func()
 	// Arch reports this server's Docker architecture for /api/status; nil or
 	// an error leaves it out.
 	Arch func(context.Context) (string, error)
@@ -118,6 +124,9 @@ type server struct {
 	// containerCache is the 2 s cache of /api/containers.
 	containerCache flightCache[[]apitypes.ContainerRow]
 	networkCache   flightCache[[]apitypes.Network]
+
+	// restore is the one whole-host restore this server may run.
+	restore restoreState
 }
 
 func New(opts Options) http.Handler {
@@ -183,6 +192,9 @@ func New(opts Options) http.Handler {
 	}
 	if opts.Backups != nil {
 		s.registerBackupRoutes(mux)
+	}
+	if opts.HostRestore != nil && opts.RestoreOps != nil {
+		s.registerSetupRestoreRoutes(mux)
 	}
 	if opts.Stacks != nil && opts.Observe != nil {
 		s.registerContainerRoutes(mux)

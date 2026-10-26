@@ -11,7 +11,6 @@ import (
 )
 
 const (
-	codeArchiveNewer   = "archive_newer"
 	codeStackBusy      = "stack_busy"
 	codeTargetOccupied = "target_occupied"
 	codeProjectTaken   = "project_taken"

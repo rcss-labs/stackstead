@@ -26,6 +26,13 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
+// Reset drops what was written so far, for a test that runs a server twice.
+func (b *syncBuffer) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buf.Reset()
+}
+
 type testEnv struct {
 	*Env
 	Out, Err *syncBuffer

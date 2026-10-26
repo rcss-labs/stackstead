@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -84,6 +85,9 @@ type HostEnv struct {
 	AllowedRoots []string
 	Version      string
 	Out          func(string)
+	// Accepted, when set, is called once RestoreHost has checked the archive
+	// and the confirmed conflicts, before it changes anything.
+	Accepted func()
 	// HTTP is used for S3 sources; nil means http.DefaultClient.
 	HTTP *http.Client
 }
@@ -391,7 +395,7 @@ func RestoreHost(ctx context.Context, src HostSource, env HostEnv, startStacks b
 	if _, err := os.Stat(filepath.Join(dir, pendingFile)); err == nil {
 		return HostReport{}, ErrRestorePending
 	}
-	if err := os.RemoveAll(dir); err != nil {
+	if err := clearStaging(dir); err != nil {
 		return HostReport{}, fmt.Errorf("clear restore staging: %w", err)
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -400,9 +404,12 @@ func RestoreHost(ctx context.Context, src HostSource, env HostEnv, startStacks b
 	finished := false
 	defer func() {
 		if !finished {
-			_ = os.RemoveAll(dir)
+			_ = clearStaging(dir)
 		}
 	}()
+	if env.Accepted != nil {
+		env.Accepted()
+	}
 
 	rc, err := OpenHostSource(ctx, src, env.HTTP)
 	if err != nil {
@@ -432,6 +439,29 @@ func RestoreHost(ctx context.Context, src HostSource, env HostEnv, startStacks b
 	finished = true
 	h.out("restore staged; it completes when Stackstead restarts")
 	return HostReport{Items: h.report()}, nil
+}
+
+// clearStaging empties the restore folder except for the uploaded archive
+// (the source of this restore or of a retry), an upload still being written,
+// and an earlier restore's unfinished post-start work.
+func clearStaging(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		switch e.Name() {
+		case uploadName, uploadName + partialSuffix, postApplyFile:
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // stackTarget is where one archived stack is restored to.

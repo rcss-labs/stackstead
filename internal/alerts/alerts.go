@@ -6,6 +6,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/rcss-labs/stackstead/internal/backup"
 	"github.com/rcss-labs/stackstead/internal/engine"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 )
@@ -20,6 +21,8 @@ const (
 	KindParseError         = "parse_error"
 	KindDockerDisconnected = "docker_disconnected"
 	KindMetricsDegraded    = "metrics_degraded"
+	KindBackupFailed       = "backup_failed"
+	KindBackupPartial      = "backup_partial"
 )
 
 // Severities, most urgent first.
@@ -54,3 +57,8 @@ type Connectivity interface{ Connected() bool }
 
 // MetricsHealth reports whether metric writes are failing; satisfied by metrics.Sampler.
 type MetricsHealth interface{ Degraded() bool }
+
+// BackupHealth reports the most recent finished backup run; satisfied by *backup.Runner.
+type BackupHealth interface {
+	LastRun(ctx context.Context) (backup.Run, bool, error)
+}
