@@ -35,7 +35,7 @@ type Stage = 'source' | 'inspected' | 'running' | 'failed';
  * Restore this host from a whole-host backup before any admin exists. Secrets (S3 secret key, setup token) live in
  * state only until the request that needs them is sent.
  */
-export function RestoreFromBackup({ pollMs = 2000 }: { pollMs?: number }) {
+export function RestoreFromBackup({ pollMs = 2000, deadlineMs = 5 * 60_000 }: { pollMs?: number; deadlineMs?: number }) {
   const navigate = useNavigate();
   const [tab, setTab] = useState<SourceTab>('s3');
   const [stage, setStage] = useState<Stage>('source');
@@ -64,10 +64,12 @@ export function RestoreFromBackup({ pollMs = 2000 }: { pollMs?: number }) {
 
   const sse = useRef<SSEHandle | undefined>(undefined);
   const poll = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+  const deadline = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(
     () => () => {
       sse.current?.close();
       clearInterval(poll.current);
+      clearTimeout(deadline.current);
     },
     [],
   );
@@ -159,20 +161,25 @@ export function RestoreFromBackup({ pollMs = 2000 }: { pollMs?: number }) {
     }
   }
 
-  /** The server re-executes itself once the restore is staged, so the stream usually ends without `done`. */
+  /**
+   * The server re-executes itself once the restore is staged. A dropped stream is followed (a reconnect replays the
+   * operation, so a failure still shows) while /api/setup/status is polled; a 403/404 means the new process answered.
+   */
   function follow(token: string) {
-    let finished = false;
-    function waitForServer() {
-      if (finished) return;
-      finished = true;
-      sse.current?.close();
-      setWaiting(true);
+    const stopWaiting = () => {
       clearInterval(poll.current);
+      clearTimeout(deadline.current);
+      poll.current = deadline.current = undefined;
+    };
+    function startWaiting() {
+      setWaiting(true);
+      if (poll.current !== undefined) return;
       poll.current = setInterval(() => {
         api.setupStatus().then(
           (s) => {
             if (s.needsSetup) return;
-            clearInterval(poll.current);
+            stopWaiting();
+            sse.current?.close();
             navigate('/login', { replace: true });
           },
           () => {
@@ -180,6 +187,12 @@ export function RestoreFromBackup({ pollMs = 2000 }: { pollMs?: number }) {
           },
         );
       }, pollMs);
+      deadline.current = setTimeout(() => {
+        stopWaiting();
+        sse.current?.close();
+        setError('Stackstead did not come back — check the service log or supervisor.');
+        setStage('failed');
+      }, deadlineMs);
     }
     function onMessage(m: SSEMessage) {
       if (m.event === 'line') {
@@ -199,12 +212,13 @@ export function RestoreFromBackup({ pollMs = 2000 }: { pollMs?: number }) {
           /* treat as succeeded: the status poll decides */
         }
         if (op.state && op.state !== 'succeeded') {
-          finished = true;
+          stopWaiting();
           sse.current?.close();
           setError(op.error || `The restore ${op.state}. Nothing was installed; you can try again.`);
           setStage('failed');
         } else {
-          waitForServer();
+          sse.current?.close();
+          startWaiting();
         }
       }
     }
@@ -212,7 +226,11 @@ export function RestoreFromBackup({ pollMs = 2000 }: { pollMs?: number }) {
       url: `/api/setup/restore/progress?token=${encodeURIComponent(token)}`,
       onMessage,
       onStatus: (status) => {
-        if (status === 'reconnecting' || status === 'gone' || status === 'unauthorized' || status === 'closed') waitForServer();
+        if (status === 'reconnecting') startWaiting();
+        if (status === 'gone' || status === 'unauthorized') {
+          sse.current?.close();
+          startWaiting();
+        }
       },
     });
   }
@@ -270,9 +288,16 @@ export function RestoreFromBackup({ pollMs = 2000 }: { pollMs?: number }) {
           <dd>{new Date(manifest.createdAt).toLocaleString()}</dd>
           <dt>Stackstead</dt>
           <dd>{manifest.stacksteadVersion}</dd>
+          <dt>Status</dt>
+          <dd>{manifest.status}</dd>
           <dt>Stacks</dt>
           <dd>{manifest.stacks.length ? manifest.stacks.map((s) => s.name).join(', ') : 'none'}</dd>
+          <dt>Volumes</dt>
+          <dd>{manifest.stacks.reduce((n, s) => n + s.volumes.length, 0)}</dd>
+          <dt>Images</dt>
+          <dd>{manifest.stacks.reduce((n, s) => n + s.images.length, 0)}</dd>
         </dl>
+        <Banner kind="warning" title="This host will take over the backed-up host's identity; don't run both at once." />
         {conflicts.length === 0 ? (
           <p className={styles.muted}>Nothing on this host conflicts with the archive.</p>
         ) : (

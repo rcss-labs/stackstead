@@ -4,7 +4,8 @@ import styles from './Auth.module.css';
 export interface AuthCardProps {
   /** Visually hidden lead-in of the heading, e.g. "Sign in to". */
   verb: string;
-  maxWidth: 360 | 400;
+  /** 'none' lets the card use the full width, as the restore flow does. */
+  maxWidth: 360 | 400 | 'none';
   children: ReactNode;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   noValidate?: boolean;
@@ -14,7 +15,7 @@ export interface AuthCardProps {
 export function AuthCard({ verb, maxWidth, children, onSubmit, noValidate }: AuthCardProps) {
   return (
     <div className={styles.auth}>
-      <form className={`${styles.card} ${styles.stack}`} style={{ maxWidth }} onSubmit={onSubmit} noValidate={noValidate}>
+      <form className={`${styles.card} ${styles.stack}`} style={maxWidth === 'none' ? undefined : { maxWidth }} onSubmit={onSubmit} noValidate={noValidate}>
         <header className={styles.brand}>
           <img src="/logo-art.png" alt="" width={168} />
           <h1 className={styles.wordmark}>

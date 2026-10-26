@@ -119,9 +119,19 @@ export interface HostRestoreConflict {
   action: 'overwrite' | 'recreate' | 'keep';
 }
 
+export interface BackupManifestVolume {
+  key: string;
+  kind: 'volume' | 'bind';
+  name: string;
+  target: string;
+  bytes: number;
+}
+
 export interface BackupManifestStack {
   name: string;
   wasRunning: boolean;
+  volumes: BackupManifestVolume[];
+  images: string[];
 }
 
 export interface HostRestoreSummary {
@@ -132,6 +142,7 @@ export interface HostRestoreSummary {
     status: string;
     stacks: BackupManifestStack[];
     networks: number;
+    items: BackupItem[];
   };
   conflicts: HostRestoreConflict[];
   conflictsDigest: string;

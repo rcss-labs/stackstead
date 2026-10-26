@@ -24,6 +24,7 @@ type restoreCalls struct {
 	started   bool
 	digest    string
 	applied   int
+	report    backup.HostReport
 }
 
 // fakeRestoreSeams replaces the engine seams and records what the command asked of them.
@@ -38,14 +39,15 @@ func fakeRestoreSeams(t *testing.T, inspectErr error) *restoreCalls {
 			return backup.HostSummary{}, inspectErr
 		}
 		return backup.HostSummary{
-			Manifest:        backup.Manifest{Host: "oldbox", Stacks: []backup.ManifestStack{{Name: "web"}}},
+			Manifest: backup.Manifest{Host: "oldbox", Status: "partial", Stacks: []backup.ManifestStack{{Name: "web",
+				Volumes: []backup.ManifestVolume{{Key: "a"}, {Key: "b"}}, Images: []string{"nginx:1"}}}},
 			Conflicts:       []backup.Conflict{{Kind: "volume", Name: "web_data", Action: "overwrite"}},
 			ConflictsDigest: "digest-1",
 		}, nil
 	}
 	restoreRun = func(_ context.Context, src backup.HostSource, _ backup.HostEnv, start bool, digest string) (backup.HostReport, error) {
 		calls.restored, calls.started, calls.digest = src, start, digest
-		return backup.HostReport{}, nil
+		return calls.report, nil
 	}
 	restoreApply = func(string, time.Time) (*backup.Pending, error) { calls.applied++; return nil, nil }
 	return calls
@@ -123,4 +125,36 @@ func TestRestoreRejectsS3WithoutCredentials(t *testing.T) {
 	fakeRestoreSeams(t, nil)
 	err := runRestore(newTestEnv(t, nil), "s3://b/k.tar.gz", "--yes", "--config", h.cfgPath)
 	wantCode(t, err, ExitUsage)
+}
+
+func TestRestorePrintsProblemItemsAndExits9(t *testing.T) {
+	h := newLocalHost(t, true)
+	calls := fakeRestoreSeams(t, nil)
+	calls.report = backup.HostReport{Items: []backup.ItemResult{
+		{Kind: "volume", Stack: "web", Name: "data", Status: "ok"},
+		{Kind: "network", Name: "front", Status: "failed", Note: "network create failed"},
+		{Kind: "base", Name: "config.yaml", Status: "skipped", Note: "archived config.yaml kept aside"},
+	}}
+	env := newTestEnv(t, nil)
+	err := runRestore(env, "/tmp/a.tar.gz", "--yes", "--config", h.cfgPath)
+	wantCode(t, err, ExitOperationFailed)
+	mustContain(t, "stdout", env.Out.String(), "network create failed", "front", "archived config.yaml kept aside", "completed with 1 problem(s)")
+	if strings.Contains(env.Out.String(), "nginx") && strings.Contains(env.Out.String(), "data") && strings.Contains(env.Out.String(), "ok  ") {
+		t.Error("ok items were printed")
+	}
+	if calls.applied != 1 {
+		t.Error("the database must still be installed when items failed")
+	}
+}
+
+func TestRestoreSummaryShowsCountsStatusAndIdentityWarning(t *testing.T) {
+	h := newLocalHost(t, true)
+	fakeRestoreSeams(t, nil)
+	env := newTestEnv(t, nil)
+	wantCode(t, runRestore(env, "/tmp/a.tar.gz", "--yes", "--config", h.cfgPath), ExitOK)
+	mustContain(t, "stdout", env.Out.String(), "volumes    2", "images     1", "status     partial",
+		"This host will take over the backed-up host's identity; don't run both at once.")
+	if n := strings.Count(env.Out.String(), "restore staged") + strings.Count(env.Out.String(), "restored;"); n > 1 {
+		t.Errorf("duplicated completion lines:\n%s", env.Out.String())
+	}
 }

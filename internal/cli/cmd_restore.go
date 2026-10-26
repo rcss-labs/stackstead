@@ -92,7 +92,12 @@ func hostRestoreEnv(env *Env, cfg config.Config) backup.HostEnv {
 	return backup.HostEnv{
 		Engine: engine.New(cfg.DockerSocket, 2*time.Second), DataDir: cfg.DataDir, AllowedRoots: cfg.AllowedRoots,
 		Version: version.Version, HTTP: &http.Client{Transport: backupTransport()},
-		Out: func(line string) { fmt.Fprintln(env.Stdout, line) },
+		Out: func(line string) {
+			// The engine's closing line assumes the server finishes the restore; the CLI does it itself.
+			if !strings.HasPrefix(line, "restore staged;") {
+				fmt.Fprintln(env.Stdout, line)
+			}
+		},
 	}
 }
 
@@ -135,22 +140,61 @@ func hostRestore(ctx context.Context, env *Env, cfg config.Config, arg string, o
 				return exitf(ExitGeneral, "restore cancelled")
 			}
 		}
-		if _, err := restoreRun(ctx, src, hostEnv, !opts.noStart, sum.ConflictsDigest); err != nil {
+		report, err := restoreRun(ctx, src, hostEnv, !opts.noStart, sum.ConflictsDigest)
+		if err != nil {
 			return restoreExitError(err)
 		}
 		// Install the staged database now: the next start only has to run the stacks.
 		if _, err := restoreApply(cfg.DataDir, env.Now()); err != nil {
 			return fmt.Errorf("install restored database: %w", err)
 		}
-		fmt.Fprintln(env.Stdout, "restored; start the server to bring the stacks back up")
+		problems := printRestoreProblems(env, report)
+		if problems > 0 {
+			return exitf(ExitOperationFailed, "restore completed with %d problem(s); the database is installed, see the items above", problems)
+		}
+		fmt.Fprintln(env.Stdout, "restore complete; start the Stackstead service to bring the stacks back up")
 		return nil
 	})
 }
 
+// printRestoreProblems lists the items that did not restore cleanly and
+// returns how many of them failed.
+func printRestoreProblems(env *Env, report backup.HostReport) (failed int) {
+	for _, it := range report.Items {
+		if it.Status == "ok" {
+			continue
+		}
+		if it.Status == "failed" {
+			failed++
+		}
+		fmt.Fprintf(env.Stdout, "  %-8s %-7s %s: %s\n", it.Status, it.Kind, strings.Join(nonEmpty(it.Stack, it.Name), "/"), it.Note)
+	}
+	if failed > 0 {
+		fmt.Fprintf(env.Stdout, "completed with %d problem(s)\n", failed)
+	}
+	return failed
+}
+
+func nonEmpty(parts ...string) []string {
+	var out []string
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func printRestoreSummary(env *Env, arg string, sum backup.HostSummary) {
 	m := sum.Manifest
-	fmt.Fprintf(env.Stdout, "archive    %s\nhost       %s (Stackstead %s, %s)\nstacks     %d\n",
-		arg, m.Host, m.StacksteadVersion, m.CreatedAt.Format(time.RFC3339), len(m.Stacks))
+	volumes, images := 0, 0
+	for _, st := range m.Stacks {
+		volumes += len(st.Volumes)
+		images += len(st.Images)
+	}
+	fmt.Fprintf(env.Stdout, "archive    %s\nhost       %s (Stackstead %s, %s)\nstatus     %s\nstacks     %d\nvolumes    %d\nimages     %d\n",
+		arg, m.Host, m.StacksteadVersion, m.CreatedAt.Format(time.RFC3339), m.Status, len(m.Stacks), volumes, images)
+	fmt.Fprintln(env.Stdout, "This host will take over the backed-up host's identity; don't run both at once.")
 	if len(sum.Conflicts) == 0 {
 		fmt.Fprintln(env.Stdout, "conflicts  none")
 		return

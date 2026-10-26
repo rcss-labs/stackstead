@@ -116,7 +116,7 @@ export function SetupScreen() {
   }
 
   return (
-    <AuthCard verb="Set up" maxWidth={400} noValidate onSubmit={mode === 'admin' ? submit : (event) => event.preventDefault()}>
+    <AuthCard verb="Set up" maxWidth={mode === 'admin' ? 400 : 'none'} noValidate onSubmit={mode === 'admin' ? submit : (event) => event.preventDefault()}>
       <Segmented label="Setup choice" options={SETUP_CHOICES} value={mode} onChange={(value) => setMode(value as 'admin' | 'restore')} />
       {mode === 'restore' ? (
         <RestoreFromBackup />
