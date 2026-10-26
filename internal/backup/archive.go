@@ -260,18 +260,24 @@ func (g *pathGuard) check(hdr *tar.Header) error {
 		// link() follows intermediate symlinks, so the target must be a plain
 		// path: no "..", and not at or below any earlier symlink.
 		target := path.Clean(hdr.Linkname)
-		_, viaSymlink := g.symlinkAtOrAbove(target)
+		// Under volumes/ a hardlink may point at a symlink itself, not through one.
+		linkPath := target
+		if topLevel(clean) == "volumes" {
+			linkPath = path.Dir(target)
+		}
+		_, viaSymlink := g.symlinkAtOrAbove(linkPath)
 		if strings.HasPrefix(hdr.Linkname, "/") || hasDotDot(hdr.Linkname) || viaSymlink || !within(extractionRoot(clean), target) {
 			return fmt.Errorf("%w: hardlink %q -> %q", ErrUnsafePath, name, hdr.Linkname)
 		}
 	case tar.TypeSymlink:
 		g.symlinks[clean] = true
+		// Volume contents are only ever restored by Docker inside the helper
+		// container, never written to the host by Stackstead, so symlink targets
+		// there are unrestricted. Everywhere else they are extracted on the host.
+		if topLevel(clean) == "volumes" && extractionRoot(clean) != "" {
+			return nil
+		}
 		if strings.HasPrefix(hdr.Linkname, "/") {
-			// Volume contents are extracted by Docker inside the container, where an
-			// absolute target resolves in the container; elsewhere it would hit the host.
-			if topLevel(clean) == "volumes" && extractionRoot(clean) != "" {
-				return nil
-			}
 			return fmt.Errorf("%w: symlink %q -> %q", ErrUnsafePath, name, hdr.Linkname)
 		}
 		// ".." only as leading components keeps the lexical check sound: every
@@ -296,7 +302,7 @@ func (g *pathGuard) symlinkAtOrAbove(p string) (string, bool) {
 func leadingDotDotOnly(target string) bool {
 	parts := strings.Split(target, "/")
 	i := 0
-	for i < len(parts) && parts[i] == ".." {
+	for i < len(parts) && (parts[i] == ".." || parts[i] == ".") {
 		i++
 	}
 	return !hasDotDot(strings.Join(parts[i:], "/"))

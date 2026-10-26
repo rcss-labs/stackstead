@@ -180,23 +180,22 @@ func file(name string) *tar.Header { return &tar.Header{Name: name, Typeflag: ta
 
 func TestReaderRejectsPathEscape(t *testing.T) {
 	cases := map[string][]*tar.Header{
-		"dotdot":                    {{Name: "../evil", Typeflag: tar.TypeDir}},
-		"nested dotdot":             {{Name: "base/../../evil", Typeflag: tar.TypeDir}},
-		"absolute":                  {{Name: "/etc/passwd", Typeflag: tar.TypeDir}},
-		"unknown top level":         {file("etc/passwd")},
-		"escaping symlink":          {sym("volumes/a/k/x", "../../../etc")},
-		"symlink out of volume key": {sym("volumes/a/k/x", "../other")},
-		"cross-section symlink":     {sym("volumes/a/k/x", "../../../base/stackstead.db")},
-		"absolute symlink in base":  {sym("base/stacks/web/x", "/etc/passwd")},
-		"escaping hardlink":         {hard("volumes/a/k/x", "base/stackstead.db")},
-		"hardlink to other volume":  {hard("volumes/a/k/x", "volumes/a/k2/y")},
-		"base symlink to /etc":      {sym("base/stacks/web/d", "../../etc")},
-		"cross-stack symlink":       {sym("base/stacks/a/x", "../b/y")},
-		"cross-stack hardlink":      {hard("base/stacks/a/x", "base/stacks/b/y")},
-		"top-level base file link":  {sym("base/stackstead.db", "config.yaml")},
-		"image symlink to sibling":  {sym("images/web/x", "../other/y")},
-		"write through symlink":     {sym("base/stacks/web/d", "real"), file("base/stacks/web/d/cron.d/evil")},
-		"dir under symlink":         {sym("volumes/a/k/d", "/etc"), file("volumes/a/k/d/evil")},
+		"dotdot":                   {{Name: "../evil", Typeflag: tar.TypeDir}},
+		"nested dotdot":            {{Name: "base/../../evil", Typeflag: tar.TypeDir}},
+		"absolute":                 {{Name: "/etc/passwd", Typeflag: tar.TypeDir}},
+		"unknown top level":        {file("etc/passwd")},
+		"absolute symlink in base": {sym("base/stacks/web/x", "/etc/passwd")},
+		"escaping hardlink":        {hard("volumes/a/k/x", "base/stackstead.db")},
+		"hardlink to other volume": {hard("volumes/a/k/x", "volumes/a/k2/y")},
+		"base non-leading dotdot":  {sym("base/stacks/web/x", "a/../y")},
+		"base dot-prefixed dotdot": {sym("base/stacks/web/x", "./a/../../../y")},
+		"base symlink to /etc":     {sym("base/stacks/web/d", "../../etc")},
+		"cross-stack symlink":      {sym("base/stacks/a/x", "../b/y")},
+		"cross-stack hardlink":     {hard("base/stacks/a/x", "base/stacks/b/y")},
+		"top-level base file link": {sym("base/stackstead.db", "config.yaml")},
+		"image symlink to sibling": {sym("images/web/x", "../other/y")},
+		"write through symlink":    {sym("base/stacks/web/d", "real"), file("base/stacks/web/d/cron.d/evil")},
+		"dir under symlink":        {sym("volumes/a/k/d", "/etc"), file("volumes/a/k/d/evil")},
 		"symlink via earlier symlink": {
 			{Name: "base/stacks/web/a/b/c/", Typeflag: tar.TypeDir},
 			sym("base/stacks/web/a/b/c/up", "../../.."),
@@ -222,6 +221,12 @@ func TestReaderRejectsPathEscape(t *testing.T) {
 	t.Run("safe entries pass", func(t *testing.T) {
 		safe := [][]*tar.Header{
 			{sym("volumes/a/k/x", "y")},
+			{sym("volumes/a/k/x", "../lib/../bin/y")},
+			{sym("volumes/a/k/x", "./../y")},
+			{sym("volumes/a/k/x", "../../../../usr/share/zoneinfo/UTC")},
+			{sym("volumes/a/k/x", "../../../etc")},
+			{sym("volumes/a/k/x", "../../../base/stackstead.db")},
+			{sym("volumes/a/k/s", "target"), hard("volumes/a/k/h", "volumes/a/k/s")},
 			{sym("volumes/a/k/sub/x", "../y")},
 			{sym("volumes/a/k/x", "/abs/in/container")},
 			{hard("volumes/a/k/x", "volumes/a/k/y")},
@@ -239,7 +244,7 @@ func TestReaderRejectsPathEscape(t *testing.T) {
 }
 
 func TestAddTarStreamRejectsUnsafeInner(t *testing.T) {
-	bad := buildLinkTar(t, []*tar.Header{{Name: "x", Typeflag: tar.TypeSymlink, Linkname: "../../etc"}})
+	bad := buildLinkTar(t, []*tar.Header{{Name: "x", Typeflag: tar.TypeLink, Linkname: "../../etc"}})
 	w := NewWriter(io.Discard)
 	if _, err := w.AddTarStream("volumes/web/data/", bytes.NewReader(bad)); !errors.Is(err, ErrUnsafePath) {
 		t.Fatalf("err = %v, want ErrUnsafePath", err)
