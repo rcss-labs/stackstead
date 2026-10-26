@@ -476,3 +476,75 @@ func contains(list []string, s string) bool {
 	}
 	return false
 }
+
+// R17: overwriting a stack whose compose file has another name diffs and
+// writes that existing file, not a second file under the archived name.
+func TestPlanOverwriteDiffsExistingComposeName(t *testing.T) {
+	f := newPlanFixture(t)
+	dir := filepath.Join(f.stacksDir, "web")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := filepath.Join(dir, "docker-compose.yml")
+	if err := os.WriteFile(existing, []byte("services: {old: {}}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.reg.Add(context.Background(), stacks.Entry{Name: "web", ComposePath: existing, Origin: stacks.OriginManaged, Project: "web"}); err != nil {
+		t.Fatal(err)
+	}
+	st := ManifestStack{Name: "web", ComposePath: filepath.Join(dir, "compose.yaml"), Origin: "managed", Project: "web"}
+	f.env.ReadArchived = func(rel string) ([]byte, error) {
+		if rel != "compose.yaml" {
+			t.Fatalf("ReadArchived(%q), want the archived name compose.yaml", rel)
+		}
+		return []byte("services: {new: {}}\n"), nil
+	}
+
+	plan, err := PlanStackRestore(context.Background(), planManifest("self", st), entryFor(st),
+		StackRestoreRequest{Stack: "web", Files: true}, f.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []FileDiff{{Path: existing, Old: "services: {old: {}}\n", New: "services: {new: {}}\n"}}
+	if !reflect.DeepEqual(plan.FileDiffs, want) {
+		t.Errorf("FileDiffs = %+v, want %+v", plan.FileDiffs, want)
+	}
+	if plan.ComposePath != existing || plan.Project != "web" {
+		t.Errorf("ComposePath = %q, Project = %q, want %q and web", plan.ComposePath, plan.Project, existing)
+	}
+}
+
+// A new name is also the compose project, so the project's named volumes
+// follow it instead of overwriting the original stack's volumes.
+func TestPlanNewNameRenamesProjectVolumes(t *testing.T) {
+	f := newPlanFixture(t)
+	st := ManifestStack{Name: "app", ComposePath: filepath.Join(f.outside, "app", "compose.yaml"), Origin: "managed", Project: "app",
+		Volumes: []ManifestVolume{
+			{Key: "v-app_data", Kind: "volume", Name: "app_data", Target: "/data"},
+			{Key: "v-shared", Kind: "volume", Name: "shared", Target: "/shared"},
+		}}
+
+	plan, err := PlanStackRestore(context.Background(), planManifest("other-host", st), entryFor(st),
+		StackRestoreRequest{Stack: "app", NewName: "app2", Files: true, Volumes: true}, f.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Project != "app2" || plan.ComposePath != filepath.Join(f.stacksDir, "app2", "compose.yaml") {
+		t.Errorf("Project = %q, ComposePath = %q", plan.Project, plan.ComposePath)
+	}
+	if len(plan.Volumes) != 2 || plan.Volumes[0].Name != "app2_data" || plan.Volumes[1].Name != "shared" {
+		t.Errorf("Volumes = %+v, want app_data renamed to app2_data and shared kept", plan.Volumes)
+	}
+}
+
+func TestPlanRefusesProjectOwnedByAnotherStack(t *testing.T) {
+	f := newPlanFixture(t)
+	if err := f.reg.Add(context.Background(), stacks.Entry{Name: "owner", ComposePath: filepath.Join(f.stacksDir, "owner", "compose.yaml"), Origin: stacks.OriginManaged, Project: "app"}); err != nil {
+		t.Fatal(err)
+	}
+	st := ManifestStack{Name: "app", ComposePath: filepath.Join(f.outside, "app", "compose.yaml"), Origin: "managed", Project: "app"}
+	_, err := PlanStackRestore(context.Background(), planManifest("other-host", st), entryFor(st), StackRestoreRequest{Stack: "app", Files: true}, f.env)
+	if !errors.Is(err, stacks.ErrProjectTaken) {
+		t.Errorf("err = %v, want ErrProjectTaken", err)
+	}
+}

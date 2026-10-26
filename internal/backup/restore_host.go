@@ -12,7 +12,6 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -423,7 +422,7 @@ func RestoreHost(ctx context.Context, src HostSource, env HostEnv, startStacks b
 	}
 	h := &hostRestore{
 		ctx: ctx, env: env, r: r, manifest: sum.Manifest, dir: dir,
-		stacks: map[string]*stackTarget{}, roots: map[string]*os.Root{},
+		stacks: map[string]*stackTarget{}, rs: newRootSet(env.AllowedRoots, env.DataDir),
 		volumesSeen: map[string]bool{}, networksDone: map[string]bool{},
 	}
 	defer h.closeRoots()
@@ -482,7 +481,7 @@ type hostRestore struct {
 	dir          string
 	stacks       map[string]*stackTarget
 	order        []string
-	roots        map[string]*os.Root // allowed root (or the data dir) -> its os.Root
+	rs           *rootSet
 	library      *os.Root
 	libraryItems []ItemResult
 	librarySeen  bool
@@ -595,9 +594,10 @@ func (h *hostRestore) checkArchiveManifest(body io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if !m.CreatedAt.Equal(h.manifest.CreatedAt) || m.InstanceID != h.manifest.InstanceID {
-		return fmt.Errorf("%w: archive created %s by instance %q, sidecar says %s by %q", ErrManifestMismatch,
-			m.CreatedAt.UTC().Format(time.RFC3339), m.InstanceID, h.manifest.CreatedAt.UTC().Format(time.RFC3339), h.manifest.InstanceID)
+	// The manifest that drove the restore is either the sidecar or this very
+	// manifest (read by InspectHost), so it is always compared.
+	if err := verifyArchiveManifest(m, h.manifest, true, h.env.Version); err != nil {
+		return err
 	}
 	h.sawManifest = true
 	return nil
@@ -676,55 +676,6 @@ func (h *hostRestore) target(stack string) *stackTarget {
 	return t
 }
 
-// openRoot returns the os.Root of dir, opening (and creating) it once.
-func (h *hostRestore) openRoot(dir string) (*os.Root, error) {
-	if r, ok := h.roots[dir]; ok {
-		return r, nil
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
-	}
-	r, err := os.OpenRoot(dir)
-	if err != nil {
-		return nil, err
-	}
-	h.roots[dir] = r
-	return r, nil
-}
-
-// allowedRootOf returns the first allowed root containing p and p relative to it.
-func (h *hostRestore) allowedRootOf(p string) (root, rel string, ok bool) {
-	for _, r := range h.env.AllowedRoots {
-		if underRoot(p, r) {
-			rel, err := filepath.Rel(filepath.Clean(r), filepath.Clean(p))
-			if err == nil {
-				return r, rel, true
-			}
-		}
-	}
-	return "", "", false
-}
-
-// openUnder creates and opens dir through the os.Root of its allowed root, so
-// a symlink on the way can only resolve inside that root.
-func (h *hostRestore) openUnder(dir string) (*os.Root, error) {
-	rootDir, rel, ok := h.allowedRootOf(dir)
-	if !ok {
-		return nil, fmt.Errorf("%s is %s", dir, reasonOutsideRoots)
-	}
-	root, err := h.openRoot(rootDir)
-	if err != nil {
-		return nil, err
-	}
-	if rel == "." {
-		return root.OpenRoot(".")
-	}
-	if err := root.MkdirAll(rel, 0o755); err != nil {
-		return nil, err
-	}
-	return root.OpenRoot(rel)
-}
-
 func (h *hostRestore) stackEntry(hdr *tar.Header, body io.Reader) error {
 	stack, rel, _ := strings.Cut(strings.TrimPrefix(hdr.Name, stacksPrefix), "/")
 	if stack == "" {
@@ -736,7 +687,7 @@ func (h *hostRestore) stackEntry(hdr *tar.Header, body io.Reader) error {
 	}
 	if t.root == nil {
 		h.out("writing files of " + stack + " to " + t.dir)
-		root, err := h.openUnder(t.dir)
+		root, err := h.rs.openUnder(t.dir)
 		if err != nil {
 			t.skipped = "cannot write " + t.dir + ": " + err.Error()
 			return nil
@@ -773,7 +724,7 @@ func (h *hostRestore) libraryEntry(hdr *tar.Header, body io.Reader) error {
 
 // openLibrary opens <data>/images through the data dir's os.Root.
 func (h *hostRestore) openLibrary() (*os.Root, error) {
-	data, err := h.openRoot(h.env.DataDir)
+	data, err := h.rs.openRoot(h.env.DataDir)
 	if err != nil {
 		return nil, err
 	}
@@ -781,116 +732,6 @@ func (h *hostRestore) openLibrary() (*os.Root, error) {
 		return nil, err
 	}
 	return data.OpenRoot(imagesLibraryDir)
-}
-
-// trackedReader remembers a read error, so a damaged archive is told apart
-// from a failure to write one file.
-type trackedReader struct {
-	r   io.Reader
-	err error
-}
-
-func (t *trackedReader) Read(p []byte) (int, error) {
-	n, err := t.r.Read(p)
-	if err != nil && !errors.Is(err, io.EOF) {
-		t.err = err
-	}
-	return n, err
-}
-
-// extractEntry writes one archive entry to rel inside root. Only os.Root is
-// used, so nothing can land outside it. A failure to write returns an item
-// and a nil error; a failure to read the archive returns an error.
-func extractEntry(root *os.Root, prefix, rel string, hdr *tar.Header, body io.Reader) (*ItemResult, error) {
-	rel = path.Clean(rel)
-	if rel == "." || rel == "" {
-		return nil, nil
-	}
-	name := filepath.FromSlash(rel)
-	perm := hdr.FileInfo().Mode().Perm()
-	fail := func(err error) (*ItemResult, error) {
-		return &ItemResult{Kind: "base", Name: hdr.Name, Status: itemFailed, Note: err.Error()}, nil
-	}
-	ensureParent := func() error {
-		if parent := filepath.Dir(name); parent != "." {
-			return root.MkdirAll(parent, 0o755)
-		}
-		return nil
-	}
-	// replace clears a non-directory already at name, so links are never followed.
-	replace := func() error {
-		info, err := root.Lstat(name)
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			return fmt.Errorf("%s is a directory", rel)
-		}
-		return root.Remove(name)
-	}
-	switch hdr.Typeflag {
-	case tar.TypeDir:
-		if err := root.MkdirAll(name, perm|0o700); err != nil {
-			return fail(err)
-		}
-	case tar.TypeReg:
-		if err := ensureParent(); err != nil {
-			return fail(err)
-		}
-		if info, err := root.Lstat(name); err == nil && info.Mode()&fs.ModeSymlink != 0 {
-			if err := root.Remove(name); err != nil {
-				return fail(err)
-			}
-		}
-		f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
-		if err != nil {
-			return fail(err)
-		}
-		src := &trackedReader{r: body}
-		_, err = io.Copy(f, src)
-		if cerr := f.Close(); err == nil {
-			err = cerr
-		}
-		if src.err != nil {
-			return nil, damaged(fmt.Errorf("read %s: %w", hdr.Name, src.err))
-		}
-		if err == nil {
-			err = root.Chmod(name, perm)
-		}
-		if err != nil {
-			return fail(err)
-		}
-	case tar.TypeSymlink:
-		if err := ensureParent(); err != nil {
-			return fail(err)
-		}
-		if err := replace(); err != nil {
-			return fail(err)
-		}
-		if err := root.Symlink(hdr.Linkname, name); err != nil {
-			return fail(err)
-		}
-	case tar.TypeLink:
-		target, ok := strings.CutPrefix(hdr.Linkname, prefix)
-		if !ok {
-			return fail(fmt.Errorf("hard link target %q is outside %s", hdr.Linkname, prefix))
-		}
-		if err := ensureParent(); err != nil {
-			return fail(err)
-		}
-		if err := replace(); err != nil {
-			return fail(err)
-		}
-		if err := root.Link(filepath.FromSlash(path.Clean(target)), name); err != nil {
-			return fail(err)
-		}
-	default:
-		return &ItemResult{Kind: "base", Name: hdr.Name, Status: itemSkipped, Note: "unsupported entry type"}, nil
-	}
-	return nil, nil
 }
 
 // createNetworks creates the archived networks that do not exist yet. An
@@ -906,43 +747,10 @@ func (h *hostRestore) createNetworks() {
 			pending = append(pending, s)
 		}
 	}
-	if len(pending) == 0 {
-		return
+	for _, spec := range pending {
+		h.networksDone[spec.Name] = true
 	}
-	existing := map[string]bool{}
-	nets, err := h.env.Engine.Networks(h.ctx)
-	if err != nil {
-		for _, s := range pending {
-			h.networksDone[s.Name] = true
-			h.items = append(h.items, ItemResult{Kind: "network", Name: s.Name, Status: itemFailed, Note: "list networks: " + err.Error()})
-		}
-		return
-	}
-	for _, n := range nets {
-		existing[n.Name] = true
-	}
-	for _, s := range pending {
-		h.networksDone[s.Name] = true
-		if existing[s.Name] {
-			h.items = append(h.items, ItemResult{Kind: "network", Name: s.Name, Status: itemSkipped, Note: "already exists; kept as it is"})
-			continue
-		}
-		h.out("creating network " + s.Name)
-		if _, err := h.env.Engine.CreateNetwork(h.ctx, s); err != nil {
-			h.items = append(h.items, ItemResult{Kind: "network", Name: s.Name, Status: itemFailed, Note: err.Error()})
-			continue
-		}
-		h.items = append(h.items, ItemResult{Kind: "network", Name: s.Name, Status: itemOK})
-	}
-}
-
-// drain consumes the rest of a TarStreamUnder stream. Its error can only come
-// from reading the archive, so it is fatal.
-func drain(stream io.Reader) error {
-	if _, err := io.Copy(io.Discard, stream); err != nil {
-		return damaged(err)
-	}
-	return nil
+	h.items = append(h.items, createNetworkSpecs(h.ctx, h.env.Engine, pending, h.env.Out)...)
 }
 
 func (h *hostRestore) manifestStack(stack string) ManifestStack {
@@ -1002,7 +810,7 @@ func (h *hostRestore) volume(hdr *tar.Header, body io.Reader) error {
 	mv := ms.Volumes[i]
 	source := mv.Name
 	if mv.Kind == volumeKindBind {
-		resolved, skip, err := h.prepareBind(mv.Name)
+		resolved, skip, err := h.rs.prepareBind(mv.Name, h.restoredStackDirs())
 		if skip != "" || err != nil {
 			item := ItemResult{Kind: conflictVolume, Stack: stack, Name: mv.Name, Status: itemSkipped, Note: skip}
 			if err != nil {
@@ -1026,78 +834,15 @@ func (h *hostRestore) volume(hdr *tar.Header, body io.Reader) error {
 	return nil
 }
 
-// prepareBind makes sure a bind source is inside an allowed root, creates it
-// through that root's os.Root when missing, and returns it with symlinks
-// resolved (rechecked against the resolved roots). Docker runs as root, so a
-// bind source is the one way a crafted archive could reach anywhere on the
-// host; anything outside the roots is skipped with a reason.
-func (h *hostRestore) prepareBind(source string) (resolved, skip string, err error) {
-	if !filepath.IsAbs(source) || !underAnyRoot(source, h.env.AllowedRoots) {
-		return "", "bind source is " + reasonOutsideRoots, nil
-	}
-	if _, statErr := os.Lstat(source); errors.Is(statErr, fs.ErrNotExist) {
-		rootDir, rel, _ := h.allowedRootOf(source)
-		root, err := h.openRoot(rootDir)
-		if err != nil {
-			return "", "", err
-		}
-		if err := root.MkdirAll(rel, 0o755); err != nil {
-			return "", "", fmt.Errorf("create bind source: %w", err)
-		}
-	}
-	resolved, err = filepath.EvalSymlinks(source)
-	if err != nil {
-		return "", "", err
-	}
-	if !underAnyRoot(resolved, resolvedRoots(h.env.AllowedRoots)) {
-		return "", "bind source resolves to " + resolved + ", " + reasonOutsideRoots, nil
-	}
-	if reason := h.bindCovers(resolved); reason != "" {
-		return "", reason, nil
-	}
-	return resolved, "", nil
-}
-
-// bindCovers explains why emptying the resolved bind source would destroy
-// more than that bind's data: it is an allowed root, holds a stack directory
-// being restored, or holds the data dir. "" means it is safe.
-func (h *hostRestore) bindCovers(resolved string) string {
-	for _, r := range append(slices.Clone(h.env.AllowedRoots), resolvedRoots(h.env.AllowedRoots)...) {
-		if filepath.Clean(r) == resolved {
-			return "bind source is an allowed root"
-		}
-	}
+// restoredStackDirs lists the directories of the stacks being restored.
+func (h *hostRestore) restoredStackDirs() []string {
+	var dirs []string
 	for _, name := range h.order {
-		t := h.stacks[name]
-		if t.skipped != "" || t.dir == "" {
-			continue
-		}
-		for _, dir := range withResolved(t.dir) {
-			if underRoot(dir, resolved) {
-				return "bind source contains the stack directory " + t.dir
-			}
+		if t := h.stacks[name]; t.skipped == "" && t.dir != "" {
+			dirs = append(dirs, t.dir)
 		}
 	}
-	for _, dir := range withResolved(h.env.DataDir) {
-		if underRoot(dir, resolved) {
-			return "bind source contains the Stackstead data directory"
-		}
-	}
-	return ""
-}
-
-// withResolved returns p (made absolute) and, when it exists, p with
-// symlinks resolved.
-func withResolved(p string) []string {
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		abs = filepath.Clean(p)
-	}
-	out := []string{abs}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil && resolved != abs {
-		out = append(out, resolved)
-	}
-	return out
+	return dirs
 }
 
 func (h *hostRestore) ensureHelper() error {
@@ -1108,66 +853,14 @@ func (h *hostRestore) ensureHelper() error {
 	return h.helperReady
 }
 
-// fillVolume empties the volume (or bind source) with a helper container and
-// then extracts the stream into it through Docker. The helper is always removed.
+// fillVolume makes sure the helper image is present and replaces the
+// volume's (or bind source's) contents with stream.
 func (h *hostRestore) fillVolume(stack string, mv ManifestVolume, source string, stream io.Reader) error {
-	eng := h.env.Engine
 	if err := h.ensureHelper(); err != nil {
 		return fmt.Errorf("helper image: %w", err)
 	}
-	switch mv.Kind {
-	case "volume":
-		_, err := eng.InspectVolume(h.ctx, mv.Name)
-		if errors.Is(err, engine.ErrVolumeNotFound) {
-			err = eng.CreateVolume(h.ctx, mv.Name, h.volumeLabels(stack, mv.Name))
-		}
-		if err != nil {
-			return err
-		}
-	case volumeKindBind:
-	default:
-		return fmt.Errorf("unknown mount kind %q", mv.Kind)
-	}
-	id, err := eng.CreateContainer(h.ctx, engine.HelperSpec{
-		Image:  HelperImage,
-		Mounts: []engine.HelperMount{{Type: mv.Kind, Source: source, Target: "/data"}},
-		Cmd:    []string{"find", "/data", "-mindepth", "1", "-delete"},
-		Labels: map[string]string{"dev.stackstead.restore-stack": stack},
-	})
-	if err != nil {
-		return fmt.Errorf("create helper: %w", err)
-	}
-	defer func() {
-		// The caller's context may be cancelled; the helper must still go.
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(h.ctx), 30*time.Second)
-		defer cancel()
-		_ = eng.RemoveContainer(cleanupCtx, id, true)
-	}()
-	if err := eng.StartContainer(h.ctx, id); err != nil {
-		return fmt.Errorf("start helper: %w", err)
-	}
-	code, err := eng.WaitContainer(h.ctx, id)
-	if err != nil {
-		return fmt.Errorf("empty %s: %w", mv.Name, err)
-	}
-	if code != 0 {
-		return fmt.Errorf("empty %s: helper exited with %d", mv.Name, code)
-	}
-	if err := eng.PutArchive(h.ctx, id, "/", stream); err != nil {
-		return fmt.Errorf("write %s: %w", mv.Name, err)
-	}
-	return nil
-}
-
-// volumeLabels marks a recreated named volume as belonging to the stack's
-// compose project, so compose adopts it without a warning.
-func (h *hostRestore) volumeLabels(stack, volume string) map[string]string {
-	project := h.stacks[stack].entry.Project
-	short, ok := strings.CutPrefix(volume, project+"_")
-	if project == "" || !ok || short == "" {
-		return nil
-	}
-	return map[string]string{"com.docker.compose.project": project, "com.docker.compose.volume": short}
+	labels := composeVolumeLabels(h.stacks[stack].entry.Project, mv.Name)
+	return RestoreVolume(h.ctx, h.env.Engine, stack, stacks.Mount{Kind: mv.Kind, Source: source, Target: mv.Target}, labels, stream)
 }
 
 // images loads one archived image, stored under images/<stack>/<image key>/.
@@ -1207,9 +900,7 @@ func (h *hostRestore) closeRoots() {
 			t.root.Close()
 		}
 	}
-	for _, r := range h.roots {
-		r.Close()
-	}
+	h.rs.close()
 	if h.library != nil {
 		h.library.Close()
 	}

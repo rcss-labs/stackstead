@@ -26,6 +26,9 @@ type BackupAPI interface {
 	Runs(ctx context.Context, limit int) ([]backup.Run, error)
 	Archives(ctx context.Context) ([]backup.ArchiveRef, error)
 	NextRun(ctx context.Context) (time.Time, bool)
+	PlanRestore(ctx context.Context, req backup.StackRestoreRequest) (backup.StackRestorePlan, error)
+	Restore(ctx context.Context, req backup.StackRestoreRequest, user string) (stacks.Operation, error)
+	ArchiveManifest(ctx context.Context, dest, name string) (backup.Manifest, error)
 }
 
 var _ BackupAPI = (*backup.Service)(nil)
@@ -48,6 +51,7 @@ func (s *server) registerBackupRoutes(mux *http.ServeMux) {
 	route("POST /api/backups/run", s.handleBackupRun)
 	route("GET /api/backups/runs", s.handleBackupRuns)
 	route("GET /api/backups/archives", s.handleBackupArchives)
+	s.registerBackupRestoreRoutes(mux)
 }
 
 func (s *server) backupConfigDTO(ctx context.Context, cfg backup.Config) apitypes.BackupConfig {

@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -60,22 +61,27 @@ var _ StackControl = (*stacks.Service)(nil)
 
 // Deps are the collaborators of a Runner.
 type Deps struct {
-	DB         *sql.DB
-	Config     *ConfigStore
-	Runs       *RunStore
-	Stacks     StackControl
-	Registry   *stacks.Registry
-	Engine     Engine
-	Ops        *stacks.Ops
-	Actions    *actionlog.Store
-	Identity   func(ctx context.Context) (peers.Identity, error)
-	DataDir    string
-	ConfigPath string
-	ImagesDir  string
-	Version    string
-	Now        func() time.Time
-	HTTP       *http.Client
-	Logger     *slog.Logger
+	DB     *sql.DB
+	Config *ConfigStore
+	Runs   *RunStore
+	Stacks StackControl
+	// Restore stops, starts and registers stacks for a single-stack restore.
+	Restore  RestoreControl
+	Registry *stacks.Registry
+	Engine   Engine
+	Ops      *stacks.Ops
+	Actions  *actionlog.Store
+	Identity func(ctx context.Context) (peers.Identity, error)
+	DataDir  string
+	// AllowedRoots and StacksDir place the files of a restored stack.
+	AllowedRoots []string
+	StacksDir    string
+	ConfigPath   string
+	ImagesDir    string
+	Version      string
+	Now          func() time.Time
+	HTTP         *http.Client
+	Logger       *slog.Logger
 }
 
 // Runner performs backup runs, one at a time.
@@ -97,7 +103,23 @@ func NewRunner(d Deps) *Runner {
 	if d.HTTP == nil {
 		d.HTTP = http.DefaultClient
 	}
+	sweepRestoreStaging(d.DataDir, d.Logger)
 	return &Runner{d: d, newLocal: NewLocal, newS3: NewS3}
+}
+
+// sweepRestoreStaging removes the staging dirs single-stack restores leave
+// behind when the process stops mid-restore. It runs once at construction,
+// before any restore can start.
+func sweepRestoreStaging(dataDir string, logger *slog.Logger) {
+	if dataDir == "" {
+		return
+	}
+	stale, _ := filepath.Glob(filepath.Join(dataDir, restoreStagingPattern))
+	for _, dir := range stale {
+		if err := os.RemoveAll(dir); err != nil {
+			logger.Warn("remove stale restore staging", "dir", dir, "err", err)
+		}
+	}
 }
 
 // LastRun returns the most recent finished run.
