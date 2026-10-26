@@ -28,6 +28,7 @@ export const ROUTES: AppRoute[] = [
   { path: '/storage/volumes/:name', title: 'Storage', screen: lazy(() => import('./routes/StorageVolume')) },
   { path: '/images', title: 'Images', screen: lazy(() => import('./routes/Images')) },
   { path: '/images/:slug', screen: lazy(() => import('./routes/ImageDetail')) },
+  { path: '/backups', title: 'Backups', screen: lazy(() => import('./routes/Backups')) },
   { path: '/settings', title: 'Settings', screen: lazy(() => import('./routes/Settings')) },
   { path: '/login', screen: lazy(() => import('./routes/Login')) },
   { path: '/setup', screen: lazy(() => import('./routes/Setup')) },
