@@ -41,11 +41,26 @@ func (d *localDest) Create(_ context.Context, archive string) (io.WriteCloser, e
 
 type localWriter struct {
 	*os.File
-	final string
+	final    string
+	writeErr error
+}
+
+// Write remembers the first failure so Close never publishes a truncated archive.
+func (w *localWriter) Write(p []byte) (int, error) {
+	n, err := w.File.Write(p)
+	if err != nil && w.writeErr == nil {
+		w.writeErr = err
+	}
+	return n, err
 }
 
 func (w *localWriter) Close() error {
 	partial := w.File.Name()
+	if w.writeErr != nil {
+		_ = w.File.Close()
+		_ = os.Remove(partial)
+		return fmt.Errorf("write %s: %w", w.final, w.writeErr)
+	}
 	if err := w.File.Sync(); err != nil {
 		_ = w.File.Close()
 		_ = os.Remove(partial)
@@ -59,7 +74,17 @@ func (w *localWriter) Close() error {
 		_ = os.Remove(partial)
 		return fmt.Errorf("publish %s: %w", w.final, err)
 	}
-	return nil
+	return syncDir(filepath.Dir(w.final))
+}
+
+// syncDir makes a rename durable.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 func (d *localDest) Abort(_ context.Context, archive string) error {
@@ -74,7 +99,27 @@ func (d *localDest) PutSidecar(_ context.Context, archive string, manifest []byt
 	if err := os.MkdirAll(d.cfg.Path, 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(d.path(SidecarName(archive)), manifest, 0o600)
+	final := d.path(SidecarName(archive))
+	partial := final + partialSuffix
+	f, err := os.OpenFile(partial, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(manifest)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(partial, final)
+	}
+	if err != nil {
+		_ = os.Remove(partial)
+		return fmt.Errorf("write sidecar of %s: %w", archive, err)
+	}
+	return syncDir(d.cfg.Path)
 }
 
 func (d *localDest) List(_ context.Context) ([]ArchiveRef, error) {
@@ -120,12 +165,17 @@ func (d *localDest) ReadSidecar(_ context.Context, archive string) (Manifest, er
 // their sidecars, and returns the deleted paths. Other slugs and ".partial"
 // files are never touched.
 func PruneLocal(cfg LocalDest, slug string) ([]string, error) {
+	if cfg.KeepLast < 1 {
+		return nil, fmt.Errorf("prune: keep-last %d must be at least 1", cfg.KeepLast)
+	}
 	refs, err := (&localDest{cfg: cfg}).List(context.Background())
 	if err != nil {
 		return nil, err
 	}
 	var own []ArchiveRef
 	for _, r := range refs {
+		// List only returns names ParseArchiveName accepts, which excludes
+		// ".partial" files; the suffix check is a defensive guard.
 		if r.HostSlug == slug && !strings.HasSuffix(r.Name, partialSuffix) {
 			own = append(own, r)
 		}

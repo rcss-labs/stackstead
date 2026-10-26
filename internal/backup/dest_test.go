@@ -116,6 +116,7 @@ func TestLocalAbortRemovesPartialAndRoundTrip(t *testing.T) {
 	}
 	// A foreign file and a partial must not be listed.
 	_ = os.WriteFile(filepath.Join(dir, "notes.txt"), nil, 0o600)
+	_ = os.WriteFile(filepath.Join(dir, ArchiveName("h", time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC))+".partial"), nil, 0o600)
 	refs, err := d.List(ctx)
 	if err != nil || len(refs) != 1 {
 		t.Fatalf("List = %v, %v", refs, err)
@@ -304,5 +305,79 @@ func TestTestS3PutsThenDeletes(t *testing.T) {
 	}
 	if len(f.objects) != 0 {
 		t.Fatalf("test object not deleted: %v", f.objects)
+	}
+}
+
+func TestLocalCloseAfterWriteErrorDoesNotPublish(t *testing.T) {
+	dir := t.TempDir()
+	d := NewLocal(LocalDest{Enabled: true, Path: dir, KeepLast: 7})
+	name := ArchiveName("h", time.Now())
+	w, err := d.Create(context.Background(), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Swap in a read-only handle: Write fails but Sync and Close still succeed,
+	// so only the remembered write error can stop the rename.
+	lw := w.(*localWriter)
+	readOnly, err := os.Open(lw.File.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lw.File.Close()
+	lw.File = readOnly
+	if _, err := w.Write([]byte("x")); err == nil {
+		t.Fatal("expected write error")
+	}
+	if err := w.Close(); err == nil {
+		t.Fatal("Close must report the earlier write error")
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("files left: %v", entries)
+	}
+}
+
+func TestPruneLocalRejectsKeepLastBelowOne(t *testing.T) {
+	dir := t.TempDir()
+	name := ArchiveName("a", time.Now())
+	_ = os.WriteFile(filepath.Join(dir, name), nil, 0o600)
+	for _, keep := range []int{0, -1} {
+		if _, err := PruneLocal(LocalDest{Path: dir, KeepLast: keep}, "a"); err == nil {
+			t.Fatalf("KeepLast %d: expected error", keep)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLocalPutSidecarIsAtomic(t *testing.T) {
+	dir := t.TempDir()
+	d := NewLocal(LocalDest{Enabled: true, Path: dir, KeepLast: 7})
+	name := ArchiveName("h", time.Now())
+	if err := d.PutSidecar(context.Background(), name, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 || entries[0].Name() != SidecarName(name) {
+		t.Fatalf("entries = %v", entries)
+	}
+	// A leftover sidecar partial must not break a retry.
+	_ = os.WriteFile(filepath.Join(dir, SidecarName(name)+".partial"), []byte("junk"), 0o600)
+	if err := d.PutSidecar(context.Background(), name, []byte(`{"hostSlug":"h"}`)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestS3CreateRefusesArchiveInFlight(t *testing.T) {
+	ctx := context.Background()
+	_, srv := newFakeS3()
+	defer srv.Close()
+	d := NewS3(testS3Dest(srv.URL, ""), srv.Client())
+	name := ArchiveName("host", time.Now())
+	if _, err := d.Create(ctx, name); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Create(ctx, name); err == nil {
+		t.Fatal("second Create of an in-flight archive must fail")
 	}
 }

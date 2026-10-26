@@ -48,11 +48,22 @@ func (d *s3Dest) Name() string { return destS3 }
 func (d *s3Dest) key(name string) string { return path.Join(d.prefix, name) }
 
 func (d *s3Dest) Create(ctx context.Context, archive string) (io.WriteCloser, error) {
+	d.mu.Lock()
+	_, busy := d.uploads[archive]
+	d.mu.Unlock()
+	if busy {
+		return nil, fmt.Errorf("upload of %s is already in progress", archive)
+	}
 	up, err := d.client.NewUpload(ctx, d.key(archive))
 	if err != nil {
 		return nil, err
 	}
 	d.mu.Lock()
+	if _, busy := d.uploads[archive]; busy {
+		d.mu.Unlock()
+		_ = up.Abort(ctx)
+		return nil, fmt.Errorf("upload of %s is already in progress", archive)
+	}
 	d.uploads[archive] = up
 	d.mu.Unlock()
 	return &s3Writer{Upload: up, dest: d, archive: archive}, nil
