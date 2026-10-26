@@ -550,6 +550,27 @@ Builds run as operations in the shared operations list under the key
 `image/<owner>/<slug>` (action `build`), so the top bar and toasts label them
 `build · image <slug>`. One build runs at a time per image.
 
+## Backups
+
+Backups archive this server's database, settings and stack files, plus the
+volumes and images of the stacks you tick. All routes need a session, and none
+is under `/api/settings`, so a connected server can forward them.
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/backups/config` | the schedule, local folder and S3 bucket. `s3.secretKeySet` says whether a secret is stored; the secret itself is never returned. `nextRun` is when the schedule fires next, and is absent when it is off |
+| `PUT /api/backups/config` | save the same shape. `400` with the validation messages when it is invalid. An omitted or empty `s3.secretKey` keeps the stored one. Returns the saved configuration |
+| `DELETE /api/backups/config/s3-secret` | remove the stored S3 secret; 204 |
+| `POST /api/backups/s3/test` | writes and deletes a small object with the `s3` settings in the body, using the stored secret when the body has none; 204, or `502` with the reason |
+| `GET /api/backups/stacks` | every stack with `volumes`, `images`, `stopDuring` and its `mounts` (`kind`, `name`, `target`, `bytes`; `bytes` is -1 when unknown, as for bind mounts). A stack never saved has both extras off and `stopDuring` on |
+| `PUT /api/backups/stacks/{name}` | `{volumes, images, stopDuring}` for one stack; 204, or 404 for an unknown stack |
+| `POST /api/backups/run` | start a backup now with a `{}` body. 202 `{"operation": {...}}`; it runs as operation `backup` on key `host:backup`. 409 `backup_running` when a run is in progress |
+| `GET /api/backups/runs?limit=` | recent runs, newest first, with per-item results; `limit` is 1 to 100 and defaults to 20 |
+| `GET /api/backups/archives` | archives at every enabled destination from all hosts, newest first: `dest`, `name`, `hostSlug`, `createdAt`, `size`. A destination that cannot be read is left out unless all of them fail |
+
+Scheduled runs use the host's local time zone. A scheduled run that finds a
+backup still running is skipped, not queued.
+
 ## Storage
 
 The Storage screen (`/storage`) has Overview, Images, Volumes and Build cache

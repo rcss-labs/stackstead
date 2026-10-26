@@ -92,6 +92,8 @@ type Options struct {
 	// Registries backs /api/settings/registries and /api/images/registries;
 	// nil disables them.
 	Registries RegistriesAPI
+	// Backups backs the /api/backups routes; nil disables them.
+	Backups BackupAPI
 	// Arch reports this server's Docker architecture for /api/status; nil or
 	// an error leaves it out.
 	Arch func(context.Context) (string, error)
@@ -178,6 +180,9 @@ func New(opts Options) http.Handler {
 	}
 	if opts.Registries != nil {
 		s.registerRegistryRoutes(mux)
+	}
+	if opts.Backups != nil {
+		s.registerBackupRoutes(mux)
 	}
 	if opts.Stacks != nil && opts.Observe != nil {
 		s.registerContainerRoutes(mux)

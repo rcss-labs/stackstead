@@ -175,6 +175,17 @@ func TestJSONTagsMatchContract(t *testing.T) {
 		{"ContainerRow", populated[apitypes.ContainerRow](), "cpu,createdAt,exitCode,health,id,image,imageId,managed,mem,memLimit,name,networks,number,ports,project,restarts24h,service,stack,state,status"},
 		{"ContainerDetail", populated[apitypes.ContainerDetail](), "exitCode,finishedAt,health,id,image,imageId,labels,managed,memoryLimit,mounts,name,networks,ports,project,restartPolicy,restarts24h,service,stack,startedAt,state,status"},
 		{"TopEntry", populated[apitypes.TopEntry](), "container,project,service,value"},
+		{"BackupSchedule", populated[apitypes.BackupSchedule](), "enabled,frequency,time,weekday"},
+		{"BackupLocal", populated[apitypes.BackupLocal](), "enabled,keepLast,path"},
+		{"BackupS3", populated[apitypes.BackupS3](), "accessKeyId,bucket,enabled,endpoint,pathStyle,prefix,region,secretKey,secretKeySet"},
+		{"BackupConfig", populated[apitypes.BackupConfig](), "local,nextRun,s3,schedule"},
+		{"BackupMount", populated[apitypes.BackupMount](), "bytes,kind,name,target"},
+		{"BackupStackSettings", populated[apitypes.BackupStackSettings](), "images,stopDuring,volumes"},
+		{"BackupStack", populated[apitypes.BackupStack](), "images,mounts,stack,stopDuring,volumes"},
+		{"BackupItem", populated[apitypes.BackupItem](), "bytes,kind,name,note,stack,status"},
+		{"BackupRun", populated[apitypes.BackupRun](), "archive,destinations,endedAt,error,id,items,size,startedAt,status,trigger"},
+		{"BackupArchive", populated[apitypes.BackupArchive](), "createdAt,dest,hostSlug,name,size"},
+		{"BackupRunStarted", populated[apitypes.BackupRunStarted](), "operation"},
 		{"UpdateStatus", populated[apitypes.UpdateStatus](), "checkedAt,command,current,error,installer,latest,notesURL,state"},
 	}
 	for _, tc := range cases {

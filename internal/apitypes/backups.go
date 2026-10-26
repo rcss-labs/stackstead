@@ -1,0 +1,106 @@
+package apitypes
+
+import "time"
+
+// Backup wire types. The web mirror lives in web/src/lib/api/backupTypes.ts
+// and must change with this file.
+
+type BackupSchedule struct {
+	Enabled bool `json:"enabled"`
+	// Frequency is daily or weekly; Weekday is 0 (Sunday) to 6 and is used for weekly.
+	Frequency string `json:"frequency"`
+	Weekday   int    `json:"weekday"`
+	// Time is HH:MM in the host's time zone.
+	Time string `json:"time"`
+}
+
+type BackupLocal struct {
+	Enabled  bool   `json:"enabled"`
+	Path     string `json:"path"`
+	KeepLast int    `json:"keepLast"`
+}
+
+type BackupS3 struct {
+	Enabled     bool   `json:"enabled"`
+	Bucket      string `json:"bucket"`
+	Prefix      string `json:"prefix"`
+	Region      string `json:"region"`
+	Endpoint    string `json:"endpoint"`
+	PathStyle   bool   `json:"pathStyle"`
+	AccessKeyID string `json:"accessKeyId"`
+	// SecretKey is accepted on PUT and the S3 test and never returned; an
+	// omitted or empty value keeps the stored secret.
+	SecretKey string `json:"secretKey,omitempty"`
+	// SecretKeySet reports whether a secret is stored.
+	SecretKeySet bool `json:"secretKeySet"`
+}
+
+type BackupConfig struct {
+	Schedule BackupSchedule `json:"schedule"`
+	Local    BackupLocal    `json:"local"`
+	S3       BackupS3       `json:"s3"`
+	// NextRun is when the schedule fires next; absent when it is off. Ignored on PUT.
+	NextRun *time.Time `json:"nextRun,omitempty"`
+}
+
+type BackupMount struct {
+	// Kind is volume or bind; Name is the volume name or host path.
+	Kind   string `json:"kind"`
+	Name   string `json:"name"`
+	Target string `json:"target"`
+	// Bytes is -1 when the size is unknown.
+	Bytes int64 `json:"bytes"`
+}
+
+// BackupStackSettings is what a backup of one stack includes.
+type BackupStackSettings struct {
+	Volumes    bool `json:"volumes"`
+	Images     bool `json:"images"`
+	StopDuring bool `json:"stopDuring"`
+}
+
+type BackupStack struct {
+	Stack      string        `json:"stack"`
+	Volumes    bool          `json:"volumes"`
+	Images     bool          `json:"images"`
+	StopDuring bool          `json:"stopDuring"`
+	Mounts     []BackupMount `json:"mounts"`
+}
+
+type BackupItem struct {
+	// Kind is base, volume, image, stack-files or upload; Status is ok, failed or skipped.
+	Kind   string `json:"kind"`
+	Stack  string `json:"stack,omitempty"`
+	Name   string `json:"name,omitempty"`
+	Status string `json:"status"`
+	Note   string `json:"note,omitempty"`
+	Bytes  int64  `json:"bytes,omitempty"`
+}
+
+type BackupRun struct {
+	ID        int64      `json:"id"`
+	StartedAt time.Time  `json:"startedAt"`
+	EndedAt   *time.Time `json:"endedAt,omitempty"`
+	// Trigger is manual or schedule; Status is running, success, partial or failed.
+	Trigger      string       `json:"trigger"`
+	Status       string       `json:"status"`
+	Archive      string       `json:"archive,omitempty"`
+	Size         int64        `json:"size"`
+	Destinations []string     `json:"destinations"`
+	Items        []BackupItem `json:"items"`
+	Error        string       `json:"error,omitempty"`
+}
+
+type BackupArchive struct {
+	// Dest is local or s3.
+	Dest      string    `json:"dest"`
+	Name      string    `json:"name"`
+	HostSlug  string    `json:"hostSlug"`
+	CreatedAt time.Time `json:"createdAt"`
+	Size      int64     `json:"size"`
+}
+
+// BackupRunStarted is the 202 body of POST /api/backups/run.
+type BackupRunStarted struct {
+	Operation Operation `json:"operation"`
+}
