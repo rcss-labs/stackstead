@@ -295,6 +295,12 @@ commands and [routes](api.md#backups).
 
 ### What an archive contains
 
+Volume data means named volumes and directory bind mounts. A bind of a single
+file (such as `./nginx.conf`) inside the stack directory is kept with the
+stack's files; one outside it (such as `/etc/localtime`) is not backed up, and
+the run lists it as skipped. A build-only service whose image no container
+shows is also listed as skipped.
+
 **Archives are not encrypted.** An archive holds the `.env` files and compose
 files of every stack, the whole database (password hashes, session tokens and
 paired-server tokens), and the stored S3 secret key and registry credentials.

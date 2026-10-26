@@ -24,7 +24,8 @@ const (
 )
 
 // CollectStackFiles archives the stack's directory under base/stacks/<name>/,
-// leaving out the skip paths (bind-mount sources, which are volume data).
+// leaving out the skip paths (directory bind-mount sources, which are volume
+// data; a skip path that is a file is kept, see isFileBind).
 // Sockets, FIFOs, devices and symlinks that leave the directory are not
 // archived; each is returned as a skipped ItemResult.
 func CollectStackFiles(w *Writer, e stacks.Entry, skip []string) ([]ItemResult, error) {
@@ -126,7 +127,7 @@ func collectTree(w *Writer, root, prefix string, skip []string) ([]ItemResult, e
 
 // effectiveSkips drops skip entries that would lose the stack's definition:
 // the stack directory itself or an ancestor (a `.:/app` bind), the compose
-// files and .env.
+// files and .env, and any single file (a file bind is stack files, R35).
 func effectiveSkips(e stacks.Entry, root string, skip []string) []string {
 	protected := map[string]bool{filepath.Clean(e.ComposePath): true, filepath.Join(root, ".env"): true}
 	for _, pattern := range []string{"compose*.y*ml", "docker-compose*.y*ml"} {
@@ -139,12 +140,40 @@ func effectiveSkips(e stacks.Entry, root string, skip []string) []string {
 	var out []string
 	for _, s := range skip {
 		s = filepath.Clean(s)
-		if s == root || strings.HasPrefix(root, s+string(filepath.Separator)) || protected[s] {
+		if s == root || strings.HasPrefix(root, s+string(filepath.Separator)) || protected[s] || isFile(s) {
 			continue
 		}
 		out = append(out, s)
 	}
 	return out
+}
+
+// isFile reports whether p exists on this host and is not a directory.
+func isFile(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && !info.IsDir()
+}
+
+// noteFileBindOutside is the skipped-item note of a file bind that is neither
+// volume data nor inside the stack directory.
+const noteFileBindOutside = "file bind outside the stack directory is not backed up"
+
+// splitMounts sorts a stack's mounts per R35. Volume data is named volumes
+// and directory binds (a missing bind source counts as a directory: Docker
+// creates one). A bind of a single file is not volume data: inside the stack
+// directory it is archived with the stack files, outside it it is returned in
+// outsideFiles and not backed up.
+func splitMounts(e stacks.Entry, mounts []stacks.Mount) (volumeData, outsideFiles []stacks.Mount) {
+	stackDir := filepath.Dir(e.ComposePath)
+	for _, m := range mounts {
+		switch {
+		case m.Kind != "bind" || !isFile(m.Source):
+			volumeData = append(volumeData, m)
+		case !underRoot(m.Source, stackDir):
+			outsideFiles = append(outsideFiles, m)
+		}
+	}
+	return volumeData, outsideFiles
 }
 
 func dirSuffix(name string) string {

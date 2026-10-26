@@ -594,7 +594,8 @@ func (sr *stackRestore) preRestoreCopy() error {
 			Note: "bind mounts unknown, so their data may be copied too: " + err.Error()})
 	}
 	for _, m := range mounts {
-		if m.Kind == volumeKindBind {
+		// A file bind is part of the stack files (R35), so it is copied too.
+		if m.Kind == volumeKindBind && !isFile(m.Source) {
 			skip = append(skip, filepath.Clean(m.Source))
 		}
 	}
@@ -847,6 +848,10 @@ func (sr *stackRestore) volume(hdr *tar.Header, body io.Reader) error {
 	}
 	source := pv.Name
 	if pv.Kind == volumeKindBind {
+		if archivedAsFile(hdr, sr.volumePrefix+key+"/") {
+			sr.item(ItemResult{Kind: conflictVolume, Stack: sr.plan.TargetName, Name: pv.Name, Status: itemSkipped, Note: noteArchivedFileBind})
+			return drain(stream)
+		}
 		// Without the stack list the bind cannot be vetted, so it is not mounted.
 		protected, err := sr.protectedDirs()
 		var resolved, skip string

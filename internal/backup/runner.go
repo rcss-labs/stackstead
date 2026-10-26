@@ -223,8 +223,10 @@ func runDetail(run Run) string {
 }
 
 type mountsResult struct {
-	mounts []stacks.Mount
-	err    error
+	mounts []stacks.Mount // volume data only, see splitMounts
+	// outsideFiles are file binds outside the stack directory, not backed up.
+	outsideFiles []stacks.Mount
+	err          error
 }
 
 // job is the state of one run.
@@ -551,7 +553,8 @@ func (j *job) writeStackFiles(aw *Writer) error {
 
 		j.out("backing up the files of " + e.Name)
 		mounts, err := d.Stacks.Mounts(ctx, e.Name)
-		j.mounts[e.Name] = mountsResult{mounts: mounts, err: err}
+		volumeData, outsideFiles := splitMounts(e, mounts)
+		j.mounts[e.Name] = mountsResult{mounts: volumeData, outsideFiles: outsideFiles, err: err}
 		if err != nil {
 			if err := j.failItem(ItemResult{Kind: "stack-files", Stack: e.Name, Note: "resolve mounts: " + err.Error()}); err != nil {
 				return err
@@ -625,6 +628,9 @@ func (j *job) backUpVolumes(aw *Writer, sel StackSelection) (err error) {
 	res := j.mounts[name]
 	if res.err != nil {
 		return j.failItem(ItemResult{Kind: "volume", Stack: name, Note: "resolve mounts: " + res.err.Error()})
+	}
+	for _, m := range res.outsideFiles {
+		j.item(ItemResult{Kind: "volume", Stack: name, Name: m.Source, Status: itemSkipped, Note: noteFileBindOutside})
 	}
 	if len(res.mounts) == 0 {
 		return nil

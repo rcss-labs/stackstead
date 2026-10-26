@@ -107,6 +107,9 @@ func (rs *rootSet) prepareBind(source string, stackDirs []string) (resolved, ski
 	if err != nil {
 		return "", "", err
 	}
+	if isFile(resolved) {
+		return "", noteBindIsFile, nil
+	}
 	if !underAnyRoot(resolved, resolvedRoots(rs.allowed)) {
 		return "", "bind source resolves to " + resolved + ", " + reasonOutsideRoots, nil
 	}
@@ -114,6 +117,20 @@ func (rs *rootSet) prepareBind(source string, stackDirs []string) (resolved, ski
 		return "", reason, nil
 	}
 	return resolved, "", nil
+}
+
+const (
+	noteBindIsFile       = "bind source is a file on this host; only directory binds are restored as volume data"
+	noteArchivedFileBind = "archived bind source is a single file; file binds are not restored as volume data (one inside the stack directory comes back with the stack files)"
+)
+
+// archivedAsFile reports whether a bind's archived data, whose section starts
+// with first under prefix, is one file (the helper copied a file mounted at
+// /data) rather than a directory. Restoring it would replace the bind
+// source's directory with a file, so it is skipped.
+func archivedAsFile(first *tar.Header, prefix string) bool {
+	rel := path.Clean(strings.TrimPrefix(first.Name, prefix))
+	return rel == "data" && first.Typeflag != tar.TypeDir
 }
 
 // bindCovers explains why emptying the resolved bind source would destroy

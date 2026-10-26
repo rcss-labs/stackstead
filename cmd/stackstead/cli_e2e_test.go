@@ -646,7 +646,7 @@ func TestE2EBackupRestore(t *testing.T) {
 		"name": name, "service": "web",
 		"config": map[string]any{
 			"image": "nginx:alpine", "limits": map[string]string{"memory": "64m"},
-			"volumes": []string{"./data:/rel", bindDir + ":/bind"},
+			"volumes": []string{"./data:/rel", bindDir + ":/bind", "./nginx.conf:/x.conf:ro"},
 		},
 	})
 	var compose apitypes.RawCompose
@@ -658,6 +658,11 @@ func TestE2EBackupRestore(t *testing.T) {
 
 	relDir := filepath.Join(r.dir, "stacks", name, "data")
 	if err := os.MkdirAll(relDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A file bind is part of the stack's files (R35), not volume data.
+	confContent := "conf-" + rand.Text()
+	if err := os.WriteFile(filepath.Join(r.dir, "stacks", name, "nginx.conf"), []byte(confContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	relContent := "relative-" + rand.Text()
@@ -752,6 +757,12 @@ func TestE2EBackupRestore(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(bindDir, "bind.txt"))
 	if err != nil || string(got) != bindContent {
 		t.Errorf("restored bind file = %q, %v; want %q", got, err, bindContent)
+	}
+	confPath := filepath.Join(r.dir, "stacks", name, "nginx.conf")
+	if info, err := os.Lstat(confPath); err != nil || !info.Mode().IsRegular() {
+		t.Errorf("restored file bind %s = %v, %v; want a regular file", confPath, info, err)
+	} else if got, _ := os.ReadFile(confPath); string(got) != confContent {
+		t.Errorf("restored file bind = %q, want %q", got, confContent)
 	}
 	if relRestored {
 		got, err := os.ReadFile(filepath.Join(r.dir, "stacks", name, "data", "rel.txt"))

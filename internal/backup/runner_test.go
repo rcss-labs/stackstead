@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -822,5 +823,45 @@ func TestRunnerReportsBuildOnlyServicesWithoutImage(t *testing.T) {
 		if !ok || it.Status != "skipped" || it.Note != "image for build-only service api not present" {
 			t.Errorf("image item = %+v (found %v) in %+v", it, ok, items)
 		}
+	}
+}
+
+// R35: volume data is named volumes and directory binds. A file bind inside
+// the stack directory stays in base/stacks/; one outside is not backed up and
+// says so.
+func TestRunnerKeepsFileBindsOutOfVolumeData(t *testing.T) {
+	env := newRunnerEnv(t, localOnly(t))
+	e := env.addStack(t, "web", stacks.StatusStopped)
+	dir := filepath.Dir(e.ComposePath)
+	outside := filepath.Join(t.TempDir(), "localtime")
+	writeTree(t, dir, map[string]string{"nginx.conf": "server {}", "data/f": "x"})
+	writeTree(t, filepath.Dir(outside), map[string]string{"localtime": "UTC"})
+	dataDir := filepath.Join(dir, "data")
+	env.stacks.mounts["web"] = []stacks.Mount{
+		{Service: "app", Kind: "bind", Source: filepath.Join(dir, "nginx.conf"), Target: "/etc/nginx/nginx.conf"},
+		{Service: "app", Kind: "bind", Source: outside, Target: "/etc/localtime"},
+		{Service: "app", Kind: "bind", Source: dataDir, Target: "/data"},
+	}
+	env.eng.volumes[dataDir] = tarOf(t, map[string][]byte{"data/f": []byte("x")})
+	env.selectStack(t, StackSelection{Stack: "web", Volumes: true})
+
+	run := env.run(t)
+	if run.Status != "success" {
+		t.Fatalf("run = %+v", run)
+	}
+	if got := env.log.list(); !reflect.DeepEqual(got, []string{"copy " + dataDir}) {
+		t.Errorf("copies = %v, want only the directory bind", got)
+	}
+	_, data := env.local.only(t)
+	names, m := readArchive(t, data)
+	if !strings.Contains(strings.Join(names, "\n"), "base/stacks/web/nginx.conf") {
+		t.Errorf("nginx.conf is not in the stack files: %v", names)
+	}
+	if vols := m.Stacks[0].Volumes; len(vols) != 1 || vols[0].Name != dataDir {
+		t.Errorf("manifest volumes = %+v, want only %s", vols, dataDir)
+	}
+	want := ItemResult{Kind: "volume", Stack: "web", Name: outside, Status: "skipped", Note: "file bind outside the stack directory is not backed up"}
+	if !slices.Contains(m.Items, want) {
+		t.Errorf("no skipped item for %s: %+v", outside, m.Items)
 	}
 }

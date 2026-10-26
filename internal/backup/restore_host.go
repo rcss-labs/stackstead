@@ -815,6 +815,10 @@ func (h *hostRestore) volume(hdr *tar.Header, body io.Reader) error {
 	mv := ms.Volumes[i]
 	source := mv.Name
 	if mv.Kind == volumeKindBind {
+		if archivedAsFile(hdr, prefix) {
+			h.items = append(h.items, ItemResult{Kind: conflictVolume, Stack: stack, Name: mv.Name, Status: itemSkipped, Note: noteArchivedFileBind})
+			return drain(stream)
+		}
 		resolved, skip, err := h.rs.prepareBind(mv.Name, h.restoredStackDirs())
 		if skip != "" || err != nil {
 			item := ItemResult{Kind: conflictVolume, Stack: stack, Name: mv.Name, Status: itemSkipped, Note: skip}

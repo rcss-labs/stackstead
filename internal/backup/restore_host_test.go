@@ -1083,3 +1083,62 @@ func TestBindCoversRefusesAncestorOfNestedAllowedRoot(t *testing.T) {
 		t.Errorf("a bind beside the nested root was refused: %s", reason)
 	}
 }
+
+// I-1: a file bind (./nginx.conf:/etc/nginx/nginx.conf) is restored from the
+// stack files. An archive that also holds it as volume data (made before R35)
+// must not turn the file into a directory or refill it through the helper.
+func TestHostRestoreKeepsFileBindFromStackFiles(t *testing.T) {
+	for _, inBase := range []bool{true, false} {
+		t.Run(fmt.Sprintf("in base %v", inBase), func(t *testing.T) {
+			s := newHostSetup(t)
+			conf := filepath.Join(s.rootA, "web", "nginx.conf")
+			if inBase {
+				s.fixture.files["base/stacks/web/nginx.conf"] = "server {}\n"
+			}
+			m := stacks.Mount{Kind: "bind", Source: conf}
+			s.fixture.volumes["web"] = append(s.fixture.volumes["web"], ManifestVolume{Key: VolumeKey(m), Kind: "bind", Name: conf, Target: "/etc/nginx/nginx.conf"})
+			s.fixture.volData["web/"+VolumeKey(m)] = map[string]string{"data": "server {}\n"}
+			path := s.fixture.build(t, t.TempDir(), true)
+
+			report, err := s.restore(t, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, statErr := os.Lstat(conf)
+			switch {
+			case inBase && (statErr != nil || !info.Mode().IsRegular() || readFile(t, conf) != "server {}\n"):
+				t.Errorf("nginx.conf not restored as a file: %v %v", info, statErr)
+			case !inBase && statErr == nil:
+				t.Errorf("nginx.conf was created as %v", info.Mode())
+			}
+			if got := readFile(t, filepath.Join(s.rootA, "web", "compose.yaml")); !strings.Contains(got, "nginx") {
+				t.Errorf("compose.yaml = %q", got)
+			}
+			for _, spec := range s.eng.specs {
+				for _, mt := range spec.Mounts {
+					if filepath.Base(mt.Source) == "nginx.conf" {
+						t.Errorf("the file bind was mounted into a helper: %+v", spec)
+					}
+				}
+			}
+			if !slices.ContainsFunc(report.Items, func(it ItemResult) bool {
+				return it.Kind == "volume" && it.Name == conf && it.Status == "skipped" && strings.Contains(it.Note, "file")
+			}) {
+				t.Errorf("no skipped item for the file bind: %+v", report.Items)
+			}
+		})
+	}
+}
+
+// prepareBind never empties a bind source that is a file on this host.
+func TestPrepareBindRefusesExistingFile(t *testing.T) {
+	root := t.TempDir()
+	conf := filepath.Join(root, "web", "nginx.conf")
+	writeTree(t, filepath.Dir(conf), map[string]string{"nginx.conf": "server {}\n"})
+	rs := newRootSet([]string{root}, filepath.Join(t.TempDir(), "data"))
+	defer rs.close()
+	_, skip, err := rs.prepareBind(conf, nil)
+	if err != nil || skip == "" {
+		t.Fatalf("skip = %q, err = %v; want the file refused", skip, err)
+	}
+}

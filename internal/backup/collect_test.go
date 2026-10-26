@@ -290,3 +290,21 @@ func TestCollectDBFailureLeavesNoTempDir(t *testing.T) {
 		t.Fatalf("temp dir left behind: %v", entries)
 	}
 }
+
+// A bind of a single file (./nginx.conf:/etc/nginx/nginx.conf) is part of the
+// stack's files, not volume data, so the base keeps it; directory binds are
+// still left to the volume copy.
+func TestCollectStackFilesKeepsFileBinds(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{"compose.yaml": "services: {}", "nginx.conf": "server {}", "data/big": "xxxx"})
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	skip := []string{filepath.Join(dir, "nginx.conf"), filepath.Join(dir, "data")}
+	if _, err := CollectStackFiles(w, stacks.Entry{Name: "web", ComposePath: filepath.Join(dir, "compose.yaml")}, skip); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"base/stacks/web/", "base/stacks/web/compose.yaml", "base/stacks/web/nginx.conf"}
+	if got := archiveNames(t, w, &buf); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+}

@@ -614,3 +614,45 @@ func TestRestoreStackFailsBindWhenRegistryUnreadable(t *testing.T) {
 		t.Errorf("calls = %v, want the bind not mounted", calls)
 	}
 }
+
+// I-1: a file bind comes back with the stack files; an archived copy of it as
+// volume data (made before R35) is skipped instead of turning it into a directory.
+func TestRestoreStackKeepsFileBindFromStackFiles(t *testing.T) {
+	e := newRestoreEnv(t)
+	compose := e.existingStack(t, "web", "compose.yaml", "services: {}\n", false)
+	conf := filepath.Join(filepath.Dir(compose), "nginx.conf")
+	f := webFixture(compose, false)
+	f.files["base/stacks/web/nginx.conf"] = "server {}\n"
+	key := VolumeKey(stacks.Mount{Kind: "bind", Source: conf})
+	f.volumes["web"] = append(f.volumes["web"], ManifestVolume{Key: key, Kind: "bind", Name: conf, Target: "/etc/nginx/nginx.conf"})
+	f.volData["web/"+key] = map[string]string{"data": "server {}\n"}
+	ref := e.addArchive(t, f)
+	if err := os.WriteFile(conf, []byte("old {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.stacks.mounts["web"] = []stacks.Mount{{Service: "app", Kind: "bind", Source: conf, Target: "/etc/nginx/nginx.conf"}}
+
+	op := e.run(t, StackRestoreRequest{Archive: ref, Stack: "web", Files: true, Volumes: true})
+	if op.State != stacks.OpSucceeded {
+		t.Fatalf("operation = %+v", op)
+	}
+	if info, err := os.Lstat(conf); err != nil || !info.Mode().IsRegular() || readFile(t, conf) != "server {}\n" {
+		t.Errorf("nginx.conf not restored as a file: %v %v", info, err)
+	}
+	if got := readFile(t, compose); got != "services: {app: {image: new}}\n" {
+		t.Errorf("compose = %q", got)
+	}
+	preDir := filepath.Join(e.dataDir, "backups", "pre-restore", "web-20261026T030000Z")
+	if got := readFile(t, filepath.Join(preDir, "nginx.conf")); got != "old {}\n" {
+		t.Errorf("pre-restore copy of the file bind = %q", got)
+	}
+	for _, spec := range e.eng.specs {
+		if filepath.Base(spec.Mounts[0].Source) == "nginx.conf" {
+			t.Errorf("the file bind was mounted into a helper: %+v", spec)
+		}
+	}
+	lines, _ := e.deps.Ops.Lines(op.ID)
+	if !slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "skipped: volume "+conf) }) {
+		t.Errorf("no skipped line for the file bind: %q", lines)
+	}
+}
