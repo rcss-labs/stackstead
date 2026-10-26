@@ -198,4 +198,63 @@ describe('single-stack restore', () => {
     await preview(user);
     expect(await screen.findByText(/does not exist on this server/i)).toBeTruthy();
   });
+
+  it('hides the restore button when a part changes after the preview', async () => {
+    setup({ 'POST /api/backups/restore/plan': { body: plan() } });
+    const user = await openDialog();
+    await screen.findByRole('combobox', { name: 'Stack' });
+    await preview(user);
+    await screen.findByRole('button', { name: 'Restore stack…' });
+    await user.click(screen.getByRole('checkbox', { name: 'Images' }));
+    expect(screen.queryByRole('button', { name: 'Restore stack…' })).toBeNull();
+  });
+
+  it('drops a plan that resolves after the choices changed', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    setup({
+      'POST /api/backups/restore/plan': async () => {
+        await gate;
+        return { body: plan() };
+      },
+    });
+    const user = await openDialog();
+    await screen.findByRole('combobox', { name: 'Stack' });
+    await preview(user);
+    await user.click(screen.getByRole('checkbox', { name: 'Images' }));
+    release();
+    await waitFor(() => expect(fake.calls.some((c) => c.path === '/api/backups/restore/plan')).toBe(true));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByRole('button', { name: 'Restore stack…' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Restore preview' })).toBeNull();
+  });
+
+  it('blocks the preview when Volumes is ticked but every volume is unticked', async () => {
+    setup({ 'POST /api/backups/restore/plan': { body: plan() } });
+    const user = await openDialog();
+    await screen.findByRole('combobox', { name: 'Stack' });
+    await user.click(screen.getByRole('checkbox', { name: 'Volumes' }));
+    await user.click(screen.getByRole('checkbox', { name: /web-data/ }));
+    const button = screen.getByRole('button', { name: 'Preview restore' });
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByText('Choose at least one volume, or untick Volumes').textContent).toBeTruthy();
+    await user.click(button);
+    expect(fake.calls.some((c) => c.path === '/api/backups/restore/plan')).toBe(false);
+  });
+
+  it('words the confirmation by what happens', async () => {
+    setup({
+      'POST /api/backups/restore/plan': { body: plan({ overwrites: true }) },
+      'POST /api/backups/restore': { status: 202, body: { operation: { id: 'op-9' } } },
+    });
+    const user = await openDialog();
+    await screen.findByRole('combobox', { name: 'Stack' });
+    await user.click(screen.getByRole('checkbox', { name: 'Files' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Volumes' }));
+    await preview(user);
+    await user.click(await screen.findByRole('button', { name: 'Restore stack…' }));
+    const confirm = await screen.findByRole('alertdialog');
+    expect(within(confirm).queryByText(/overwrites/i)).toBeNull();
+    expect(within(confirm).getByText(/volume contents are replaced and not kept/i)).toBeTruthy();
+  });
 });

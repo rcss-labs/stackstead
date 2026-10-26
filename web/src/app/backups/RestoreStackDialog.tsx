@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { BackupsApi } from '$lib/api/backups';
 import type { BackupArchive, BackupManifest, BackupRestorePlan, BackupRestoreRequest } from '$lib/api/backupTypes';
 import { formatBytes } from '$lib/format';
@@ -37,14 +37,24 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
   const [starting, setStarting] = useState(false);
   const [operationId, setOperationId] = useState<string>();
 
+  // Identifies the latest preview request; a response for an older one is dropped.
+  const planSeq = useRef(0);
+
   useEffect(() => {
+    let cancelled = false;
     api.manifest(archive).then(
       (m) => {
+        if (cancelled) return;
         setManifest(m);
         setStack(m.stacks[0]?.name ?? '');
       },
-      (e: unknown) => setLoadError(messageOf(e)),
+      (e: unknown) => {
+        if (!cancelled) setLoadError(messageOf(e));
+      },
     );
+    return () => {
+      cancelled = true;
+    };
   }, [api, archive]);
 
   const manifestStack = manifest?.stacks.find((s) => s.name === stack);
@@ -63,6 +73,8 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
   // Any change to the choices makes the shown plan stale.
   function change(update: () => void) {
     update();
+    planSeq.current++;
+    setPlanning(false);
     setPlan(undefined);
     setError(undefined);
   }
@@ -76,18 +88,21 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
   }
 
   async function runPreview() {
+    const seq = ++planSeq.current;
     setPlanning(true);
     setError(undefined);
     setPlan(undefined);
     try {
       const next = await api.restorePlan(request());
+      if (seq !== planSeq.current) return;
       setPlan(next);
       if (next.overwrites || next.crossHost) setOfferRename(true);
     } catch (e) {
+      if (seq !== planSeq.current) return;
       if (codeOf(e) === 'target_occupied') setOfferRename(true);
       setError(describeError(e));
     } finally {
-      setPlanning(false);
+      if (seq === planSeq.current) setPlanning(false);
     }
   }
 
@@ -108,14 +123,26 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
   }
 
   const noPartChosen = !files && !volumes && !images;
-  const previewBlocked = !stack ? 'Choose a stack' : noPartChosen ? 'Choose at least one part to restore' : undefined;
+  // An empty volumeKeys list means "all volumes" to the API, so no volume left ticked must not be sent.
+  const noVolumeChosen = volumes && archiveVolumes.length > 0 && archiveVolumes.every((v) => skippedKeys.has(v.key));
+  const previewBlocked = !stack
+    ? 'Choose a stack'
+    : noPartChosen
+      ? 'Choose at least one part to restore'
+      : noVolumeChosen
+        ? 'Choose at least one volume, or untick Volumes'
+        : undefined;
   const replacesVolumes = volumes && (plan?.volumes.some((v) => !v.skip) ?? false);
 
   const confirmMessage = plan
     ? [
-        plan.overwrites ? `This overwrites the existing stack ${plan.targetName} on this server.` : `This creates the stack ${plan.targetName}.`,
-        files ? 'Its files are replaced with the archived copies.' : '',
-        replacesVolumes ? 'Volume contents are replaced and cannot be recovered.' : '',
+        plan.overwrites
+          ? files
+            ? `This overwrites the files of the existing stack ${plan.targetName} on this server.`
+            : `This restores into the existing stack ${plan.targetName} on this server.`
+          : `This creates the stack ${plan.targetName}.`,
+        files && plan.overwrites ? 'Current files are saved to backups/pre-restore.' : '',
+        replacesVolumes ? 'Volume contents are replaced and not kept.' : '',
         images ? 'Archived images are loaded.' : '',
       ]
         .filter(Boolean)
