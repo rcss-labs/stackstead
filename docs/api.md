@@ -567,9 +567,9 @@ is under `/api/settings`, so a connected server can forward them.
 | `POST /api/backups/run` | start a backup now with a `{}` body. 202 `{"operation": {...}}`; it runs as operation `backup` on key `host:backup`. 409 `backup_running` when a run is in progress |
 | `GET /api/backups/runs?limit=` | recent runs, newest first, with per-item results; `limit` is 1 to 100 and defaults to 20 |
 | `GET /api/backups/archives` | archives at every enabled destination from all hosts, newest first: `dest`, `name`, `hostSlug`, `createdAt`, `size`. A destination that cannot be read is left out unless all of them fail |
-| `GET /api/backups/archives/{dest}/{name}/manifest` | the manifest of one archive (its sidecar, or the archive's own `manifest.json` when there is none): `format`, `stacksteadVersion`, `host`, `hostSlug`, `instanceId`, `createdAt`, `status`, `stacks` (each with `name`, `composePath`, `origin`, `project`, `wasRunning`, `networks`, `volumes` of `{key, kind, name, target, bytes}`, `images`, `liveCopy`), `networks` (a count) and per-item `items`. `dest` is `local` or `s3` and `name` an archive file name; anything else is `400` |
+| `GET /api/backups/archives/{dest}/{name}/manifest` | the manifest of one archive (its sidecar, or the archive's own `manifest.json` when there is none): `format`, `stacksteadVersion`, `host`, `hostSlug`, `instanceId`, `createdAt`, `status`, `stacks` (each with `name`, `composePath`, `origin`, `project`, `wasRunning`, `networks`, `volumes` of `{key, kind, name, target, bytes}`, `images`, `liveCopy`), `networks` (a count) and per-item `items`. `dest` is `local` or `s3` and `name` an archive file name; anything else is 400 `bad_archive_ref` |
 | `POST /api/backups/restore/plan` | preview restoring one stack; changes nothing. The body is `{archive: {dest, name}, stack, newName, files, volumes, images, volumeKeys}`: `stack` is the name in the archive, `newName` (optional) restores it under another name that is also its compose project, and an empty `volumeKeys` means every archived volume. 200 with `stack`, `targetName`, `targetDir`, `composePath`, `project`, `origin`, `overwrites`, `fileDiffs` (`path`, `old`, `new`), `volumes` (`key`, `kind`, `name`, `target`, `bytes`, `skip`, `reason`), `images`, `missingNetworks` (`name`, `driver`), `crossHost` and `warnings`. Errors as for the restore below |
-| `POST /api/backups/restore` | restore one stack with the same body. 202 `{"operation": {...}}`; it runs as operation `restore` on the target stack's own key, so it never overlaps another operation on that stack. 409 `stack_busy` while one is running; 400 `archive_newer` for an archive from a newer Stackstead; 409 `target_occupied` when `<stacks_dir>/<name>` holds files of no stack of that name; 400 for a bad archive reference, nothing selected, a damaged archive, or data without files for a stack that does not exist here; 404 when the archive or the stack in it is missing; 409 when `newName` is taken |
+| `POST /api/backups/restore` | restore one stack with the same body. 202 `{"operation": {...}}`; it runs as operation `restore` on the target stack's own key, so it never overlaps another operation on that stack. 409 `stack_busy` while one is running; 400 `archive_newer` for an archive from a newer Stackstead; 409 `target_occupied` when `<stacks_dir>/<name>` holds files of no stack of that name; 409 `project_taken` when the new stack's compose project belongs to another stack; 400 `bad_archive_ref` for an unknown destination or an archive name that is not one; 400 `nothing_to_restore` when none of `files`, `volumes` and `images` is set; 400 `files_required` when only data is restored for a stack that does not exist here; 400 for a damaged archive or a sidecar that does not match it; 404 when the archive or the stack in it is missing; 409 when `newName` is taken |
 
 A single-stack restore stops the stack if it is running, copies its current
 files (not its bind-mount data) to
@@ -579,8 +579,11 @@ and refills each selected volume, loads the images, registers a stack that did
 not exist here, and starts the stack if it was running before (for a new
 stack: if it was running at backup time). The start happens on every path,
 including after a failure. Volume contents are replaced and not kept. Bind
-mounts outside the allowed roots, and volumes or images whose backup failed,
-are skipped and reported. When the existing stack's compose file has another
+mounts outside the allowed roots or covering a root, a stack directory or the
+data dir, and volumes or images whose backup failed, are skipped and reported.
+If a new stack cannot be registered, its volumes and images are not restored.
+Two restores in the same second keep separate pre-restore copies (`-2`, `-3`,
+... suffixes). When the existing stack's compose file has another
 name than the archived one, the archived content is written into the existing
 file. Each restore is recorded in the action log as `backup.restore` with the
 target stack as its scope.

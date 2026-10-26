@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -102,7 +103,23 @@ func NewRunner(d Deps) *Runner {
 	if d.HTTP == nil {
 		d.HTTP = http.DefaultClient
 	}
+	sweepRestoreStaging(d.DataDir, d.Logger)
 	return &Runner{d: d, newLocal: NewLocal, newS3: NewS3}
+}
+
+// sweepRestoreStaging removes the staging dirs single-stack restores leave
+// behind when the process stops mid-restore. It runs once at construction,
+// before any restore can start.
+func sweepRestoreStaging(dataDir string, logger *slog.Logger) {
+	if dataDir == "" {
+		return
+	}
+	stale, _ := filepath.Glob(filepath.Join(dataDir, restoreStagingPattern))
+	for _, dir := range stale {
+		if err := os.RemoveAll(dir); err != nil {
+			logger.Warn("remove stale restore staging", "dir", dir, "err", err)
+		}
+	}
 }
 
 // LastRun returns the most recent finished run.

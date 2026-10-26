@@ -271,6 +271,7 @@ func TestRestoreAPIConflicts(t *testing.T) {
 	}{
 		{stacks.ErrBusy, "stack_busy"},
 		{fmt.Errorf("wrapped: %w", backup.ErrTargetOccupied), "target_occupied"},
+		{fmt.Errorf("wrapped: %w", stacks.ErrProjectTaken), "project_taken"},
 	} {
 		fake := &fakeBackups{cfg: validBackupConfig(), restoreErr: tc.err}
 		env, cookie := newBackupEnv(t, fake)
@@ -340,5 +341,35 @@ func TestRestorePlanAndManifestAPI(t *testing.T) {
 	}
 	if fake.manifestRef != [2]string{"s3", testArchive} {
 		t.Errorf("manifest ref = %v", fake.manifestRef)
+	}
+}
+
+func TestRestoreAPIBadRequestCodes(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		code string
+	}{
+		{backup.ErrFilesRequired, "files_required"},
+		{backup.ErrNothingToRestore, "nothing_to_restore"},
+		{fmt.Errorf("%w: destination \"x\"", backup.ErrBadArchiveRef), "bad_archive_ref"},
+	} {
+		fake := &fakeBackups{cfg: validBackupConfig(), restoreErr: tc.err, planErr: tc.err}
+		env, cookie := newBackupEnv(t, fake)
+		for _, path := range []string{"/api/backups/restore", "/api/backups/restore/plan"} {
+			rec := env.do(t, "POST", path, restoreBody(""), withCookie(cookie))
+			if rec.Code != http.StatusBadRequest || errorCode(t, rec.Body.Bytes()) != tc.code {
+				t.Errorf("%s %v: status = %d: %s, want 400 %s", path, tc.err, rec.Code, rec.Body, tc.code)
+			}
+		}
+	}
+	// A reference the handler rejects itself carries the same code.
+	env, cookie := newBackupEnv(t, &fakeBackups{cfg: validBackupConfig()})
+	rec := env.do(t, "POST", "/api/backups/restore", `{"archive":{"dest":"ftp","name":"x"},"stack":"web","files":true}`, withCookie(cookie))
+	if rec.Code != http.StatusBadRequest || errorCode(t, rec.Body.Bytes()) != "bad_archive_ref" {
+		t.Errorf("handler-rejected ref: %d %s", rec.Code, rec.Body)
+	}
+	rec = env.do(t, "GET", "/api/backups/archives/local/notes.txt/manifest", "", withCookie(cookie))
+	if rec.Code != http.StatusBadRequest || errorCode(t, rec.Body.Bytes()) != "bad_archive_ref" {
+		t.Errorf("manifest ref: %d %s", rec.Code, rec.Body)
 	}
 }

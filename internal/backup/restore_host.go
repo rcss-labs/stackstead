@@ -564,9 +564,10 @@ func (h *hostRestore) checkArchiveManifest(body io.Reader) error {
 	if err != nil {
 		return err
 	}
-	if !m.CreatedAt.Equal(h.manifest.CreatedAt) || m.InstanceID != h.manifest.InstanceID {
-		return fmt.Errorf("%w: archive created %s by instance %q, sidecar says %s by %q", ErrManifestMismatch,
-			m.CreatedAt.UTC().Format(time.RFC3339), m.InstanceID, h.manifest.CreatedAt.UTC().Format(time.RFC3339), h.manifest.InstanceID)
+	// The manifest that drove the restore is either the sidecar or this very
+	// manifest (read by InspectHost), so it is always compared.
+	if err := verifyArchiveManifest(m, h.manifest, true, h.env.Version); err != nil {
+		return err
 	}
 	h.sawManifest = true
 	return nil
