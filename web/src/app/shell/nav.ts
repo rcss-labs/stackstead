@@ -45,10 +45,10 @@ export const SETTINGS: NavEntry = { href: '/settings', label: 'Settings', icon: 
 
 export const NAV: NavEntry[] = [...serverNav(null), SETTINGS];
 
-/** Mobile tab bar: the viewed server's four screens (Storage before Networks), then this server's Settings. */
+/** Mobile tab bar: the viewed server's five screens (Storage before Networks), then this server's Settings. */
 export function tabBarNav(slug: string | null): NavEntry[] {
-  const [stacks, containers, networks, storage] = serverNav(slug);
-  return [stacks, containers, storage, networks, SETTINGS];
+  const [stacks, containers, networks, storage, images] = serverNav(slug);
+  return [stacks, containers, storage, networks, images, SETTINGS];
 }
 
 /** Mobile top bar title: the last breadcrumb, mono when it is an entity name. */
