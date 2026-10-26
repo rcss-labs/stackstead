@@ -51,3 +51,32 @@ func TestServiceSelectionsListMountsWithSizes(t *testing.T) {
 		t.Error("saved selection not returned")
 	}
 }
+
+func TestSaveConfigWithScheduleOnClearsPausedFlag(t *testing.T) {
+	cs, db := newTestConfigStore(t)
+	svc := &Service{Settings: cs}
+	ctx := context.Background()
+	if err := PauseScheduleAfterRestore(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	if paused, err := svc.PausedAfterRestore(ctx); err != nil || !paused {
+		t.Fatalf("PausedAfterRestore = %v, %v; want true after a restore", paused, err)
+	}
+
+	off := defaultConfig()
+	if err := svc.SaveConfig(ctx, off); err != nil {
+		t.Fatal(err)
+	}
+	if paused, _ := svc.PausedAfterRestore(ctx); !paused {
+		t.Error("saving with the schedule still off cleared the flag")
+	}
+
+	on := defaultConfig()
+	on.Schedule.Enabled = true
+	if err := svc.SaveConfig(ctx, on); err != nil {
+		t.Fatal(err)
+	}
+	if paused, _ := svc.PausedAfterRestore(ctx); paused {
+		t.Error("turning the schedule on kept the paused flag")
+	}
+}

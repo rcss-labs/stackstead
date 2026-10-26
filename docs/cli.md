@@ -227,7 +227,7 @@ file in the data directory. They never create or migrate the database; only
 | `admin metrics-token status\|rotate\|clear` | online-safe | manage the `/metrics` token |
 | `upgrade [--check] [--version vX.Y.Z] [--force] [--yes] [--base-url URL] [-o json]` | any | download the release, verify it against `SHA256SUMS` and run the native installer; `--check` only reports; see [Upgrading](#upgrading) |
 
-`serve` and `db restore` take an exclusive lock on `<data_dir>/stackstead.lock`.
+`serve`, `db restore` and `restore` take an exclusive lock on `<data_dir>/stackstead.lock`.
 The other admin commands do not take it, so **do not run them while a
 `db restore` is in progress**.
 
@@ -237,6 +237,32 @@ any time. To restore: `sudo systemctl stop stackstead`, then
 start the service. The restored database is a self-contained copy (any WAL
 content is folded in), and the previous one is kept next to it as
 `stackstead.db.bak-<UTC timestamp>`. Sessions are whatever the backup holds.
+
+**Whole-host restore.** `stackstead restore <s3://bucket/key | path>` restores a
+whole-host backup archive (database, stack files, volumes, images) on a host
+where the server is stopped, for example a fresh machine:
+
+```bash
+sudo systemctl stop stackstead
+export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...   # only for an s3:// source
+sudo -u stackstead -E stackstead restore s3://my-bucket/host/stackstead-2026-10-26.tar.gz --s3-region eu-west-1
+sudo systemctl start stackstead
+```
+
+Flags: `--yes` skips the confirmation (required when stdin is not a terminal,
+else exit 2), `--no-start` leaves the stacks that were running stopped,
+`--s3-endpoint URL`, `--s3-region R` and `--s3-path-style` configure an
+S3-compatible store. S3 keys are read only from `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY`, never from flags, and are never printed. The command
+prints the archive summary and the existing volumes, networks, containers and
+stack directories it would overwrite, recreate or keep, asks once, restores, and
+installs the restored database right away (the old one is kept as
+`stackstead.db.bak-<UTC timestamp>`). The stacks start when the server next
+starts. The backup schedule is turned off in the restored database, and the UI
+says so until you turn it back on. Exit codes: 5 while the server runs (or a
+restore is already pending), 6 for an archive from a newer Stackstead or a
+damaged one, 9 when some items failed to restore (the database is still
+installed; the failed items are listed), 2 for a bad source or missing S3 keys.
 
 **Forgot the admin password.**
 

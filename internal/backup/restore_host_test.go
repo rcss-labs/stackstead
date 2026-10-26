@@ -1020,3 +1020,20 @@ func TestHostRestoreRefusesBindCoveringRootsStacksOrData(t *testing.T) {
 		})
 	}
 }
+
+func TestHostRestoreSaysItWaitsForRestartOnlyWhenDeferred(t *testing.T) {
+	for _, deferred := range []bool{true, false} {
+		s := newHostSetup(t)
+		var lines []string
+		s.env.Out = func(l string) { lines = append(lines, l) }
+		s.env.Deferred = deferred
+		path := s.fixture.build(t, t.TempDir(), false)
+		if _, err := s.restore(t, path); err != nil {
+			t.Fatal(err)
+		}
+		said := strings.Contains(strings.Join(lines, "\n"), "completes when Stackstead restarts")
+		if said != deferred {
+			t.Errorf("Deferred=%v: said restart line = %v (lines %q)", deferred, said, lines)
+		}
+	}
+}

@@ -368,7 +368,7 @@ func runServer(ctx context.Context, env *Env, args []string, restart *atomic.Boo
 
 	hostRestorer := backup.HostRestorer{Env: backup.HostEnv{
 		Engine: dockerEngine, DataDir: cfg.DataDir, AllowedRoots: cfg.AllowedRoots,
-		Version: version.Version, HTTP: backupHTTP,
+		Version: version.Version, HTTP: backupHTTP, Deferred: true,
 	}}
 	restartRequested := make(chan struct{})
 	var restartOnce sync.Once

@@ -25,6 +25,7 @@ type fakeBackups struct {
 	trigger  string
 	selected backup.StackSelection
 	unknown  bool
+	paused   bool
 
 	restoreReq  backup.StackRestoreRequest
 	restoreUser string
@@ -94,7 +95,8 @@ func (f *fakeBackups) Runs(context.Context, int) ([]backup.Run, error) {
 func (f *fakeBackups) Archives(context.Context) ([]backup.ArchiveRef, error) {
 	return []backup.ArchiveRef{{Dest: "local", Name: "a.tar.gz", HostSlug: "h", CreatedAt: time.Unix(1, 0).UTC(), Size: 5}}, nil
 }
-func (f *fakeBackups) NextRun(context.Context) (time.Time, bool) { return time.Time{}, false }
+func (f *fakeBackups) PausedAfterRestore(context.Context) (bool, error) { return f.paused, nil }
+func (f *fakeBackups) NextRun(context.Context) (time.Time, bool)        { return time.Time{}, false }
 
 func newBackupEnv(t *testing.T, fake *fakeBackups) (*testEnv, *http.Cookie) {
 	t.Helper()
@@ -122,14 +124,14 @@ func TestBackupConfigNeverReturnsSecret(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "hunter2") || strings.Contains(rec.Body.String(), "redacted") {
 		t.Errorf("body leaks the secret: %s", rec.Body)
 	}
-	var got map[string]map[string]any
+	var got map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got["s3"]["secretKeySet"] != true {
-		t.Errorf("secretKeySet = %v, want true", got["s3"]["secretKeySet"])
+	if got["s3"].(map[string]any)["secretKeySet"] != true {
+		t.Errorf("secretKeySet = %v, want true", got["s3"])
 	}
-	if _, present := got["s3"]["secretKey"]; present {
+	if _, present := got["s3"].(map[string]any)["secretKey"]; present {
 		t.Error("response has a secretKey field")
 	}
 }
@@ -235,6 +237,20 @@ func TestBackupStacksRunsArchivesAndSelection(t *testing.T) {
 	fake.unknown = true
 	if rec = env.do(t, "PUT", "/api/backups/stacks/nope", `{}`, withCookie(cookie)); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown stack status = %d", rec.Code)
+	}
+}
+
+func TestBackupConfigReportsPausedAfterRestore(t *testing.T) {
+	for _, paused := range []bool{true, false} {
+		env, cookie := newBackupEnv(t, &fakeBackups{cfg: validBackupConfig(), paused: paused})
+		rec := env.do(t, "GET", "/api/backups/config", "", withCookie(cookie))
+		var got map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got["pausedAfterRestore"] != paused {
+			t.Errorf("pausedAfterRestore = %v, want %v (body %s)", got["pausedAfterRestore"], paused, rec.Body)
+		}
 	}
 }
 

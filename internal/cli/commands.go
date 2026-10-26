@@ -15,7 +15,7 @@ func rootCommand() *Command {
 		loginCommand(), logoutCommand(), contextCommand(), whoamiCommand(), statusCommand(),
 		stacksCommand(), opsCommand(), logsCommand(), execCommand(), metricsCommand(), eventsCommand(),
 		networksCommand(), storageCommand(), imagesCommand(), settingsCommand())
-	add("Host admin", configCommand(), dbCommand(), adminCommand(), healthCommand(), upgradeCommand(), backupCommand())
+	add("Host admin", configCommand(), dbCommand(), adminCommand(), healthCommand(), upgradeCommand(), backupCommand(), restoreCommand())
 	return &Command{
 		Name:  "stackstead",
 		Short: "Stackstead: manage Docker Compose stacks",
