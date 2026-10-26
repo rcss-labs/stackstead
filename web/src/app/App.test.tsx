@@ -665,6 +665,7 @@ it('every route is lazy except the overview', () => {
     '/containers',
     '/containers/:name',
     '/networks',
+    '/networks/:name',
     '/storage',
     '/storage/images/:id',
     '/storage/volumes/:name',

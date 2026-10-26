@@ -1,0 +1,96 @@
+.card {
+  overflow-x: auto;
+  padding: 24px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.diagram {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: max-content;
+  margin: 0 auto;
+}
+
+.pill {
+  padding: 6px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.pill[data-warning='true'] { border-color: var(--warning); color: var(--warning); }
+
+.dash { width: 0; height: 22px; border-left: 1px dashed var(--border-strong); }
+.dash[data-warning='true'] { border-color: var(--warning); }
+.solid { width: 2px; height: 22px; background: var(--border-strong); }
+
+.node {
+  padding: 8px 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-xs);
+  background: var(--accent-soft);
+  text-align: center;
+  font-family: var(--mono);
+}
+.nodeName { font-size: 12.5px; font-weight: 600; }
+.nodeSub { font-size: 11px; color: var(--muted); }
+
+.bus { display: flex; align-items: flex-start; }
+.column { display: flex; flex-direction: column; align-items: center; }
+/* Each column draws the bus halves that reach its neighbours, so it spans first centre to last centre. */
+.rail { position: relative; align-self: stretch; height: 2px; }
+.rail::before,
+.rail::after { content: ''; position: absolute; top: 0; height: 2px; background: var(--border-strong); }
+.rail::before { left: 0; right: 50%; }
+.rail::after { left: 50%; right: 0; }
+.column[data-first='true'] .rail::before,
+.column[data-last='true'] .rail::after { display: none; }
+.drop { width: 2px; height: 20px; background: var(--border-strong); }
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 170px;
+  margin: 0 10px;
+  padding: 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-xs);
+}
+
+.container {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: 7px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--mono);
+}
+.container:hover { background: var(--hover); }
+.container[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--bg);
+}
+.containerName { font-size: 12px; font-weight: 500; }
+.ip { grid-column: 2; font-size: 11px; color: var(--faint); }
+
+/* Phones: groups stack under the network node on one vertical trunk, so the diagram never runs past the screen. */
+@media (max-width: 759px) {
+  .card { padding: 20px 12px; }
+  .diagram { min-width: 0; }
+  .bus { flex-direction: column; align-items: stretch; align-self: stretch; }
+  .column { align-items: stretch; }
+  .rail { display: none; }
+  .drop { align-self: center; }
+  .group { margin: 0; min-width: 0; }
+  .containerName { overflow-wrap: anywhere; }
+}

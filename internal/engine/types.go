@@ -94,6 +94,8 @@ type ContainerInspect struct {
 type Network struct {
 	ID, Name, Driver, Scope string
 	Internal                bool
+	Attachable, IPv6        bool
+	Created                 time.Time // zero when Docker reports none or an unparsable value
 	Subnets                 []Subnet
 	Options, Labels         map[string]string
 	Containers              []NetworkEndpoint // populated only by InspectNetwork
@@ -109,7 +111,7 @@ func (n Network) Parent() string { return n.Options["parent"] }
 func (n Network) IPvlanMode() string { return n.Options["ipvlan_mode"] }
 
 // NetworkEndpoint is one container attached to a network.
-type NetworkEndpoint struct{ ID, Name, IPv4 string }
+type NetworkEndpoint struct{ ID, Name, IPv4, MAC string }
 
 // NetworkSpec is the configuration sent when creating a Docker network.
 type NetworkSpec struct {
@@ -155,15 +157,21 @@ type apiNetwork struct {
 	ID                  string `json:"Id"`
 	Name, Driver, Scope string
 	Internal            bool
+	Attachable          bool
+	EnableIPv6          bool
+	Created             string
 	Options, Labels     map[string]string
 	IPAM                struct {
 		Config []struct{ Subnet, Gateway, IPRange string }
 	}
-	Containers map[string]struct{ Name, IPv4Address string }
+	Containers map[string]struct{ Name, IPv4Address, MacAddress string }
 }
 
 func (r apiNetwork) toNetwork() Network {
-	n := Network{ID: r.ID, Name: r.Name, Driver: r.Driver, Scope: r.Scope, Internal: r.Internal, Options: r.Options, Labels: r.Labels}
+	n := Network{ID: r.ID, Name: r.Name, Driver: r.Driver, Scope: r.Scope, Internal: r.Internal, Attachable: r.Attachable, IPv6: r.EnableIPv6, Options: r.Options, Labels: r.Labels}
+	if created, err := time.Parse(time.RFC3339Nano, r.Created); err == nil && created.Year() > 1 {
+		n.Created = created.UTC()
+	}
 	if n.Options == nil {
 		n.Options = make(map[string]string)
 	}

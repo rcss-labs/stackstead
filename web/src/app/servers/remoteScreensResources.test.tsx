@@ -104,7 +104,7 @@ describe('connected server: containers, networks and storage', () => {
 
   it('networks list loads from the peer', async () => {
     mount('/s/mini-02/networks');
-    await screen.findByText('1 network');
+    await screen.findByText(/^1 network · /);
     expect(hitRemote('GET', '/networks')).toBe(true);
     expect(hitLocal('/api/networks')).toBe(false);
   });

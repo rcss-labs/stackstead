@@ -41,6 +41,7 @@ from connected servers also carry a `"code"`; see [Connected servers](#connected
 | `POST /api/containers/{id}/{start\|stop\|restart}` | act on a container outside the registered stacks; returns its row (200) |
 | `GET /api/containers/{id}/exec` | WebSocket: a shell or command inside a running container; see [Container exec](#container-exec) |
 | `GET /api/networks`, `POST /api/networks` | list Docker networks; create a bridge, macvlan or ipvlan network (201); see [Networks](#networks) |
+| `POST /api/networks/{id}/connect`, `POST /api/networks/{id}/disconnect`, `POST /api/networks/prune` | attach or detach a container (204); remove unused networks (200); see [Networks](#networks) |
 | `DELETE /api/networks/{id}` | remove an unused, unmanaged network (204), by ID or name |
 | `GET /api/host/interfaces` | IPv4 host interfaces for LAN network setup; see [Networks](#networks) |
 | `GET /api/events` | container changes and Docker container events as they happen (SSE) |
@@ -914,9 +915,16 @@ log (see [Security](security.md#container-exec)).
 `GET /api/networks` returns an array, cached for 2 seconds. Each network has
 `id` (12 hexadecimal characters), `name`, `driver`, `scope`, `subnets`,
 `gateways`, `ipRange`, `parent`, `ipvlanMode`, `internal`, `builtin`, `project`,
-`stack` and `containers`. The arrays are never null; `gateways[i]` corresponds
-to `subnets[i]`. Each container has `name` and `ipv4` (a bare IPv4 address,
-or an empty string when unavailable).
+`stack`, `containers`, `fullId` (the full 64-character ID), `attachable`,
+`ipv6` and `created` (RFC 3339 UTC, or an empty string when Docker reports
+none). The arrays are never null; `gateways[i]` corresponds
+to `subnets[i]`. Each container has `name`, `ipv4` (a bare IPv4 address,
+or an empty string when unavailable), `id` (12 hexadecimal characters), `mac`
+(empty when none), `stack` (the registered stack owning its Compose project,
+else the project name, else empty), `state`, `health` and `exitCode` (null
+when unknown). `stack`, `state`, `health` and `exitCode` come from the
+container list; if that is unavailable the network list still succeeds and
+those fields are empty or null.
 `builtin` identifies Docker's `bridge`, `host` and `none` networks. `project`
 is the Compose project label, or an empty string; `stack` is the registered
 Stackstead stack owning that project, or an empty string. Successful creates
@@ -941,6 +949,18 @@ hexadecimal ID prefix and returns 204. Removal refuses built-in networks,
 networks belonging to a registered stack, and networks with attached
 containers (409, with the stack or container names in the error). These
 checks run on the server against fresh Docker state.
+
+`POST /api/networks/{id}/connect` and `POST /api/networks/{id}/disconnect`
+take `{"container": "<name or id>"}` and return 204. The network is resolved
+like removal. Connect is refused with 409 for `host` and `null` networks
+(`containers can't join the <name> network at runtime`); disconnect is not
+forced. An empty `container` is 400, an unknown network is 404, and Docker
+refusals return 409 (or 404 when Docker reports a missing container) with
+Docker's message.
+
+`POST /api/networks/prune` removes all unused networks and returns 200
+`{"removed": [...]}`: the sorted names, never null. All three invalidate the
+network and container caches.
 
 Validation returns 400 `{error, fields}`. Duplicate names and Docker
 conflicts return 409; other Docker create refusals return 400 with Docker's

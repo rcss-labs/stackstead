@@ -45,6 +45,8 @@ function localBreadcrumb(path: string): Crumb[] {
   if (path === '/stacks/new') return [stacks, { label: 'New stack' }];
   if (path === '/stacks/import') return [stacks, { label: 'Import' }];
   if (path === '/networks') return [{ label: 'Networks' }];
+  const network = /^\/networks\/([^/]+)$/.exec(path);
+  if (network) return [{ label: 'Networks', href: '/networks' }, { label: decode(network[1]), mono: true }];
   if (path === '/containers') return [{ label: 'Containers' }];
   const container = /^\/containers\/([^/]+)$/.exec(path);
   if (container) return [containers, { label: decode(container[1]), mono: true }];

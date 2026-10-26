@@ -208,9 +208,71 @@ func TestInspectNetworkDecodes(t *testing.T) {
 	if got.Name != "lan" || got.Scope != "local" || got.Parent() != "enp3s0" || got.Project() != "dns" || len(got.Subnets) != 1 {
 		t.Fatalf("network = %+v", got)
 	}
-	want := []NetworkEndpoint{{ID: "aaa", Name: "alpha", IPv4: "192.168.0.30"}, {ID: "bbb", Name: "zebra", IPv4: ""}}
+	want := []NetworkEndpoint{{ID: "aaa", Name: "alpha", IPv4: "192.168.0.30", MAC: "02:42:c0:a8:00:1e"}, {ID: "bbb", Name: "zebra", IPv4: ""}}
 	if !reflect.DeepEqual(got.Containers, want) {
 		t.Errorf("containers = %+v", got.Containers)
+	}
+}
+
+func TestInspectNetworkDecodesFlags(t *testing.T) {
+	sock := serve(t, fileHandler(t, map[string]string{"/v1.41/networks/lan": "inspect_network.json"}))
+	got, err := New(sock, time.Second).InspectNetwork(ctx(t), "lan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Attachable || !got.IPv6 || !got.Created.Equal(time.Date(2026, 10, 1, 6, 0, 0, 123456789, time.UTC)) {
+		t.Fatalf("attachable=%v ipv6=%v created=%v", got.Attachable, got.IPv6, got.Created)
+	}
+}
+
+func TestConnectDisconnectNetworkSendBody(t *testing.T) {
+	for _, tc := range []struct {
+		action string
+		call   func(*Client) error
+		want   map[string]any
+	}{
+		{"connect", func(c *Client) error { return c.ConnectNetwork(ctx(t), "net1", "web-1") }, map[string]any{"Container": "web-1"}},
+		{"disconnect", func(c *Client) error { return c.DisconnectNetwork(ctx(t), "net1", "web-1") }, map[string]any{"Container": "web-1", "Force": false}},
+	} {
+		t.Run(tc.action, func(t *testing.T) {
+			sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var got map[string]any
+				_ = json.NewDecoder(r.Body).Decode(&got)
+				if r.Method != http.MethodPost || r.URL.Path != "/v1.41/networks/net1/"+tc.action || !reflect.DeepEqual(got, tc.want) {
+					t.Errorf("request = %s %s %#v", r.Method, r.URL.Path, got)
+				}
+			}))
+			if err := tc.call(New(sock, time.Second)); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestConnectNetworkNotFound(t *testing.T) {
+	sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		w.Write([]byte(`{"message":"No such container: x"}`))
+	}))
+	err := New(sock, time.Second).ConnectNetwork(ctx(t), "net1", "x")
+	var ae *ActionError
+	if !errors.As(err, &ae) || ae.Message != "No such container: x" || !errors.Is(err, ErrNetworkNotFound) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestPruneNetworksDecodesDeleted(t *testing.T) {
+	for body, want := range map[string][]string{`{"NetworksDeleted":["a","b"]}`: {"a", "b"}, `{"NetworksDeleted":null}`: {}} {
+		sock := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost || r.URL.Path != "/v1.41/networks/prune" {
+				t.Errorf("request = %s %s", r.Method, r.URL.Path)
+			}
+			w.Write([]byte(body))
+		}))
+		got, err := New(sock, time.Second).PruneNetworks(ctx(t))
+		if err != nil || got == nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: got %#v err %v", body, got, err)
+		}
 	}
 }
 
