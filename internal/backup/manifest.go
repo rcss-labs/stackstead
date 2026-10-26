@@ -47,6 +47,9 @@ type ManifestStack struct {
 	Volumes     []ManifestVolume `json:"volumes"`
 	Images      []string         `json:"images"`
 	LiveCopy    bool             `json:"liveCopy"`
+	// Networks lists the Stackstead-created networks the stack's containers
+	// were attached to.
+	Networks []string `json:"networks,omitempty"`
 }
 
 // ManifestVolume describes one volume or bind mount of a stack.
