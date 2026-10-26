@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -67,9 +68,11 @@ func syncFile(path string) error {
 
 // ApplyPending finishes a host restore at startup, before the database is
 // opened: it swaps the staged database in (keeping the old one as a .bak),
-// pauses the backup schedule in it, removes the staged files and returns the
-// marker for the post-start work. Without a marker it returns nil, nil. It is
-// safe to run again after a crash part-way through.
+// removes the staged files and returns the marker for the post-start work.
+// When the returned PauseSchedule is set, the caller runs
+// PauseScheduleAfterRestore once the server has migrated the database.
+// Without a marker it returns nil, nil. It is safe to run again after a crash
+// part-way through.
 func ApplyPending(dataDir string, now time.Time) (*Pending, error) {
 	dir := restoreDir(dataDir)
 	markerPath := filepath.Join(dir, pendingFile)
@@ -99,11 +102,6 @@ func ApplyPending(dataDir string, now time.Time) (*Pending, error) {
 	default:
 		return nil, fmt.Errorf("install restored database: %w", err)
 	}
-	if p.PauseSchedule {
-		if err := pauseSchedule(current); err != nil {
-			return nil, err
-		}
-	}
 	for _, name := range []string{staged + "-wal", staged + "-shm", markerPath} {
 		if err := os.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("remove staged restore files: %w", err)
@@ -115,15 +113,10 @@ func ApplyPending(dataDir string, now time.Time) (*Pending, error) {
 	return &p, nil
 }
 
-// pauseSchedule turns the backup schedule off in the restored database and
-// flags it for the UI, so a clone does not write over the old host's archives.
-func pauseSchedule(dbPath string) error {
-	ctx := context.Background()
-	db, err := store.OpenExisting(dbPath, store.OpenOptions{AllowOlderSchema: true})
-	if err != nil {
-		return fmt.Errorf("pause backup schedule: %w", err)
-	}
-	defer db.Close()
+// PauseScheduleAfterRestore turns the backup schedule off in a restored
+// database and flags it for the UI, so a clone does not write over the old
+// host's archives. db must already be migrated (store.Open).
+func PauseScheduleAfterRestore(ctx context.Context, db *sql.DB) error {
 	cs := NewConfigStore(db)
 	cfg, err := cs.Load(ctx)
 	if err != nil {

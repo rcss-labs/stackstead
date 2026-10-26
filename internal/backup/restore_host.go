@@ -3,6 +3,8 @@ package backup
 import (
 	"archive/tar"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,6 +26,11 @@ import (
 var (
 	// ErrArchiveDamaged reports an archive that is truncated or malformed.
 	ErrArchiveDamaged = errors.New("backup: archive is damaged or incomplete")
+	// ErrManifestMismatch reports a sidecar that does not describe the archive.
+	ErrManifestMismatch = errors.New("backup: the manifest sidecar does not match the archive")
+	// ErrConflictsChanged refuses a restore when the host changed after the
+	// user confirmed the conflicts.
+	ErrConflictsChanged = errors.New("backup: existing Docker state changed since it was confirmed; inspect the archive again")
 	// ErrRestorePending refuses a restore while an earlier one awaits a restart.
 	ErrRestorePending = errors.New("backup: a host restore is already pending; restart Stackstead to finish it")
 )
@@ -32,6 +40,7 @@ const (
 	entryDB       = "base/stackstead.db"
 	entryConfig   = "base/config.yaml"
 	entryNetworks = "base/networks.json"
+	basePrefix    = "base/"
 	stacksPrefix  = "base/stacks/"
 	libraryPrefix = "base/images-library/"
 	volumesPrefix = "volumes/"
@@ -47,6 +56,17 @@ const (
 	SourceS3     = "s3"
 	SourcePath   = "path"
 	SourceUpload = "upload"
+)
+
+// Conflict kinds and actions.
+const (
+	conflictVolume    = "volume"
+	conflictNetwork   = "network"
+	conflictContainer = "container"
+	conflictStackDir  = "stack-dir"
+	actionOverwrite   = "overwrite"
+	actionRecreate    = "recreate"
+	actionKeep        = "keep"
 )
 
 // HostSource is where a whole-host archive comes from. For S3, Key is the full
@@ -70,12 +90,14 @@ type HostEnv struct {
 	HTTP *http.Client
 }
 
-// Conflict is existing Docker or filesystem state a host restore replaces.
+// Conflict is existing Docker or filesystem state a host restore meets.
 type Conflict struct {
 	// Kind is "volume", "network", "container" or "stack-dir".
 	Kind string `json:"kind"`
 	Name string `json:"name"`
-	// Action is "overwrite" or "recreate".
+	// Action is "overwrite" (volume contents, stack files), "recreate"
+	// (containers, by compose at start) or "keep" (an existing network is
+	// used as it is).
 	Action string `json:"action"`
 }
 
@@ -83,6 +105,9 @@ type Conflict struct {
 type HostSummary struct {
 	Manifest  Manifest   `json:"manifest"`
 	Conflicts []Conflict `json:"conflicts"`
+	// ConflictsDigest identifies Conflicts. The user confirms them once and
+	// RestoreHost requires the digest back.
+	ConflictsDigest string `json:"conflictsDigest"`
 }
 
 // HostReport lists the outcome of every restored item.
@@ -155,10 +180,11 @@ func damaged(err error) error {
 	return fmt.Errorf("%w: %w", ErrArchiveDamaged, err)
 }
 
-// InspectHost reads the manifest of a whole-host archive (from the sidecar
-// when there is one, otherwise by reading the archive to its end) and lists
-// what already exists on this host. It refuses an archive from a newer
-// Stackstead. It changes nothing.
+// InspectHost reads the manifest of a whole-host archive and lists what
+// already exists on this host. With a sidecar it reads only the base/ section
+// of the archive (for networks.json); without one it reads the archive to its
+// end for manifest.json, which also proves the archive is complete. It
+// refuses an archive from a newer Stackstead. It changes nothing.
 func InspectHost(ctx context.Context, src HostSource, env HostEnv) (HostSummary, error) {
 	m, haveManifest := readHostSidecar(ctx, src, env.HTTP)
 	if haveManifest {
@@ -184,20 +210,20 @@ func InspectHost(ctx context.Context, src HostSource, env HostEnv) (HostSummary,
 		if err != nil {
 			return HostSummary{}, damaged(err)
 		}
-		switch {
-		case hdr.Name == entryNetworks:
+		// With a sidecar, only base/ is needed: networks.json lives there.
+		if haveManifest && !strings.HasPrefix(hdr.Name, basePrefix) {
+			break
+		}
+		switch hdr.Name {
+		case entryNetworks:
 			if specs, err = decodeNetworks(body); err != nil {
 				return HostSummary{}, err
 			}
-		case hdr.Name == ManifestEntryName && !haveManifest:
-			if err := json.NewDecoder(io.LimitReader(body, maxSmallJSON)).Decode(&m); err != nil {
-				return HostSummary{}, damaged(fmt.Errorf("read manifest: %w", err))
+		case ManifestEntryName:
+			if m, err = decodeArchiveManifest(body); err != nil {
+				return HostSummary{}, err
 			}
 			haveManifest = true
-		}
-		// With a sidecar, only the small base files at the front are needed.
-		if haveManifest && pastBaseFiles(hdr.Name) {
-			break
 		}
 	}
 	if !haveManifest {
@@ -206,17 +232,19 @@ func InspectHost(ctx context.Context, src HostSource, env HostEnv) (HostSummary,
 	if err := checkManifest(m, env.Version); err != nil {
 		return HostSummary{}, err
 	}
-	conflicts, err := hostConflicts(ctx, env.Engine, m, specs)
+	conflicts, err := hostConflicts(ctx, env, m, specs)
 	if err != nil {
 		return HostSummary{}, err
 	}
-	return HostSummary{Manifest: m, Conflicts: conflicts}, nil
+	return HostSummary{Manifest: m, Conflicts: conflicts, ConflictsDigest: conflictsDigest(conflicts)}, nil
 }
 
-// pastBaseFiles reports whether name lies beyond the top-level base files
-// (database, config and networks), which always come first.
-func pastBaseFiles(name string) bool {
-	return name != entryDB && name != entryConfig && name != entryNetworks
+func decodeArchiveManifest(body io.Reader) (Manifest, error) {
+	var m Manifest
+	if err := json.NewDecoder(io.LimitReader(body, maxSmallJSON)).Decode(&m); err != nil {
+		return Manifest{}, damaged(fmt.Errorf("read manifest: %w", err))
+	}
+	return m, nil
 }
 
 func decodeNetworks(body io.Reader) ([]engine.NetworkSpec, error) {
@@ -227,22 +255,68 @@ func decodeNetworks(body io.Reader) ([]engine.NetworkSpec, error) {
 	return specs, nil
 }
 
-func hostConflicts(ctx context.Context, eng Engine, m Manifest, specs []engine.NetworkSpec) ([]Conflict, error) {
+// conflictsDigest is a sha256 over the sorted conflicts.
+func conflictsDigest(conflicts []Conflict) string {
+	sorted := slices.Clone(conflicts)
+	slices.SortFunc(sorted, func(a, b Conflict) int {
+		return strings.Compare(a.Kind+"\x00"+a.Name+"\x00"+a.Action, b.Kind+"\x00"+b.Name+"\x00"+b.Action)
+	})
+	h := sha256.New()
+	for _, c := range sorted {
+		fmt.Fprintf(h, "%s\x00%s\x00%s\n", c.Kind, c.Name, c.Action)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// pathInsideRoots reports whether p lies inside an allowed root, both as
+// written and with symlinks resolved as far as p exists.
+func pathInsideRoots(p string, roots []string) bool {
+	if !underAnyRoot(p, roots) {
+		return false
+	}
+	resolved, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return true // nothing there yet to follow
+	}
+	return underAnyRoot(resolved, resolvedRoots(roots))
+}
+
+func resolvedRoots(roots []string) []string {
+	out := make([]string, 0, len(roots))
+	for _, r := range roots {
+		if resolved, err := filepath.EvalSymlinks(r); err == nil {
+			out = append(out, resolved)
+		} else {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// hostConflicts lists existing state the restore meets. Paths outside the
+// allowed roots are never looked at: they are not restored.
+func hostConflicts(ctx context.Context, env HostEnv, m Manifest, specs []engine.NetworkSpec) ([]Conflict, error) {
+	eng := env.Engine
 	var out []Conflict
 	projects := map[string]bool{}
 	for _, s := range m.Stacks {
 		projects[s.Project] = true
 		for _, v := range s.Volumes {
-			if v.Kind == "bind" {
-				if _, err := os.Stat(v.Name); err == nil {
-					out = append(out, Conflict{Kind: "volume", Name: v.Name, Action: "overwrite"})
+			if failedInManifest(m, conflictVolume, s.Name, v.Name) {
+				continue
+			}
+			if v.Kind == volumeKindBind {
+				if pathInsideRoots(v.Name, env.AllowedRoots) {
+					if _, err := os.Stat(v.Name); err == nil {
+						out = append(out, Conflict{Kind: conflictVolume, Name: v.Name, Action: actionOverwrite})
+					}
 				}
 				continue
 			}
 			_, err := eng.InspectVolume(ctx, v.Name)
 			switch {
 			case err == nil:
-				out = append(out, Conflict{Kind: "volume", Name: v.Name, Action: "overwrite"})
+				out = append(out, Conflict{Kind: conflictVolume, Name: v.Name, Action: actionOverwrite})
 			case !errors.Is(err, engine.ErrVolumeNotFound):
 				return nil, fmt.Errorf("inspect volume %s: %w", v.Name, err)
 			}
@@ -259,7 +333,7 @@ func hostConflicts(ctx context.Context, eng Engine, m Manifest, specs []engine.N
 		}
 		for _, s := range specs {
 			if existing[s.Name] {
-				out = append(out, Conflict{Kind: "network", Name: s.Name, Action: "recreate"})
+				out = append(out, Conflict{Kind: conflictNetwork, Name: s.Name, Action: actionKeep})
 			}
 		}
 	}
@@ -269,7 +343,7 @@ func hostConflicts(ctx context.Context, eng Engine, m Manifest, specs []engine.N
 	}
 	for _, c := range containers {
 		if p := c.Project(); p != "" && projects[p] {
-			out = append(out, Conflict{Kind: "container", Name: c.Name, Action: "recreate"})
+			out = append(out, Conflict{Kind: conflictContainer, Name: c.Name, Action: actionRecreate})
 		}
 	}
 	for _, s := range m.Stacks {
@@ -277,25 +351,43 @@ func hostConflicts(ctx context.Context, eng Engine, m Manifest, specs []engine.N
 			continue
 		}
 		dir := filepath.Dir(s.ComposePath)
+		if !pathInsideRoots(dir, env.AllowedRoots) {
+			continue
+		}
 		if _, err := os.Stat(dir); err == nil {
-			out = append(out, Conflict{Kind: "stack-dir", Name: dir, Action: "overwrite"})
+			out = append(out, Conflict{Kind: conflictStackDir, Name: dir, Action: actionOverwrite})
 		}
 	}
 	return out, nil
 }
 
+// failedInManifest reports whether the backup recorded the item as failed.
+func failedInManifest(m Manifest, kind, stack, name string) bool {
+	return slices.ContainsFunc(m.Items, func(it ItemResult) bool {
+		return it.Kind == kind && it.Stack == stack && it.Name == name && it.Status == itemFailed
+	})
+}
+
 // RestoreHost restores a whole-host archive in one streaming pass: it stages
 // and verifies the database, writes each stack's files to its original path
-// (skipping paths outside the allowed roots), recreates missing networks,
+// (skipping paths outside the allowed roots), creates missing networks,
 // refills volumes and loads images, and finally writes the pending marker
 // that ApplyPending acts on at the next start. The live database is never
-// touched. Any error before stack files are written leaves the host as it was.
-// Existing volumes listed by InspectHost are overwritten; existing networks
-// are kept as they are.
-func RestoreHost(ctx context.Context, src HostSource, env HostEnv, startStacks bool) (HostReport, error) {
+// touched.
+//
+// confirmedDigest is the ConflictsDigest the user confirmed; a fresh
+// inspection that differs refuses the restore before anything changes. Any
+// error before stack files are written leaves the host as it was. With a
+// sidecar there is no full pre-scan, so an archive damaged after the stack
+// files fails the restore with those files (and anything restored before the
+// damage) already in place; no pending marker is written then.
+func RestoreHost(ctx context.Context, src HostSource, env HostEnv, startStacks bool, confirmedDigest string) (HostReport, error) {
 	sum, err := InspectHost(ctx, src, env)
 	if err != nil {
 		return HostReport{}, err
+	}
+	if sum.ConflictsDigest != confirmedDigest {
+		return HostReport{}, ErrConflictsChanged
 	}
 	dir := restoreDir(env.DataDir)
 	if _, err := os.Stat(filepath.Join(dir, pendingFile)); err == nil {
@@ -325,7 +417,8 @@ func RestoreHost(ctx context.Context, src HostSource, env HostEnv, startStacks b
 	}
 	h := &hostRestore{
 		ctx: ctx, env: env, r: r, manifest: sum.Manifest, dir: dir,
-		stacks: map[string]*stackTarget{}, volumesSeen: map[string]bool{}, networksDone: map[string]bool{},
+		stacks: map[string]*stackTarget{}, roots: map[string]*os.Root{},
+		volumesSeen: map[string]bool{}, networksDone: map[string]bool{},
 	}
 	defer h.closeRoots()
 	if err := h.run(); err != nil {
@@ -349,7 +442,6 @@ type stackTarget struct {
 	dir     string
 	skipped string // reason the stack is not restored, "" when it is
 	root    *os.Root
-	seen    bool
 	failed  []ItemResult
 }
 
@@ -361,9 +453,11 @@ type hostRestore struct {
 	dir          string
 	stacks       map[string]*stackTarget
 	order        []string
+	roots        map[string]*os.Root // allowed root (or the data dir) -> its os.Root
 	library      *os.Root
 	libraryItems []ItemResult
 	librarySeen  bool
+	dbStaged     bool
 	networks     []engine.NetworkSpec
 	networksDone map[string]bool
 	pastStacks   bool
@@ -381,19 +475,6 @@ func (h *hostRestore) out(line string) {
 }
 
 func (h *hostRestore) run() error {
-	hdr, body, err := h.r.Next()
-	if errors.Is(err, io.EOF) {
-		return damaged(errors.New("archive is empty"))
-	}
-	if err != nil {
-		return damaged(err)
-	}
-	if hdr.Name != entryDB {
-		return damaged(fmt.Errorf("archive starts with %q, not %s", hdr.Name, entryDB))
-	}
-	if err := h.stageDatabase(body); err != nil {
-		return err
-	}
 	for {
 		hdr, body, err := h.r.Next()
 		if errors.Is(err, io.EOF) {
@@ -406,10 +487,86 @@ func (h *hostRestore) run() error {
 			return err
 		}
 	}
+	if !h.dbStaged {
+		return damaged(fmt.Errorf("%s is missing", entryDB))
+	}
 	if !h.sawManifest {
 		return damaged(errors.New("manifest.json is missing"))
 	}
 	h.createNetworks()
+	return nil
+}
+
+// needsDatabase reports entries that change the host, which may only come
+// after the database has been staged and verified.
+func needsDatabase(name string) bool {
+	for _, p := range []string{stacksPrefix, libraryPrefix, volumesPrefix, imagesPrefix} {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *hostRestore) entry(hdr *tar.Header, body io.Reader) error {
+	name := hdr.Name
+	if needsDatabase(name) && !h.dbStaged {
+		return damaged(fmt.Errorf("%q comes before %s", name, entryDB))
+	}
+	switch {
+	case name == ManifestEntryName:
+		return h.checkArchiveManifest(body)
+	case name == entryDB:
+		if h.dbStaged {
+			return damaged(errors.New("archive holds a second database"))
+		}
+		return h.stageDatabase(body)
+	case name == entryConfig:
+		return h.stageConfig(body)
+	case name == entryNetworks:
+		specs, err := decodeNetworks(body)
+		if err != nil {
+			return err
+		}
+		h.networks = append(h.networks, specs...)
+		if h.pastStacks {
+			h.createNetworks()
+		}
+		return nil
+	case strings.HasPrefix(name, stacksPrefix):
+		return h.stackEntry(hdr, body)
+	case strings.HasPrefix(name, basePrefix):
+		if strings.HasPrefix(name, libraryPrefix) {
+			return h.libraryEntry(hdr, body)
+		}
+		return nil
+	}
+	// Stack files are done: networks come next, before any container data.
+	if !h.pastStacks {
+		h.pastStacks = true
+		h.createNetworks()
+	}
+	switch {
+	case strings.HasPrefix(name, volumesPrefix):
+		return h.volume(hdr, body)
+	case strings.HasPrefix(name, imagesPrefix):
+		return h.images(hdr, body)
+	}
+	return nil
+}
+
+// checkArchiveManifest makes sure the manifest that drove the restore (often
+// the sidecar) describes this archive.
+func (h *hostRestore) checkArchiveManifest(body io.Reader) error {
+	m, err := decodeArchiveManifest(body)
+	if err != nil {
+		return err
+	}
+	if !m.CreatedAt.Equal(h.manifest.CreatedAt) || m.InstanceID != h.manifest.InstanceID {
+		return fmt.Errorf("%w: archive created %s by instance %q, sidecar says %s by %q", ErrManifestMismatch,
+			m.CreatedAt.UTC().Format(time.RFC3339), m.InstanceID, h.manifest.CreatedAt.UTC().Format(time.RFC3339), h.manifest.InstanceID)
+	}
+	h.sawManifest = true
 	return nil
 }
 
@@ -446,62 +603,13 @@ func (h *hostRestore) stageDatabase(body io.Reader) error {
 	}
 	for _, e := range entries {
 		t := &stackTarget{entry: e, dir: filepath.Dir(e.ComposePath)}
-		if !filepath.IsAbs(e.ComposePath) || !h.insideRoots(t.dir) {
-			t.skipped = fmt.Sprintf("%s is outside the allowed roots", t.dir)
+		if !filepath.IsAbs(e.ComposePath) || !underAnyRoot(t.dir, h.env.AllowedRoots) {
+			t.skipped = fmt.Sprintf("%s is %s", t.dir, reasonOutsideRoots)
 		}
 		h.stacks[e.Name] = t
 		h.order = append(h.order, e.Name)
 	}
-	return nil
-}
-
-func (h *hostRestore) insideRoots(dir string) bool {
-	dir = filepath.Clean(dir)
-	for _, root := range h.env.AllowedRoots {
-		rel, err := filepath.Rel(filepath.Clean(root), dir)
-		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
-			return true
-		}
-	}
-	return false
-}
-
-func (h *hostRestore) entry(hdr *tar.Header, body io.Reader) error {
-	name := hdr.Name
-	switch {
-	case name == ManifestEntryName:
-		h.sawManifest = true
-		return nil
-	case name == entryDB:
-		return damaged(errors.New("archive holds a second database"))
-	case name == entryConfig:
-		return h.stageConfig(body)
-	case name == entryNetworks:
-		specs, err := decodeNetworks(body)
-		if err != nil {
-			return err
-		}
-		h.networks = append(h.networks, specs...)
-		if h.pastStacks {
-			h.createNetworks()
-		}
-		return nil
-	case strings.HasPrefix(name, stacksPrefix):
-		return h.stackEntry(hdr, body)
-	}
-	// Stack files are done: networks come next, before any container data.
-	if !h.pastStacks {
-		h.pastStacks = true
-		h.createNetworks()
-	}
-	switch {
-	case strings.HasPrefix(name, libraryPrefix):
-		return h.libraryEntry(hdr, body)
-	case strings.HasPrefix(name, volumesPrefix):
-		return h.volume(hdr, body)
-	case strings.HasPrefix(name, imagesPrefix):
-		return h.images(hdr, body)
-	}
+	h.dbStaged = true
 	return nil
 }
 
@@ -519,7 +627,7 @@ func (h *hostRestore) stageConfig(body io.Reader) error {
 	if err != nil {
 		return damaged(fmt.Errorf("stage config.yaml: %w", err))
 	}
-	h.items = append(h.items, ItemResult{Kind: "base", Name: "config.yaml", Status: "skipped", Note: "not applied; the archived copy is kept at " + p})
+	h.items = append(h.items, ItemResult{Kind: "base", Name: "config.yaml", Status: itemSkipped, Note: "not applied; the archived copy is kept at " + p})
 	return nil
 }
 
@@ -532,8 +640,56 @@ func (h *hostRestore) target(stack string) *stackTarget {
 		h.stacks[stack] = t
 		h.order = append(h.order, stack)
 	}
-	t.seen = true
 	return t
+}
+
+// openRoot returns the os.Root of dir, opening (and creating) it once.
+func (h *hostRestore) openRoot(dir string) (*os.Root, error) {
+	if r, ok := h.roots[dir]; ok {
+		return r, nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	r, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	h.roots[dir] = r
+	return r, nil
+}
+
+// allowedRootOf returns the first allowed root containing p and p relative to it.
+func (h *hostRestore) allowedRootOf(p string) (root, rel string, ok bool) {
+	for _, r := range h.env.AllowedRoots {
+		if underRoot(p, r) {
+			rel, err := filepath.Rel(filepath.Clean(r), filepath.Clean(p))
+			if err == nil {
+				return r, rel, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// openUnder creates and opens dir through the os.Root of its allowed root, so
+// a symlink on the way can only resolve inside that root.
+func (h *hostRestore) openUnder(dir string) (*os.Root, error) {
+	rootDir, rel, ok := h.allowedRootOf(dir)
+	if !ok {
+		return nil, fmt.Errorf("%s is %s", dir, reasonOutsideRoots)
+	}
+	root, err := h.openRoot(rootDir)
+	if err != nil {
+		return nil, err
+	}
+	if rel == "." {
+		return root.OpenRoot(".")
+	}
+	if err := root.MkdirAll(rel, 0o755); err != nil {
+		return nil, err
+	}
+	return root.OpenRoot(rel)
 }
 
 func (h *hostRestore) stackEntry(hdr *tar.Header, body io.Reader) error {
@@ -547,13 +703,9 @@ func (h *hostRestore) stackEntry(hdr *tar.Header, body io.Reader) error {
 	}
 	if t.root == nil {
 		h.out("writing files of " + stack + " to " + t.dir)
-		if err := os.MkdirAll(t.dir, 0o755); err != nil {
-			t.skipped = "cannot create " + t.dir + ": " + err.Error()
-			return nil
-		}
-		root, err := os.OpenRoot(t.dir)
+		root, err := h.openUnder(t.dir)
 		if err != nil {
-			t.skipped = "cannot open " + t.dir + ": " + err.Error()
+			t.skipped = "cannot write " + t.dir + ": " + err.Error()
 			return nil
 		}
 		t.root = root
@@ -572,21 +724,30 @@ func (h *hostRestore) libraryEntry(hdr *tar.Header, body io.Reader) error {
 			return nil // the library dir could not be opened
 		}
 		h.librarySeen = true
-		dir := filepath.Join(h.env.DataDir, imagesLibraryDir)
-		err := os.MkdirAll(dir, 0o700)
-		if err == nil {
-			h.library, err = os.OpenRoot(dir)
-		}
+		lib, err := h.openLibrary()
 		if err != nil {
-			h.libraryItems = append(h.libraryItems, ItemResult{Kind: "base", Name: "images-library", Status: "failed", Note: err.Error()})
+			h.libraryItems = append(h.libraryItems, ItemResult{Kind: "base", Name: "images-library", Status: itemFailed, Note: err.Error()})
 			return nil
 		}
+		h.library = lib
 	}
 	item, err := extractEntry(h.library, libraryPrefix, strings.TrimPrefix(hdr.Name, libraryPrefix), hdr, body)
 	if item != nil {
 		h.libraryItems = append(h.libraryItems, *item)
 	}
 	return err
+}
+
+// openLibrary opens <data>/images through the data dir's os.Root.
+func (h *hostRestore) openLibrary() (*os.Root, error) {
+	data, err := h.openRoot(h.env.DataDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := data.MkdirAll(imagesLibraryDir, 0o700); err != nil {
+		return nil, err
+	}
+	return data.OpenRoot(imagesLibraryDir)
 }
 
 // trackedReader remembers a read error, so a damaged archive is told apart
@@ -615,7 +776,7 @@ func extractEntry(root *os.Root, prefix, rel string, hdr *tar.Header, body io.Re
 	name := filepath.FromSlash(rel)
 	perm := hdr.FileInfo().Mode().Perm()
 	fail := func(err error) (*ItemResult, error) {
-		return &ItemResult{Kind: "base", Name: hdr.Name, Status: "failed", Note: err.Error()}, nil
+		return &ItemResult{Kind: "base", Name: hdr.Name, Status: itemFailed, Note: err.Error()}, nil
 	}
 	ensureParent := func() error {
 		if parent := filepath.Dir(name); parent != "." {
@@ -694,13 +855,14 @@ func extractEntry(root *os.Root, prefix, rel string, hdr *tar.Header, body io.Re
 			return fail(err)
 		}
 	default:
-		return &ItemResult{Kind: "base", Name: hdr.Name, Status: "skipped", Note: "unsupported entry type"}, nil
+		return &ItemResult{Kind: "base", Name: hdr.Name, Status: itemSkipped, Note: "unsupported entry type"}, nil
 	}
 	return nil, nil
 }
 
-// createNetworks creates the archived networks that do not exist yet. A
-// failure is reported and does not stop the restore.
+// createNetworks creates the archived networks that do not exist yet. An
+// existing network is kept as it is. A failure is reported and does not stop
+// the restore.
 func (h *hostRestore) createNetworks() {
 	var pending []engine.NetworkSpec
 	for _, s := range h.networks {
@@ -716,7 +878,7 @@ func (h *hostRestore) createNetworks() {
 	if err != nil {
 		for _, s := range pending {
 			h.networksDone[s.Name] = true
-			h.items = append(h.items, ItemResult{Kind: "network", Name: s.Name, Status: "failed", Note: "list networks: " + err.Error()})
+			h.items = append(h.items, ItemResult{Kind: "network", Name: s.Name, Status: itemFailed, Note: "list networks: " + err.Error()})
 		}
 		return
 	}
@@ -726,15 +888,15 @@ func (h *hostRestore) createNetworks() {
 	for _, s := range pending {
 		h.networksDone[s.Name] = true
 		if existing[s.Name] {
-			h.items = append(h.items, ItemResult{Kind: "network", Name: s.Name, Status: "skipped", Note: "already exists; kept as it is"})
+			h.items = append(h.items, ItemResult{Kind: "network", Name: s.Name, Status: itemSkipped, Note: "already exists; kept as it is"})
 			continue
 		}
 		h.out("creating network " + s.Name)
 		if _, err := h.env.Engine.CreateNetwork(h.ctx, s); err != nil {
-			h.items = append(h.items, ItemResult{Kind: "network", Name: s.Name, Status: "failed", Note: err.Error()})
+			h.items = append(h.items, ItemResult{Kind: "network", Name: s.Name, Status: itemFailed, Note: err.Error()})
 			continue
 		}
-		h.items = append(h.items, ItemResult{Kind: "network", Name: s.Name, Status: "ok"})
+		h.items = append(h.items, ItemResult{Kind: "network", Name: s.Name, Status: itemOK})
 	}
 }
 
@@ -747,18 +909,39 @@ func drain(stream io.Reader) error {
 	return nil
 }
 
-func (h *hostRestore) manifestVolume(stack, key string) (ManifestVolume, bool) {
-	for _, s := range h.manifest.Stacks {
-		if s.Name != stack {
+func (h *hostRestore) manifestStack(stack string) ManifestStack {
+	s, _ := findManifestStack(h.manifest, stack)
+	return s
+}
+
+// failedName returns the name of an item the backup recorded as failed whose
+// archive key is key, so its leftover entries can be reported by name.
+func (h *hostRestore) failedName(kind, stack, key string) (string, bool) {
+	for _, it := range h.manifest.Items {
+		if it.Kind != kind || it.Stack != stack || it.Status != itemFailed || it.Name == "" {
 			continue
 		}
-		for _, v := range s.Volumes {
-			if v.Key == key {
-				return v, true
-			}
+		var keys []string
+		if kind == conflictVolume {
+			keys = []string{VolumeKey(stacks.Mount{Kind: "volume", Source: it.Name}), VolumeKey(stacks.Mount{Kind: volumeKindBind, Source: it.Name})}
+		} else {
+			keys = []string{ImageKey(it.Name)}
+		}
+		if slices.Contains(keys, key) {
+			return it.Name, true
 		}
 	}
-	return ManifestVolume{}, false
+	return "", false
+}
+
+// unlisted reports an archived volume or image the manifest does not list
+// for restore, which happens when its backup failed part-way.
+func (h *hostRestore) unlisted(kind, stack, key string) {
+	if name, ok := h.failedName(kind, stack, key); ok {
+		h.items = append(h.items, ItemResult{Kind: kind, Stack: stack, Name: name, Status: itemSkipped, Note: "its backup failed; the archived data is incomplete"})
+		return
+	}
+	h.items = append(h.items, ItemResult{Kind: kind, Stack: stack, Name: key, Status: itemSkipped, Note: "not listed in the manifest"})
 }
 
 func (h *hostRestore) volume(hdr *tar.Header, body io.Reader) error {
@@ -774,22 +957,66 @@ func (h *hostRestore) volume(hdr *tar.Header, body io.Reader) error {
 		return drain(stream)
 	}
 	h.volumesSeen[prefix] = true
-	mv, ok := h.manifestVolume(stack, key)
-	if !ok {
-		h.items = append(h.items, ItemResult{Kind: "volume", Stack: stack, Name: key, Status: "failed", Note: "not described in the manifest"})
+	ms := h.manifestStack(stack)
+	i := slices.IndexFunc(ms.Volumes, func(v ManifestVolume) bool { return v.Key == key })
+	if i < 0 || failedInManifest(h.manifest, conflictVolume, stack, ms.Volumes[i].Name) {
+		h.unlisted(conflictVolume, stack, key)
 		return drain(stream)
 	}
+	mv := ms.Volumes[i]
+	source := mv.Name
+	if mv.Kind == volumeKindBind {
+		resolved, skip, err := h.prepareBind(mv.Name)
+		if skip != "" || err != nil {
+			item := ItemResult{Kind: conflictVolume, Stack: stack, Name: mv.Name, Status: itemSkipped, Note: skip}
+			if err != nil {
+				item.Status, item.Note = itemFailed, err.Error()
+			}
+			h.items = append(h.items, item)
+			return drain(stream)
+		}
+		source = resolved
+	}
 	h.out("restoring " + mv.Kind + " " + mv.Name + " of " + stack)
-	err := h.fillVolume(stack, mv, stream)
+	err := h.fillVolume(stack, mv, source, stream)
 	if derr := drain(stream); derr != nil {
 		return derr
 	}
 	if err != nil {
-		h.items = append(h.items, ItemResult{Kind: "volume", Stack: stack, Name: mv.Name, Status: "failed", Note: err.Error()})
+		h.items = append(h.items, ItemResult{Kind: conflictVolume, Stack: stack, Name: mv.Name, Status: itemFailed, Note: err.Error()})
 		return nil
 	}
-	h.items = append(h.items, ItemResult{Kind: "volume", Stack: stack, Name: mv.Name, Status: "ok"})
+	h.items = append(h.items, ItemResult{Kind: conflictVolume, Stack: stack, Name: mv.Name, Status: itemOK})
 	return nil
+}
+
+// prepareBind makes sure a bind source is inside an allowed root, creates it
+// through that root's os.Root when missing, and returns it with symlinks
+// resolved (rechecked against the resolved roots). Docker runs as root, so a
+// bind source is the one way a crafted archive could reach anywhere on the
+// host; anything outside the roots is skipped with a reason.
+func (h *hostRestore) prepareBind(source string) (resolved, skip string, err error) {
+	if !filepath.IsAbs(source) || !underAnyRoot(source, h.env.AllowedRoots) {
+		return "", "bind source is " + reasonOutsideRoots, nil
+	}
+	if _, statErr := os.Lstat(source); errors.Is(statErr, fs.ErrNotExist) {
+		rootDir, rel, _ := h.allowedRootOf(source)
+		root, err := h.openRoot(rootDir)
+		if err != nil {
+			return "", "", err
+		}
+		if err := root.MkdirAll(rel, 0o755); err != nil {
+			return "", "", fmt.Errorf("create bind source: %w", err)
+		}
+	}
+	resolved, err = filepath.EvalSymlinks(source)
+	if err != nil {
+		return "", "", err
+	}
+	if !underAnyRoot(resolved, resolvedRoots(h.env.AllowedRoots)) {
+		return "", "bind source resolves to " + resolved + ", " + reasonOutsideRoots, nil
+	}
+	return resolved, "", nil
 }
 
 func (h *hostRestore) ensureHelper() error {
@@ -802,7 +1029,7 @@ func (h *hostRestore) ensureHelper() error {
 
 // fillVolume empties the volume (or bind source) with a helper container and
 // then extracts the stream into it through Docker. The helper is always removed.
-func (h *hostRestore) fillVolume(stack string, mv ManifestVolume, stream io.Reader) error {
+func (h *hostRestore) fillVolume(stack string, mv ManifestVolume, source string, stream io.Reader) error {
 	eng := h.env.Engine
 	if err := h.ensureHelper(); err != nil {
 		return fmt.Errorf("helper image: %w", err)
@@ -816,19 +1043,13 @@ func (h *hostRestore) fillVolume(stack string, mv ManifestVolume, stream io.Read
 		if err != nil {
 			return err
 		}
-	case "bind":
-		if !filepath.IsAbs(mv.Name) {
-			return fmt.Errorf("bind source %q is not absolute", mv.Name)
-		}
-		if err := os.MkdirAll(mv.Name, 0o755); err != nil {
-			return err
-		}
+	case volumeKindBind:
 	default:
 		return fmt.Errorf("unknown mount kind %q", mv.Kind)
 	}
 	id, err := eng.CreateContainer(h.ctx, engine.HelperSpec{
 		Image:  HelperImage,
-		Mounts: []engine.HelperMount{{Type: mv.Kind, Source: mv.Name, Target: "/data"}},
+		Mounts: []engine.HelperMount{{Type: mv.Kind, Source: source, Target: "/data"}},
 		Cmd:    []string{"find", "/data", "-mindepth", "1", "-delete"},
 		Labels: map[string]string{"dev.stackstead.restore-stack": stack},
 	})
@@ -868,25 +1089,34 @@ func (h *hostRestore) volumeLabels(stack, volume string) map[string]string {
 	return map[string]string{"com.docker.compose.project": project, "com.docker.compose.volume": short}
 }
 
+// images loads one archived image, stored under images/<stack>/<image key>/.
 func (h *hostRestore) images(hdr *tar.Header, body io.Reader) error {
-	stack, _, _ := strings.Cut(strings.TrimPrefix(hdr.Name, imagesPrefix), "/")
-	if stack == "" {
+	parts := strings.SplitN(strings.TrimPrefix(hdr.Name, imagesPrefix), "/", 3)
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
 		return nil
 	}
-	stream := TarStreamUnder(h.r, imagesPrefix+stack+"/", hdr, body)
+	stack, key := parts[0], parts[1]
+	stream := TarStreamUnder(h.r, imagesPrefix+stack+"/"+key+"/", hdr, body)
 	if t := h.target(stack); t.skipped != "" {
 		return drain(stream)
 	}
-	h.out("loading images of " + stack)
+	ms := h.manifestStack(stack)
+	i := slices.IndexFunc(ms.Images, func(ref string) bool { return ImageKey(ref) == key })
+	if i < 0 || failedInManifest(h.manifest, "image", stack, ms.Images[i]) {
+		h.unlisted("image", stack, key)
+		return drain(stream)
+	}
+	ref := ms.Images[i]
+	h.out("loading image " + ref + " of " + stack)
 	err := h.env.Engine.LoadImage(h.ctx, stream)
 	if derr := drain(stream); derr != nil {
 		return derr
 	}
 	if err != nil {
-		h.items = append(h.items, ItemResult{Kind: "image", Stack: stack, Status: "failed", Note: err.Error()})
+		h.items = append(h.items, ItemResult{Kind: "image", Stack: stack, Name: ref, Status: itemFailed, Note: err.Error()})
 		return nil
 	}
-	h.items = append(h.items, ItemResult{Kind: "image", Stack: stack, Status: "ok"})
+	h.items = append(h.items, ItemResult{Kind: "image", Stack: stack, Name: ref, Status: itemOK})
 	return nil
 }
 
@@ -895,6 +1125,9 @@ func (h *hostRestore) closeRoots() {
 		if t.root != nil {
 			t.root.Close()
 		}
+	}
+	for _, r := range h.roots {
+		r.Close()
 	}
 	if h.library != nil {
 		h.library.Close()
@@ -920,19 +1153,19 @@ func (h *hostRestore) report() []ItemResult {
 		t := h.stacks[name]
 		switch {
 		case t.skipped != "":
-			items = append(items, ItemResult{Kind: "stack-files", Stack: name, Name: t.dir, Status: "skipped", Note: t.skipped})
+			items = append(items, ItemResult{Kind: "stack-files", Stack: name, Name: t.dir, Status: itemSkipped, Note: t.skipped})
 		case t.root != nil:
 			items = append(items, t.failed...)
-			status := "ok"
+			status := itemOK
 			if len(t.failed) > 0 {
-				status = "failed"
+				status = itemFailed
 			}
 			items = append(items, ItemResult{Kind: "stack-files", Stack: name, Name: t.dir, Status: status})
 		}
 	}
 	items = append(items, h.libraryItems...)
 	if h.library != nil {
-		items = append(items, ItemResult{Kind: "base", Name: "images-library", Status: "ok"})
+		items = append(items, ItemResult{Kind: "base", Name: "images-library", Status: itemOK})
 	}
 	return append(items, h.items...)
 }

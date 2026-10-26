@@ -148,8 +148,9 @@ type hostFixture struct {
 	files    map[string]string // base/... entries other than the db, config and networks
 	networks []engine.NetworkSpec
 	volumes  map[string][]ManifestVolume
-	volData  map[string]map[string]string // "<stack>/<key>" -> inner tar files
-	images   map[string]map[string]string // stack -> inner tar files
+	volData  map[string]map[string]string            // "<stack>/<key>" -> inner tar files
+	images   map[string]map[string]map[string]string // stack -> image ref -> inner tar files
+	items    []ItemResult                            // manifest items; a failed image is left out of Images
 }
 
 // archivedDB builds the database a backup would hold and returns its bytes.
@@ -218,9 +219,24 @@ func (f hostFixture) manifest() Manifest {
 		m.Stacks = append(m.Stacks, ManifestStack{
 			Name: e.Name, ComposePath: e.ComposePath, Origin: string(e.Origin), Project: e.Project,
 			WasRunning: slices.Contains(f.running, e.Name), Volumes: f.volumes[e.Name],
+			Images: f.imageRefs(e.Name),
 		})
 	}
+	m.Items = f.items
 	return m
+}
+
+func (f hostFixture) imageRefs(stack string) []string {
+	var refs []string
+	for ref := range f.images[stack] {
+		if !slices.ContainsFunc(f.items, func(it ItemResult) bool {
+			return it.Kind == "image" && it.Stack == stack && it.Name == ref && it.Status == "failed"
+		}) {
+			refs = append(refs, ref)
+		}
+	}
+	slices.Sort(refs)
+	return refs
 }
 
 // build writes the archive to dir and returns its path; withSidecar also writes the sidecar.
@@ -250,9 +266,11 @@ func (f hostFixture) build(t *testing.T, dir string, withSidecar bool) string {
 			t.Fatal(err)
 		}
 	}
-	for stack, files := range f.images {
-		if _, err := w.AddTarStream("images/"+stack+"/", innerTar(t, files)); err != nil {
-			t.Fatal(err)
+	for stack, refs := range f.images {
+		for ref, files := range refs {
+			if _, err := w.AddTarStream("images/"+stack+"/"+ImageKey(ref)+"/", innerTar(t, files)); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	m := f.manifest()
@@ -317,14 +335,22 @@ func newHostSetup(t *testing.T) *hostSetup {
 		volData: map[string]map[string]string{
 			"web/v-web_data": {"data/": "", "data/file.txt": "volume contents"},
 		},
-		images: map[string]map[string]string{
-			"web": {"manifest.json": "[]", "blobs/sha256/abc": "layer"},
+		images: map[string]map[string]map[string]string{
+			"web": {"nginx:1.27": {"manifest.json": "[]", "blobs/sha256/abc": "layer"}},
 		},
 	}
 	return s
 }
 
 func pathSource(p string) HostSource { return HostSource{Kind: "path", Path: p} }
+
+// restore inspects the archive and restores it with the conflicts the
+// inspection reported as confirmed, as the setup screen does.
+func (s *hostSetup) restore(t *testing.T, path string) (HostReport, error) {
+	t.Helper()
+	sum, _ := InspectHost(context.Background(), pathSource(path), s.env)
+	return RestoreHost(context.Background(), pathSource(path), s.env, true, sum.ConflictsDigest)
+}
 
 // assertHostUntouched checks the anti-goal: no Docker changes and no stack files.
 func (s *hostSetup) assertHostUntouched(t *testing.T) {
@@ -384,7 +410,7 @@ func TestHostRestoreRefusesTruncatedBeforeChanges(t *testing.T) {
 			if tc.sidecar {
 				writeSidecar(t, path, s.fixture.manifest())
 			}
-			_, err := RestoreHost(context.Background(), pathSource(path), s.env, true)
+			_, err := s.restore(t, path)
 			if err == nil {
 				t.Fatal("restore of a truncated archive succeeded")
 			}
@@ -397,7 +423,7 @@ func TestHostRestoreRefusesNewerArchive(t *testing.T) {
 	s := newHostSetup(t)
 	s.fixture.version = "1.5.0"
 	path := s.fixture.build(t, t.TempDir(), false)
-	_, err := RestoreHost(context.Background(), pathSource(path), s.env, true)
+	_, err := s.restore(t, path)
 	if !errors.Is(err, ErrArchiveNewer) {
 		t.Fatalf("err = %v, want ErrArchiveNewer", err)
 	}
@@ -416,7 +442,7 @@ func TestHostRestoreRefusesFirstEntryNotDatabase(t *testing.T) {
 	w.Close(s.fixture.manifest())
 	path := filepath.Join(t.TempDir(), "odd.tar.gz")
 	os.WriteFile(path, buf.Bytes(), 0o600)
-	if _, err := RestoreHost(context.Background(), pathSource(path), s.env, true); err == nil {
+	if _, err := s.restore(t, path); err == nil {
 		t.Fatal("restore succeeded although the database was not first")
 	}
 	s.assertHostUntouched(t)
@@ -428,7 +454,7 @@ func TestHostRestoreWritesOriginalPaths(t *testing.T) {
 	livePath := filepath.Join(s.env.DataDir, "stackstead.db")
 	os.WriteFile(livePath, []byte("live"), 0o600)
 
-	report, err := RestoreHost(context.Background(), pathSource(path), s.env, true)
+	report, err := s.restore(t, path)
 	if err != nil {
 		t.Fatalf("restore: %v (items %+v)", err, report.Items)
 	}
@@ -499,7 +525,7 @@ func TestHostRestoreSkipsPathOutsideRoots(t *testing.T) {
 	s.fixture.stacks[1].ComposePath = filepath.Join(s.rootA+"-evil", "web", "compose.yaml")
 	path := s.fixture.build(t, t.TempDir(), true)
 
-	report, err := RestoreHost(context.Background(), pathSource(path), s.env, true)
+	report, err := s.restore(t, path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -531,7 +557,7 @@ func TestHostRestoreNetworkFailureContinues(t *testing.T) {
 	s.eng.networks = []engine.Network{{Name: "exists", Driver: "bridge"}}
 	path := s.fixture.build(t, t.TempDir(), false)
 
-	report, err := RestoreHost(context.Background(), pathSource(path), s.env, true)
+	report, err := s.restore(t, path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -577,7 +603,7 @@ func TestInspectHostListsConflicts(t *testing.T) {
 	}
 	want := []Conflict{
 		{Kind: "volume", Name: "web_data", Action: "overwrite"},
-		{Kind: "network", Name: "backend", Action: "recreate"},
+		{Kind: "network", Name: "backend", Action: "keep"},
 		{Kind: "container", Name: "web-app-1", Action: "recreate"},
 		{Kind: "stack-dir", Name: filepath.Join(s.rootA, "web"), Action: "overwrite"},
 	}
@@ -588,6 +614,10 @@ func TestInspectHostListsConflicts(t *testing.T) {
 	}
 	if len(sum.Conflicts) != len(want) {
 		t.Errorf("conflicts = %+v", sum.Conflicts)
+	}
+	again, err := InspectHost(context.Background(), pathSource(path), s.env)
+	if err != nil || sum.ConflictsDigest == "" || again.ConflictsDigest != sum.ConflictsDigest {
+		t.Errorf("digest %q, again %q (%v)", sum.ConflictsDigest, again.ConflictsDigest, err)
 	}
 	if c := s.eng.changes(); len(c) != 0 {
 		t.Errorf("inspect changed the host: %v", c)
@@ -634,19 +664,33 @@ func TestApplyPendingSwapsAndPausesSchedule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p == nil || !slices.Equal(p.StartStacks, []string{"web"}) {
+	if p == nil || !slices.Equal(p.StartStacks, []string{"web"}) || !p.PauseSchedule {
 		t.Fatalf("pending = %+v", p)
 	}
+	// The swapped database is not written before the server has migrated it.
 	db, err = store.OpenExisting(live, store.OpenOptions{ReadOnly: true})
 	if err != nil {
 		t.Fatal(err)
 	}
+	cfg, err := NewConfigStore(db).Load(context.Background())
+	db.Close()
+	if err != nil || !cfg.Schedule.Enabled {
+		t.Fatalf("ApplyPending changed the unmigrated database: enabled=%v err=%v", cfg.Schedule.Enabled, err)
+	}
+
+	db, err = store.Open(live) // what the server does next: migrate
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer db.Close()
+	if err := PauseScheduleAfterRestore(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
 	entries, err := stacks.NewRegistry(db, time.Now).List(context.Background())
 	if err != nil || len(entries) != 2 {
 		t.Fatalf("restored stacks = %v, %v", entries, err)
 	}
-	cfg, err := NewConfigStore(db).Load(context.Background())
+	cfg, err = NewConfigStore(db).Load(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -677,5 +721,217 @@ func TestApplyPendingNoMarker(t *testing.T) {
 	p, err := ApplyPending(t.TempDir(), time.Now())
 	if p != nil || err != nil {
 		t.Fatalf("p=%+v err=%v", p, err)
+	}
+}
+
+func symlinkOrFatal(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func dirEntries(t *testing.T, dir string) []string {
+	t.Helper()
+	var out []string
+	filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err == nil && p != dir {
+			out = append(out, p)
+		}
+		return nil
+	})
+	return out
+}
+
+func TestHostRestoreRefusesSymlinkEscapeFromRoot(t *testing.T) {
+	s := newHostSetup(t)
+	if err := os.MkdirAll(s.outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A symlink inside an allowed root (planted on the host, or by an
+	// earlier stack) points outside it; a stack whose archived path runs
+	// through it is lexically inside the root.
+	symlinkOrFatal(t, s.outside, filepath.Join(s.rootA, "x"))
+	symlinkOrFatal(t, s.outside, filepath.Join(s.env.DataDir, "images"))
+	evil := stacks.Entry{Name: "evil", ComposePath: filepath.Join(s.rootA, "x", "evil", "compose.yaml"), Origin: stacks.OriginExternal, Project: "evil"}
+	s.fixture.stacks = append(s.fixture.stacks, evil)
+	s.fixture.files["base/stacks/evil/compose.yaml"] = "pwned"
+	path := s.fixture.build(t, t.TempDir(), true)
+
+	report, err := s.restore(t, path)
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if got := dirEntries(t, s.outside); len(got) != 0 {
+		t.Errorf("files were written outside the allowed roots: %v", got)
+	}
+	if !slices.ContainsFunc(report.Items, func(it ItemResult) bool {
+		return it.Stack == "evil" && it.Kind == "stack-files" && it.Status != "ok"
+	}) {
+		t.Errorf("no failed/skipped item for the escaping stack: %+v", report.Items)
+	}
+	if _, err := os.ReadFile(filepath.Join(s.rootA, "web", "compose.yaml")); err != nil {
+		t.Errorf("the other stacks were not restored: %v", err)
+	}
+}
+
+func TestHostRestoreSkipsBindOutsideRoots(t *testing.T) {
+	s := newHostSetup(t)
+	outsideBind := filepath.Join(s.outside, "media")
+	linkedBind := filepath.Join(s.rootA, "web", "linked")
+	inRootBind := filepath.Join(s.rootA, "web", "uploads")
+	if err := os.MkdirAll(filepath.Join(s.outside, "linked-target"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOrFatal(t, filepath.Join(s.outside, "linked-target"), linkedBind)
+	for _, b := range []string{outsideBind, linkedBind, inRootBind} {
+		m := stacks.Mount{Kind: "bind", Source: b}
+		s.fixture.volumes["web"] = append(s.fixture.volumes["web"], ManifestVolume{Key: VolumeKey(m), Kind: "bind", Name: b, Target: "/x"})
+		s.fixture.volData["web/"+VolumeKey(m)] = map[string]string{"data/": "", "data/f": "bind data"}
+	}
+	path := s.fixture.build(t, t.TempDir(), true)
+
+	sum, err := InspectHost(context.Background(), pathSource(path), s.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range sum.Conflicts {
+		if strings.HasPrefix(c.Name, s.outside) || c.Name == linkedBind {
+			t.Errorf("conflict lists a path outside the roots: %+v", c)
+		}
+	}
+	report, err := RestoreHost(context.Background(), pathSource(path), s.env, true, sum.ConflictsDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(outsideBind); !errors.Is(err, os.ErrNotExist) {
+		t.Error("a bind source outside the roots was created")
+	}
+	resolvedInRoot, err := filepath.EvalSymlinks(inRootBind)
+	if err != nil {
+		t.Fatalf("in-root bind source not created: %v", err)
+	}
+	var mounted []string
+	for _, spec := range s.eng.specs {
+		for _, m := range spec.Mounts {
+			mounted = append(mounted, m.Source)
+		}
+	}
+	if slices.Contains(mounted, outsideBind) || slices.Contains(mounted, linkedBind) || slices.ContainsFunc(mounted, func(m string) bool { return strings.Contains(m, "linked-target") }) {
+		t.Errorf("a bind outside the roots was mounted: %v", mounted)
+	}
+	if !slices.Contains(mounted, resolvedInRoot) {
+		t.Errorf("in-root bind not mounted by its resolved path %s: %v", resolvedInRoot, mounted)
+	}
+	for _, b := range []string{outsideBind, linkedBind} {
+		if !slices.ContainsFunc(report.Items, func(it ItemResult) bool {
+			return it.Kind == "volume" && it.Name == b && it.Status == "skipped"
+		}) {
+			t.Errorf("no skipped item for %s: %+v", b, report.Items)
+		}
+	}
+}
+
+func TestHostRestoreSkipsItemsThatFailedAtBackup(t *testing.T) {
+	s := newHostSetup(t)
+	s.eng.volumes = map[string]bool{"web_cache": true}
+	cache := stacks.Mount{Kind: "volume", Source: "web_cache"}
+	// The backup of web_cache broke mid-stream: its entries are in the
+	// archive (zero-padded) but the manifest marks it failed and leaves it out.
+	s.fixture.volData["web/"+VolumeKey(cache)] = map[string]string{"data/": "", "data/junk": "\x00\x00\x00\x00"}
+	s.fixture.images["web"]["broken:1"] = map[string]string{"manifest.json": "\x00\x00"}
+	s.fixture.items = []ItemResult{
+		{Kind: "volume", Stack: "web", Name: "web_cache", Status: "failed", Note: "read error"},
+		{Kind: "image", Stack: "web", Name: "broken:1", Status: "failed", Note: "save error"},
+	}
+	path := s.fixture.build(t, t.TempDir(), true)
+
+	report, err := s.restore(t, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, spec := range s.eng.specs {
+		for _, m := range spec.Mounts {
+			if m.Source == "web_cache" {
+				t.Errorf("the failed volume was touched: %+v", spec)
+			}
+		}
+	}
+	if len(s.eng.puts) != 1 || len(s.eng.loads) != 1 {
+		t.Errorf("puts=%d loads=%d, want only the good volume and image", len(s.eng.puts), len(s.eng.loads))
+	}
+	for _, want := range []ItemResult{{Kind: "volume", Name: "web_cache"}, {Kind: "image", Name: "broken:1"}} {
+		if !slices.ContainsFunc(report.Items, func(it ItemResult) bool {
+			return it.Kind == want.Kind && it.Name == want.Name && it.Status == "skipped"
+		}) {
+			t.Errorf("no skipped item for %s %s: %+v", want.Kind, want.Name, report.Items)
+		}
+	}
+}
+
+func TestHostRestoreRejectsSidecarMismatch(t *testing.T) {
+	s := newHostSetup(t)
+	path := s.fixture.build(t, t.TempDir(), true)
+	other := s.fixture.manifest()
+	other.CreatedAt = other.CreatedAt.Add(time.Hour)
+	writeSidecar(t, path, other)
+
+	if _, err := s.restore(t, path); err == nil {
+		t.Fatal("restore succeeded although the sidecar does not match the archive")
+	}
+	if _, err := os.Stat(filepath.Join(s.env.DataDir, "restore", pendingFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Error("a pending restore was recorded")
+	}
+}
+
+func TestHostRestoreRefusesChangedConflicts(t *testing.T) {
+	s := newHostSetup(t)
+	path := s.fixture.build(t, t.TempDir(), true)
+	sum, err := InspectHost(context.Background(), pathSource(path), s.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.eng.volumes = map[string]bool{"web_data": true} // appeared after the user confirmed
+	_, err = RestoreHost(context.Background(), pathSource(path), s.env, true, sum.ConflictsDigest)
+	if !errors.Is(err, ErrConflictsChanged) {
+		t.Fatalf("err = %v, want ErrConflictsChanged", err)
+	}
+	s.assertHostUntouched(t)
+}
+
+func TestHostRestoreAcceptsBaseFilesBeforeDatabase(t *testing.T) {
+	s := newHostSetup(t)
+	s.eng.networks = []engine.Network{{Name: "backend", Driver: "bridge"}}
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	addBytes(t, w, "base/config.yaml", []byte("x: 1\n"))
+	addBytes(t, w, "base/stackstead.db", archivedDB(t, s.fixture.stacks, true))
+	addBytes(t, w, "base/stacks/web/compose.yaml", []byte("services: {}\n"))
+	nets, _ := json.Marshal(s.fixture.networks)
+	addBytes(t, w, "base/networks.json", nets) // after stack files
+	m := s.fixture.manifest()
+	m.Stacks[1].Volumes, m.Stacks[1].Images = nil, nil
+	if err := w.Close(m); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "late.tar.gz")
+	os.WriteFile(path, buf.Bytes(), 0o600)
+	writeSidecar(t, path, m)
+
+	sum, err := InspectHost(context.Background(), pathSource(path), s.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(sum.Conflicts, Conflict{Kind: "network", Name: "backend", Action: "keep"}) {
+		t.Errorf("a late networks.json was not seen: %+v", sum.Conflicts)
+	}
+	if _, err := RestoreHost(context.Background(), pathSource(path), s.env, true, sum.ConflictsDigest); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(s.eng.changes(), "network:lan") {
+		t.Errorf("networks were not created: %v", s.eng.changes())
 	}
 }
