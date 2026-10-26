@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/rcss-labs/stackstead/internal/actionlog"
@@ -73,7 +75,30 @@ var serveRun func(ctx context.Context, env *Env, args []string) error
 // Assigned in init: serve prints serveCommand's usage, which refers to serveRun.
 func init() { serveRun = serve }
 
+// newAPIHandler builds the HTTP handler; tests capture its Options.
+var newAPIHandler = api.New
+
+// reexec replaces this process with a fresh copy of the same binary, same
+// arguments and environment. Tests replace it so they never exec.
+var reexec = func() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("find own executable: %w", err)
+	}
+	return syscall.Exec(exe, os.Args, os.Environ())
+}
+
+// serve runs the server and, when a staged host restore asked for it,
+// re-executes the binary once everything is shut down and the lock released.
 func serve(ctx context.Context, env *Env, args []string) error {
+	var restart atomic.Bool
+	if err := runServer(ctx, env, args, &restart); err != nil || !restart.Load() {
+		return err
+	}
+	return reexec()
+}
+
+func runServer(ctx context.Context, env *Env, args []string, restart *atomic.Bool) error {
 	logger := slog.New(slog.NewTextHandler(env.Stderr, nil))
 	flags := flag.NewFlagSet("stackstead serve", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -113,6 +138,13 @@ func serve(ctx context.Context, env *Env, args []string) error {
 		return err
 	}
 	defer lock.Release()
+	// A host restore staged by the previous process is installed before the
+	// database is opened. A half-installed one must not be served.
+	pending, err := backup.ApplyPending(cfg.DataDir, time.Now())
+	if err != nil {
+		logger.Error("could not finish the pending host restore", "err", err)
+		return fmt.Errorf("finish the pending host restore: %w", err)
+	}
 	if path != "" {
 		logger.Info("loaded config file", "path", path)
 	} else {
@@ -123,6 +155,15 @@ func serve(ctx context.Context, env *Env, args []string) error {
 		return err
 	}
 	defer db.Close()
+	if pending != nil {
+		logger.Info("installed the restored database")
+		if pending.PauseSchedule {
+			// The marker is gone, so a failure cannot be retried: report it loudly.
+			if err := backup.PauseScheduleAfterRestore(ctx, db); err != nil {
+				logger.Error("could not pause the restored backup schedule; turn it off in Settings", "err", err)
+			}
+		}
+	}
 
 	authSvc, err := auth.NewService(db, time.Now)
 	if err != nil {
@@ -293,6 +334,19 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	}
 	bg.add(backupScheduler.Run)
 
+	hostRestorer := backup.HostRestorer{Env: backup.HostEnv{
+		Engine: dockerEngine, DataDir: cfg.DataDir, AllowedRoots: cfg.AllowedRoots,
+		Version: version.Version, HTTP: backupHTTP,
+	}}
+	restartRequested := make(chan struct{})
+	var restartOnce sync.Once
+	requestRestart := func() {
+		restartOnce.Do(func() {
+			restart.Store(true)
+			close(restartRequested)
+		})
+	}
+
 	// The collector and alerts engine do nothing until a request arrives:
 	// both cache for 5 s and start no goroutines.
 	collector := host.New(host.Config{
@@ -309,7 +363,7 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	closing := make(chan struct{})
 	srv := &http.Server{
 		Addr: cfg.Listen,
-		Handler: api.New(api.Options{
+		Handler: newAPIHandler(api.Options{
 			Storage:          storageSvc,
 			Actions:          actions,
 			Auth:             authSvc,
@@ -322,6 +376,9 @@ func serve(ctx context.Context, env *Env, args []string) error {
 			Images:           imagesSvc,
 			Registries:       registries,
 			Backups:          backupSvc,
+			HostRestore:      hostRestorer,
+			RestoreOps:       ops,
+			Restart:          requestRestart,
 			Arch:             dockerEngine.Arch,
 			Operations:       ops,
 			FSRoots:          cfg.AllowedRoots,
@@ -358,11 +415,18 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.ListenAndServe() }()
 	logger.Info("stackstead listening", "addr", cfg.Listen, "version", version.Get().Version)
+	if pending != nil && len(pending.StartStacks) > 0 {
+		bg.add(func(ctx context.Context) {
+			startRestoredStacks(ctx, stackSvc, actions, pending.StartStacks, logger)
+		})
+	}
 
 	select {
 	case err := <-serveErr:
 		return fmt.Errorf("http server: %w", err)
 	case <-ctx.Done():
+	case <-restartRequested:
+		logger.Info("restarting to finish the host restore")
 	}
 	logger.Info("shutting down")
 	// Order: stop accepting HTTP (Closing ends streams), cancel running
@@ -380,6 +444,38 @@ func serve(ctx context.Context, env *Env, args []string) error {
 		}
 		return err
 	}, ops.Shutdown, bg)
+}
+
+type stackStarter interface {
+	ActWait(ctx context.Context, stack, action string, out func(string)) error
+}
+
+type actionAppender interface {
+	Append(ctx context.Context, e actionlog.Entry) error
+}
+
+// startRestoredStacks brings up, one at a time, the stacks that were running
+// when the restored backup was taken. A stack that fails is logged to the
+// action log and the rest still start.
+func startRestoredStacks(ctx context.Context, starter stackStarter, actions actionAppender, names []string, logger *slog.Logger) {
+	for _, name := range names {
+		if ctx.Err() != nil {
+			return
+		}
+		err := starter.ActWait(ctx, name, "up", func(string) {})
+		if err == nil {
+			logger.Info("started restored stack", "stack", name)
+			continue
+		}
+		logger.Warn("start restored stack failed", "stack", name, "err", err)
+		entry := actionlog.Entry{
+			Username: "system", Kind: "backup.restore", Scope: name, Target: name,
+			Detail: "start after host restore: " + err.Error(), Result: "failed",
+		}
+		if aerr := actions.Append(context.WithoutCancel(ctx), entry); aerr != nil {
+			logger.Warn("record restored stack start failure", "stack", name, "err", aerr)
+		}
+	}
 }
 
 // newUpdateChecker builds the release checker. The server always uses the

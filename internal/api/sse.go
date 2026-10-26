@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/rcss-labs/stackstead/internal/stacks"
 )
 
 const (
@@ -134,7 +136,18 @@ func parseLastEventID(r *http.Request) int {
 // unsubscribes. It holds no locks while writing: the Ops manager never blocks
 // on subscribers, and a stuck client is cut by the per-write deadline.
 func (s *server) handleStreamOperation(w http.ResponseWriter, r *http.Request) {
-	replay, first, live, done, cancel, err := s.opts.Operations.Subscribe(r.PathValue("id"))
+	s.streamOperation(w, r, s.opts.Operations, r.PathValue("id"))
+}
+
+// operationSubscriber is the part of an operations registry a stream needs.
+type operationSubscriber interface {
+	Subscribe(id string) (replay []string, first int, live <-chan string, done <-chan stacks.Operation, cancel func(), err error)
+}
+
+// streamOperation is handleStreamOperation for operation id of ops; routes
+// with their own authorisation reuse it.
+func (s *server) streamOperation(w http.ResponseWriter, r *http.Request, ops operationSubscriber, id string) {
+	replay, first, live, done, cancel, err := ops.Subscribe(id)
 	if err != nil {
 		s.writeStackError(w, r, err)
 		return
