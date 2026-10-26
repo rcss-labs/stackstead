@@ -14,6 +14,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -38,13 +40,11 @@ type cliRig struct {
 }
 
 // buildCLI compiles the binary with a known version stamp.
-func buildCLI(t *testing.T) string { return buildCLIVersion(t, "e2e-test") }
-
-func buildCLIVersion(t *testing.T, stamp string) string {
+func buildCLI(t *testing.T) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "stackstead")
 	build := exec.Command("go", "build",
-		"-ldflags", "-X github.com/rcss-labs/stackstead/internal/version.Version="+stamp,
+		"-ldflags", "-X github.com/rcss-labs/stackstead/internal/version.Version=e2e-test",
 		"-o", bin, ".")
 	build.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if out, err := build.CombinedOutput(); err != nil {
@@ -598,18 +598,10 @@ func TestE2EBackupRestore(t *testing.T) {
 		t.Skip("docker or docker compose unavailable")
 	}
 	r := newCLIRig(t, socket)
-	// Restore compares archive and installed versions, so it needs a release-shaped stamp.
-	r.bin = buildCLIVersion(t, "v1.0.0")
-	// Restore compares stack paths with allowed_roots after resolving symlinks
-	// (macOS temp dirs live behind /var -> /private/var), so configure resolved paths.
-	resolved, err := filepath.EvalSymlinks(r.dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.dir, r.cfg = resolved, filepath.Join(resolved, "config.yaml")
 	r.initHost()
-	// The bind source lives outside the stack directory, under a second allowed
-	// root: restore only writes binds inside allowed_roots.
+	// One bind source is relative (inside the stack directory); the other lives
+	// outside it under a second allowed root, since restore only writes binds
+	// inside allowed_roots.
 	bindRoot := filepath.Join(r.dir, "binds")
 	bindDir := filepath.Join(bindRoot, "data")
 	if err := os.MkdirAll(bindDir, 0o755); err != nil {
@@ -636,6 +628,13 @@ func TestE2EBackupRestore(t *testing.T) {
 		for _, id := range projectContainers(name) {
 			_, _ = dockerOutput("rm", "-f", id)
 		}
+		// Backup and restore helper containers are labelled with the stack they served.
+		for _, label := range []string{"dev.stackstead.backup-stack=" + name, "dev.stackstead.restore-stack=" + name} {
+			out, _ := dockerOutput("ps", "-aq", "--filter", "label="+label)
+			for _, id := range strings.Fields(string(out)) {
+				_, _ = dockerOutput("rm", "-f", id)
+			}
+		}
 		_, _ = dockerOutput("network", "rm", name+"_default")
 		_, _ = dockerOutput("volume", "rm", "-f", volume)
 	}
@@ -647,7 +646,7 @@ func TestE2EBackupRestore(t *testing.T) {
 		"name": name, "service": "web",
 		"config": map[string]any{
 			"image": "nginx:alpine", "limits": map[string]string{"memory": "64m"},
-			"volumes": []string{bindDir + ":/bind"},
+			"volumes": []string{"./data:/rel", bindDir + ":/bind"},
 		},
 	})
 	var compose apitypes.RawCompose
@@ -657,6 +656,14 @@ func TestE2EBackupRestore(t *testing.T) {
 	withVolume := strings.Replace(compose.Content, bindDir+":/bind", bindDir+":/bind\n      - data:/vol", 1) + "\nvolumes:\n  data: {}\n"
 	api.expect(200, "PUT", "/api/stacks/"+name+"/compose", map[string]string{"content": withVolume, "hash": compose.Hash})
 
+	relDir := filepath.Join(r.dir, "stacks", name, "data")
+	if err := os.MkdirAll(relDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	relContent := "relative-" + rand.Text()
+	if err := os.WriteFile(filepath.Join(relDir, "rel.txt"), []byte(relContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	bindContent := "bind-" + rand.Text()
 	volumeContent := "volume-" + rand.Text()
 	if err := os.WriteFile(filepath.Join(bindDir, "bind.txt"), []byte(bindContent), 0o644); err != nil {
@@ -681,18 +688,18 @@ func TestE2EBackupRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	archiveName := regexp.MustCompile(`^stackstead-[a-z0-9-]+-\d{8}T\d{6}Z\.tar\.gz$`)
 	var archive string
-	sidecar := false
 	for _, e := range entries {
-		switch {
-		case strings.HasSuffix(e.Name(), ".tar.gz") || strings.HasSuffix(e.Name(), ".tar.zst") || strings.HasSuffix(e.Name(), ".tar"):
+		if archiveName.MatchString(e.Name()) {
 			archive = filepath.Join(archives, e.Name())
-		case strings.HasSuffix(e.Name(), ".json"):
-			sidecar = true
 		}
 	}
-	if archive == "" || !sidecar {
-		t.Fatalf("backup folder has no archive and sidecar: %v", entries)
+	if archive == "" {
+		t.Fatalf("backup folder has no archive named like stackstead-<host>-<time>.tar.gz: %v", entries)
+	}
+	if _, err := os.Stat(archive + ".manifest.json"); err != nil {
+		t.Fatalf("archive has no sidecar: %v", err)
 	}
 	var listed []apitypes.BackupArchive
 	r.jsonOf(0, "", &listed, "backup", "list", "-o", "json")
@@ -703,8 +710,8 @@ func TestE2EBackupRestore(t *testing.T) {
 	// Lose the host: stop the server, remove its data, its stacks and the Docker resources.
 	srv.stop(t)
 	removeResources()
-	// The bind source is host data outside both directories; empty it rather than
-	// remove it so the restore has something to bring back.
+	// The external bind source is host data outside both directories; empty it
+	// rather than remove it so the restore has something to bring back.
 	if err := os.Remove(filepath.Join(bindDir, "bind.txt")); err != nil {
 		t.Fatal(err)
 	}
@@ -714,13 +721,18 @@ func TestE2EBackupRestore(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(r.dir, "stacks")); err != nil {
 		t.Fatal(err)
 	}
-	// A fresh host has empty directories, which restore requires.
-	for _, d := range []string{"data", "stacks"} {
-		if err := os.Mkdir(filepath.Join(r.dir, d), 0o755); err != nil {
-			t.Fatal(err)
-		}
+	// Docker Desktop on macOS may not see a bind directory re-created at a path
+	// that was just deleted, which fails the helper for the relative bind. Linux must restore it.
+	relRestored := true
+	code, out, errOut := r.run("", "restore", archive, "--yes", "--config", r.cfg)
+	switch {
+	case code == 0:
+	case code == 9 && runtime.GOOS == "darwin" && strings.Contains(out, "bind source path does not exist"):
+		relRestored = false
+		t.Logf("skipping the relative bind assertion: Docker Desktop cannot see the re-created directory\n%s", out)
+	default:
+		t.Fatalf("restore: exit %d\nstdout: %s\nstderr: %s", code, out, redact(errOut))
 	}
-	r.want(0, "", "restore", archive, "--yes", "--config", r.cfg)
 
 	r.startServer()
 	api = newClient(t, r.base)
@@ -741,9 +753,15 @@ func TestE2EBackupRestore(t *testing.T) {
 	if err != nil || string(got) != bindContent {
 		t.Errorf("restored bind file = %q, %v; want %q", got, err, bindContent)
 	}
-	out, err := dockerOutput("run", "--rm", "-v", volume+":/vol", "--entrypoint", "cat", "nginx:alpine", "/vol/vol.txt")
-	if err != nil || string(out) != volumeContent {
-		t.Errorf("restored volume file = %q, %v; want %q", out, err, volumeContent)
+	if relRestored {
+		got, err := os.ReadFile(filepath.Join(r.dir, "stacks", name, "data", "rel.txt"))
+		if err != nil || string(got) != relContent {
+			t.Errorf("restored relative bind file = %q, %v; want %q", got, err, relContent)
+		}
+	}
+	volOut, err := dockerOutput("run", "--rm", "-v", volume+":/vol", "--entrypoint", "cat", "nginx:alpine", "/vol/vol.txt")
+	if err != nil || string(volOut) != volumeContent {
+		t.Errorf("restored volume file = %q, %v; want %q", volOut, err, volumeContent)
 	}
 }
 

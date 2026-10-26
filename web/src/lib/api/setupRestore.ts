@@ -34,25 +34,31 @@ async function uploadRestoreArchive(
 ): Promise<void> {
   const headers: Record<string, string> = { 'Content-Type': 'application/gzip', Accept: 'application/json' };
   if (setupToken) headers['X-Stackstead-Setup-Token'] = setupToken;
-  const init: RequestInit & { duplex?: 'half' } = { method: 'POST', headers, credentials: 'same-origin', redirect: 'error', signal };
-  if (canStreamUploads()) {
-    let sent = 0;
-    init.body = file.stream().pipeThrough(
-      new TransformStream<Uint8Array, Uint8Array>({
-        transform(chunk, controller) {
-          sent += chunk.byteLength;
-          onProgress(sent);
-          controller.enqueue(chunk);
-        },
-      }),
-    );
-    init.duplex = 'half';
-  } else {
-    init.body = file;
-  }
+  const base: RequestInit = { method: 'POST', headers, credentials: 'same-origin', redirect: 'error', signal };
+  const send = (init: RequestInit) => fetch('/api/setup/restore/upload', init);
   let res: Response;
   try {
-    res = await fetch('/api/setup/restore/upload', init);
+    if (canStreamUploads()) {
+      let sent = 0;
+      const body = file.stream().pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, controller) {
+            sent += chunk.byteLength;
+            onProgress(sent);
+            controller.enqueue(chunk);
+          },
+        }),
+      );
+      try {
+        res = await send({ ...base, body, duplex: 'half' } as RequestInit);
+      } catch (err) {
+        // A streamed body needs HTTP/2; a proxy that speaks HTTP/1.1 to the browser makes fetch throw a TypeError.
+        if (!(err instanceof TypeError) || signal?.aborted) throw err;
+        res = await send({ ...base, body: file });
+      }
+    } else {
+      res = await send({ ...base, body: file });
+    }
   } catch (err) {
     if (signal?.aborted) throw signal.reason ?? err;
     throw new ApiError(0, 'network error');

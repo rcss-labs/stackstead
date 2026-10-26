@@ -291,7 +291,7 @@ tags and Docker messages are rendered as text. See [Storage](api.md#storage).
 Backups are archives of the database, the files of every stack, optionally
 their volumes and images, and the host's identity. They are as sensitive as the
 host itself. See [Backups](cli.md#backups) and [`/api/backups`](api.md) for the
-commands and routes.
+commands and [routes](api.md#backups).
 
 ### What an archive contains
 
@@ -323,6 +323,10 @@ operator can read them.
   }
   ```
 
+  With no prefix, use `arn:aws:s3:::BUCKET/*` and
+  `arn:aws:s3:::BUCKET/.stackstead-test-*` for the object resources, and omit the
+  `s3:prefix` condition on `s3:ListBucket`.
+
   `DeleteObject` is needed only to remove the small object the connection test
   writes (`<prefix>/.stackstead-test-<random>`).
 - **Stackstead never deletes archives in S3.** Retention there is yours to set
@@ -337,9 +341,12 @@ operator can read them.
 - Bind mounts are restored only under `allowed_roots`. A bind outside them, or
   one that covers an allowed root, a stack directory or the data directory, is
   skipped and reported, never emptied.
-- Before it overwrites a stack, the files of that stack are copied to
-  `<data_dir>/backups/pre-restore/<stack>-<UTC timestamp>/`. Volume contents are
-  replaced and not kept; take a backup first if you may want them.
+- Restoring a single stack first copies that stack's files (compose files,
+  `.env` and the rest of its directory, not bind data) to
+  `<data_dir>/backups/pre-restore/<stack>-<UTC timestamp>/`. A whole-host
+  restore keeps only the previous database, as `stackstead.db.bak-<UTC timestamp>`
+  next to the new one. In both cases bind and volume contents are replaced and
+  not kept; take a backup first if you may want them.
 
 ### Whole-host restore
 
@@ -357,11 +364,13 @@ do not leave a fresh install exposed.
   writing to the original's destinations unnoticed. The pause is stored in the
   restored database and retried at every start until it is confirmed; the UI
   shows a banner until you save the schedule enabled again.
-- Uploading an archive through the web UI sends the whole file in one request.
-  Raise the reverse proxy's body limit for the upload route (nginx
-  `client_max_body_size`, and `proxy_request_buffering off` to stream it) or the
-  proxy rejects it. Upload progress is only determinate over HTTPS or HTTP/2;
-  over plain HTTP/1.1 the browser shows an indeterminate bar.
+- Uploading an archive on the setup screen sends the whole file in one request
+  to `/api/setup/restore/upload`. Raise the reverse proxy's body limit for that
+  route (nginx `client_max_body_size`, and `proxy_request_buffering off` to
+  stream it) or the proxy rejects it. Upload progress is only determinate over
+  HTTPS with HTTP/2 or newer. Over plain HTTP, or behind a proxy that speaks
+  HTTP/1.1 to the browser, the browser cannot stream the body: the page retries
+  by sending the file as a whole, with no progress bar.
 - **A paired peer can read and change this host's backup settings**: the
   `/api/backups` routes are forwardable like the rest of the API, so a connection
   is as powerful over backups (destinations, S3 keys it can overwrite, restores)

@@ -50,11 +50,8 @@ func (rs *rootSet) openRoot(dir string) (*os.Root, error) {
 // allowedRootOf returns the first allowed root containing p and p relative to it.
 func (rs *rootSet) allowedRootOf(p string) (root, rel string, ok bool) {
 	for _, r := range rs.allowed {
-		if underRoot(p, r) {
-			rel, err := filepath.Rel(filepath.Clean(r), filepath.Clean(p))
-			if err == nil {
-				return r, rel, true
-			}
+		if rel, ok := relUnder(p, r); ok {
+			return r, rel, true
 		}
 	}
 	return "", "", false

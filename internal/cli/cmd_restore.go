@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -117,6 +118,10 @@ func hostRestore(ctx context.Context, env *Env, cfg config.Config, arg string, o
 	}
 	if err := checkOwnership(cfg); err != nil {
 		return err
+	}
+	// A replacement host has no data directory yet; the stacks directories are created as stacks are restored.
+	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
+		return fmt.Errorf("create data directory: %w", err)
 	}
 	return withExclusiveLock(cfg, func() error {
 		hostEnv := hostRestoreEnv(env, cfg)
