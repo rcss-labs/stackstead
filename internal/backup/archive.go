@@ -97,7 +97,7 @@ func (w *Writer) AddTarStream(prefix string, r io.Reader) (int64, error) {
 			return written, err
 		}
 		out := *hdr
-		inner := path.Clean(hdr.Name)
+		inner := path.Clean(strings.TrimLeft(hdr.Name, "/"))
 		if inner == "." {
 			out.Name = prefix
 		} else {
@@ -107,7 +107,7 @@ func (w *Writer) AddTarStream(prefix string, r io.Reader) (int64, error) {
 			out.Name += "/"
 		}
 		if hdr.Typeflag == tar.TypeLink {
-			out.Linkname = prefix + path.Clean(hdr.Linkname)
+			out.Linkname = prefix + path.Clean(strings.TrimLeft(hdr.Linkname, "/"))
 		}
 		if err := w.guard.check(&out); err != nil {
 			return written, err
@@ -248,15 +248,20 @@ func (g *pathGuard) check(hdr *tar.Header) error {
 	if _, ok := sectionRank[topLevel(clean)]; !ok {
 		return fmt.Errorf("%w: unexpected top-level entry %q", ErrUnsafePath, name)
 	}
-	for dir := path.Dir(clean); dir != "."; dir = path.Dir(dir) {
-		if g.symlinks[dir] {
-			return fmt.Errorf("%w: %q lies below symlink %q", ErrUnsafePath, name, dir)
-		}
+	if g.symlinks[clean] {
+		return fmt.Errorf("%w: %q replaces an earlier symlink", ErrUnsafePath, name)
+	}
+	if dir, ok := g.symlinkAtOrAbove(path.Dir(clean)); ok {
+		return fmt.Errorf("%w: %q lies below symlink %q", ErrUnsafePath, name, dir)
 	}
 	switch hdr.Typeflag {
 	case tar.TypeLink:
 		// Hardlink targets are archive-relative.
-		if strings.HasPrefix(hdr.Linkname, "/") || !within(extractionRoot(clean), path.Clean(hdr.Linkname)) {
+		// link() follows intermediate symlinks, so the target must be a plain
+		// path: no "..", and not at or below any earlier symlink.
+		target := path.Clean(hdr.Linkname)
+		_, viaSymlink := g.symlinkAtOrAbove(target)
+		if strings.HasPrefix(hdr.Linkname, "/") || hasDotDot(hdr.Linkname) || viaSymlink || !within(extractionRoot(clean), target) {
 			return fmt.Errorf("%w: hardlink %q -> %q", ErrUnsafePath, name, hdr.Linkname)
 		}
 	case tar.TypeSymlink:
@@ -269,11 +274,32 @@ func (g *pathGuard) check(hdr *tar.Header) error {
 			}
 			return fmt.Errorf("%w: symlink %q -> %q", ErrUnsafePath, name, hdr.Linkname)
 		}
-		if !within(extractionRoot(clean), path.Join(path.Dir(clean), hdr.Linkname)) {
+		// ".." only as leading components keeps the lexical check sound: every
+		// earlier symlink already resolves inside the root, so following a
+		// chain of them cannot leave it.
+		if !leadingDotDotOnly(hdr.Linkname) || !within(extractionRoot(clean), path.Join(path.Dir(clean), hdr.Linkname)) {
 			return fmt.Errorf("%w: symlink %q -> %q", ErrUnsafePath, name, hdr.Linkname)
 		}
 	}
 	return nil
+}
+
+func (g *pathGuard) symlinkAtOrAbove(p string) (string, bool) {
+	for ; p != "." && p != "/" && p != ""; p = path.Dir(p) {
+		if g.symlinks[p] {
+			return p, true
+		}
+	}
+	return "", false
+}
+
+func leadingDotDotOnly(target string) bool {
+	parts := strings.Split(target, "/")
+	i := 0
+	for i < len(parts) && parts[i] == ".." {
+		i++
+	}
+	return !hasDotDot(strings.Join(parts[i:], "/"))
 }
 
 func hasDotDot(name string) bool {

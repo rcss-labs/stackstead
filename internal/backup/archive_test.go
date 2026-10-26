@@ -197,6 +197,20 @@ func TestReaderRejectsPathEscape(t *testing.T) {
 		"image symlink to sibling":  {sym("images/web/x", "../other/y")},
 		"write through symlink":     {sym("base/stacks/web/d", "real"), file("base/stacks/web/d/cron.d/evil")},
 		"dir under symlink":         {sym("volumes/a/k/d", "/etc"), file("volumes/a/k/d/evil")},
+		"symlink via earlier symlink": {
+			{Name: "base/stacks/web/a/b/c/", Typeflag: tar.TypeDir},
+			sym("base/stacks/web/a/b/c/up", "../../.."),
+			sym("base/stacks/web/x", "a/b/c/up/../../../etc"),
+		},
+		"hardlink via earlier symlink": {
+			sym("base/stacks/web/a/b/c/up", "../../.."),
+			hard("base/stacks/web/h", "base/stacks/web/a/b/c/up/../../../etc/passwd"),
+		},
+		"hardlink with dotdot":       {hard("base/stacks/web/h", "base/stacks/web/a/../b")},
+		"hardlink below symlink":     {sym("base/stacks/web/d", "."), hard("base/stacks/web/h", "base/stacks/web/d/y")},
+		"cross-stack by indirection": {sym("base/stacks/web/d", "."), sym("base/stacks/web/x", "d/../b/y")},
+		"file replaces symlink":      {sym("base/stacks/web/x", "y"), file("base/stacks/web/x")},
+		"dir replaces symlink":       {sym("base/stacks/web/x", "y"), {Name: "base/stacks/web/x/", Typeflag: tar.TypeDir}},
 	}
 	for name, hdrs := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -229,6 +243,23 @@ func TestAddTarStreamRejectsUnsafeInner(t *testing.T) {
 	w := NewWriter(io.Discard)
 	if _, err := w.AddTarStream("volumes/web/data/", bytes.NewReader(bad)); !errors.Is(err, ErrUnsafePath) {
 		t.Fatalf("err = %v, want ErrUnsafePath", err)
+	}
+}
+
+func TestAddTarStreamCanonicalisesAbsoluteInnerNames(t *testing.T) {
+	inner := buildLinkTar(t, []*tar.Header{{Name: "/etc/x", Typeflag: tar.TypeReg, Mode: 0o600, Size: 1}})
+	var buf bytes.Buffer
+	w := NewWriter(&buf)
+	if _, err := w.AddTarStream("volumes/web/data/", bytes.NewReader(inner)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(Manifest{}); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := NewReader(&buf)
+	h, _, err := r.Next()
+	if err != nil || h.Name != "volumes/web/data/etc/x" {
+		t.Fatalf("name = %v, err = %v", h, err)
 	}
 }
 
