@@ -325,20 +325,45 @@ func (s *server) handleRestoreStart(w http.ResponseWriter, r *http.Request) {
 	s.restore.mu.Unlock()
 	go s.restartAfterRestore(op.ID)
 
-	select {
-	case <-accepted:
-	case err := <-early:
-		// Accepted and then failed: the operation reports it, not this answer.
-		if err != nil && !isClosed(accepted) {
-			writeRestoreError(w, err)
-			return
-		}
-	case <-r.Context().Done():
+	switch outcome, err := awaitAcceptance(r.Context().Done(), accepted, early); outcome {
+	case restoreRefused:
+		writeRestoreError(w, err)
+		return
+	case restoreClientGone:
 		// Nobody would get the restore token: do not restore unseen.
 		_ = s.opts.RestoreOps.Cancel(op.ID)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, apitypes.HostRestoreStarted{RestoreToken: token, Operation: apitypes.Operation(toOperation(op))})
+}
+
+// acceptance is how waiting for a restore to be accepted ended.
+type acceptance int
+
+const (
+	restoreAccepted acceptance = iota
+	restoreRefused
+	restoreClientGone
+)
+
+// awaitAcceptance waits until the restore is accepted, refused before it
+// changed anything (the error says why), or the client has gone.
+func awaitAcceptance(clientGone, accepted <-chan struct{}, early <-chan error) (acceptance, error) {
+	select {
+	case <-accepted:
+	case err := <-early:
+		// Accepted and then failed: the operation reports it, not this answer.
+		if err != nil && !isClosed(accepted) {
+			return restoreRefused, err
+		}
+	case <-clientGone:
+		// Both may be ready at once; an accepted restore is already changing
+		// the host and must not be cancelled.
+		if !isClosed(accepted) {
+			return restoreClientGone, nil
+		}
+	}
+	return restoreAccepted, nil
 }
 
 func isClosed(ch <-chan struct{}) bool {

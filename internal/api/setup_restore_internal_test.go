@@ -15,3 +15,25 @@ func TestSetupRestoreRoutesNotForwardable(t *testing.T) {
 		}
 	}
 }
+
+// A client that leaves just as the restore is accepted must not cancel it:
+// the restore is already changing the host and has to run to its end.
+func TestAwaitAcceptancePrefersAcceptedOverClientGone(t *testing.T) {
+	for range 200 {
+		accepted := make(chan struct{})
+		close(accepted)
+		clientGone := make(chan struct{})
+		close(clientGone)
+		if got, _ := awaitAcceptance(clientGone, accepted, make(chan error)); got != restoreAccepted {
+			t.Fatalf("outcome = %v, want accepted", got)
+		}
+	}
+}
+
+func TestAwaitAcceptanceReportsClientGoneBeforeAcceptance(t *testing.T) {
+	clientGone := make(chan struct{})
+	close(clientGone)
+	if got, _ := awaitAcceptance(clientGone, make(chan struct{}), make(chan error)); got != restoreClientGone {
+		t.Fatalf("outcome = %v, want client gone", got)
+	}
+}
