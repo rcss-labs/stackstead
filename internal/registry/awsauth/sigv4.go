@@ -46,6 +46,10 @@ func SignV4(req *http.Request, body []byte, c Credentials, region, service strin
 	day := now.Format("20060102")
 
 	req.Header.Set("X-Amz-Date", amzDate)
+	if service == "s3" {
+		// S3 requires the payload hash as a signed header.
+		req.Header.Set("X-Amz-Content-Sha256", hexSHA256(body))
+	}
 	if c.SessionToken != "" {
 		req.Header.Set("X-Amz-Security-Token", c.SessionToken.Reveal())
 	} else {
@@ -91,7 +95,7 @@ func SignV4(req *http.Request, body []byte, c Credentials, region, service strin
 
 	canonical := strings.Join([]string{
 		req.Method,
-		canonicalPath(req.URL),
+		canonicalPath(req.URL, service == "s3"),
 		canonicalQuery(req.URL),
 		canonHeaders.String(),
 		signedHeaders,
@@ -124,15 +128,25 @@ func hmacSHA256(key []byte, data string) []byte {
 }
 
 // canonicalPath double-encodes the path as required for every service except
-// S3, which Stackstead does not talk to.
-func canonicalPath(u *url.URL) string {
+// S3, which encodes each decoded segment exactly once.
+func canonicalPath(u *url.URL, s3 bool) string {
+	if s3 {
+		if u.Path == "" {
+			return "/"
+		}
+		segs := strings.Split(u.Path, "/")
+		for i, s := range segs {
+			segs[i] = URIEncode(s)
+		}
+		return strings.Join(segs, "/")
+	}
 	p := u.EscapedPath()
 	if p == "" {
 		return "/"
 	}
 	segs := strings.Split(p, "/")
 	for i, s := range segs {
-		segs[i] = rfc3986(s)
+		segs[i] = URIEncode(s)
 	}
 	return strings.Join(segs, "/")
 }
@@ -153,7 +167,7 @@ func canonicalQuery(u *url.URL) string {
 		if err1 != nil || err2 != nil {
 			dk, dv = k, v
 		}
-		pairs = append(pairs, kv{rfc3986(dk), rfc3986(dv)})
+		pairs = append(pairs, kv{URIEncode(dk), URIEncode(dv)})
 	}
 	sort.Slice(pairs, func(i, j int) bool {
 		if pairs[i].k != pairs[j].k {
@@ -168,8 +182,8 @@ func canonicalQuery(u *url.URL) string {
 	return strings.Join(out, "&")
 }
 
-// rfc3986 percent-encodes everything except unreserved characters.
-func rfc3986(s string) string {
+// URIEncode percent-encodes everything except unreserved characters.
+func URIEncode(s string) string {
 	const hexUpper = "0123456789ABCDEF"
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {
