@@ -39,9 +39,14 @@ type fakeCompose struct {
 	runErr         error
 	runs           []runCall
 	runGate        chan struct{} // when set, Run blocks until it is closed
+	configJSON     string        // returned by ConfigJSON
 }
 
 func (f *fakeCompose) Version(context.Context) (string, error) { return "2.29.0", f.versionErr }
+
+func (f *fakeCompose) ConfigJSON(context.Context, string) ([]byte, error) {
+	return []byte(f.configJSON), nil
+}
 
 func (f *fakeCompose) Config(_ context.Context, file string) error {
 	data, _ := os.ReadFile(file)
