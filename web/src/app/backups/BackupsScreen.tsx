@@ -12,6 +12,7 @@ import { useServer } from '../servers/ServerContext';
 import { BackupRunsList } from './BackupRunsList';
 import { BackupScheduleCard } from './BackupScheduleCard';
 import { BackupStacksTable } from './BackupStacksTable';
+import { RestoreStackDialog } from './RestoreStackDialog';
 import styles from './backups.module.css';
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -28,6 +29,7 @@ function groupByHost(archives: BackupArchive[], own: string): { host: string; ar
 function ArchivesTab({ api, ownSlug }: { api: ReturnType<typeof createBackupsApi>; ownSlug: string }) {
   const [archives, setArchives] = useState<BackupArchive[]>();
   const [error, setError] = useState<string>();
+  const [restoring, setRestoring] = useState<BackupArchive>();
 
   useEffect(() => {
     api.archives().then(setArchives, (e: unknown) => setError(messageOf(e)));
@@ -70,7 +72,7 @@ function ArchivesTab({ api, ownSlug }: { api: ReturnType<typeof createBackupsApi
                     </td>
                     <td>{formatBytes(a.size)}</td>
                     <td>
-                      <Button variant="secondary" size="sm" disabledReason="Restore is not available yet">
+                      <Button variant="secondary" size="sm" onClick={() => setRestoring(a)}>
                         Restore
                       </Button>
                     </td>
@@ -81,6 +83,7 @@ function ArchivesTab({ api, ownSlug }: { api: ReturnType<typeof createBackupsApi
           </div>
         </section>
       ))}
+      {restoring && <RestoreStackDialog key={`${restoring.dest}:${restoring.name}`} api={api} archive={restoring} onClose={() => setRestoring(undefined)} />}
     </div>
   );
 }

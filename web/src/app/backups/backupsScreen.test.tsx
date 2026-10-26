@@ -61,6 +61,6 @@ describe('BackupsScreen', () => {
     await screen.findByText('m1.tar.gz');
     const headings = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent);
     expect(headings.slice(0, 2)).toEqual(['mine (this host)', 'alpha']);
-    expect((screen.getAllByRole('button', { name: 'Restore' })[0] as HTMLButtonElement).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getAllByRole('button', { name: 'Restore' })[0].getAttribute('aria-disabled')).toBeNull();
   });
 });
