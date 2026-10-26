@@ -442,8 +442,9 @@ func RestoreHost(ctx context.Context, src HostSource, env HostEnv, startStacks b
 	return HostReport{Items: h.report()}, nil
 }
 
-// clearStaging empties the restore folder except for an uploaded archive,
-// which may be the source of this restore or of a retry after a failure.
+// clearStaging empties the restore folder except for the uploaded archive
+// (the source of this restore or of a retry), an upload still being written,
+// and an earlier restore's unfinished post-start work.
 func clearStaging(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -453,7 +454,8 @@ func clearStaging(dir string) error {
 		return err
 	}
 	for _, e := range entries {
-		if e.Name() == uploadName {
+		switch e.Name() {
+		case uploadName, uploadName + partialSuffix, postApplyFile:
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(dir, e.Name())); err != nil {

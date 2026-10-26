@@ -17,6 +17,7 @@ import (
 const (
 	restoreDirName  = "restore"
 	pendingFile     = "pending.json"
+	postApplyFile   = "post-apply.json"
 	stagedDBName    = "stackstead.db"
 	liveDBName      = "stackstead.db"
 	stagedConfigYML = "config.yaml"
@@ -35,13 +36,16 @@ type Pending struct {
 
 func restoreDir(dataDir string) string { return filepath.Join(dataDir, restoreDirName) }
 
-func writePending(dataDir string, p Pending) error {
-	raw, err := json.MarshalIndent(p, "", "  ")
+func writePending(dataDir string, p Pending) error { return writeMarker(dataDir, pendingFile, p) }
+
+// writeMarker durably replaces <data>/restore/<name> with v as JSON.
+func writeMarker(dataDir, name string, v any) error {
+	raw, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
 	dir := restoreDir(dataDir)
-	final := filepath.Join(dir, pendingFile)
+	final := filepath.Join(dir, name)
 	tmp := final + partialSuffix
 	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
 		return err
@@ -102,6 +106,11 @@ func ApplyPending(dataDir string, now time.Time) (*Pending, error) {
 	default:
 		return nil, fmt.Errorf("install restored database: %w", err)
 	}
+	// The post-start work is recorded before the pending marker goes, so a
+	// crash or a failed step from here on is finished by a later start.
+	if err := WritePostApply(dataDir, PostApply{StartStacks: p.StartStacks, PauseSchedule: p.PauseSchedule}); err != nil {
+		return nil, fmt.Errorf("record post-restore work: %w", err)
+	}
 	for _, name := range []string{staged + "-wal", staged + "-shm", markerPath} {
 		if err := os.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("remove staged restore files: %w", err)
@@ -131,4 +140,40 @@ func PauseScheduleAfterRestore(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("pause backup schedule: %w", err)
 	}
 	return nil
+}
+
+// PostApply is the work left after the restored database is installed.
+type PostApply struct {
+	StartStacks   []string `json:"startStacks"`
+	PauseSchedule bool     `json:"pauseSchedule"`
+}
+
+// ReadPostApply returns the post-start work a host restore left, or nil when
+// there is none.
+func ReadPostApply(dataDir string) (*PostApply, error) {
+	raw, err := os.ReadFile(filepath.Join(restoreDir(dataDir), postApplyFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read post-restore work: %w", err)
+	}
+	var p PostApply
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, fmt.Errorf("read post-restore work: %w", err)
+	}
+	return &p, nil
+}
+
+// WritePostApply records the work still to do; with nothing left it removes
+// the marker.
+func WritePostApply(dataDir string, p PostApply) error {
+	if !p.PauseSchedule && len(p.StartStacks) == 0 {
+		err := os.Remove(filepath.Join(restoreDir(dataDir), postApplyFile))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	return writeMarker(dataDir, postApplyFile, p)
 }

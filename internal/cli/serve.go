@@ -75,6 +75,13 @@ var serveRun func(ctx context.Context, env *Env, args []string) error
 // Assigned in init: serve prints serveCommand's usage, which refers to serveRun.
 func init() { serveRun = serve }
 
+// pauseSchedule pauses a restored backup schedule; tests make it fail.
+var pauseSchedule = backup.PauseScheduleAfterRestore
+
+// startBackupScheduler runs the backup scheduler in the background group;
+// tests count its starts.
+var startBackupScheduler = func(bg *background, s *backup.Scheduler) { bg.add(s.Run) }
+
 // newAPIHandler builds the HTTP handler; tests capture its Options.
 var newAPIHandler = api.New
 
@@ -140,10 +147,24 @@ func runServer(ctx context.Context, env *Env, args []string, restart *atomic.Boo
 	defer lock.Release()
 	// A host restore staged by the previous process is installed before the
 	// database is opened. A half-installed one must not be served.
-	pending, err := backup.ApplyPending(cfg.DataDir, time.Now())
+	installed, err := backup.ApplyPending(cfg.DataDir, time.Now())
 	if err != nil {
 		logger.Error("could not finish the pending host restore", "err", err)
 		return fmt.Errorf("finish the pending host restore: %w", err)
+	}
+	// What is left of a host restore: recorded by ApplyPending, and kept
+	// until each step has been done, so a crash or a failure is retried.
+	// Unreadable, it could hide a schedule pause: a clone must not run with
+	// the old host's schedule live.
+	restoreWork, err := backup.ReadPostApply(cfg.DataDir)
+	if err != nil {
+		logger.Error("could not read the remaining host restore work", "err", err)
+		return fmt.Errorf("finish the pending host restore: %w", err)
+	}
+	saveRestoreWork := func() {
+		if err := backup.WritePostApply(cfg.DataDir, *restoreWork); err != nil {
+			logger.Error("could not record the remaining host restore work", "err", err)
+		}
 	}
 	if path != "" {
 		logger.Info("loaded config file", "path", path)
@@ -155,13 +176,16 @@ func runServer(ctx context.Context, env *Env, args []string, restart *atomic.Boo
 		return err
 	}
 	defer db.Close()
-	if pending != nil {
+	if installed != nil {
 		logger.Info("installed the restored database")
-		if pending.PauseSchedule {
-			// The marker is gone, so a failure cannot be retried: report it loudly.
-			if err := backup.PauseScheduleAfterRestore(ctx, db); err != nil {
-				logger.Error("could not pause the restored backup schedule; turn it off in Settings", "err", err)
-			}
+	}
+	if restoreWork != nil && restoreWork.PauseSchedule {
+		if err := pauseSchedule(ctx, db); err != nil {
+			logger.Error("could not pause the restored backup schedule; retrying at the next start", "err", err)
+		} else {
+			logger.Info("paused the restored backup schedule")
+			restoreWork.PauseSchedule = false
+			saveRestoreWork()
 		}
 	}
 
@@ -332,7 +356,12 @@ func runServer(ctx context.Context, env *Env, args []string, restart *atomic.Boo
 		Settings: backupSettings, History: backupRuns, Runner: backupRunner, Scheduler: backupScheduler,
 		Stacks: stackSvc, Sizes: dockerEngine, HTTP: backupHTTP, Now: time.Now, Loc: time.Local, Logger: logger,
 	}
-	bg.add(backupScheduler.Run)
+	if restoreWork != nil && restoreWork.PauseSchedule {
+		// Running it now could write over the old host's archives.
+		logger.Error("backup scheduler not started: the restored schedule could not be paused; restart Stackstead to retry")
+	} else {
+		startBackupScheduler(bg, backupScheduler)
+	}
 
 	hostRestorer := backup.HostRestorer{Env: backup.HostEnv{
 		Engine: dockerEngine, DataDir: cfg.DataDir, AllowedRoots: cfg.AllowedRoots,
@@ -415,9 +444,12 @@ func runServer(ctx context.Context, env *Env, args []string, restart *atomic.Boo
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.ListenAndServe() }()
 	logger.Info("stackstead listening", "addr", cfg.Listen, "version", version.Get().Version)
-	if pending != nil && len(pending.StartStacks) > 0 {
+	if restoreWork != nil && len(restoreWork.StartStacks) > 0 {
 		bg.add(func(ctx context.Context) {
-			startRestoredStacks(ctx, stackSvc, actions, pending.StartStacks, logger)
+			if startRestoredStacks(ctx, stackSvc, actions, restoreWork.StartStacks, logger) {
+				restoreWork.StartStacks = nil
+				saveRestoreWork()
+			}
 		})
 	}
 
@@ -433,7 +465,7 @@ func runServer(ctx context.Context, env *Env, args []string, restart *atomic.Boo
 	// operations (compose process groups get SIGTERM then SIGKILL), stop the
 	// cache and sampler, then the deferred db.Close. Containers are never
 	// stopped.
-	return shutdownServices(cfg.ShutdownGrace, func() error {
+	shutdownErr := shutdownServices(cfg.ShutdownGrace, func() error {
 		httpCtx, cancelHTTP := context.WithTimeout(context.Background(), httpShutdownGrace)
 		defer cancelHTTP()
 		err := srv.Shutdown(httpCtx)
@@ -444,6 +476,11 @@ func runServer(ctx context.Context, env *Env, args []string, restart *atomic.Boo
 		}
 		return err
 	}, ops.Shutdown, bg)
+	if shutdownErr != nil && restart.Load() {
+		// No re-exec follows an error; the staged restore waits for a start.
+		logger.Error("restore staged; start Stackstead again to finish it", "err", shutdownErr)
+	}
+	return shutdownErr
 }
 
 type stackStarter interface {
@@ -456,11 +493,12 @@ type actionAppender interface {
 
 // startRestoredStacks brings up, one at a time, the stacks that were running
 // when the restored backup was taken. A stack that fails is logged to the
-// action log and the rest still start.
-func startRestoredStacks(ctx context.Context, starter stackStarter, actions actionAppender, names []string, logger *slog.Logger) {
+// action log and the rest still start. It reports whether every stack was
+// attempted, rather than cut short by shutdown.
+func startRestoredStacks(ctx context.Context, starter stackStarter, actions actionAppender, names []string, logger *slog.Logger) bool {
 	for _, name := range names {
 		if ctx.Err() != nil {
-			return
+			return false
 		}
 		err := starter.ActWait(ctx, name, "up", func(string) {})
 		if err == nil {
@@ -476,6 +514,7 @@ func startRestoredStacks(ctx context.Context, starter stackStarter, actions acti
 			logger.Warn("record restored stack start failure", "stack", name, "err", aerr)
 		}
 	}
+	return ctx.Err() == nil
 }
 
 // newUpdateChecker builds the release checker. The server always uses the

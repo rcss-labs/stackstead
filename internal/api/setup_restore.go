@@ -50,11 +50,16 @@ const (
 	restoreOpKey    = "host:restore"
 	restoreOpAction = "restore"
 
+	// uploadPartialSuffix names an upload while it is written; the restore
+	// engine leaves that file alone when it clears its staging folder.
+	uploadPartialSuffix = ".partial"
+
 	// setupTokenHeader carries the setup token where the body cannot: the
 	// upload body is the archive itself.
 	setupTokenHeader = "X-Stackstead-Setup-Token"
 
 	codeRestoreRunning   = "restore_running"
+	codeUploadRunning    = "upload_running"
 	codeRestorePending   = "restore_pending"
 	codeConflictsChanged = "conflicts_changed"
 	codeArchiveNewer     = "archive_newer"
@@ -64,9 +69,10 @@ const (
 // restoreState is the single whole-host restore: the operation running it
 // and the token that authorises its progress stream.
 type restoreState struct {
-	mu    sync.Mutex
-	token string
-	opID  string
+	mu        sync.Mutex
+	token     string
+	opID      string
+	uploading bool
 }
 
 func (s *server) registerSetupRestoreRoutes(mux *http.ServeMux) {
@@ -111,10 +117,27 @@ func (s *server) restoreActiveLocked() bool {
 	return err == nil && (op.State == stacks.OpRunning || op.State == stacks.OpSucceeded)
 }
 
-func (s *server) restoreActive() bool {
+// beginUpload claims the single upload slot, refusing while another upload
+// or a restore is under way. The caller must call endUpload.
+func (s *server) beginUpload(w http.ResponseWriter) bool {
 	s.restore.mu.Lock()
 	defer s.restore.mu.Unlock()
-	return s.restoreActiveLocked()
+	switch {
+	case s.restore.uploading:
+		writeCodedError(w, http.StatusConflict, "another upload is in progress", codeUploadRunning)
+		return false
+	case s.restoreActiveLocked():
+		writeCodedError(w, http.StatusConflict, "a restore is in progress", codeRestoreRunning)
+		return false
+	}
+	s.restore.uploading = true
+	return true
+}
+
+func (s *server) endUpload() {
+	s.restore.mu.Lock()
+	s.restore.uploading = false
+	s.restore.mu.Unlock()
 }
 
 // uploadMediaTypes are the accepted archive types. None is a CORS "simple"
@@ -131,29 +154,29 @@ func (s *server) handleRestoreUpload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/gzip or application/octet-stream")
 		return
 	}
-	if s.restoreActive() {
-		writeCodedError(w, http.StatusConflict, "a restore is in progress", codeRestoreRunning)
+	if !s.beginUpload(w) {
 		return
 	}
+	defer s.endUpload()
 	// The server's read timeout suits API calls, not an archive of many gigabytes.
 	if err := http.NewResponseController(w).SetReadDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
 		s.internalError(w, r, err)
 		return
 	}
+	// Written under a temporary name and renamed into place, so the upload
+	// path only ever holds a complete archive.
 	path := s.opts.HostRestore.UploadPath()
+	partial := path + uploadPartialSuffix
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	// Only a crashed earlier upload can have left this behind: the slot is ours.
+	if err := os.Remove(partial); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		s.internalError(w, r, err)
 		return
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, fs.ErrExist) {
-		writeError(w, http.StatusConflict, "another upload is in progress")
-		return
-	}
+	f, err := os.OpenFile(partial, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		s.internalError(w, r, err)
 		return
@@ -163,8 +186,23 @@ func (s *server) handleRestoreUpload(w http.ResponseWriter, r *http.Request) {
 		copyErr = closeErr
 	}
 	if copyErr != nil {
-		_ = os.Remove(path)
+		_ = os.Remove(partial)
 		writeError(w, http.StatusBadRequest, "upload failed: "+copyErr.Error())
+		return
+	}
+	// Setup may have been completed the normal way while this was uploading.
+	if has, err := s.opts.Auth.HasAdmin(r.Context()); err != nil || has {
+		_ = os.Remove(partial)
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		writeError(w, http.StatusConflict, "setup is already complete")
+		return
+	}
+	if err := os.Rename(partial, path); err != nil {
+		_ = os.Remove(partial)
+		s.internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, apitypes.HostRestoreUploaded{Source: apitypes.HostRestoreSource{Kind: backup.SourceUpload}})
@@ -261,6 +299,11 @@ func (s *server) handleRestoreStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.restore.mu.Lock()
+	if src.Kind == backup.SourceUpload && s.restore.uploading {
+		s.restore.mu.Unlock()
+		writeCodedError(w, http.StatusConflict, "the archive is still being uploaded", codeUploadRunning)
+		return
+	}
 	if s.restoreActiveLocked() {
 		s.restore.mu.Unlock()
 		writeCodedError(w, http.StatusConflict, "a restore is already in progress", codeRestoreRunning)
@@ -368,4 +411,25 @@ func toHostRestoreSummary(sum backup.HostSummary) apitypes.HostRestoreSummary {
 		out.Manifest.Stacks = append(out.Manifest.Stacks, row)
 	}
 	return out
+}
+
+// removeRestoreUpload drops an uploaded archive nobody will restore: setup
+// was completed the normal way.
+// An upload still being written is left to its handler, which discards it
+// once it sees the admin.
+func (s *server) removeRestoreUpload() {
+	if s.opts.HostRestore == nil {
+		return
+	}
+	s.restore.mu.Lock()
+	defer s.restore.mu.Unlock()
+	if s.restore.uploading {
+		return
+	}
+	path := s.opts.HostRestore.UploadPath()
+	for _, p := range []string{path, path + uploadPartialSuffix} {
+		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			s.opts.Logger.Warn("remove unused restore upload", "err", err)
+		}
+	}
 }
