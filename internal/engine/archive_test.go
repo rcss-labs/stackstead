@@ -198,3 +198,25 @@ func TestCreateVolumeSendsLabels(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestStartContainerPostsStart(t *testing.T) {
+	c := opsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1.41/containers/c1/start" {
+			t.Errorf("got %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	if err := c.StartContainer(context.Background(), "c1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStartContainerMissing(t *testing.T) {
+	c := opsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, `{"message":"No such container: c1"}`)
+	})
+	if err := c.StartContainer(context.Background(), "c1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v", err)
+	}
+}
