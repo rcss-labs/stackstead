@@ -188,7 +188,7 @@ describe('single-stack restore', () => {
     setup({
       'POST /api/backups/restore/plan': {
         status: 400,
-        body: { error: 'backup: a stack that does not exist here is restored with its files' },
+        body: { error: 'the stack is not on this server', code: 'files_required' },
       },
     });
     const user = await openDialog();
@@ -256,5 +256,29 @@ describe('single-stack restore', () => {
     const confirm = await screen.findByRole('alertdialog');
     expect(within(confirm).queryByText(/overwrites/i)).toBeNull();
     expect(within(confirm).getByText(/volume contents are replaced and not kept/i)).toBeTruthy();
+  });
+
+  it('offers a new name with the server message when the compose project is taken', async () => {
+    setup({
+      'POST /api/backups/restore/plan': {
+        status: 409,
+        body: { error: 'compose project web belongs to another stack', code: 'project_taken' },
+      },
+    });
+    const user = await openDialog();
+    await screen.findByRole('combobox', { name: 'Stack' });
+    await preview(user);
+    expect(await screen.findByText(/belongs to another stack/)).toBeTruthy();
+    expect(screen.getByLabelText('Restore as new name')).toBeTruthy();
+  });
+
+  it('explains nothing_to_restore without echoing the raw message', async () => {
+    setup({
+      'POST /api/backups/restore/plan': { status: 400, body: { error: 'backup: choose', code: 'nothing_to_restore' } },
+    });
+    const user = await openDialog();
+    await screen.findByRole('combobox', { name: 'Stack' });
+    await preview(user);
+    expect(await screen.findByText(/Choose the files, the volumes or the images/i)).toBeTruthy();
   });
 });

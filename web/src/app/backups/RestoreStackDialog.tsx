@@ -15,8 +15,8 @@ import styles from './backups.module.css';
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const codeOf = (e: unknown) => (e as { code?: string } | null)?.code;
 
-// The server answers this one with a plain 400 and no code.
-const filesRequired = (message: string) => message.includes('restored with its files');
+// Taken names: offer a new one and show the server's message.
+const NAME_CLASH_CODES = ['target_occupied', 'project_taken'];
 
 /** Restores one stack from an archive: choose parts, preview the plan, confirm, follow the operation. */
 export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi; archive: BackupArchive; onClose: () => void }) {
@@ -80,11 +80,14 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
   }
 
   function describeError(e: unknown): string {
-    const message = messageOf(e);
-    if (filesRequired(message)) {
-      return 'This stack does not exist on this server, so it can only be restored together with its files. Tick Files and preview again.';
+    switch (codeOf(e)) {
+      case 'files_required':
+        return 'This stack does not exist on this server, so it can only be restored together with its files. Tick Files and preview again.';
+      case 'nothing_to_restore':
+        return 'Choose the files, the volumes or the images to restore.';
+      default:
+        return messageOf(e);
     }
-    return message;
   }
 
   async function runPreview() {
@@ -99,7 +102,7 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
       if (next.overwrites || next.crossHost) setOfferRename(true);
     } catch (e) {
       if (seq !== planSeq.current) return;
-      if (codeOf(e) === 'target_occupied') setOfferRename(true);
+      if (NAME_CLASH_CODES.includes(codeOf(e) ?? '')) setOfferRename(true);
       setError(describeError(e));
     } finally {
       if (seq === planSeq.current) setPlanning(false);
@@ -114,7 +117,7 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
       setOperationId(started.operation.id);
     } catch (e) {
       setConfirming(false);
-      if (codeOf(e) === 'target_occupied') setOfferRename(true);
+      if (NAME_CLASH_CODES.includes(codeOf(e) ?? '')) setOfferRename(true);
       setError(describeError(e));
       setPlan(undefined);
     } finally {
