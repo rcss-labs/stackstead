@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rcss-labs/stackstead/internal/store"
 )
@@ -67,6 +68,31 @@ func TestConfigRoundTripKeepsSecret(t *testing.T) {
 	}
 }
 
+func TestConfigClearS3Secret(t *testing.T) {
+	cs, db := newTestConfigStore(t)
+	ctx := context.Background()
+	if err := cs.Save(ctx, Config{S3: S3Dest{SecretKey: "s1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cs.ClearS3Secret(ctx); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := cs.Load(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.S3.SecretKey != "" {
+		t.Errorf("SecretKey after clear = %q, want empty", loaded.S3.SecretKey.Reveal())
+	}
+	var rows int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM settings WHERE key = 'backup_s3_secret_key'`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Errorf("backup_s3_secret_key rows = %d, want 0", rows)
+	}
+}
+
 func TestConfigValidate(t *testing.T) {
 	validConfig := func() Config {
 		return Config{
@@ -88,6 +114,17 @@ func TestConfigValidate(t *testing.T) {
 			c.S3 = S3Dest{Enabled: true}
 		}, true},
 		{"schedule without destination", func(c *Config) { c.Local.Enabled = false }, true},
+		{"weekly weekday saturday", func(c *Config) {
+			c.Schedule.Frequency = "weekly"
+			c.Schedule.Weekday = time.Saturday
+		}, false},
+		{"weekly weekday 7", func(c *Config) {
+			c.Schedule.Frequency = "weekly"
+			c.Schedule.Weekday = 7
+		}, true},
+		{"endpoint ftp scheme", func(c *Config) { c.S3.Endpoint = "ftp://x" }, true},
+		{"endpoint unparsable", func(c *Config) { c.S3.Endpoint = "::bad" }, true},
+		{"frequency monthly", func(c *Config) { c.Schedule.Frequency = "monthly" }, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

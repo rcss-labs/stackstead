@@ -88,6 +88,9 @@ func (c Config) Validate() error {
 	if c.Schedule.Frequency != frequencyDaily && c.Schedule.Frequency != frequencyWeekly {
 		problems = append(problems, fmt.Errorf("schedule frequency %q must be daily or weekly", c.Schedule.Frequency))
 	}
+	if c.Schedule.Frequency == frequencyWeekly && (c.Schedule.Weekday < time.Sunday || c.Schedule.Weekday > time.Saturday) {
+		problems = append(problems, fmt.Errorf("schedule weekday %d must be between 0 (Sunday) and 6 (Saturday)", c.Schedule.Weekday))
+	}
 	if c.Local.Enabled && !filepath.IsAbs(c.Local.Path) {
 		problems = append(problems, fmt.Errorf("local backup path %q must be absolute", c.Local.Path))
 	}
