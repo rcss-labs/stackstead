@@ -88,6 +88,9 @@ type HostEnv struct {
 	// Accepted, when set, is called once RestoreHost has checked the archive
 	// and the confirmed conflicts, before it changes anything.
 	Accepted func()
+	// Deferred says the caller finishes the restore by restarting Stackstead
+	// (the server does); the closing progress line then says so.
+	Deferred bool
 	// HTTP is used for S3 sources; nil means http.DefaultClient.
 	HTTP *http.Client
 }
@@ -437,7 +440,9 @@ func RestoreHost(ctx context.Context, src HostSource, env HostEnv, startStacks b
 		return HostReport{Items: h.report()}, fmt.Errorf("record pending restore: %w", err)
 	}
 	finished = true
-	h.out("restore staged; it completes when Stackstead restarts")
+	if env.Deferred {
+		h.out("restore staged; it completes when Stackstead restarts")
+	}
 	return HostReport{Items: h.report()}, nil
 }
 

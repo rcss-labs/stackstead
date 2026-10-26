@@ -138,9 +138,14 @@ func TestRestorePrintsProblemItemsAndExits9(t *testing.T) {
 	env := newTestEnv(t, nil)
 	err := runRestore(env, "/tmp/a.tar.gz", "--yes", "--config", h.cfgPath)
 	wantCode(t, err, ExitOperationFailed)
-	mustContain(t, "stdout", env.Out.String(), "network create failed", "front", "archived config.yaml kept aside", "completed with 1 problem(s)")
-	if strings.Contains(env.Out.String(), "nginx") && strings.Contains(env.Out.String(), "data") && strings.Contains(env.Out.String(), "ok  ") {
-		t.Error("ok items were printed")
+	mustContain(t, "stdout", env.Out.String(), "network create failed", "front", "archived config.yaml kept aside")
+	for _, line := range strings.Split(env.Out.String(), "\n") {
+		if strings.HasPrefix(line, "  ok") {
+			t.Errorf("ok item printed: %q", line)
+		}
+	}
+	if n := strings.Count(env.Out.String()+env.Err.String()+errMessage(err), "completed with 1 problem(s)"); n != 1 {
+		t.Errorf("problem summary printed %d times:\nstdout: %s\nstderr: %s", n, env.Out, env.Err)
 	}
 	if calls.applied != 1 {
 		t.Error("the database must still be installed when items failed")

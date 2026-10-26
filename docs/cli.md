@@ -261,7 +261,8 @@ installs the restored database right away (the old one is kept as
 starts. The backup schedule is turned off in the restored database, and the UI
 says so until you turn it back on. Exit codes: 5 while the server runs (or a
 restore is already pending), 6 for an archive from a newer Stackstead or a
-damaged one, 2 for a bad source or missing S3 keys.
+damaged one, 9 when some items failed to restore (the database is still
+installed; the failed items are listed), 2 for a bad source or missing S3 keys.
 
 **Forgot the admin password.**
 

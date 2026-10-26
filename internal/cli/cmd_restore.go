@@ -93,10 +93,7 @@ func hostRestoreEnv(env *Env, cfg config.Config) backup.HostEnv {
 		Engine: engine.New(cfg.DockerSocket, 2*time.Second), DataDir: cfg.DataDir, AllowedRoots: cfg.AllowedRoots,
 		Version: version.Version, HTTP: &http.Client{Transport: backupTransport()},
 		Out: func(line string) {
-			// The engine's closing line assumes the server finishes the restore; the CLI does it itself.
-			if !strings.HasPrefix(line, "restore staged;") {
-				fmt.Fprintln(env.Stdout, line)
-			}
+			fmt.Fprintln(env.Stdout, line)
 		},
 	}
 }
@@ -168,9 +165,6 @@ func printRestoreProblems(env *Env, report backup.HostReport) (failed int) {
 			failed++
 		}
 		fmt.Fprintf(env.Stdout, "  %-8s %-7s %s: %s\n", it.Status, it.Kind, strings.Join(nonEmpty(it.Stack, it.Name), "/"), it.Note)
-	}
-	if failed > 0 {
-		fmt.Fprintf(env.Stdout, "completed with %d problem(s)\n", failed)
 	}
 	return failed
 }

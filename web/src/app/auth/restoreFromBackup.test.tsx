@@ -138,7 +138,9 @@ describe('Restore from backup', () => {
       'POST /api/setup/restore/start': { status: 202, body: { restoreToken: 'rt', operation: { id: 'op', state: 'running' } } },
       'GET /api/setup/status': () => ({ body: { needsSetup: ++polls < 2 } }),
     });
-    stream = installFakeStream({ '/api/setup/restore/progress': ['event: line\ndata: "restoring volumes"\n\n'] });
+    stream = installFakeStream({
+      '/api/setup/restore/progress': { responses: [{ chunks: ['event: line\ndata: "restoring volumes"\n\n'] }, { status: 403, body: { error: 'x' } }] },
+    }); // after the re-exec the new process answers 403
     await inspectPath(user);
     await user.click(screen.getByLabelText(/I understand/));
     await user.click(screen.getByRole('button', { name: 'Start restore' }));
@@ -231,4 +233,36 @@ describe('Restore progress after the stream ends', () => {
     stream?.close('/api/setup/restore/progress'); // a dropped connection, not a re-exec
     expect((await screen.findByRole('alert', {}, { timeout: 5000 })).textContent).toContain('volume fill failed');
   });
+
+  it('does not declare a restore failed when the stream recovers before the deadline', async () => {
+    await mountDirect({ ...started, 'GET /api/setup/status': { body: { needsSetup: true } } }, 2500, {
+      '/api/setup/restore/progress': {
+        responses: [
+          { chunks: ['id: 0\nevent: line\ndata: "first"\n\n'] },
+          { chunks: ['id: 1\nevent: line\ndata: "second"\n\n'] },
+        ],
+      },
+    });
+    await screen.findByText('first');
+    stream?.close('/api/setup/restore/progress'); // one dropped connection
+    await screen.findByText('second', {}, { timeout: 4000 });
+    await new Promise((r) => setTimeout(r, 3000)); // well past deadlineMs, stream still open
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByText(/Waiting for Stackstead to restart/)).toBeNull();
+  }, 15_000);
+
+  it('does not repeat lines the server replays after a reconnect', async () => {
+    await mountDirect({ ...started, 'GET /api/setup/status': { body: { needsSetup: true } } }, 60_000, {
+      '/api/setup/restore/progress': {
+        responses: [
+          { chunks: ['id: 0\nevent: line\ndata: "alpha"\n\n'] },
+          { chunks: ['id: 0\nevent: line\ndata: "alpha"\n\n', 'id: 1\nevent: line\ndata: "beta"\n\n'] },
+        ],
+      },
+    });
+    await screen.findByText('alpha');
+    stream?.close('/api/setup/restore/progress');
+    await screen.findByText('beta', {}, { timeout: 4000 });
+    expect(screen.getAllByText('alpha')).toHaveLength(1);
+  }, 10_000);
 });

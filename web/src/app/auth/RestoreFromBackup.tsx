@@ -171,6 +171,11 @@ export function RestoreFromBackup({ pollMs = 2000, deadlineMs = 5 * 60_000 }: { 
       clearTimeout(deadline.current);
       poll.current = deadline.current = undefined;
     };
+    // A live stream means the restore is still reporting: the wait (and its deadline) only measures silence.
+    const streamIsLive = () => {
+      stopWaiting();
+      setWaiting(false);
+    };
     function startWaiting() {
       setWaiting(true);
       if (poll.current !== undefined) return;
@@ -194,8 +199,16 @@ export function RestoreFromBackup({ pollMs = 2000, deadlineMs = 5 * 60_000 }: { 
         setStage('failed');
       }, deadlineMs);
     }
+    let lastLineId = -1;
     function onMessage(m: SSEMessage) {
       if (m.event === 'line') {
+        // A reconnect may replay lines already shown; ids are absolute line indexes.
+        const id = m.id === undefined ? NaN : Number(m.id);
+        if (!Number.isNaN(id)) {
+          if (id <= lastLineId) return;
+          lastLineId = id;
+        }
+        streamIsLive();
         let text = m.data;
         try {
           const parsed: unknown = JSON.parse(m.data);
@@ -226,6 +239,7 @@ export function RestoreFromBackup({ pollMs = 2000, deadlineMs = 5 * 60_000 }: { 
       url: `/api/setup/restore/progress?token=${encodeURIComponent(token)}`,
       onMessage,
       onStatus: (status) => {
+        if (status === 'open') streamIsLive();
         if (status === 'reconnecting') startWaiting();
         if (status === 'gone' || status === 'unauthorized') {
           sse.current?.close();
