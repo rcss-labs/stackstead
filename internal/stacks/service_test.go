@@ -538,6 +538,8 @@ func TestActPassesComposeArgs(t *testing.T) {
 		"restart": {"restart"},
 		"pull":    {"pull"},
 		"build":   {"build"},
+		"stop":    {"stop"},
+		"start":   {"start"},
 	}
 	for action, args := range want {
 		t.Run(action, func(t *testing.T) {
@@ -556,6 +558,37 @@ func TestActPassesComposeArgs(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestActWaitReturnsOperationError(t *testing.T) {
+	h := newHarness(t)
+	setupWeb(t, h)
+	ctx := context.Background()
+	var lines []string
+	if err := h.svc.ActWait(ctx, "web", "stop", func(l string) { lines = append(lines, l) }); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	if len(lines) == 0 || lines[0] != "running stop" {
+		t.Errorf("lines = %q, want the operation output", lines)
+	}
+
+	h.compose.runErr = errors.New("compose exploded")
+	err := h.svc.ActWait(ctx, "web", "start", func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "compose exploded") {
+		t.Errorf("err = %v, want the operation's failure", err)
+	}
+
+	h.compose.runErr = nil
+	h.compose.runGate = make(chan struct{})
+	op, err := h.svc.Act(ctx, "web", "up")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.ActWait(ctx, "web", "start", func(string) {}); !errors.Is(err, stacks.ErrBusy) {
+		t.Errorf("busy err = %v", err)
+	}
+	close(h.compose.runGate)
+	wait(t, h.ops, op.ID)
 }
 
 func TestActBusyUnknownActionAndUnavailable(t *testing.T) {

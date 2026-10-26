@@ -485,6 +485,8 @@ var composeArgs = map[string][]string{
 	"restart": {"restart"},
 	"pull":    {"pull"},
 	"build":   {"build"},
+	"stop":    {"stop"},
+	"start":   {"start"},
 }
 
 // Act starts a lifecycle action as an operation.
@@ -526,6 +528,56 @@ func (s *Service) Act(ctx context.Context, stack, action string) (Operation, err
 		}
 		return s.compose.Run(ctx, e.ComposePath, args, out)
 	})
+}
+
+// ActWait runs Act and waits for the operation to end, streaming its output
+// to out. It returns the operation's error when it did not succeed, and
+// ErrBusy as is. When ctx ends first the operation is cancelled and still
+// waited for, so the stack's slot is free when ActWait returns.
+func (s *Service) ActWait(ctx context.Context, stack, action string, out func(string)) error {
+	op, err := s.Act(ctx, stack, action)
+	if err != nil {
+		return err
+	}
+	replay, _, live, done, cancel, err := s.ops.Subscribe(op.ID)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	for _, line := range replay {
+		out(line)
+	}
+	var ctxErr error
+	ctxDone := ctx.Done()
+	for live != nil {
+		select {
+		case line, ok := <-live:
+			if !ok {
+				live = nil
+				continue
+			}
+			out(line)
+		case <-ctxDone:
+			ctxErr = ctx.Err()
+			ctxDone = nil
+			_ = s.ops.Cancel(op.ID)
+		}
+	}
+	final, finished := <-done
+	if !finished {
+		// The subscription was dropped (too slow); the result is still known.
+		s.ops.Wait(op.ID)
+		if final, err = s.ops.Get(op.ID); err != nil {
+			return fmt.Errorf("%s %s: %w", action, stack, err)
+		}
+	}
+	if ctxErr != nil {
+		return ctxErr
+	}
+	if final.State != OpSucceeded {
+		return fmt.Errorf("%s %s: %s", action, stack, final.Error)
+	}
+	return nil
 }
 
 // ActService rebuilds and restarts one service with `up -d --build --no-deps`,
