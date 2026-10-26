@@ -19,6 +19,7 @@ import (
 	"github.com/rcss-labs/stackstead/internal/alerts"
 	"github.com/rcss-labs/stackstead/internal/api"
 	"github.com/rcss-labs/stackstead/internal/auth"
+	"github.com/rcss-labs/stackstead/internal/backup"
 	"github.com/rcss-labs/stackstead/internal/composecli"
 	"github.com/rcss-labs/stackstead/internal/config"
 	"github.com/rcss-labs/stackstead/internal/engine"
@@ -201,6 +202,15 @@ func serve(ctx context.Context, env *Env, args []string) error {
 		registry.KindDockerHub: &registry.HubProvider{},
 		registry.KindECR:       &registry.ECRProvider{},
 	}, actions, logger)
+	// This server's identity; the hostname names it until the operator does.
+	hostIdentity := func(ctx context.Context) (peers.Identity, error) {
+		fallback, err := os.Hostname()
+		if err != nil || fallback == "" {
+			fallback = "stackstead"
+		}
+		return peerStore.Identity(ctx, fallback)
+	}
+	imagesDir := filepath.Join(cfg.DataDir, "images")
 	imagesSvc := images.NewService(images.Deps{
 		Registries: registries,
 		Store:      images.NewStore(db, time.Now),
@@ -208,16 +218,12 @@ func serve(ctx context.Context, env *Env, args []string) error {
 		Settings:   images.NewSettingsStore(db),
 		Ops:        ops,
 		Engine:     dockerEngine,
-		Dir:        filepath.Join(cfg.DataDir, "images"),
+		Dir:        imagesDir,
 		Limits:     images.Limits{MaxFileBytes: cfg.ImageMaxFileBytes, MaxContextBytes: cfg.ImageMaxContextBytes},
 		OpTimeout:  cfg.ImageOperationTimeout,
 		Actions:    actions,
 		Self: func(ctx context.Context) (images.Self, error) {
-			fallback, err := os.Hostname()
-			if err != nil || fallback == "" {
-				fallback = "stackstead"
-			}
-			id, err := peerStore.Identity(ctx, fallback)
+			id, err := hostIdentity(ctx)
 			if err != nil {
 				return images.Self{}, err
 			}
@@ -252,6 +258,41 @@ func serve(ctx context.Context, env *Env, args []string) error {
 	}
 	bg.add((&images.Sweeper{Service: imagesSvc}).Run)
 
+	// Backups. A run interrupted by a restart is closed out before the
+	// scheduler can start another.
+	backupSettings := backup.NewConfigStore(db)
+	backupRuns := backup.NewRunStore(db, time.Now)
+	if err := backupRuns.MarkInterrupted(ctx); err != nil {
+		logger.Warn("mark interrupted backup runs", "err", err)
+	}
+	backupHTTP := &http.Client{Transport: backupTransport()}
+	backupRunner := backup.NewRunner(backup.Deps{
+		DB:         db,
+		Config:     backupSettings,
+		Runs:       backupRuns,
+		Stacks:     stackSvc,
+		Registry:   stackRegistry,
+		Engine:     dockerEngine,
+		Ops:        ops,
+		Actions:    actions,
+		Identity:   hostIdentity,
+		DataDir:    cfg.DataDir,
+		ConfigPath: path,
+		ImagesDir:  imagesDir,
+		Version:    version.Version,
+		Now:        time.Now,
+		HTTP:       backupHTTP,
+		Logger:     logger,
+	})
+	backupScheduler := &backup.Scheduler{
+		Runner: backupRunner, Config: backupSettings, Now: time.Now, After: time.After, Loc: time.Local, Logger: logger,
+	}
+	backupSvc := &backup.Service{
+		Settings: backupSettings, History: backupRuns, Runner: backupRunner, Scheduler: backupScheduler,
+		Stacks: stackSvc, Sizes: dockerEngine, HTTP: backupHTTP, Now: time.Now, Loc: time.Local, Logger: logger,
+	}
+	bg.add(backupScheduler.Run)
+
 	// The collector and alerts engine do nothing until a request arrives:
 	// both cache for 5 s and start no goroutines.
 	collector := host.New(host.Config{
@@ -280,6 +321,7 @@ func serve(ctx context.Context, env *Env, args []string) error {
 			Stacks:           stackSvc,
 			Images:           imagesSvc,
 			Registries:       registries,
+			Backups:          backupSvc,
 			Arch:             dockerEngine.Arch,
 			Operations:       ops,
 			FSRoots:          cfg.AllowedRoots,
@@ -462,4 +504,13 @@ func probeStatus(ctx context.Context, docker dockerProber, compose composeVersio
 		report.Compose = v
 	}
 	return report
+}
+
+// backupTransport bounds connecting and waiting for a response, but not the
+// transfer itself: an archive upload to S3 can legitimately take hours.
+func backupTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.TLSHandshakeTimeout = 15 * time.Second
+	t.ResponseHeaderTimeout = 2 * time.Minute
+	return t
 }
