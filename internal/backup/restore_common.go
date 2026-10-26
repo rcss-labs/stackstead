@@ -117,12 +117,12 @@ func (rs *rootSet) prepareBind(source string, stackDirs []string) (resolved, ski
 }
 
 // bindCovers explains why emptying the resolved bind source would destroy
-// more than that bind's data: it is an allowed root, holds a stack directory
-// being restored, or holds the data dir. "" means it is safe.
+// more than that bind's data: it is or holds an allowed root, holds a stack
+// directory being restored, or holds the data dir. "" means it is safe.
 func bindCovers(resolved string, allowed, stackDirs []string, dataDir string) string {
 	for _, r := range append(slices.Clone(allowed), resolvedRoots(allowed)...) {
-		if filepath.Clean(r) == resolved {
-			return "bind source is an allowed root"
+		if underRoot(filepath.Clean(r), resolved) {
+			return "bind source is or contains an allowed root"
 		}
 	}
 	for _, sd := range stackDirs {

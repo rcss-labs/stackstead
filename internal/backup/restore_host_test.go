@@ -1065,3 +1065,21 @@ func TestHostRestoreAcceptsSymlinkedAllowedRoot(t *testing.T) {
 		t.Errorf("an item was skipped as outside the roots: %+v", report.Items)
 	}
 }
+
+// Emptying a bind that holds a nested allowed root would wipe that root.
+func TestBindCoversRefusesAncestorOfNestedAllowedRoot(t *testing.T) {
+	base := t.TempDir()
+	srv := filepath.Join(base, "srv")
+	nested := filepath.Join(srv, "a", "b")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	allowed := []string{srv, nested}
+	dataDir := filepath.Join(base, "data")
+	if reason := bindCovers(filepath.Join(srv, "a"), allowed, nil, dataDir); reason == "" {
+		t.Error("a bind holding the allowed root srv/a/b was accepted")
+	}
+	if reason := bindCovers(filepath.Join(srv, "a", "c"), allowed, nil, dataDir); reason != "" {
+		t.Errorf("a bind beside the nested root was refused: %s", reason)
+	}
+}
