@@ -119,10 +119,22 @@ func (w *Writer) AddTarStream(prefix string, r io.Reader) (int64, error) {
 			n, err := io.Copy(w.tw, tr)
 			written += n
 			if err != nil {
-				return written, err
+				// Fill the rest of the entry with zeros so the archive stays a
+				// valid tar and later entries can still be written.
+				if _, perr := io.CopyN(w.tw, zeroReader{}, hdr.Size-n); perr != nil {
+					return written, fmt.Errorf("%s: %w (padding failed: %v)", out.Name, err, perr)
+				}
+				return written, fmt.Errorf("%s: %w", out.Name, err)
 			}
 		}
 	}
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
 }
 
 // Close writes manifest.json as the last entry, then closes tar and gzip.

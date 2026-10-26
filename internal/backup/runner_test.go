@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/rcss-labs/stackstead/internal/actionlog"
@@ -51,6 +52,8 @@ type fakeStackControl struct {
 	refs      map[string][]string
 	actErr    map[string]error // "<action> <stack>" -> error
 	listGate  chan struct{}    // when set, List blocks until it is closed
+	ops       *stacks.Ops      // when set, ActWait goes through it like stacks.Service does
+	panicOn   string           // ImageRefs panics for this stack
 }
 
 func (f *fakeStackControl) List(ctx context.Context) ([]stacks.Summary, error) {
@@ -65,13 +68,29 @@ func (f *fakeStackControl) Mounts(_ context.Context, stack string) ([]stacks.Mou
 }
 
 func (f *fakeStackControl) ImageRefs(_ context.Context, stack string) ([]string, error) {
+	if stack == f.panicOn {
+		panic("image refs exploded")
+	}
 	return f.refs[stack], nil
 }
 
 func (f *fakeStackControl) ActWait(_ context.Context, stack, action string, out func(string)) error {
+	if f.ops != nil {
+		op, err := f.ops.Start(stack, action, func(context.Context, func(string)) error { return nil })
+		if err != nil {
+			return err
+		}
+		f.ops.Wait(op.ID)
+	}
 	f.log.add(action + " " + stack)
 	out(action + " " + stack)
 	return f.actErr[action+" "+stack]
+}
+
+func (f *fakeStackControl) StartAfterBackup(_ context.Context, stack string, out func(string)) error {
+	f.log.add("start " + stack)
+	out("start " + stack)
+	return f.actErr["start "+stack]
 }
 
 // runnerEngine serves volume and image contents keyed by mount source and ref.
@@ -81,7 +100,9 @@ type runnerEngine struct {
 	sources    map[string]string // helper id -> mount source
 	volumes    map[string][]byte // mount source -> inner tar
 	volumeErr  map[string]error
-	images     map[string][]byte // ref -> docker save tar
+	onCopy     func(source string)
+	streams    map[string]func() io.Reader // mount source -> custom stream
+	images     map[string][]byte           // ref -> docker save tar
 	networks   []engine.Network
 	containers []engine.Container
 }
@@ -100,8 +121,14 @@ func (e *runnerEngine) GetArchive(_ context.Context, id, _ string) (io.ReadClose
 	src := e.sources[id]
 	e.mu.Unlock()
 	e.log.add("copy " + src)
+	if e.onCopy != nil {
+		e.onCopy(src)
+	}
 	if err := e.volumeErr[src]; err != nil {
 		return nil, err
+	}
+	if stream := e.streams[src]; stream != nil {
+		return io.NopCloser(stream()), nil
 	}
 	return io.NopCloser(bytes.NewReader(e.volumes[src])), nil
 }
@@ -679,4 +706,91 @@ func TestRunnerBusy(t *testing.T) {
 	}
 	close(env.stacks.listGate)
 	env.deps.Ops.Wait(op.ID)
+}
+
+// brokenStream is a tar stream that fails partway through a regular file.
+func brokenStream(t *testing.T) io.Reader {
+	t.Helper()
+	whole := tarOf(t, map[string][]byte{"big.bin": bytes.Repeat([]byte("x"), 64<<10)})
+	return io.MultiReader(bytes.NewReader(whole[:512+1000]), iotest.ErrReader(errors.New("helper stream broke")))
+}
+
+func TestRunnerVolumeStreamBreakingMidEntryIsPartial(t *testing.T) {
+	env := newRunnerEnv(t, localOnly(t))
+	env.addStack(t, "alpha", stacks.StatusStopped)
+	env.addStack(t, "beta", stacks.StatusStopped)
+	env.addVolume(t, "alpha", "alpha_data")
+	env.addVolume(t, "beta", "beta_data")
+	env.eng.streams = map[string]func() io.Reader{"alpha_data": func() io.Reader { return brokenStream(t) }}
+	env.selectStack(t, StackSelection{Stack: "alpha", Volumes: true})
+	env.selectStack(t, StackSelection{Stack: "beta", Volumes: true})
+
+	run := env.run(t)
+	if run.Status != "partial" {
+		t.Fatalf("run = %+v", run)
+	}
+	it, ok := findItem(run.Items, "volume", "alpha")
+	if !ok || it.Status != "failed" || !strings.Contains(it.Note, "helper stream broke") {
+		t.Errorf("alpha item = %+v", it)
+	}
+	_, data := env.local.only(t)
+	names, m := readArchive(t, data)
+	if names[len(names)-1] != ManifestEntryName {
+		t.Errorf("archive does not end with the manifest: %v", names)
+	}
+	if !strings.Contains(strings.Join(names, "\n"), "volumes/beta/v-beta_data/file.txt") {
+		t.Errorf("beta not archived: %v", names)
+	}
+	if it, ok := findItem(m.Items, "volume", "alpha"); !ok || it.Status != "failed" || m.Status != "partial" {
+		t.Errorf("manifest status %q, alpha item %+v", m.Status, it)
+	}
+}
+
+func TestRunnerRestartsStackAfterOpsShutdown(t *testing.T) {
+	env := newRunnerEnv(t, localOnly(t))
+	env.stacks.ops = env.deps.Ops
+	env.addStack(t, "web", stacks.StatusRunning)
+	env.addVolume(t, "web", "web_data")
+	env.selectStack(t, StackSelection{Stack: "web", Volumes: true, StopDuring: true})
+	env.eng.onCopy = func(string) {
+		go env.deps.Ops.Shutdown(context.Background())
+		for {
+			if _, err := env.deps.Ops.Start("probe", "probe", func(context.Context, func(string)) error { return nil }); errors.Is(err, stacks.ErrShutdown) {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	env.run(t)
+	if got, want := env.log.list(), []string{"stop web", "copy web_data", "start web"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("calls = %v, want %v", got, want)
+	}
+}
+
+func TestRunnerPanicIsRecordedAndAborted(t *testing.T) {
+	env := newRunnerEnv(t, localOnly(t))
+	env.addStack(t, "web", stacks.StatusRunning)
+	env.stacks.panicOn = "web"
+	env.selectStack(t, StackSelection{Stack: "web", Images: true})
+
+	op, err := env.runner.Start(context.Background(), "manual", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.deps.Ops.Wait(op.ID)
+	if fin, _ := env.deps.Ops.Get(op.ID); fin.State != stacks.OpFailed || !strings.Contains(fin.Error, "panicked") {
+		t.Errorf("operation = %+v", fin)
+	}
+	run, ok, err := env.runner.LastRun(context.Background())
+	if err != nil || !ok || run.Status != "failed" || !strings.Contains(run.Error, "image refs exploded") {
+		t.Errorf("run = %+v ok=%v err=%v", run, ok, err)
+	}
+	if len(env.local.archives) != 0 || len(env.local.aborted) != 1 {
+		t.Errorf("archives %d, aborted %v", len(env.local.archives), env.local.aborted)
+	}
+	entries, err := actionlog.NewStore(env.db, time.Now).Recent(context.Background(), actionlog.Filter{})
+	if err != nil || len(entries) != 1 || entries[0].Result != "failed" {
+		t.Errorf("action log = %+v err=%v", entries, err)
+	}
 }

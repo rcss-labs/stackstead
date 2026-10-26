@@ -40,7 +40,9 @@ const (
 	runOpAction   = "backup"
 	runOpTimeout  = 12 * time.Hour
 	runActionKind = "backup.run"
-	systemUser    = "system"
+	// restartTimeout bounds the restart of a stack stopped for the backup.
+	restartTimeout = 5 * time.Minute
+	systemUser     = "system"
 )
 
 // StackControl is the part of stacks.Service the runner uses.
@@ -49,6 +51,9 @@ type StackControl interface {
 	Mounts(ctx context.Context, stack string) ([]stacks.Mount, error)
 	ImageRefs(ctx context.Context, stack string) ([]string, error)
 	ActWait(ctx context.Context, stack, action string, out func(string)) error
+	// StartAfterBackup starts a stack the backup stopped, without going
+	// through the operations manager, so it works during shutdown.
+	StartAfterBackup(ctx context.Context, stack string, out func(string)) error
 }
 
 var _ StackControl = (*stacks.Service)(nil)
@@ -130,8 +135,23 @@ func (r *Runner) run(ctx context.Context, trigger, username string, opIDs <-chan
 		return err
 	}
 	j := &job{r: r, ctx: ctx, out: out, stacks: map[string]*ManifestStack{}, mounts: map[string]mountsResult{}}
+	defer func() {
+		// Record a panicking run as failed and drop its archive, then let Ops
+		// recover the panic and mark the operation failed.
+		if p := recover(); p != nil {
+			j.fatal = fmt.Errorf("backup panicked: %v", p)
+			j.abortArchive()
+			r.finish(ctx, runID, trigger, username, j, opIDs, out)
+			panic(p)
+		}
+	}()
 	j.execute()
+	return r.finish(ctx, runID, trigger, username, j, opIDs, out)
+}
 
+// finish records the run and its action log entry and returns the run's
+// fatal error, if any.
+func (r *Runner) finish(ctx context.Context, runID int64, trigger, username string, j *job, opIDs <-chan string, out func(string)) error {
 	run := Run{ID: runID, Trigger: trigger, Status: j.status(), Items: j.items, Destinations: j.reached}
 	if j.fatal != nil {
 		run.Error = j.fatal.Error()
@@ -198,6 +218,8 @@ type job struct {
 	manifest Manifest
 
 	sink      *countingWriter
+	primary   Destination               // set while an archive is being written
+	dw        io.WriteCloser            // the primary's writer until it is closed
 	stackList []*ManifestStack          // every registered stack, in name order
 	stacks    map[string]*ManifestStack // by name
 	listed    map[string]bool           // stacks the stack list still reports
@@ -276,10 +298,13 @@ func (j *job) execute() {
 		j.fatal = fmt.Errorf("create archive in %s: %w", primary.Name(), err)
 		return
 	}
+	j.primary, j.dw = primary, dw
 	j.sink = &countingWriter{w: dw}
 	aw := NewWriter(j.sink)
 	err = j.writeSections(aw, selections)
 	if err == nil {
+		// The in-archive manifest describes the archive's contents; upload
+		// failures happen later and are only on the run record.
 		j.manifest.Status = j.status()
 		j.manifest.Items = j.items
 		j.manifest.Stacks = make([]ManifestStack, 0, len(j.stackList))
@@ -292,14 +317,11 @@ func (j *job) execute() {
 		err = j.sink.err
 	}
 	if err != nil {
-		abortCtx := context.WithoutCancel(ctx)
-		if aerr := primary.Abort(abortCtx, j.archive); aerr != nil {
-			d.Logger.Warn("abort backup archive", "archive", j.archive, "err", aerr)
-		}
-		_ = dw.Close() // after Abort, Close never publishes
+		j.abortArchive()
 		j.fatal = err
 		return
 	}
+	j.dw = nil
 	if err := dw.Close(); err != nil {
 		j.fatal = fmt.Errorf("finish archive in %s: %w", primary.Name(), err)
 		return
@@ -313,6 +335,8 @@ func (j *job) execute() {
 		j.fatal = err
 		return
 	}
+	// The sidecar matches the in-archive manifest, which describes the
+	// archive's contents; an upload failure below is only on the run record.
 	if err := primary.PutSidecar(ctx, j.archive, sidecar); err != nil {
 		_ = j.failItem(ItemResult{Kind: "upload", Name: primary.Name(), Note: "write manifest sidecar: " + err.Error()})
 	}
@@ -332,6 +356,19 @@ func (j *job) execute() {
 			j.reached = append(j.reached, upload.Name())
 		}
 	}
+}
+
+// abortArchive discards an archive that is still being written.
+func (j *job) abortArchive() {
+	if j.dw == nil {
+		return
+	}
+	dw := j.dw
+	j.dw = nil
+	if err := j.primary.Abort(context.WithoutCancel(j.ctx), j.archive); err != nil {
+		j.r.d.Logger.Warn("abort backup archive", "archive", j.archive, "err", err)
+	}
+	_ = dw.Close() // after Abort, Close never publishes
 }
 
 // upload copies the finished archive from one destination to another, on
@@ -421,9 +458,8 @@ func (j *job) writeBase(aw *Writer) error {
 	if err != nil {
 		return err
 	}
-	err = addHostFile(aw, "base/stackstead.db", snapshot)
-	cleanup()
-	if err != nil {
+	defer cleanup()
+	if err := addHostFile(aw, "base/stackstead.db", snapshot); err != nil {
 		return fmt.Errorf("archive database: %w", err)
 	}
 	j.item(ItemResult{Kind: "base", Name: "stackstead.db", Status: itemOK})
@@ -585,8 +621,11 @@ func (j *job) backUpVolumes(aw *Writer, sel StackSelection) (err error) {
 	}
 	defer func() {
 		j.out("starting " + name)
-		// The stack must come back even when the run is being cancelled.
-		if startErr := j.r.d.Stacks.ActWait(context.WithoutCancel(j.ctx), name, "start", j.out); startErr != nil {
+		// The stack must come back even when the run is cancelled or the
+		// server is shutting down.
+		startCtx, cancel := context.WithTimeout(context.WithoutCancel(j.ctx), restartTimeout)
+		defer cancel()
+		if startErr := j.r.d.Stacks.StartAfterBackup(startCtx, name, j.out); startErr != nil {
 			if ferr := j.failItem(ItemResult{Kind: "volume", Stack: name, Name: "restart", Note: "stack left stopped: start failed: " + startErr.Error()}); err == nil {
 				err = ferr
 			}

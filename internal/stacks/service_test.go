@@ -591,6 +591,26 @@ func TestActWaitReturnsOperationError(t *testing.T) {
 	wait(t, h.ops, op.ID)
 }
 
+func TestStartAfterBackupBypassesOps(t *testing.T) {
+	h := newHarness(t)
+	setupWeb(t, h)
+	h.ops.Shutdown(context.Background())
+	var lines []string
+	if err := h.svc.StartAfterBackup(context.Background(), "web", func(l string) { lines = append(lines, l) }); err != nil {
+		t.Fatalf("StartAfterBackup after shutdown: %v", err)
+	}
+	if got := h.compose.lastRun(); got.File != h.path("web") || strings.Join(got.Args, " ") != "start" {
+		t.Errorf("run = %+v", got)
+	}
+	if len(lines) == 0 {
+		t.Error("no output streamed")
+	}
+	h.compose.runErr = errors.New("compose exploded")
+	if err := h.svc.StartAfterBackup(context.Background(), "web", func(string) {}); err == nil || !strings.Contains(err.Error(), "compose exploded") {
+		t.Errorf("err = %v", err)
+	}
+}
+
 func TestActBusyUnknownActionAndUnavailable(t *testing.T) {
 	h := newHarness(t)
 	setupWeb(t, h)

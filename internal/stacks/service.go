@@ -580,6 +580,19 @@ func (s *Service) ActWait(ctx context.Context, stack, action string, out func(st
 	return nil
 }
 
+// StartAfterBackup runs `docker compose start` for a stack a backup stopped.
+// It deliberately bypasses the operations manager: the restart must happen
+// even while Ops is shutting down and refusing new operations. The stack's
+// file lock keeps it from racing an edit of the compose file.
+func (s *Service) StartAfterBackup(ctx context.Context, stack string, out func(string)) error {
+	e, unlock, err := s.lockedEntry(ctx, stack)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return s.compose.Run(ctx, e.ComposePath, composeArgs["start"], out)
+}
+
 // ActService rebuilds and restarts one service with `up -d --build --no-deps`,
 // leaving the stack's other services alone. Unlike the stack-wide up it omits
 // --remove-orphans, which acts on the whole project. The "--" keeps a
