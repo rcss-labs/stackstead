@@ -22,6 +22,7 @@ const BASE: BaseEntry[] = [
   { path: '/networks', label: 'Networks', icon: 'network', match: (p) => p === '/networks' || p.startsWith('/networks/'), group: 'main' },
   { path: '/storage', label: 'Storage', icon: 'disk', match: (p) => p === '/storage' || p.startsWith('/storage/'), group: 'main' },
   { path: '/images', label: 'Images', icon: 'image', match: (p) => p === '/images' || p.startsWith('/images/'), group: 'main' },
+  { path: '/backups', label: 'Backups', icon: 'copy', match: (p) => p === '/backups', group: 'main' },
   { path: '/stacks/new', label: 'New stack', icon: 'plus', match: (p) => p === '/stacks/new', group: 'create' },
   { path: '/stacks/import', label: 'Import', icon: 'import', match: (p) => p === '/stacks/import', group: 'create' },
 ];
@@ -44,10 +45,10 @@ export const SETTINGS: NavEntry = { href: '/settings', label: 'Settings', icon: 
 
 export const NAV: NavEntry[] = [...serverNav(null), SETTINGS];
 
-/** Mobile tab bar: the viewed server's four screens (Storage before Networks), then this server's Settings. */
+/** Mobile tab bar: the viewed server's five screens (Storage before Networks), then this server's Settings. */
 export function tabBarNav(slug: string | null): NavEntry[] {
-  const [stacks, containers, networks, storage] = serverNav(slug);
-  return [stacks, containers, storage, networks, SETTINGS];
+  const [stacks, containers, networks, storage, images] = serverNav(slug);
+  return [stacks, containers, storage, networks, images, SETTINGS];
 }
 
 /** Mobile top bar title: the last breadcrumb, mono when it is an entity name. */

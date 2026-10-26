@@ -419,7 +419,7 @@ describe('Mobile', () => {
     expect(screen.getByRole('link', { name: 'New stack' }).getAttribute('href')).toBe('/stacks/new');
     expect(screen.getAllByRole('main')).toHaveLength(1);
     const tabs = within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('link');
-    expect(tabs.map((a) => a.getAttribute('aria-label'))).toEqual(['Stacks', 'Containers', 'Storage', 'Networks', 'Settings']);
+    expect(tabs.map((a) => a.getAttribute('aria-label'))).toEqual(['Stacks', 'Containers', 'Storage', 'Networks', 'Images', 'Settings']);
   });
 
   it('crossing 760px keeps the page mounted with its state', async () => {
@@ -449,7 +449,7 @@ describe('Mobile', () => {
     const onMobile = screen.getByRole('textbox', { name: 'Draft' }) as HTMLInputElement;
     expect(onMobile).toBe(before);
     expect(onMobile.value).toBe('hello');
-    expect(within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('link')).toHaveLength(5);
+    expect(within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('link')).toHaveLength(6);
     expect(screen.queryByRole('button', { name: /^Log out/ })).toBeNull();
     expect(screen.getAllByRole('main')).toHaveLength(1);
 
@@ -655,6 +655,12 @@ describe('server navigation', () => {
     expect(screen.getByRole('link', { name: 'Storage' }).getAttribute('href')).toBe('/s/mini-02/storage');
     expect(current('Storage')).toBe('page');
     expect(screen.getByRole('link', { name: 'Settings' }).getAttribute('href')).toBe('/settings');
+  });
+
+  it('the mobile tab bar reaches Images', () => {
+    renderIn(<TabBar current="/s/mini-02/images/web" attention={false} />);
+    expect(screen.getByRole('link', { name: 'Images' }).getAttribute('href')).toBe('/s/mini-02/images');
+    expect(current('Images')).toBe('page');
   });
 
   it('the top bar and host block describe the viewed peer, with no second stream for it', async () => {

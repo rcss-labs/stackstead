@@ -150,6 +150,23 @@ registry or GitHub token (`tag_taken`, `build_running`, `image_in_use`,
 7 when GitHub or the owning peer is unreachable (502). The server's message is
 printed.
 
+### Backups
+
+`stackstead backup run [--detach]` starts a backup now and streams its output
+like `stacks up`. It exits 9 when the run failed, and also when it finished
+`partial` (some items failed), printing `backup partial: N item(s) failed`.
+`--detach` prints the operation ID and returns. A run already in progress is
+exit 5.
+
+`stackstead backup list [-o table|json]` lists archives found at the configured
+destinations: HOST, TIME, SIZE and DESTINATION (`local` or `s3`). JSON prints
+the API response.
+
+```bash
+stackstead backup run
+stackstead backup list
+```
+
 ### Contexts and credentials
 
 `login` saves the server URL and the session cookie in
@@ -210,7 +227,7 @@ file in the data directory. They never create or migrate the database; only
 | `admin metrics-token status\|rotate\|clear` | online-safe | manage the `/metrics` token |
 | `upgrade [--check] [--version vX.Y.Z] [--force] [--yes] [--base-url URL] [-o json]` | any | download the release, verify it against `SHA256SUMS` and run the native installer; `--check` only reports; see [Upgrading](#upgrading) |
 
-`serve` and `db restore` take an exclusive lock on `<data_dir>/stackstead.lock`.
+`serve`, `db restore` and `restore` take an exclusive lock on `<data_dir>/stackstead.lock`.
 The other admin commands do not take it, so **do not run them while a
 `db restore` is in progress**.
 
@@ -220,6 +237,47 @@ any time. To restore: `sudo systemctl stop stackstead`, then
 start the service. The restored database is a self-contained copy (any WAL
 content is folded in), and the previous one is kept next to it as
 `stackstead.db.bak-<UTC timestamp>`. Sessions are whatever the backup holds.
+
+**Whole-host restore.** `stackstead restore <s3://bucket/key | path>` restores a
+whole-host backup archive (database, stack files, volumes, images) on a host
+where the server is stopped, for example a fresh machine:
+
+```bash
+sudo systemctl stop stackstead
+export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...   # only for an s3:// source
+sudo -u stackstead -E stackstead restore s3://my-bucket/host/stackstead-2026-10-26.tar.gz --s3-region eu-west-1
+sudo systemctl start stackstead
+```
+
+Flags: `--yes` skips the confirmation (required when stdin is not a terminal,
+else exit 2), `--no-start` leaves the stacks that were running stopped,
+`--s3-endpoint URL`, `--s3-region R` and `--s3-path-style` configure an
+S3-compatible store. S3 keys are read only from `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY`, never from flags, and are never printed. The command
+prints the archive summary and the existing volumes, networks, containers and
+stack directories it would overwrite, recreate, stop or keep, asks once, restores, and
+installs the restored database right away (the old one is kept as
+`stackstead.db.bak-<UTC timestamp>`). Running containers of the restored
+projects whose volumes are replaced are stopped before their volumes are
+emptied and refilled (shown as "stopped during restore"); a project whose
+container will not stop keeps its volumes, which are reported as skipped. The
+stacks start when the server next starts, including those stopped here even
+with `--no-start`; if the restore fails, the stopped containers are started
+again right away. The backup schedule is turned off in the restored database, and the UI
+says so until you turn it back on. Exit codes: 5 while the server runs (or a
+restore is already pending), 6 for an archive from a newer Stackstead or a
+damaged one, 9 when some items failed to restore (the database is still
+installed; the failed items are listed), 2 for a bad source or missing S3 keys,
+3 when run as root and the data directory does not exist (root does not create
+it, so the service user is not locked out; create it with
+`sudo install -d -o stackstead -m 0700 <data_dir>` and run the restore as the
+service user).
+
+Known issue (Docker Desktop on macOS): a bind directory that was deleted and
+re-created at the same path may not be visible to Docker for a short while, so
+restoring it can fail with "bind source path does not exist" (exit 9). If a
+restored stack reports a missing bind source, restart Docker Desktop and restore
+the stack again from the UI, or run `docker compose up -d` in its directory.
 
 **Forgot the admin password.**
 

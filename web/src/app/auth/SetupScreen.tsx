@@ -6,8 +6,15 @@ import { expireSession, login, session } from '$lib/api/session';
 import { toasts } from '$lib/stores/toasts';
 import { Button } from '../components/Button';
 import { Field } from '../components/Field';
+import { Segmented } from '../components/Segmented';
 import { useStore } from '../hooks/useStore';
 import { AuthCard, AuthError, AuthHint } from './AuthCard';
+import { RestoreFromBackup } from './RestoreFromBackup';
+
+const SETUP_CHOICES = [
+  { value: 'admin', label: 'Create admin' },
+  { value: 'restore', label: 'Restore from backup' },
+];
 
 /** Mirrors the server's MinPasswordLength. */
 const MIN_PASSWORD = 12;
@@ -18,6 +25,7 @@ const MIN_PASSWORD = 12;
 export function SetupScreen() {
   const navigate = useNavigate();
   const { state: sessionState } = useStore(session);
+  const [mode, setMode] = useState<'admin' | 'restore'>('admin');
   const [username, setUsername] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
@@ -108,26 +116,33 @@ export function SetupScreen() {
   }
 
   return (
-    <AuthCard verb="Set up" maxWidth={400} noValidate onSubmit={submit}>
-      <AuthHint>Create the first account.</AuthHint>
-      <AuthError message={error} />
-      <Field label="Username" id="setup-username">
-        {({ readOnly: _, ...c }) => <input {...c} type="text" autoComplete="username" required value={username} onChange={(e) => setUsername(e.target.value)} />}
-      </Field>
-      <Field label="Password" id="setup-password" hint={`Use at least ${MIN_PASSWORD} characters.`} error={passwordError}>
-        {({ readOnly: _, ...c }) => <input {...c} ref={passwordInput} type="password" autoComplete="new-password" required onChange={syncDerived} />}
-      </Field>
-      <Field label="Confirm password" id="setup-confirm" error={confirmError}>
-        {({ readOnly: _, ...c }) => <input {...c} ref={confirmInput} type="password" autoComplete="new-password" required onChange={syncDerived} />}
-      </Field>
-      <Field label="Setup token (optional)" id="setup-token" hint="Needed unless you open this page from the machine itself.">
-        {({ readOnly: _, ...c }) => (
-          <input {...c} ref={tokenInput} type="text" autoComplete="off" spellCheck={false} autoCapitalize="off" />
-        )}
-      </Field>
-      <Button variant="primary" type="submit" loading={pending}>
-        Create account
-      </Button>
+    <AuthCard verb="Set up" maxWidth={mode === 'admin' ? 400 : 'none'} noValidate onSubmit={mode === 'admin' ? submit : (event) => event.preventDefault()}>
+      <Segmented label="Setup choice" options={SETUP_CHOICES} value={mode} onChange={(value) => setMode(value as 'admin' | 'restore')} />
+      {mode === 'restore' ? (
+        <RestoreFromBackup />
+      ) : (
+        <>
+        <AuthHint>Create the first account.</AuthHint>
+        <AuthError message={error} />
+        <Field label="Username" id="setup-username">
+          {({ readOnly: _, ...c }) => <input {...c} type="text" autoComplete="username" required value={username} onChange={(e) => setUsername(e.target.value)} />}
+        </Field>
+        <Field label="Password" id="setup-password" hint={`Use at least ${MIN_PASSWORD} characters.`} error={passwordError}>
+          {({ readOnly: _, ...c }) => <input {...c} ref={passwordInput} type="password" autoComplete="new-password" required onChange={syncDerived} />}
+        </Field>
+        <Field label="Confirm password" id="setup-confirm" error={confirmError}>
+          {({ readOnly: _, ...c }) => <input {...c} ref={confirmInput} type="password" autoComplete="new-password" required onChange={syncDerived} />}
+        </Field>
+        <Field label="Setup token (optional)" id="setup-token" hint="Needed unless you open this page from the machine itself.">
+          {({ readOnly: _, ...c }) => (
+            <input {...c} ref={tokenInput} type="text" autoComplete="off" spellCheck={false} autoCapitalize="off" />
+          )}
+        </Field>
+        <Button variant="primary" type="submit" loading={pending}>
+          Create account
+        </Button>
+        </>
+      )}
     </AuthCard>
   );
 }

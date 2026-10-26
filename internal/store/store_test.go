@@ -130,8 +130,8 @@ func TestOpenCreatesStacksTableAtLatestVersion(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 8 {
-		t.Errorf("user_version = %d, want 8", version)
+	if version != 9 {
+		t.Errorf("user_version = %d, want 9", version)
 	}
 	if _, err := db.Exec(`INSERT INTO stacks (name, compose_path, origin, project, created_at) VALUES ('a', '/a/compose.yaml', 'managed', 'a', 0)`); err != nil {
 		t.Fatalf("insert stack: %v", err)
@@ -257,8 +257,8 @@ func TestOpenUpgradesVersion3DatabaseKeepingStacks(t *testing.T) {
 
 func TestMigrationAddsPeerTables(t *testing.T) {
 	db := openTemp(t)
-	if got := store.SupportedSchema(); got != 8 {
-		t.Fatalf("SupportedSchema = %d, want 8", got)
+	if got := store.SupportedSchema(); got != 9 {
+		t.Fatalf("SupportedSchema = %d, want 9", got)
 	}
 	for _, table := range []string{"peers", "connection_tokens"} {
 		count(t, db, table)

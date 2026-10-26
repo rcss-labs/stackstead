@@ -2,6 +2,7 @@ package awsauth
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -159,5 +160,58 @@ func TestSignV4MergesCaseVariantHeaders(t *testing.T) {
 	}
 	if split == sign(http.Header{"X-Custom": {"b"}}) {
 		t.Error("first variant was overwritten")
+	}
+}
+
+func TestSignV4S3SetsContentSHA(t *testing.T) {
+	body := []byte("hello")
+	req, _ := http.NewRequest("PUT", "https://b.s3.us-east-1.amazonaws.com/a b/c.txt", nil)
+	if err := SignV4(req, body, vectorCreds(), "us-east-1", "s3", vectorTime); err != nil {
+		t.Fatal(err)
+	}
+	const want = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+	if got := req.Header.Get("X-Amz-Content-Sha256"); got != want {
+		t.Fatalf("x-amz-content-sha256 = %q, want %q", got, want)
+	}
+	if !strings.Contains(req.Header.Get("Authorization"), "x-amz-content-sha256") {
+		t.Errorf("content sha header not signed: %s", req.Header.Get("Authorization"))
+	}
+}
+
+func TestSignV4ECRUnchanged(t *testing.T) {
+	req, _ := http.NewRequest("POST", "https://api.ecr.us-east-1.amazonaws.com/", nil)
+	if err := SignV4(req, []byte("{}"), vectorCreds(), "us-east-1", "ecr", vectorTime); err != nil {
+		t.Fatal(err)
+	}
+	if got := req.Header.Get("X-Amz-Content-Sha256"); got != "" {
+		t.Errorf("ECR request must not carry x-amz-content-sha256, got %q", got)
+	}
+	if strings.Contains(req.Header.Get("Authorization"), "x-amz-content-sha256") {
+		t.Errorf("ECR signed headers changed: %s", req.Header.Get("Authorization"))
+	}
+}
+
+func TestCanonicalPathS3EncodesOnce(t *testing.T) {
+	u := &url.URL{Scheme: "https", Host: "h", Path: "/a b/x+y ü.txt"}
+	want := "/a%20b/x%2By%20%C3%BC.txt"
+	if got := canonicalPath(u, true); got != want {
+		t.Errorf("s3 canonical path = %q, want %q", got, want)
+	}
+	if got := canonicalPath(u, false); !strings.Contains(got, "%2520") {
+		t.Errorf("non-s3 path must stay double-encoded, got %q", got)
+	}
+}
+
+// AWS S3 SigV4 documentation example: GET Object with a Range header.
+func TestSignV4S3DocsGetObjectVector(t *testing.T) {
+	req, _ := http.NewRequest("GET", "https://examplebucket.s3.amazonaws.com/test.txt", nil)
+	req.Header.Set("Range", "bytes=0-9")
+	c := Credentials{AccessKeyID: "AKIAIOSFODNN7EXAMPLE", SecretAccessKey: secret.Secret("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")}
+	if err := SignV4(req, nil, c, "us-east-1", "s3", time.Date(2013, 5, 24, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	want := "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"
+	if got := req.Header.Get("Authorization"); got != want {
+		t.Fatalf("Authorization\n got %s\nwant %s", got, want)
 	}
 }

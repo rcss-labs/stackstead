@@ -671,6 +671,7 @@ it('every route is lazy except the overview', () => {
     '/storage/volumes/:name',
     '/images',
     '/images/:slug',
+    '/backups',
     '/settings',
     '/login',
     '/setup',

@@ -1,8 +1,10 @@
 package alerts
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/rcss-labs/stackstead/internal/engine"
 	"github.com/rcss-labs/stackstead/internal/stacks"
@@ -14,8 +16,9 @@ const restartLoopThreshold = 3
 // item is an alert with the internal identity Engine tracks "since" by.
 type item struct {
 	Alert
-	subject       string // distinguishes alerts that share kind, stack, service and container
-	fromContainer bool   // derived from the container listing
+	subject       string    // distinguishes alerts that share kind, stack, service and container
+	fromContainer bool      // derived from the container listing
+	startedAt     time.Time // when the problem began, if known; otherwise Engine uses first observation
 }
 
 // key identifies an alert by names, not ids, so a recreated container keeps it.
@@ -220,4 +223,30 @@ func publishes(c engine.Container, p portKey) bool {
 		}
 	}
 	return false
+}
+
+// backupAlerts reports the last finished backup run when it failed or was
+// partial. An unreadable history raises nothing: it is not evidence of a failed backup.
+func (e *Engine) backupAlerts(ctx context.Context) []item {
+	if e.backups == nil {
+		return nil
+	}
+	run, ok, err := e.backups.LastRun(ctx)
+	if err != nil || !ok {
+		return nil
+	}
+	switch run.Status {
+	case "failed":
+		return []item{{Alert: Alert{Kind: KindBackupFailed, Severity: SeverityDanger, Message: "Last backup failed: " + run.Error}, startedAt: run.EndedAt}}
+	case "partial":
+		failed := 0
+		for _, it := range run.Items {
+			if it.Status == "failed" {
+				failed++
+			}
+		}
+		return []item{{Alert: Alert{Kind: KindBackupPartial, Severity: SeverityWarning,
+			Message: fmt.Sprintf("Last backup was partial: %d item(s) failed", failed)}, startedAt: run.EndedAt}}
+	}
+	return nil
 }

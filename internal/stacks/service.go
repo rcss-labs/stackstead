@@ -32,6 +32,7 @@ var (
 type Compose interface {
 	Version(ctx context.Context) (string, error)
 	Config(ctx context.Context, file string) error
+	ConfigJSON(ctx context.Context, file string) ([]byte, error)
 	ProjectName(ctx context.Context, file string) (string, error)
 	Run(ctx context.Context, file string, args []string, out func(string)) error
 }
@@ -484,6 +485,8 @@ var composeArgs = map[string][]string{
 	"restart": {"restart"},
 	"pull":    {"pull"},
 	"build":   {"build"},
+	"stop":    {"stop"},
+	"start":   {"start"},
 }
 
 // Act starts a lifecycle action as an operation.
@@ -525,6 +528,111 @@ func (s *Service) Act(ctx context.Context, stack, action string) (Operation, err
 		}
 		return s.compose.Run(ctx, e.ComposePath, args, out)
 	})
+}
+
+// ActWait runs Act and waits for the operation to end, streaming its output
+// to out. It returns the operation's error when it did not succeed, and
+// ErrBusy as is. When ctx ends first the operation is cancelled and still
+// waited for, so the stack's slot is free when ActWait returns.
+func (s *Service) ActWait(ctx context.Context, stack, action string, out func(string)) error {
+	op, err := s.Act(ctx, stack, action)
+	if err != nil {
+		return err
+	}
+	replay, _, live, done, cancel, err := s.ops.Subscribe(op.ID)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	for _, line := range replay {
+		out(line)
+	}
+	var ctxErr error
+	ctxDone := ctx.Done()
+	for live != nil {
+		select {
+		case line, ok := <-live:
+			if !ok {
+				live = nil
+				continue
+			}
+			out(line)
+		case <-ctxDone:
+			ctxErr = ctx.Err()
+			ctxDone = nil
+			_ = s.ops.Cancel(op.ID)
+		}
+	}
+	final, finished := <-done
+	if !finished {
+		// The subscription was dropped (too slow); the result is still known.
+		s.ops.Wait(op.ID)
+		if final, err = s.ops.Get(op.ID); err != nil {
+			return fmt.Errorf("%s %s: %w", action, stack, err)
+		}
+	}
+	if ctxErr != nil {
+		return ctxErr
+	}
+	if final.State != OpSucceeded {
+		return fmt.Errorf("%s %s: %s", action, stack, final.Error)
+	}
+	return nil
+}
+
+// StartAfterBackup runs `docker compose start` for a stack a backup stopped.
+// It deliberately bypasses the operations manager: the restart must happen
+// even while Ops is shutting down and refusing new operations. The stack's
+// file lock keeps it from racing an edit of the compose file.
+func (s *Service) StartAfterBackup(ctx context.Context, stack string, out func(string)) error {
+	e, unlock, err := s.lockedEntry(ctx, stack)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return s.compose.Run(ctx, e.ComposePath, composeArgs["start"], out)
+}
+
+// StopForRestore runs `docker compose stop` for a stack a backup restore is
+// about to overwrite. Like StartAfterBackup it bypasses the operations
+// manager: the restore itself holds the stack's operation slot.
+func (s *Service) StopForRestore(ctx context.Context, stack string, out func(string)) error {
+	e, unlock, err := s.lockedEntry(ctx, stack)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return s.compose.Run(ctx, e.ComposePath, composeArgs["stop"], out)
+}
+
+// StartRestored brings a restored stack up with the same arguments as the
+// "up" action, so a new stack gets its containers and an overwritten one picks
+// up its restored files. It bypasses the operations manager for the same
+// reasons as StopForRestore and StartAfterBackup.
+func (s *Service) StartRestored(ctx context.Context, stack string, out func(string)) error {
+	e, unlock, err := s.lockedEntry(ctx, stack)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	_, _, f, err := readFile(e)
+	if err != nil {
+		return err
+	}
+	refs, args, err := s.actPlan(f, "up", composeArgs["up"])
+	if err != nil {
+		return err
+	}
+	if err := refuseOverrides(e.ComposePath); err != nil {
+		return err
+	}
+	if err := s.ensureLibrary(ctx, refs, out); err != nil {
+		return err
+	}
+	if args == nil {
+		return nil
+	}
+	return s.compose.Run(ctx, e.ComposePath, args, out)
 }
 
 // ActService rebuilds and restarts one service with `up -d --build --no-deps`,

@@ -1,12 +1,14 @@
 import { useLayoutEffect, type MouseEvent } from 'react';
-import { useLocation } from 'react-router';
+import { Link, useLocation } from 'react-router';
 import { logout, session } from '$lib/api/session';
 import { density, setDensity, setTheme, theme, type ThemeChoice } from '$lib/stores/appearance';
+import { createBackupsApi } from '$lib/api/backups';
 import { toasts } from '$lib/stores/toasts';
 import { Button } from '../components/Button';
 import { PanelLabel } from '../components/PanelLabel';
 import { Segmented } from '../components/Segmented';
 import { useStore } from '../hooks/useStore';
+import { BackupScheduleCard } from '../backups/BackupScheduleCard';
 import { ConnectedServersCard } from './ConnectedServersCard';
 import { GitHubCard } from './GitHubCard';
 import { ImageDefaultsCard } from './ImageDefaultsCard';
@@ -18,6 +20,8 @@ import styles from './SettingsScreen.module.css';
 import { SystemStatusCard } from './SystemStatusCard';
 import { UpdateCard } from './UpdateCard';
 
+const backupsApi = createBackupsApi('');
+
 export const SECTIONS: readonly { id: string; label: string }[] = [
   { id: 'settings-system', label: 'System' },
   { id: 'settings-updates', label: 'Updates' },
@@ -26,6 +30,7 @@ export const SECTIONS: readonly { id: string; label: string }[] = [
   { id: 'settings-registries', label: 'Registries' },
   { id: 'settings-github', label: 'GitHub' },
   { id: 'settings-images', label: 'Images' },
+  { id: 'settings-backups', label: 'Backups' },
   { id: 'settings-appearance', label: 'Appearance' },
   { id: 'settings-account', label: 'Account' },
 ];
@@ -118,6 +123,12 @@ export function SettingsScreen() {
         </div>
         <div id="settings-images">
           <ImageDefaultsCard />
+        </div>
+        <div id="settings-backups">
+          <BackupScheduleCard api={backupsApi} />
+          <p>
+            <Link to="/backups">Open backups</Link>
+          </p>
         </div>
         <div id="settings-appearance">
           <SettingsCard id="appearance-h" title="Appearance">

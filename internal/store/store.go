@@ -185,6 +185,24 @@ var migrations = []string{
 		updated_at INTEGER NOT NULL,
 		PRIMARY KEY (version_id, target_id)
 	);`,
+	`CREATE TABLE backup_stacks (
+		stack        TEXT    NOT NULL PRIMARY KEY REFERENCES stacks(name) ON DELETE CASCADE,
+		volumes      INTEGER NOT NULL,
+		images       INTEGER NOT NULL,
+		stop_during  INTEGER NOT NULL
+	);
+	CREATE TABLE backup_runs (
+		id           INTEGER PRIMARY KEY,
+		started_at   INTEGER NOT NULL,
+		ended_at     INTEGER,
+		trigger      TEXT    NOT NULL,
+		status       TEXT    NOT NULL,
+		archive      TEXT,
+		size         INTEGER,
+		destinations TEXT    NOT NULL DEFAULT '[]',
+		items        TEXT    NOT NULL DEFAULT '[]',
+		error        TEXT
+	);`,
 }
 
 // preMigration checks run inside the migration's transaction, before its SQL.

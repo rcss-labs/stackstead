@@ -550,6 +550,94 @@ Builds run as operations in the shared operations list under the key
 `image/<owner>/<slug>` (action `build`), so the top bar and toasts label them
 `build · image <slug>`. One build runs at a time per image.
 
+## Backups
+
+Backups archive this server's database, settings and stack files, plus the
+volumes and images of the stacks you tick. All routes need a session, and none
+is under `/api/settings`, so a connected server can forward them.
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/backups/config` | the schedule, local folder and S3 bucket. `s3.secretKeySet` says whether a secret is stored; the secret itself is never returned. `nextRun` is when the schedule fires next, and is absent when it is off. `pausedAfterRestore` is true after a host restore turned the schedule off, until the schedule is saved with `enabled: true` |
+| `PUT /api/backups/config` | save the same shape. `400` with the validation messages when it is invalid. An omitted or empty `s3.secretKey` keeps the stored one. Returns the saved configuration |
+| `DELETE /api/backups/config/s3-secret` | remove the stored S3 secret; 204 |
+| `POST /api/backups/s3/test` | writes and deletes a small object with the `s3` settings in the body, using the stored secret when the body has none; 204, or `502` with the reason |
+| `GET /api/backups/stacks` | every stack with `volumes`, `images`, `stopDuring` and its `mounts` (`kind`, `name`, `target`, `bytes`; `bytes` is -1 when unknown, as for bind mounts). A stack never saved has both extras off and `stopDuring` on |
+| `PUT /api/backups/stacks/{name}` | `{volumes, images, stopDuring}` for one stack; 204, or 404 for an unknown stack |
+| `POST /api/backups/run` | start a backup now with a `{}` body. 202 `{"operation": {...}}`; it runs as operation `backup` on key `host:backup`. 409 `backup_running` when a run is in progress |
+| `GET /api/backups/runs?limit=` | recent runs, newest first, with per-item results; `limit` is 1 to 100 and defaults to 20 |
+| `GET /api/backups/archives` | archives at every enabled destination from all hosts, newest first: `dest`, `name`, `hostSlug`, `createdAt`, `size`. A destination that cannot be read is left out unless all of them fail |
+| `GET /api/backups/archives/{dest}/{name}/manifest` | the manifest of one archive (its sidecar, or the archive's own `manifest.json` when there is none): `format`, `stacksteadVersion`, `host`, `hostSlug`, `instanceId`, `createdAt`, `status`, `stacks` (each with `name`, `composePath`, `origin`, `project`, `wasRunning`, `networks`, `volumes` of `{key, kind, name, target, bytes}`, `images`, `liveCopy`), `networks` (a count) and per-item `items`. `dest` is `local` or `s3` and `name` an archive file name; anything else is 400 `bad_archive_ref` |
+| `POST /api/backups/restore/plan` | preview restoring one stack; changes nothing. The body is `{archive: {dest, name}, stack, newName, files, volumes, images, volumeKeys}`: `stack` is the name in the archive, `newName` (optional) restores it under another name that is also its compose project, and an empty `volumeKeys` means every archived volume. 200 with `stack`, `targetName`, `targetDir`, `composePath`, `project`, `origin`, `overwrites`, `fileDiffs` (`path`, `old`, `new`), `volumes` (`key`, `kind`, `name`, `target`, `bytes`, `skip`, `reason`), `images`, `missingNetworks` (`name`, `driver`), `crossHost` and `warnings`. Errors as for the restore below |
+| `POST /api/backups/restore` | restore one stack with the same body. 202 `{"operation": {...}}`; it runs as operation `restore` on the target stack's own key, so it never overlaps another operation on that stack. 409 `stack_busy` while one is running; 400 `archive_newer` for an archive from a newer Stackstead; 409 `target_occupied` when `<stacks_dir>/<name>` holds files of no stack of that name; 409 `project_taken` when the new stack's compose project belongs to another stack; 400 `bad_archive_ref` for an unknown destination or an archive name that is not one; 400 `nothing_to_restore` when none of `files`, `volumes` and `images` is set; 400 `files_required` when only data is restored for a stack that does not exist here; 400 for a damaged archive or a sidecar that does not match it; 404 when the archive or the stack in it is missing; 409 when `newName` is taken |
+
+A single-stack restore stops the stack if it is running, copies its current
+files (not its bind-mount data) to
+`<data_dir>/backups/pre-restore/<stack>-<UTC timestamp>/`, writes the archived
+files, creates missing Stackstead networks (a failure is a warning), empties
+and refills each selected volume, loads the images, registers a stack that did
+not exist here, and starts the stack if it was running before (for a new
+stack: if it was running at backup time). The start happens on every path,
+including after a failure. Volume contents are replaced and not kept. Bind
+mounts outside the allowed roots or covering a root, a stack directory or the
+data dir, and volumes or images whose backup failed, are skipped and reported.
+If a new stack cannot be registered, its volumes and images are not restored.
+Two restores in the same second keep separate pre-restore copies (`-2`, `-3`,
+... suffixes). When the existing stack's compose file has another
+name than the archived one, the archived content is written into the existing
+file. Each restore is recorded in the action log as `backup.restore` with the
+target stack as its scope.
+
+Scheduled runs use the host's local time zone. A scheduled run that finds a
+backup still running is skipped, not queued.
+
+## Setup
+
+These routes work without a session while no admin account exists. They are
+allowed from this machine (a direct loopback connection with no forwarding
+headers), or from anywhere with the setup token printed in the service log.
+Once an admin exists they answer `409`. A connected server can never reach
+them.
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/setup/status` | `{"needsSetup": true}` while no admin exists |
+| `POST /api/setup` | create the first admin with `{username, password, setupToken}`; 204 |
+| `POST /api/setup/restore/upload` | the body is the archive (`Content-Type: application/gzip` or `application/octet-stream`, setup token in the `X-Stackstead-Setup-Token` header). It is streamed to a temporary file and renamed to `<data_dir>/restore/upload.tar.gz` (mode 0600, no size limit) when complete, replacing an earlier upload. Returns `{"source": {"kind": "upload"}}`. 409 `upload_running` while another upload is in progress, 409 `restore_running` during a restore. Completing setup the normal way (`POST /api/setup`) deletes an unused upload |
+| `POST /api/setup/restore/inspect` | `{source, setupToken}`; returns the archive's `manifest`, the `conflicts` it would meet on this host (`kind`, `name`, `action`: `overwrite`, `recreate`, `stopped during restore` (a running container whose project's volumes are replaced; its stack starts after the restart) or `keep`) and their `conflictsDigest` |
+| `POST /api/setup/restore/start` | `{source, startStacks, confirmedDigest, setupToken}`, where `confirmedDigest` is the `conflictsDigest` the user confirmed. It answers once the archive has been checked: 202 `{"restoreToken": "...", "operation": {...}}`. The restore runs as operation `restore` on key `host:restore`, and when it has been staged the server restarts itself to install the restored database |
+| `GET /api/setup/restore/progress?token=` | the restore operation's output as server-sent events, in the same format as `/api/operations/{id}/stream`. It needs the `restoreToken` instead of the setup gate, so it keeps working after the gate closes. The stream ends when the server restarts; the client then polls `/api/setup/status` until the server is back, and signs in as the restored admin |
+
+A `source` is `{"kind": "path", "path": "/abs/archive.tar.gz"}`,
+`{"kind": "upload"}` (the uploaded archive), or `{"kind": "s3", "s3": {bucket,
+key, region, endpoint, pathStyle, accessKeyId, secretKey}}` where `key` is the
+full object key. The secret key is used for the request and never stored or
+returned.
+
+Errors from inspect and start:
+
+| Status and code | Meaning |
+| --- | --- |
+| 409 `conflicts_changed` | the host changed since the inspection; inspect again and confirm the new conflicts |
+| 409 `restore_running` | a restore is running, or one has been staged and the server is about to restart |
+| 409 `restore_pending` | a staged restore is waiting for a restart |
+| 409 `upload_running` | the `upload` source is still being uploaded |
+| 422 `archive_newer` | the archive was written by a newer Stackstead |
+| 422 `archive_damaged` | the archive is truncated, malformed or does not match its manifest |
+| 400 | the source cannot be read, such as a wrong path, bucket or key |
+
+On the first start after a restore the server installs the restored database
+(the previous one is kept next to it as `stackstead.db.bak-<UTC time>`), pauses the backup schedule
+and starts the stacks that were running at backup time when `startStacks` was
+set. A stack that fails to start is recorded in the action log as
+`backup.restore` by `system`. The pause and the stack starts are recorded in
+`<data_dir>/restore/post-apply.json` before the restore marker is removed, so
+a pause that fails, or a crash before the stacks were started, is retried at
+the next start. Until the pause has succeeded the backup scheduler does not
+run. If the staged restore cannot be installed, or that file cannot be read,
+the server refuses to start and says why. An upload still in progress when
+setup completes is discarded when it ends (409).
+
 ## Storage
 
 The Storage screen (`/storage`) has Overview, Images, Volumes and Build cache
