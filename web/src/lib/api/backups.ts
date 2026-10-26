@@ -2,6 +2,10 @@ import { request } from './client';
 import type {
   BackupArchive,
   BackupConfig,
+  BackupManifest,
+  BackupRestorePlan,
+  BackupRestoreRequest,
+  BackupRestoreStarted,
   BackupRun,
   BackupRunStarted,
   BackupS3,
@@ -31,6 +35,10 @@ export function createBackupsApi(base: string) {
     run: () => call<BackupRunStarted>('POST', '/run', {}),
     runs: (limit?: number) => call<BackupRun[]>('GET', limit === undefined ? '/runs' : `/runs?limit=${limit}`),
     archives: () => call<BackupArchive[]>('GET', '/archives'),
+    manifest: (archive: Pick<BackupArchive, 'dest' | 'name'>) =>
+      call<BackupManifest>('GET', `/archives/${archive.dest}/${encodeURIComponent(archive.name)}/manifest`),
+    restorePlan: (req: BackupRestoreRequest) => call<BackupRestorePlan>('POST', '/restore/plan', req),
+    restore: (req: BackupRestoreRequest) => call<BackupRestoreStarted>('POST', '/restore', req),
   };
 }
 

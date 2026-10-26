@@ -93,6 +93,100 @@ export interface BackupRunStarted {
   operation: Operation;
 }
 
+export interface BackupArchiveRef {
+  dest: 'local' | 's3';
+  name: string;
+}
+
+/** Body of POST /api/backups/restore and /api/backups/restore/plan. */
+export interface BackupRestoreRequest {
+  archive: BackupArchiveRef;
+  stack: string;
+  /** Restores under another name (also the compose project); empty keeps the name. */
+  newName: string;
+  files: boolean;
+  volumes: boolean;
+  images: boolean;
+  /** Limits the volumes restored; empty means all of them. */
+  volumeKeys: string[];
+}
+
+export interface BackupFileDiff {
+  path: string;
+  old: string;
+  new: string;
+}
+
+export interface BackupPlannedVolume {
+  key: string;
+  kind: string;
+  name: string;
+  target: string;
+  bytes: number;
+  skip: boolean;
+  reason: string;
+}
+
+export interface BackupRestoreNetwork {
+  name: string;
+  driver: string;
+}
+
+export interface BackupRestorePlan {
+  stack: string;
+  targetName: string;
+  targetDir: string;
+  composePath: string;
+  project: string;
+  origin: string;
+  /** A stack named targetName exists here and is replaced. */
+  overwrites: boolean;
+  fileDiffs: BackupFileDiff[];
+  volumes: BackupPlannedVolume[];
+  images: string[];
+  missingNetworks: BackupRestoreNetwork[];
+  crossHost: boolean;
+  warnings: string[];
+}
+
+/** The 202 body of POST /api/backups/restore. */
+export interface BackupRestoreStarted {
+  operation: Operation;
+}
+
+export interface BackupManifestVolume {
+  key: string;
+  kind: string;
+  name: string;
+  target: string;
+  bytes: number;
+}
+
+export interface BackupManifestStack {
+  name: string;
+  composePath: string;
+  origin: string;
+  project: string;
+  wasRunning: boolean;
+  networks: string[];
+  volumes: BackupManifestVolume[];
+  images: string[];
+  liveCopy: boolean;
+}
+
+export interface BackupManifest {
+  format: number;
+  stacksteadVersion: string;
+  host: string;
+  hostSlug: string;
+  instanceId: string;
+  createdAt: string;
+  status: string;
+  stacks: BackupManifestStack[];
+  networks: number;
+  items: BackupItem[];
+}
+
 // Whole-host restore from the setup screen (/api/setup/restore/...).
 
 export interface HostRestoreS3 {
@@ -119,31 +213,8 @@ export interface HostRestoreConflict {
   action: 'overwrite' | 'recreate' | 'keep';
 }
 
-export interface BackupManifestVolume {
-  key: string;
-  kind: 'volume' | 'bind';
-  name: string;
-  target: string;
-  bytes: number;
-}
-
-export interface BackupManifestStack {
-  name: string;
-  wasRunning: boolean;
-  volumes: BackupManifestVolume[];
-  images: string[];
-}
-
 export interface HostRestoreSummary {
-  manifest: {
-    stacksteadVersion: string;
-    host: string;
-    createdAt: string;
-    status: string;
-    stacks: BackupManifestStack[];
-    networks: number;
-    items: BackupItem[];
-  };
+  manifest: BackupManifest;
   conflicts: HostRestoreConflict[];
   conflictsDigest: string;
 }

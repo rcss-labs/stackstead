@@ -593,6 +593,48 @@ func (s *Service) StartAfterBackup(ctx context.Context, stack string, out func(s
 	return s.compose.Run(ctx, e.ComposePath, composeArgs["start"], out)
 }
 
+// StopForRestore runs `docker compose stop` for a stack a backup restore is
+// about to overwrite. Like StartAfterBackup it bypasses the operations
+// manager: the restore itself holds the stack's operation slot.
+func (s *Service) StopForRestore(ctx context.Context, stack string, out func(string)) error {
+	e, unlock, err := s.lockedEntry(ctx, stack)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return s.compose.Run(ctx, e.ComposePath, composeArgs["stop"], out)
+}
+
+// StartRestored brings a restored stack up with the same arguments as the
+// "up" action, so a new stack gets its containers and an overwritten one picks
+// up its restored files. It bypasses the operations manager for the same
+// reasons as StopForRestore and StartAfterBackup.
+func (s *Service) StartRestored(ctx context.Context, stack string, out func(string)) error {
+	e, unlock, err := s.lockedEntry(ctx, stack)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	_, _, f, err := readFile(e)
+	if err != nil {
+		return err
+	}
+	refs, args, err := s.actPlan(f, "up", composeArgs["up"])
+	if err != nil {
+		return err
+	}
+	if err := refuseOverrides(e.ComposePath); err != nil {
+		return err
+	}
+	if err := s.ensureLibrary(ctx, refs, out); err != nil {
+		return err
+	}
+	if args == nil {
+		return nil
+	}
+	return s.compose.Run(ctx, e.ComposePath, args, out)
+}
+
 // ActService rebuilds and restarts one service with `up -d --build --no-deps`,
 // leaving the stack's other services alone. Unlike the stack-wide up it omits
 // --remove-orphans, which acts on the whole project. The "--" keeps a

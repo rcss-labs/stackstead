@@ -381,34 +381,13 @@ func (s *server) handleRestoreProgress(w http.ResponseWriter, r *http.Request) {
 }
 
 func toHostRestoreSummary(sum backup.HostSummary) apitypes.HostRestoreSummary {
-	m := sum.Manifest
 	out := apitypes.HostRestoreSummary{
 		ConflictsDigest: sum.ConflictsDigest,
 		Conflicts:       make([]apitypes.HostRestoreConflict, 0, len(sum.Conflicts)),
-		Manifest: apitypes.BackupManifest{
-			Format: m.Format, StacksteadVersion: m.StacksteadVersion, Host: m.Host, HostSlug: m.HostSlug,
-			InstanceID: m.InstanceID, CreatedAt: m.CreatedAt, Status: m.Status, Networks: m.Networks,
-			Stacks: make([]apitypes.BackupManifestStack, 0, len(m.Stacks)),
-			Items:  make([]apitypes.BackupItem, 0, len(m.Items)),
-		},
+		Manifest:        toBackupManifest(sum.Manifest),
 	}
 	for _, c := range sum.Conflicts {
 		out.Conflicts = append(out.Conflicts, apitypes.HostRestoreConflict(c))
-	}
-	for _, it := range m.Items {
-		out.Manifest.Items = append(out.Manifest.Items, apitypes.BackupItem(it))
-	}
-	for _, st := range m.Stacks {
-		row := apitypes.BackupManifestStack{
-			Name: st.Name, ComposePath: st.ComposePath, Origin: st.Origin, Project: st.Project,
-			WasRunning: st.WasRunning, Networks: st.Networks, LiveCopy: st.LiveCopy,
-			Images:  append([]string{}, st.Images...),
-			Volumes: make([]apitypes.BackupManifestVolume, 0, len(st.Volumes)),
-		}
-		for _, v := range st.Volumes {
-			row.Volumes = append(row.Volumes, apitypes.BackupManifestVolume(v))
-		}
-		out.Manifest.Stacks = append(out.Manifest.Stacks, row)
 	}
 	return out
 }

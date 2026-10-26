@@ -108,6 +108,92 @@ type BackupRunStarted struct {
 	Operation Operation `json:"operation"`
 }
 
+// BackupArchiveRef names one archive at a destination (local or s3).
+type BackupArchiveRef struct {
+	Dest string `json:"dest"`
+	Name string `json:"name"`
+}
+
+// BackupRestoreRequest is the body of POST /api/backups/restore and
+// /api/backups/restore/plan.
+type BackupRestoreRequest struct {
+	Archive BackupArchiveRef `json:"archive"`
+	// Stack is the stack's name in the archive. NewName restores it under
+	// another name, which is also its compose project; empty keeps the name.
+	Stack   string `json:"stack"`
+	NewName string `json:"newName"`
+	Files   bool   `json:"files"`
+	Volumes bool   `json:"volumes"`
+	Images  bool   `json:"images"`
+	// VolumeKeys limits the volumes restored; empty means all of them.
+	VolumeKeys []string `json:"volumeKeys"`
+}
+
+type BackupFileDiff struct {
+	Path string `json:"path"`
+	Old  string `json:"old"`
+	New  string `json:"new"`
+}
+
+type BackupPlannedVolume struct {
+	Key    string `json:"key"`
+	Kind   string `json:"kind"`
+	Name   string `json:"name"`
+	Target string `json:"target"`
+	Bytes  int64  `json:"bytes"`
+	// Skip is set for a volume that is not restored; Reason says why.
+	Skip   bool   `json:"skip"`
+	Reason string `json:"reason"`
+}
+
+type BackupRestoreNetwork struct {
+	Name   string `json:"name"`
+	Driver string `json:"driver"`
+}
+
+// BackupRestorePlan is the preview of a single-stack restore.
+type BackupRestorePlan struct {
+	Stack       string `json:"stack"`
+	TargetName  string `json:"targetName"`
+	TargetDir   string `json:"targetDir"`
+	ComposePath string `json:"composePath"`
+	Project     string `json:"project"`
+	Origin      string `json:"origin"`
+	// Overwrites means a stack named TargetName exists here and is replaced.
+	Overwrites      bool                   `json:"overwrites"`
+	FileDiffs       []BackupFileDiff       `json:"fileDiffs"`
+	Volumes         []BackupPlannedVolume  `json:"volumes"`
+	Images          []string               `json:"images"`
+	MissingNetworks []BackupRestoreNetwork `json:"missingNetworks"`
+	CrossHost       bool                   `json:"crossHost"`
+	Warnings        []string               `json:"warnings"`
+}
+
+// BackupRestoreStarted is the 202 body of POST /api/backups/restore.
+type BackupRestoreStarted struct {
+	Operation Operation `json:"operation"`
+}
+
+type BackupManifestVolume struct {
+	Key    string `json:"key"`
+	Kind   string `json:"kind"`
+	Name   string `json:"name"`
+	Target string `json:"target"`
+	Bytes  int64  `json:"bytes"`
+}
+
+type BackupManifestStack struct {
+	Name        string                 `json:"name"`
+	ComposePath string                 `json:"composePath"`
+	Origin      string                 `json:"origin"`
+	Project     string                 `json:"project"`
+	WasRunning  bool                   `json:"wasRunning"`
+	Networks    []string               `json:"networks"`
+	Volumes     []BackupManifestVolume `json:"volumes"`
+	Images      []string               `json:"images"`
+	LiveCopy    bool                   `json:"liveCopy"`
+}
+
 // Whole-host restore from the setup screen (/api/setup/restore/...).
 
 // HostRestoreS3 locates an archive in S3. Key is the full object key; the
@@ -174,7 +260,8 @@ type HostRestoreSummary struct {
 	ConflictsDigest string                `json:"conflictsDigest"`
 }
 
-// BackupManifest describes one archive.
+// BackupManifest is an archive's manifest, as GET
+// /api/backups/archives/{dest}/{name}/manifest returns it.
 type BackupManifest struct {
 	Format            int                   `json:"format"`
 	StacksteadVersion string                `json:"stacksteadVersion"`
@@ -186,24 +273,4 @@ type BackupManifest struct {
 	Stacks            []BackupManifestStack `json:"stacks"`
 	Networks          int                   `json:"networks"`
 	Items             []BackupItem          `json:"items"`
-}
-
-type BackupManifestStack struct {
-	Name        string                 `json:"name"`
-	ComposePath string                 `json:"composePath"`
-	Origin      string                 `json:"origin"`
-	Project     string                 `json:"project"`
-	WasRunning  bool                   `json:"wasRunning"`
-	Networks    []string               `json:"networks,omitempty"`
-	Volumes     []BackupManifestVolume `json:"volumes"`
-	Images      []string               `json:"images"`
-	LiveCopy    bool                   `json:"liveCopy"`
-}
-
-type BackupManifestVolume struct {
-	Key    string `json:"key"`
-	Kind   string `json:"kind"`
-	Name   string `json:"name"`
-	Target string `json:"target"`
-	Bytes  int64  `json:"bytes"`
 }
