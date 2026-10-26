@@ -71,6 +71,17 @@ func (c *Client) CreateContainer(ctx context.Context, spec HelperSpec) (string, 
 	return result.ID, nil
 }
 
+// StartContainer starts a created container; an already running one is fine.
+func (c *Client) StartContainer(ctx context.Context, id string) error {
+	resp, cancel, err := c.openRequest(ctx, http.MethodPost, "/containers/"+url.PathEscape(id)+"/start", nil, "", nil, c.timeout, true)
+	if err != nil {
+		return actionResult(err)
+	}
+	defer cancel()
+	resp.Body.Close()
+	return nil
+}
+
 // WaitContainer blocks until the container stops and returns its exit code.
 func (c *Client) WaitContainer(ctx context.Context, id string) (int, error) {
 	resp, cancel, err := c.openRequest(ctx, http.MethodPost, "/containers/"+url.PathEscape(id)+"/wait?condition=not-running", nil, "", nil, waitHeaderWait, true)

@@ -156,6 +156,7 @@ func (f *fakeEngine) CreateContainer(_ context.Context, spec engine.HelperSpec) 
 	f.spec = spec
 	return "helper1", nil
 }
+func (f *fakeEngine) StartContainer(context.Context, string) error       { return nil }
 func (f *fakeEngine) WaitContainer(context.Context, string) (int, error) { return 0, nil }
 func (f *fakeEngine) RemoveContainer(_ context.Context, id string, force bool) error {
 	f.removed = append(f.removed, id)

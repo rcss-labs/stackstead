@@ -114,6 +114,7 @@ func (e *runnerEngine) CreateContainer(_ context.Context, spec engine.HelperSpec
 	e.sources[id] = spec.Mounts[0].Source
 	return id, nil
 }
+func (e *runnerEngine) StartContainer(context.Context, string) error        { return nil }
 func (e *runnerEngine) WaitContainer(context.Context, string) (int, error)  { return 0, nil }
 func (e *runnerEngine) RemoveContainer(context.Context, string, bool) error { return nil }
 func (e *runnerEngine) GetArchive(_ context.Context, id, _ string) (io.ReadCloser, error) {

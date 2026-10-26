@@ -11,6 +11,7 @@ import (
 // *engine.Client and by test fakes.
 type Engine interface {
 	CreateContainer(ctx context.Context, spec engine.HelperSpec) (string, error)
+	StartContainer(ctx context.Context, id string) error
 	WaitContainer(ctx context.Context, id string) (int, error)
 	RemoveContainer(ctx context.Context, id string, force bool) error
 	GetArchive(ctx context.Context, id, path string) (io.ReadCloser, error)
