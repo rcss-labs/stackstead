@@ -517,7 +517,7 @@ func startRestoredStacks(ctx context.Context, starter stackStarter, actions acti
 			logger.Warn("record restored stack start failure", "stack", name, "err", aerr)
 		}
 	}
-	return ctx.Err() == nil
+	return true
 }
 
 // newUpdateChecker builds the release checker. The server always uses the

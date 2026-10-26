@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -545,5 +546,27 @@ func TestServeRefusesToStartOnUnreadableRestoreWork(t *testing.T) {
 	err := serve(ctx, te.Env, nil)
 	if err == nil || !strings.Contains(err.Error(), "finish the pending host restore") {
 		t.Fatalf("serve returned %v, want a pending host restore error", err)
+	}
+}
+
+type cancellingStarter struct{ cancel context.CancelFunc }
+
+func (s cancellingStarter) ActWait(context.Context, string, string, func(string)) error {
+	s.cancel()
+	return errors.New("docker is gone")
+}
+
+type discardActions struct{}
+
+func (discardActions) Append(context.Context, actionlog.Entry) error { return nil }
+
+// A shutdown that lands after the last stack was attempted must not mark the
+// work unfinished, or the next start repeats it.
+func TestStartRestoredStacksCountsAShutdownAfterTheLastStackAsDone(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	logger := slog.New(slog.DiscardHandler)
+	if !startRestoredStacks(ctx, cancellingStarter{cancel}, discardActions{}, []string{"web"}, logger) {
+		t.Error("every stack was attempted, but the work was reported cut short")
 	}
 }
