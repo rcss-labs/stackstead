@@ -5,8 +5,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -117,6 +119,14 @@ func hostRestore(ctx context.Context, env *Env, cfg config.Config, arg string, o
 	}
 	if err := checkOwnership(cfg); err != nil {
 		return err
+	}
+	// A replacement host has no data directory yet; the stacks directories are created as stacks are restored.
+	// Root must not create it: the service user would then be locked out of it.
+	if _, err := os.Stat(cfg.DataDir); errors.Is(err, fs.ErrNotExist) && geteuid() == 0 {
+		return exitf(ExitAuth, "data directory %s does not exist; create it as the service user: sudo -u stackstead stackstead restore …", cfg.DataDir)
+	}
+	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
+		return fmt.Errorf("create data directory: %w", err)
 	}
 	return withExclusiveLock(cfg, func() error {
 		hostEnv := hostRestoreEnv(env, cfg)

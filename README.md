@@ -66,6 +66,7 @@ without a platform to maintain.
 ## What you get
 
 - **Update notice.** Settings shows when a newer release exists and the terminal command to install it; `stackstead upgrade` verifies and installs it. Turn the daily check off with `update_check: false`.
+- **Backups and restore.** Scheduled or on-demand backups of the database, stack files, volumes and images to a local folder or S3, and restore of one stack from the UI or a whole host from the command line.
 - **Networks.** Create LAN (macvlan/ipvlan) and bridge networks from the UI, give services static IPs on them, and see which containers use each network.
 - **A live overview.** Every stack and service on the machine, its status,
   health and running containers, updated the moment Docker reports a change.

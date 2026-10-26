@@ -309,16 +309,49 @@ func underAnyRoot(path string, roots []string) bool {
 }
 
 // underRoot reports whether path is root or inside it, comparing cleaned
-// absolute paths component-wise rather than by string prefix.
+// absolute paths component-wise rather than by string prefix. It holds when
+// either the paths as written or the paths with symlinks resolved (as far as
+// they exist) are nested, so a symlinked allowed root matches the resolved
+// paths the database stores.
 func underRoot(path, root string) bool {
+	_, ok := relUnder(path, root)
+	return ok
+}
+
+// relUnder returns path relative to root when path is inside it, as written or
+// with symlinks resolved on both sides.
+func relUnder(path, root string) (string, bool) {
 	if !filepath.IsAbs(path) || !filepath.IsAbs(root) {
-		return false
+		return "", false
 	}
+	if rel, ok := plainRel(path, root); ok {
+		return rel, true
+	}
+	return plainRel(evalExisting(path), evalExisting(root))
+}
+
+func plainRel(path, root string) (string, bool) {
 	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
-	if err != nil {
-		return false
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
 	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	return rel, true
+}
+
+// evalExisting resolves symlinks in the longest existing prefix of p and
+// appends the rest unchanged.
+func evalExisting(p string) string {
+	p = filepath.Clean(p)
+	var rest []string
+	for cur := p; ; cur = filepath.Dir(cur) {
+		if resolved, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(append([]string{resolved}, rest...)...)
+		}
+		if filepath.Dir(cur) == cur {
+			return p
+		}
+		rest = append([]string{filepath.Base(cur)}, rest...)
+	}
 }
 
 // composeDiff pairs the current content of target with the archived compose
@@ -358,8 +391,7 @@ func planVolumes(vols []ManifestVolume, keys, roots []string, originalDir, targe
 		delete(unmatched, v.Key)
 		pv := PlannedVolume{Key: v.Key, Kind: v.Kind, Name: v.Name, Target: v.Target, Bytes: v.Bytes}
 		if v.Kind == volumeKindBind && filepath.IsAbs(v.Name) {
-			if underRoot(v.Name, originalDir) {
-				rel, _ := filepath.Rel(originalDir, filepath.Clean(v.Name))
+			if rel, ok := relUnder(v.Name, originalDir); ok {
 				pv.Name = filepath.Join(targetDir, rel)
 			} else if !underAnyRoot(v.Name, roots) {
 				pv.Skip, pv.Reason = true, reasonOutsideRoots
@@ -433,9 +465,11 @@ func missingNetworks(ctx context.Context, used []string, env PlanEnv) ([]engine.
 }
 
 // checkArchiveVersion refuses an archive newer than the running binary. A
-// dev build on either side cannot be ordered, so it is never refused.
+// dev build on either side, or an installed version that is not a release
+// number, cannot be ordered, so it is never refused; an archive from a
+// non-dev build must carry a parsable version.
 func checkArchiveVersion(archive, installed string) error {
-	if isDevVersion(archive) || isDevVersion(installed) {
+	if archive == installed || isDevVersion(archive) || isDevVersion(installed) {
 		return nil
 	}
 	a, err := parseSemver(archive)
@@ -444,7 +478,7 @@ func checkArchiveVersion(archive, installed string) error {
 	}
 	i, err := parseSemver(installed)
 	if err != nil {
-		return fmt.Errorf("installed version: %w", err)
+		return nil // an unstamped or custom build cannot be ordered, like dev
 	}
 	for n := range a.core {
 		if a.core[n] > i.core[n] {

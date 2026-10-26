@@ -264,6 +264,12 @@ restore is already pending), 6 for an archive from a newer Stackstead or a
 damaged one, 9 when some items failed to restore (the database is still
 installed; the failed items are listed), 2 for a bad source or missing S3 keys.
 
+Known issue (Docker Desktop on macOS): a bind directory that was deleted and
+re-created at the same path may not be visible to Docker for a short while, so
+restoring it can fail with "bind source path does not exist" (exit 9). If a
+restored stack reports a missing bind source, restart Docker Desktop and restore
+the stack again from the UI, or run `docker compose up -d` in its directory.
+
 **Forgot the admin password.**
 
 ```bash

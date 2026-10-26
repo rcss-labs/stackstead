@@ -285,3 +285,94 @@ result and estimated bytes (actual aggregate bytes for fallback cache pruning).
 Compose interpolation output is never stored, returned or logged; image env,
 command and entrypoint and volume driver options are omitted. Names, labels,
 tags and Docker messages are rendered as text. See [Storage](api.md#storage).
+
+## Backups and restore
+
+Backups are archives of the database, the files of every stack, optionally
+their volumes and images, and the host's identity. They are as sensitive as the
+host itself. See [Backups](cli.md#backups) and [`/api/backups`](api.md) for the
+commands and [routes](api.md#backups).
+
+### What an archive contains
+
+**Archives are not encrypted.** An archive holds the `.env` files and compose
+files of every stack, the whole database (password hashes, session tokens and
+paired-server tokens), and the stored S3 secret key and registry credentials.
+Anyone who can read an archive can sign in as the admin, impersonate the host to
+its peers and push to its registries. Keep archives where only the Stackstead
+operator can read them.
+
+- The local folder is created `0700` and its files `0600`. A folder you point
+  at an existing, wider-open directory is your responsibility.
+- For S3, turn on server-side encryption (SSE-S3 or SSE-KMS) and add a bucket
+  policy that denies access to everyone but the backup identity and denies
+  non-TLS requests. Block public access on the bucket.
+- Give the backup identity the least access that works:
+
+  ```json
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {"Effect": "Allow", "Action": ["s3:PutObject", "s3:GetObject", "s3:AbortMultipartUpload"],
+       "Resource": "arn:aws:s3:::BUCKET/PREFIX/*"},
+      {"Effect": "Allow", "Action": "s3:DeleteObject",
+       "Resource": "arn:aws:s3:::BUCKET/PREFIX/.stackstead-test-*"},
+      {"Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::BUCKET",
+       "Condition": {"StringLike": {"s3:prefix": ["PREFIX/*"]}}}
+    ]
+  }
+  ```
+
+  With no prefix, use `arn:aws:s3:::BUCKET/*` and
+  `arn:aws:s3:::BUCKET/.stackstead-test-*` for the object resources, and omit the
+  `s3:prefix` condition on `s3:ListBucket`.
+
+  `DeleteObject` is needed only to remove the small object the connection test
+  writes (`<prefix>/.stackstead-test-<random>`).
+- **Stackstead never deletes archives in S3.** Retention there is yours to set
+  with a bucket lifecycle rule (expire objects under the prefix after N days).
+  Only the local folder is pruned, by its keep-last setting.
+
+### Restore safety
+
+- Archive entries are confined. A link in a stack's files cannot point outside
+  that stack's directory, and volume data is written only through Docker, inside
+  a helper container, never by Stackstead directly on the host.
+- Bind mounts are restored only under `allowed_roots`. A bind outside them, or
+  one that covers an allowed root, a stack directory or the data directory, is
+  skipped and reported, never emptied.
+- Restoring a single stack first copies that stack's files (compose files,
+  `.env` and the rest of its directory, not bind data) to
+  `<data_dir>/backups/pre-restore/<stack>-<UTC timestamp>/`. A whole-host
+  restore keeps only the previous database, as `stackstead.db.bak-<UTC timestamp>`
+  next to the new one. In both cases bind and volume contents are replaced and
+  not kept; take a backup first if you may want them.
+
+### Whole-host restore
+
+`stackstead restore <source>` runs on the host with the server stopped and is
+authorized by shell access to the host, with the same trust as first-run setup.
+In the UI, the same restore on a fresh install is authorized by the setup token.
+Whoever holds it can name **any file the server can read, or any S3 endpoint**,
+as the source. That is by design; guard the setup token like a root password and
+do not leave a fresh install exposed.
+
+- **A restored host keeps the original's identity**, including the identity
+  paired servers know it by. Do not run the original and the restored host at the
+  same time; paired servers and tokens cannot tell them apart.
+- **The backup schedule comes back paused.** A restored host must not start
+  writing to the original's destinations unnoticed. The pause is stored in the
+  restored database and retried at every start until it is confirmed; the UI
+  shows a banner until you save the schedule enabled again.
+- Uploading an archive on the setup screen sends the whole file in one request
+  to `/api/setup/restore/upload`. Raise the reverse proxy's body limit for that
+  route (nginx `client_max_body_size`, and `proxy_request_buffering off` to
+  stream it) or the proxy rejects it. Upload progress is only determinate over
+  HTTPS with HTTP/2 or newer. Over plain HTTP the browser sends the file directly
+  with no progress bar. Over HTTPS behind a proxy that speaks HTTP/1.1 to the
+  browser, streaming fails and the page retries by sending the whole file, also
+  without progress.
+- **A paired peer can read and change this host's backup settings**: the
+  `/api/backups` routes are forwardable like the rest of the API, so a connection
+  is as powerful over backups (destinations, S3 keys it can overwrite, restores)
+  as it is over stacks. See [Connected servers](#connected-servers).

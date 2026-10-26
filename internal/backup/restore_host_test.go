@@ -1037,3 +1037,31 @@ func TestHostRestoreSaysItWaitsForRestartOnlyWhenDeferred(t *testing.T) {
 		}
 	}
 }
+
+// A configured allowed root may be a symlink (macOS temp dirs, /srv links)
+// while the database holds resolved stack paths; the restore must still write.
+func TestHostRestoreAcceptsSymlinkedAllowedRoot(t *testing.T) {
+	s := newHostSetup(t)
+	if err := os.MkdirAll(s.rootA, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "stacks-link")
+	symlinkOrFatal(t, s.rootA, link)
+	s.env.AllowedRoots = []string{link, s.rootB}
+	bind := filepath.Join(s.rootA, "web", "uploads")
+	m := stacks.Mount{Kind: "bind", Source: bind}
+	s.fixture.volumes["web"] = append(s.fixture.volumes["web"], ManifestVolume{Key: VolumeKey(m), Kind: "bind", Name: bind, Target: "/x"})
+	s.fixture.volData["web/"+VolumeKey(m)] = map[string]string{"data/": "", "data/f": "bind data"}
+	path := s.fixture.build(t, t.TempDir(), true)
+
+	report, err := s.restore(t, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(s.rootA, "web", "compose.yaml")); err != nil || !strings.Contains(string(got), "nginx") {
+		t.Errorf("web compose.yaml not restored through the symlinked root: %q, %v; items %+v", got, err, report.Items)
+	}
+	if slices.ContainsFunc(report.Items, func(it ItemResult) bool { return it.Status == "skipped" && strings.Contains(it.Note, "outside") }) {
+		t.Errorf("an item was skipped as outside the roots: %+v", report.Items)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -161,5 +162,31 @@ func TestRestoreSummaryShowsCountsStatusAndIdentityWarning(t *testing.T) {
 		"This host will take over the backed-up host's identity; don't run both at once.")
 	if n := strings.Count(env.Out.String(), "restore staged") + strings.Count(env.Out.String(), "restored;"); n > 1 {
 		t.Errorf("duplicated completion lines:\n%s", env.Out.String())
+	}
+}
+
+// A replacement host has no data directory yet; restore creates it.
+func TestHostRestoreCreatesMissingDataDir(t *testing.T) {
+	h := newLocalHost(t, false)
+	if err := os.Remove(h.dataDir); err != nil {
+		t.Fatal(err)
+	}
+	fakeRestoreSeams(t, nil)
+	wantCode(t, runRestore(newTestEnv(t, nil), "/tmp/a.tar.gz", "--yes", "--config", h.cfgPath), ExitOK)
+	if info, err := os.Stat(h.dataDir); err != nil || !info.IsDir() {
+		t.Errorf("data dir not created: %v", err)
+	}
+}
+
+func TestHostRestoreAsRootRefusesToCreateDataDir(t *testing.T) {
+	h := newLocalHost(t, false)
+	if err := os.Remove(h.dataDir); err != nil {
+		t.Fatal(err)
+	}
+	geteuid = func() int { return 0 } // newLocalHost restores it on cleanup
+	calls := fakeRestoreSeams(t, nil)
+	wantCode(t, runRestore(newTestEnv(t, nil), "/tmp/a.tar.gz", "--yes", "--config", h.cfgPath), ExitAuth)
+	if _, err := os.Stat(h.dataDir); err == nil || calls.restored.Kind != "" {
+		t.Error("root created the data dir or restored")
 	}
 }

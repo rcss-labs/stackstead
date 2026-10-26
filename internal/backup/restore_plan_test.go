@@ -548,3 +548,44 @@ func TestPlanRefusesProjectOwnedByAnotherStack(t *testing.T) {
 		t.Errorf("err = %v, want ErrProjectTaken", err)
 	}
 }
+
+func TestCheckArchiveVersionTreatsUnparsableInstalledAsUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		installed, archive string
+		wantErr            bool
+	}{
+		{"e2e-test", "v9.0.0", false}, // an unstamped or custom build cannot be ordered, like dev
+		{"custom-build", "v1.0.0", false},
+		{"e2e-test", "e2e-test", false}, // the same build wrote the archive, so it cannot be newer
+		{"v1.4.0", "garbage", true},     // an archive from a non-dev build must carry a version
+		{"v1.4.0", "1.4", true},
+		{"v1.4.0", "dev", false},
+		{"v1.4.0", "v2.0.0", true},
+	} {
+		err := checkArchiveVersion(tc.archive, tc.installed)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("installed %q, archive %q: err = %v, wantErr %v", tc.installed, tc.archive, err, tc.wantErr)
+		}
+	}
+}
+
+// A bind recorded under the resolved path of a symlinked stack directory must
+// be rebased onto the new target, never left pointing at the original stack.
+func TestPlanVolumesRebasesBindThroughSymlinkedDir(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "stacks-link")
+	symlinkOrFatal(t, real, link)
+	if err := os.MkdirAll(filepath.Join(real, "app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	vols := []ManifestVolume{{Key: "b-1", Kind: "bind", Name: filepath.Join(real, "app", "data"), Target: "/d"}}
+	target := filepath.Join(link, "app2")
+
+	got, err := planVolumes(vols, nil, []string{link}, filepath.Join(link, "app"), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(target, "data"); len(got) != 1 || got[0].Name != want || got[0].Skip {
+		t.Errorf("planned volumes = %+v, want bind rebased to %s", got, want)
+	}
+}
