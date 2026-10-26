@@ -32,6 +32,7 @@ var (
 type Compose interface {
 	Version(ctx context.Context) (string, error)
 	Config(ctx context.Context, file string) error
+	ConfigJSON(ctx context.Context, file string) ([]byte, error)
 	ProjectName(ctx context.Context, file string) (string, error)
 	Run(ctx context.Context, file string, args []string, out func(string)) error
 }
