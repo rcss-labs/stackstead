@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +23,8 @@ var (
 	// ErrArchiveNewer refuses an archive written by a newer Stackstead.
 	ErrArchiveNewer      = errors.New("archive is from a newer Stackstead version")
 	ErrStackNotInArchive = errors.New("stack is not in this archive")
+	// ErrTargetOccupied means <StacksDir>/<name> holds files of no registered stack.
+	ErrTargetOccupied = errors.New("target directory is not empty and belongs to no stack of that name")
 )
 
 // Plan warnings and skip reasons, shown verbatim in the preview.
@@ -109,28 +112,33 @@ func PlanStackRestore(ctx context.Context, m Manifest, archivedEntry stacks.Entr
 		composePath = ms.ComposePath
 	}
 
-	existing, err := lookupStack(ctx, env.Registry, ms.Name)
+	if req.NewName != "" {
+		plan.TargetName = req.NewName
+	}
+	// The archived name is untrusted input: it becomes a directory name.
+	if err := stacks.ValidateName(plan.TargetName); err != nil {
+		return StackRestorePlan{}, fmt.Errorf("restore as %q: %w", plan.TargetName, err)
+	}
+	existing, err := lookupStack(ctx, env.Registry, plan.TargetName)
 	if err != nil {
 		return StackRestorePlan{}, err
 	}
-	if req.NewName != "" {
-		if err := stacks.ValidateName(req.NewName); err != nil {
-			return StackRestorePlan{}, err
-		}
-		plan.TargetName = req.NewName
-		existing, err = lookupStack(ctx, env.Registry, req.NewName)
-		if err != nil {
-			return StackRestorePlan{}, err
-		}
-		if existing != nil {
-			return StackRestorePlan{}, fmt.Errorf("%w: %q", stacks.ErrStackExists, req.NewName)
-		}
+	if existing != nil && req.NewName != "" {
+		return StackRestorePlan{}, fmt.Errorf("%w: %q", stacks.ErrStackExists, req.NewName)
 	}
 	plan.Overwrites = existing != nil
 
-	plan.TargetDir, err = targetDir(filepath.Dir(composePath), plan.TargetName, existing, env)
+	originalDir := filepath.Clean(filepath.Dir(composePath))
+	var relocated bool
+	plan.TargetDir, relocated, err = targetDir(originalDir, plan.TargetName, existing, env)
 	if err != nil {
 		return StackRestorePlan{}, err
+	}
+	switch {
+	case existing != nil:
+		plan.Origin = existing.Origin
+	case relocated:
+		plan.Origin = stacks.OriginManaged
 	}
 
 	if req.Files {
@@ -141,7 +149,7 @@ func PlanStackRestore(ctx context.Context, m Manifest, archivedEntry stacks.Entr
 		plan.FileDiffs = []FileDiff{diff}
 	}
 	if req.Volumes {
-		plan.Volumes, err = planVolumes(ms.Volumes, req.VolumeKeys, env.AllowedRoots)
+		plan.Volumes, err = planVolumes(ms.Volumes, req.VolumeKeys, env.AllowedRoots, originalDir, plan.TargetDir)
 		if err != nil {
 			return StackRestorePlan{}, err
 		}
@@ -155,10 +163,12 @@ func PlanStackRestore(ctx context.Context, m Manifest, archivedEntry stacks.Entr
 	if req.Images {
 		plan.Images = append([]string(nil), ms.Images...)
 	}
-	plan.MissingNetworks, err = missingNetworks(ctx, ms.Networks, env)
+	var netWarnings []string
+	plan.MissingNetworks, netWarnings, err = missingNetworks(ctx, ms.Networks, env)
 	if err != nil {
 		return StackRestorePlan{}, err
 	}
+	plan.Warnings = append(plan.Warnings, netWarnings...)
 	return plan, nil
 }
 
@@ -194,24 +204,37 @@ func lookupStack(ctx context.Context, reg *stacks.Registry, name string) (*stack
 	return &e, nil
 }
 
-// targetDir keeps the original directory when it is inside the allowed roots
-// and either free or already the target stack's own directory; otherwise the
-// stack goes to <StacksDir>/<name>.
-func targetDir(original, name string, existing *stacks.Entry, env PlanEnv) (string, error) {
-	original = filepath.Clean(original)
+// targetDir picks where the stack's files go, and reports whether the stack
+// is relocated into <StacksDir>:
+//   - overwriting a registered stack keeps that stack's directory, even
+//     outside AllowedRoots: the host already runs it from there;
+//   - otherwise the original directory, when inside AllowedRoots and free;
+//   - otherwise <StacksDir>/<name>, which must be inside AllowedRoots and free.
+func targetDir(original, name string, existing *stacks.Entry, env PlanEnv) (string, bool, error) {
+	if existing != nil {
+		return filepath.Clean(filepath.Dir(existing.ComposePath)), false, nil
+	}
 	if filepath.IsAbs(original) && underAnyRoot(original, env.AllowedRoots) {
-		if existing != nil && filepath.Clean(filepath.Dir(existing.ComposePath)) == original {
-			return original, nil
-		}
 		free, err := dirFree(original)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		if free {
-			return original, nil
+			return original, false, nil
 		}
 	}
-	return filepath.Join(env.StacksDir, name), nil
+	fallback := filepath.Join(env.StacksDir, name)
+	if !underAnyRoot(fallback, env.AllowedRoots) {
+		return "", false, fmt.Errorf("target directory %s is outside the allowed roots", fallback)
+	}
+	free, err := dirFree(fallback)
+	if err != nil {
+		return "", false, err
+	}
+	if !free {
+		return "", false, fmt.Errorf("%w: %s", ErrTargetOccupied, fallback)
+	}
+	return fallback, true, nil
 }
 
 // dirFree reports whether dir does not exist or is empty.
@@ -276,7 +299,10 @@ func composeDiff(target string, env PlanEnv) (FileDiff, error) {
 	return diff, nil
 }
 
-func planVolumes(vols []ManifestVolume, keys []string, roots []string) ([]PlannedVolume, error) {
+// planVolumes selects the requested volumes. Bind sources inside the archived
+// compose directory follow the compose file to targetDir; other absolute
+// binds outside the allowed roots are skipped.
+func planVolumes(vols []ManifestVolume, keys, roots []string, originalDir, targetDir string) ([]PlannedVolume, error) {
 	unmatched := map[string]bool{}
 	for _, k := range keys {
 		unmatched[k] = true
@@ -288,27 +314,39 @@ func planVolumes(vols []ManifestVolume, keys []string, roots []string) ([]Planne
 		}
 		delete(unmatched, v.Key)
 		pv := PlannedVolume{Key: v.Key, Kind: v.Kind, Name: v.Name, Target: v.Target, Bytes: v.Bytes}
-		// Relative binds follow the compose file into the target directory.
-		if v.Kind == volumeKindBind && filepath.IsAbs(v.Name) && !underAnyRoot(v.Name, roots) {
-			pv.Skip, pv.Reason = true, reasonOutsideRoots
+		if v.Kind == volumeKindBind && filepath.IsAbs(v.Name) {
+			if underRoot(v.Name, originalDir) {
+				rel, _ := filepath.Rel(originalDir, filepath.Clean(v.Name))
+				pv.Name = filepath.Join(targetDir, rel)
+			} else if !underAnyRoot(v.Name, roots) {
+				pv.Skip, pv.Reason = true, reasonOutsideRoots
+			}
 		}
 		out = append(out, pv)
 	}
-	for k := range unmatched {
-		return nil, fmt.Errorf("volume %q is not in this archive", k)
+	if len(unmatched) > 0 {
+		missing := make([]string, 0, len(unmatched))
+		for k := range unmatched {
+			missing = append(missing, strconv.Quote(k))
+		}
+		sort.Strings(missing)
+		return nil, fmt.Errorf("volumes not in this archive: %s", strings.Join(missing, ", "))
 	}
 	return out, nil
 }
 
 // missingNetworks returns the archived specs of networks the stack uses that
-// do not exist on this host.
-func missingNetworks(ctx context.Context, used []string, env PlanEnv) ([]engine.NetworkSpec, error) {
-	if len(used) == 0 || env.Networks == nil {
-		return nil, nil
+// do not exist on this host, plus warnings for those it cannot recreate.
+func missingNetworks(ctx context.Context, used []string, env PlanEnv) ([]engine.NetworkSpec, []string, error) {
+	if len(used) == 0 {
+		return nil, nil, nil
+	}
+	if env.Networks == nil {
+		return nil, []string{"networks were not checked: " + strings.Join(used, ", ")}, nil
 	}
 	present, err := env.Networks(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list networks: %w", err)
+		return nil, nil, fmt.Errorf("list networks: %w", err)
 	}
 	have := map[string]bool{}
 	for _, n := range present {
@@ -319,12 +357,18 @@ func missingNetworks(ctx context.Context, used []string, env PlanEnv) ([]engine.
 		specs[s.Name] = s
 	}
 	var out []engine.NetworkSpec
+	var warnings []string
 	for _, name := range used {
-		if spec, ok := specs[name]; ok && !have[name] {
+		if have[name] {
+			continue
+		}
+		if spec, ok := specs[name]; ok {
 			out = append(out, spec)
+		} else {
+			warnings = append(warnings, fmt.Sprintf("network %q is missing here and not in the archive", name))
 		}
 	}
-	return out, nil
+	return out, warnings, nil
 }
 
 // checkArchiveVersion refuses an archive newer than the running binary. A
@@ -341,13 +385,17 @@ func checkArchiveVersion(archive, installed string) error {
 	if err != nil {
 		return fmt.Errorf("installed version: %w", err)
 	}
-	for n := range a {
-		if a[n] > i[n] {
+	for n := range a.core {
+		if a.core[n] > i.core[n] {
 			return fmt.Errorf("%w: archive %s, installed %s", ErrArchiveNewer, archive, installed)
 		}
-		if a[n] < i[n] {
+		if a.core[n] < i.core[n] {
 			return nil
 		}
+	}
+	// A release is newer than a pre-release of the same version.
+	if i.pre && !a.pre {
+		return fmt.Errorf("%w: archive %s, installed %s", ErrArchiveNewer, archive, installed)
 	}
 	return nil
 }
@@ -355,15 +403,23 @@ func checkArchiveVersion(archive, installed string) error {
 // isDevVersion matches "dev" and the "dev-dirty" form version.Get reports.
 func isDevVersion(v string) bool { return v == "dev" || strings.HasPrefix(v, "dev-") }
 
-// parseSemver reads vX.Y.Z, ignoring a leading "v" and any pre-release or
-// build suffix.
-func parseSemver(v string) ([3]int, error) {
+type semver struct {
+	core [3]int
+	pre  bool
+}
+
+// parseSemver reads vX.Y.Z, ignoring a leading "v" and the content of any
+// pre-release or build suffix.
+func parseSemver(v string) (semver, error) {
+	var out semver
 	s := strings.TrimPrefix(v, "v")
-	if i := strings.IndexAny(s, "-+"); i >= 0 {
+	if i := strings.IndexByte(s, '+'); i >= 0 {
 		s = s[:i]
 	}
+	if i := strings.IndexByte(s, '-'); i >= 0 {
+		s, out.pre = s[:i], true
+	}
 	parts := strings.Split(s, ".")
-	var out [3]int
 	if len(parts) != 3 {
 		return out, fmt.Errorf("unrecognised version %q", v)
 	}
@@ -372,7 +428,7 @@ func parseSemver(v string) ([3]int, error) {
 		if err != nil || x < 0 {
 			return out, fmt.Errorf("unrecognised version %q", v)
 		}
-		out[n] = x
+		out.core[n] = x
 	}
 	return out, nil
 }

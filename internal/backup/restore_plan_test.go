@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -141,6 +142,9 @@ func TestPlanCrossHostRelocatesWhenOutsideRoots(t *testing.T) {
 	if !plan.CrossHost || plan.Overwrites {
 		t.Errorf("CrossHost = %v, Overwrites = %v, want true/false", plan.CrossHost, plan.Overwrites)
 	}
+	if plan.Origin != stacks.OriginManaged {
+		t.Errorf("Origin = %q, want managed after relocation into the stacks dir", plan.Origin)
+	}
 }
 
 func TestPlanCrossHostKeepsAllowedFreePath(t *testing.T) {
@@ -155,6 +159,9 @@ func TestPlanCrossHostKeepsAllowedFreePath(t *testing.T) {
 	}
 	if plan.TargetDir != origDir {
 		t.Errorf("TargetDir = %q, want original %q", plan.TargetDir, origDir)
+	}
+	if plan.Origin != stacks.OriginExternal {
+		t.Errorf("Origin = %q, want external kept at the original path", plan.Origin)
 	}
 
 	// The same path, now occupied by something else, is no longer free.
@@ -252,9 +259,9 @@ func TestPlanSkipsAbsoluteBindOutsideRoots(t *testing.T) {
 	}
 
 	_, err = PlanStackRestore(context.Background(), planManifest("other-host", st), entryFor(st),
-		StackRestoreRequest{Stack: "app", Volumes: true, VolumeKeys: []string{"nope"}}, f.env)
-	if err == nil {
-		t.Error("unknown volume key: want an error")
+		StackRestoreRequest{Stack: "app", Volumes: true, VolumeKeys: []string{"zz", "nope", "aa"}}, f.env)
+	if err == nil || !strings.Contains(err.Error(), `"aa", "nope", "zz"`) {
+		t.Errorf("unknown volume keys: err = %v, want all three listed in sorted order", err)
 	}
 }
 
@@ -280,6 +287,26 @@ func TestPlanMissingNetworksListed(t *testing.T) {
 	if !reflect.DeepEqual(plan.MissingNetworks, want) {
 		t.Errorf("MissingNetworks = %+v, want %+v", plan.MissingNetworks, want)
 	}
+
+	// A missing network with no archived spec, or no way to list networks, is warned about.
+	st.Networks = []string{"frontend", "ghost"}
+	plan, err = PlanStackRestore(context.Background(), planManifest("other-host", st), entryFor(st),
+		StackRestoreRequest{Stack: "app", Files: true}, f.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubstring(plan.Warnings, "ghost") {
+		t.Errorf("Warnings = %v, want one naming the unknown network ghost", plan.Warnings)
+	}
+	f.env.Networks = nil
+	plan, err = PlanStackRestore(context.Background(), planManifest("other-host", st), entryFor(st),
+		StackRestoreRequest{Stack: "app", Files: true}, f.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Warnings) == 0 {
+		t.Error("Networks == nil: want a warning that networks were not checked")
+	}
 }
 
 func TestPlanRefusesNewerArchive(t *testing.T) {
@@ -298,6 +325,8 @@ func TestPlanRefusesNewerArchive(t *testing.T) {
 		{"v1.10.0", "v1.9.0", false},
 		{"dev", "v9.0.0", false},
 		{"v1.4.0", "dev", false},
+		{"v1.4.0-rc.1", "v1.4.0", true},
+		{"v1.4.0", "v1.4.0-rc.1", false},
 	} {
 		setInstalledVersion(t, tc.installed)
 		m := planManifest("self", st)
@@ -358,6 +387,85 @@ func TestArchivedEntryReadsStagedDatabase(t *testing.T) {
 	if _, err := ArchivedEntry(context.Background(), path, "gone"); !errors.Is(err, stacks.ErrStackNotFound) {
 		t.Errorf("missing stack: err = %v, want ErrStackNotFound", err)
 	}
+}
+
+func TestPlanRejectsUnsafeStackName(t *testing.T) {
+	f := newPlanFixture(t)
+	st := ManifestStack{Name: "../../etc", ComposePath: filepath.Join(f.outside, "x", "compose.yaml"), Origin: "managed", Project: "x"}
+	plan, err := PlanStackRestore(context.Background(), planManifest("other-host", st), entryFor(st),
+		StackRestoreRequest{Stack: "../../etc", Files: true}, f.env)
+	if err == nil {
+		t.Fatalf("plan = %+v, want an error for an unsafe archived stack name", plan)
+	}
+
+	// A stacks dir outside the allowed roots must never be written to.
+	f.env.StacksDir = filepath.Join(f.outside, "stacks")
+	st = ManifestStack{Name: "app", ComposePath: filepath.Join(f.outside, "app", "compose.yaml"), Origin: "managed", Project: "app"}
+	plan, err = PlanStackRestore(context.Background(), planManifest("other-host", st), entryFor(st),
+		StackRestoreRequest{Stack: "app", Files: true}, f.env)
+	if err == nil {
+		t.Fatalf("plan = %+v, want an error for a target outside the allowed roots", plan)
+	}
+}
+
+func TestPlanRebasesBindsUnderComposeDir(t *testing.T) {
+	f := newPlanFixture(t)
+	origDir := filepath.Join(f.outside, "app")
+	st := ManifestStack{Name: "app", ComposePath: filepath.Join(origDir, "compose.yaml"), Origin: "managed", Project: "app",
+		Volumes: []ManifestVolume{{Key: "data", Kind: "bind", Name: filepath.Join(origDir, "data", "db"), Target: "/var/lib/db"}}}
+
+	plan, err := PlanStackRestore(context.Background(), planManifest("other-host", st), entryFor(st),
+		StackRestoreRequest{Stack: "app", Volumes: true}, f.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []PlannedVolume{{Key: "data", Kind: "bind", Name: filepath.Join(f.stacksDir, "app", "data", "db"), Target: "/var/lib/db"}}
+	if !reflect.DeepEqual(plan.Volumes, want) {
+		t.Errorf("Volumes = %+v, want %+v (rebased onto the target dir, not skipped)", plan.Volumes, want)
+	}
+}
+
+func TestPlanOverwriteTargetsExistingStackDir(t *testing.T) {
+	f := newPlanFixture(t)
+	liveDir := filepath.Join(f.outside, "live", "db") // registered here, outside the roots
+	existing := writeCompose(t, liveDir, "services: {}\n")
+	if err := f.reg.Add(context.Background(), stacks.Entry{Name: "db", ComposePath: existing, Origin: stacks.OriginExternal, Project: "db"}); err != nil {
+		t.Fatal(err)
+	}
+	st := ManifestStack{Name: "db", ComposePath: filepath.Join(f.root, "archived", "db", "compose.yaml"), Origin: "managed", Project: "db"}
+
+	plan, err := PlanStackRestore(context.Background(), planManifest("other-host", st), entryFor(st),
+		StackRestoreRequest{Stack: "db", Files: true}, f.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Overwrites || plan.TargetDir != liveDir {
+		t.Errorf("Overwrites = %v, TargetDir = %q, want overwrite in the existing dir %q", plan.Overwrites, plan.TargetDir, liveDir)
+	}
+	if plan.Origin != stacks.OriginExternal {
+		t.Errorf("Origin = %q, want the existing stack's origin", plan.Origin)
+	}
+}
+
+func TestPlanRefusesOccupiedFallbackDir(t *testing.T) {
+	f := newPlanFixture(t)
+	writeCompose(t, filepath.Join(f.stacksDir, "app"), "unrelated\n")
+	st := ManifestStack{Name: "app", ComposePath: filepath.Join(f.outside, "app", "compose.yaml"), Origin: "managed", Project: "app"}
+
+	_, err := PlanStackRestore(context.Background(), planManifest("other-host", st), entryFor(st),
+		StackRestoreRequest{Stack: "app", Files: true}, f.env)
+	if !errors.Is(err, ErrTargetOccupied) {
+		t.Errorf("err = %v, want ErrTargetOccupied", err)
+	}
+}
+
+func containsSubstring(list []string, sub string) bool {
+	for _, v := range list {
+		if strings.Contains(v, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 func contains(list []string, s string) bool {
