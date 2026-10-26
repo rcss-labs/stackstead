@@ -189,6 +189,21 @@ func (s *Service) Start(ctx context.Context, trigger, user string) (stacks.Opera
 	return s.Runner.Start(ctx, trigger, user)
 }
 
+// PlanRestore previews restoring one stack from an archive.
+func (s *Service) PlanRestore(ctx context.Context, req StackRestoreRequest) (StackRestorePlan, error) {
+	return s.Runner.PlanRestore(ctx, req)
+}
+
+// Restore starts restoring one stack from an archive.
+func (s *Service) Restore(ctx context.Context, req StackRestoreRequest, user string) (stacks.Operation, error) {
+	return s.Runner.RestoreStack(ctx, req, user)
+}
+
+// ArchiveManifest returns the manifest of one archive.
+func (s *Service) ArchiveManifest(ctx context.Context, dest, name string) (Manifest, error) {
+	return s.Runner.ArchiveManifest(ctx, dest, name)
+}
+
 // Runs returns the most recent runs, newest first.
 func (s *Service) Runs(ctx context.Context, limit int) ([]Run, error) {
 	return s.History.Recent(ctx, limit)

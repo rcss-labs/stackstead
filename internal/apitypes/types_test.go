@@ -186,6 +186,16 @@ func TestJSONTagsMatchContract(t *testing.T) {
 		{"BackupRun", populated[apitypes.BackupRun](), "archive,destinations,endedAt,error,id,items,size,startedAt,status,trigger"},
 		{"BackupArchive", populated[apitypes.BackupArchive](), "createdAt,dest,hostSlug,name,size"},
 		{"BackupRunStarted", populated[apitypes.BackupRunStarted](), "operation"},
+		{"BackupArchiveRef", populated[apitypes.BackupArchiveRef](), "dest,name"},
+		{"BackupRestoreRequest", populated[apitypes.BackupRestoreRequest](), "archive,files,images,newName,stack,volumeKeys,volumes"},
+		{"BackupFileDiff", populated[apitypes.BackupFileDiff](), "new,old,path"},
+		{"BackupPlannedVolume", populated[apitypes.BackupPlannedVolume](), "bytes,key,kind,name,reason,skip,target"},
+		{"BackupRestoreNetwork", populated[apitypes.BackupRestoreNetwork](), "driver,name"},
+		{"BackupRestorePlan", populated[apitypes.BackupRestorePlan](), "composePath,crossHost,fileDiffs,images,missingNetworks,origin,overwrites,project,stack,targetDir,targetName,volumes,warnings"},
+		{"BackupRestoreStarted", populated[apitypes.BackupRestoreStarted](), "operation"},
+		{"BackupManifestVolume", populated[apitypes.BackupManifestVolume](), "bytes,key,kind,name,target"},
+		{"BackupManifestStack", populated[apitypes.BackupManifestStack](), "composePath,images,liveCopy,name,networks,origin,project,volumes,wasRunning"},
+		{"BackupManifest", populated[apitypes.BackupManifest](), "createdAt,format,host,hostSlug,instanceId,items,networks,stacks,stacksteadVersion,status"},
 		{"UpdateStatus", populated[apitypes.UpdateStatus](), "checkedAt,command,current,error,installer,latest,notesURL,state"},
 	}
 	for _, tc := range cases {

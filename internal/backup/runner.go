@@ -60,22 +60,27 @@ var _ StackControl = (*stacks.Service)(nil)
 
 // Deps are the collaborators of a Runner.
 type Deps struct {
-	DB         *sql.DB
-	Config     *ConfigStore
-	Runs       *RunStore
-	Stacks     StackControl
-	Registry   *stacks.Registry
-	Engine     Engine
-	Ops        *stacks.Ops
-	Actions    *actionlog.Store
-	Identity   func(ctx context.Context) (peers.Identity, error)
-	DataDir    string
-	ConfigPath string
-	ImagesDir  string
-	Version    string
-	Now        func() time.Time
-	HTTP       *http.Client
-	Logger     *slog.Logger
+	DB     *sql.DB
+	Config *ConfigStore
+	Runs   *RunStore
+	Stacks StackControl
+	// Restore stops, starts and registers stacks for a single-stack restore.
+	Restore  RestoreControl
+	Registry *stacks.Registry
+	Engine   Engine
+	Ops      *stacks.Ops
+	Actions  *actionlog.Store
+	Identity func(ctx context.Context) (peers.Identity, error)
+	DataDir  string
+	// AllowedRoots and StacksDir place the files of a restored stack.
+	AllowedRoots []string
+	StacksDir    string
+	ConfigPath   string
+	ImagesDir    string
+	Version      string
+	Now          func() time.Time
+	HTTP         *http.Client
+	Logger       *slog.Logger
 }
 
 // Runner performs backup runs, one at a time.
