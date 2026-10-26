@@ -571,6 +571,53 @@ is under `/api/settings`, so a connected server can forward them.
 Scheduled runs use the host's local time zone. A scheduled run that finds a
 backup still running is skipped, not queued.
 
+## Setup
+
+These routes work without a session while no admin account exists. They are
+allowed from this machine (a direct loopback connection with no forwarding
+headers), or from anywhere with the setup token printed in the service log.
+Once an admin exists they answer `409`. A connected server can never reach
+them.
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/setup/status` | `{"needsSetup": true}` while no admin exists |
+| `POST /api/setup` | create the first admin with `{username, password, setupToken}`; 204 |
+| `POST /api/setup/restore/upload` | the body is the archive (`Content-Type: application/gzip` or `application/octet-stream`, setup token in the `X-Stackstead-Setup-Token` header). It is streamed to a temporary file and renamed to `<data_dir>/restore/upload.tar.gz` (mode 0600, no size limit) when complete, replacing an earlier upload. Returns `{"source": {"kind": "upload"}}`. 409 `upload_running` while another upload is in progress, 409 `restore_running` during a restore. Completing setup the normal way (`POST /api/setup`) deletes an unused upload |
+| `POST /api/setup/restore/inspect` | `{source, setupToken}`; returns the archive's `manifest`, the `conflicts` it would meet on this host (`kind`, `name`, `action`: `overwrite`, `recreate` or `keep`) and their `conflictsDigest` |
+| `POST /api/setup/restore/start` | `{source, startStacks, confirmedDigest, setupToken}`, where `confirmedDigest` is the `conflictsDigest` the user confirmed. It answers once the archive has been checked: 202 `{"restoreToken": "...", "operation": {...}}`. The restore runs as operation `restore` on key `host:restore`, and when it has been staged the server restarts itself to install the restored database |
+| `GET /api/setup/restore/progress?token=` | the restore operation's output as server-sent events, in the same format as `/api/operations/{id}/stream`. It needs the `restoreToken` instead of the setup gate, so it keeps working after the gate closes. The stream ends when the server restarts; the client then polls `/api/setup/status` until the server is back, and signs in as the restored admin |
+
+A `source` is `{"kind": "path", "path": "/abs/archive.tar.gz"}`,
+`{"kind": "upload"}` (the uploaded archive), or `{"kind": "s3", "s3": {bucket,
+key, region, endpoint, pathStyle, accessKeyId, secretKey}}` where `key` is the
+full object key. The secret key is used for the request and never stored or
+returned.
+
+Errors from inspect and start:
+
+| Status and code | Meaning |
+| --- | --- |
+| 409 `conflicts_changed` | the host changed since the inspection; inspect again and confirm the new conflicts |
+| 409 `restore_running` | a restore is running, or one has been staged and the server is about to restart |
+| 409 `restore_pending` | a staged restore is waiting for a restart |
+| 409 `upload_running` | the `upload` source is still being uploaded |
+| 422 `archive_newer` | the archive was written by a newer Stackstead |
+| 422 `archive_damaged` | the archive is truncated, malformed or does not match its manifest |
+| 400 | the source cannot be read, such as a wrong path, bucket or key |
+
+On the first start after a restore the server installs the restored database
+(the previous one is kept next to it as `stackstead.db.bak-<UTC time>`), pauses the backup schedule
+and starts the stacks that were running at backup time when `startStacks` was
+set. A stack that fails to start is recorded in the action log as
+`backup.restore` by `system`. The pause and the stack starts are recorded in
+`<data_dir>/restore/post-apply.json` before the restore marker is removed, so
+a pause that fails, or a crash before the stacks were started, is retried at
+the next start. Until the pause has succeeded the backup scheduler does not
+run. If the staged restore cannot be installed, or that file cannot be read,
+the server refuses to start and says why. An upload still in progress when
+setup completes is discarded when it ends (409).
+
 ## Storage
 
 The Storage screen (`/storage`) has Overview, Images, Volumes and Build cache
