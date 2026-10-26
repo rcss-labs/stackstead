@@ -43,6 +43,7 @@ type ManifestStack struct {
 	Origin      string           `json:"origin"`
 	Project     string           `json:"project"`
 	WasRunning  bool             `json:"wasRunning"`
+	Networks    []string         `json:"networks,omitempty"`
 	Volumes     []ManifestVolume `json:"volumes"`
 	Images      []string         `json:"images"`
 	LiveCopy    bool             `json:"liveCopy"`
