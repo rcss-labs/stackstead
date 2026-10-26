@@ -2,6 +2,7 @@ package awsauth
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -187,5 +188,30 @@ func TestSignV4ECRUnchanged(t *testing.T) {
 	}
 	if strings.Contains(req.Header.Get("Authorization"), "x-amz-content-sha256") {
 		t.Errorf("ECR signed headers changed: %s", req.Header.Get("Authorization"))
+	}
+}
+
+func TestCanonicalPathS3EncodesOnce(t *testing.T) {
+	u := &url.URL{Scheme: "https", Host: "h", Path: "/a b/x+y ü.txt"}
+	want := "/a%20b/x%2By%20%C3%BC.txt"
+	if got := canonicalPath(u, true); got != want {
+		t.Errorf("s3 canonical path = %q, want %q", got, want)
+	}
+	if got := canonicalPath(u, false); !strings.Contains(got, "%2520") {
+		t.Errorf("non-s3 path must stay double-encoded, got %q", got)
+	}
+}
+
+// AWS S3 SigV4 documentation example: GET Object with a Range header.
+func TestSignV4S3DocsGetObjectVector(t *testing.T) {
+	req, _ := http.NewRequest("GET", "https://examplebucket.s3.amazonaws.com/test.txt", nil)
+	req.Header.Set("Range", "bytes=0-9")
+	c := Credentials{AccessKeyID: "AKIAIOSFODNN7EXAMPLE", SecretAccessKey: secret.Secret("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")}
+	if err := SignV4(req, nil, c, "us-east-1", "s3", time.Date(2013, 5, 24, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	want := "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41"
+	if got := req.Header.Get("Authorization"); got != want {
+		t.Fatalf("Authorization\n got %s\nwant %s", got, want)
 	}
 }

@@ -93,6 +93,10 @@ func (u *Upload) Close() error {
 
 // Abort cancels the multipart upload and discards uploaded parts.
 func (u *Upload) Abort(ctx context.Context) error {
+	u.closed = true
+	if u.err == nil {
+		u.err = errors.New("s3: upload aborted")
+	}
 	resp, err := u.c.do(ctx, http.MethodDelete, u.key, url.Values{"uploadId": {u.uploadID}}, nil)
 	if err != nil {
 		return err

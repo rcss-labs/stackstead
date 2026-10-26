@@ -177,7 +177,7 @@ func (c *Client) objectURL(key string, query url.Values) (*url.URL, error) {
 func encodePath(p string) string {
 	segs := strings.Split(p, "/")
 	for i, s := range segs {
-		segs[i] = escape(s)
+		segs[i] = awsauth.URIEncode(s)
 	}
 	return strings.Join(segs, "/")
 }
@@ -191,29 +191,10 @@ func encodeQuery(q url.Values) string {
 	var parts []string
 	for _, k := range keys {
 		for _, v := range q[k] {
-			parts = append(parts, escape(k)+"="+escape(v))
+			parts = append(parts, awsauth.URIEncode(k)+"="+awsauth.URIEncode(v))
 		}
 	}
 	return strings.Join(parts, "&")
-}
-
-func escape(s string) string {
-	// url.PathEscape leaves sub-delims such as "+" and "=" alone, so escape
-	// by hand to the RFC 3986 unreserved set.
-	const hexUpper = "0123456789ABCDEF"
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' ||
-			c == '-' || c == '_' || c == '.' || c == '~' {
-			b.WriteByte(c)
-			continue
-		}
-		b.WriteByte('%')
-		b.WriteByte(hexUpper[c>>4])
-		b.WriteByte(hexUpper[c&15])
-	}
-	return b.String()
 }
 
 func parseError(method, key string, resp *http.Response) error {

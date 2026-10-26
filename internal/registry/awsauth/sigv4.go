@@ -136,7 +136,7 @@ func canonicalPath(u *url.URL, s3 bool) string {
 		}
 		segs := strings.Split(u.Path, "/")
 		for i, s := range segs {
-			segs[i] = rfc3986(s)
+			segs[i] = URIEncode(s)
 		}
 		return strings.Join(segs, "/")
 	}
@@ -146,7 +146,7 @@ func canonicalPath(u *url.URL, s3 bool) string {
 	}
 	segs := strings.Split(p, "/")
 	for i, s := range segs {
-		segs[i] = rfc3986(s)
+		segs[i] = URIEncode(s)
 	}
 	return strings.Join(segs, "/")
 }
@@ -167,7 +167,7 @@ func canonicalQuery(u *url.URL) string {
 		if err1 != nil || err2 != nil {
 			dk, dv = k, v
 		}
-		pairs = append(pairs, kv{rfc3986(dk), rfc3986(dv)})
+		pairs = append(pairs, kv{URIEncode(dk), URIEncode(dv)})
 	}
 	sort.Slice(pairs, func(i, j int) bool {
 		if pairs[i].k != pairs[j].k {
@@ -182,8 +182,8 @@ func canonicalQuery(u *url.URL) string {
 	return strings.Join(out, "&")
 }
 
-// rfc3986 percent-encodes everything except unreserved characters.
-func rfc3986(s string) string {
+// URIEncode percent-encodes everything except unreserved characters.
+func URIEncode(s string) string {
 	const hexUpper = "0123456789ABCDEF"
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {

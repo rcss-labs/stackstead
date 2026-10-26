@@ -64,13 +64,21 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("ETag", fmt.Sprintf(`"etag-%d"`, n))
 	case r.Method == "POST" && q.Has("uploadId"):
+		f.mu.Lock()
 		f.complete = string(body)
+		f.mu.Unlock()
 		fmt.Fprint(w, `<CompleteMultipartUploadResult><ETag>"x"</ETag></CompleteMultipartUploadResult>`)
 	case r.Method == "DELETE" && q.Has("uploadId"):
 		w.WriteHeader(204)
 	case r.Method == "GET" && q.Get("list-type") == "2":
 		fmt.Fprint(w, f.pages[q.Get("continuation-token")])
 	}
+}
+
+func (f *fakeS3) snapshot() ([]recordedReq, string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]recordedReq(nil), f.reqs...), f.complete
 }
 
 func (f *fakeS3) newClient(srvURL string) *Client {
@@ -98,7 +106,8 @@ func TestUploadMultipartParts(t *testing.T) {
 	}
 
 	var sizes []int
-	for _, r := range f.reqs {
+	reqs, _ := f.snapshot()
+	for _, r := range reqs {
 		if r.Method == "PUT" {
 			sizes = append(sizes, r.Size)
 		}
@@ -107,7 +116,7 @@ func TestUploadMultipartParts(t *testing.T) {
 	if fmt.Sprint(sizes) != fmt.Sprint(want) {
 		t.Fatalf("part sizes %v, want %v", sizes, want)
 	}
-	first, last := f.reqs[0], f.reqs[len(f.reqs)-1]
+	first, last := reqs[0], reqs[len(reqs)-1]
 	if first.Method != "POST" || first.Query != "uploads=" || first.Path != "/bkt/pre/a.tar.gz" {
 		t.Errorf("first request %+v", first)
 	}
@@ -125,10 +134,11 @@ func TestUploadCompleteBodyListsETagsInOrder(t *testing.T) {
 	if err := u.Close(); err != nil {
 		t.Fatal(err)
 	}
-	i1 := strings.Index(f.complete, "etag-1")
-	i2 := strings.Index(f.complete, "etag-2")
+	_, complete := f.snapshot()
+	i1 := strings.Index(complete, "etag-1")
+	i2 := strings.Index(complete, "etag-2")
 	if i1 < 0 || i2 < i1 {
-		t.Fatalf("complete body %q", f.complete)
+		t.Fatalf("complete body %q", complete)
 	}
 }
 
@@ -145,7 +155,8 @@ func TestUploadAbortOnError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "InternalError") || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("Close err = %v, want S3 code and message", err)
 	}
-	last := f.reqs[len(f.reqs)-1]
+	reqs, _ := f.snapshot()
+	last := reqs[len(reqs)-1]
 	if last.Method != "DELETE" || !strings.Contains(last.Query, "uploadId=UP1") {
 		t.Fatalf("expected AbortMultipartUpload last, got %+v", last)
 	}
