@@ -411,3 +411,38 @@ func TestSetupRemovesALeftoverUpload(t *testing.T) {
 		t.Error("the uploaded archive outlived a normal setup")
 	}
 }
+
+func TestSetupRemovesALeftoverPartialUpload(t *testing.T) {
+	env := newRestoreEnv(t, "")
+	partial := env.fake.upload + ".partial"
+	if err := os.MkdirAll(filepath.Dir(partial), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(partial, []byte("half"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if rec := env.do(t, http.MethodPost, "/api/setup", setupBody(""), fromLoopback); rec.Code != http.StatusNoContent {
+		t.Fatalf("setup = %d %s", rec.Code, rec.Body)
+	}
+	if _, err := os.Stat(partial); !errors.Is(err, os.ErrNotExist) {
+		t.Error("a crashed upload's partial file outlived a normal setup")
+	}
+}
+
+// An upload still running when setup completes is thrown away at its end.
+func TestSetupDuringAnUploadDiscardsIt(t *testing.T) {
+	env := newRestoreEnv(t, "")
+	release, first := env.startSlowUpload(t)
+	if rec := env.do(t, http.MethodPost, "/api/setup", setupBody(""), fromLoopback); rec.Code != http.StatusNoContent {
+		t.Fatalf("setup = %d %s", rec.Code, rec.Body)
+	}
+	release()
+	if rec := <-first; rec.Code != http.StatusConflict {
+		t.Errorf("upload finishing after setup = %d %s, want 409", rec.Code, rec.Body)
+	}
+	for _, p := range []string{env.fake.upload, env.fake.upload + ".partial"} {
+		if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s was kept after setup completed", filepath.Base(p))
+		}
+	}
+}

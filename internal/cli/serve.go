@@ -78,6 +78,10 @@ func init() { serveRun = serve }
 // pauseSchedule pauses a restored backup schedule; tests make it fail.
 var pauseSchedule = backup.PauseScheduleAfterRestore
 
+// startBackupScheduler runs the backup scheduler in the background group;
+// tests count its starts.
+var startBackupScheduler = func(bg *background, s *backup.Scheduler) { bg.add(s.Run) }
+
 // newAPIHandler builds the HTTP handler; tests capture its Options.
 var newAPIHandler = api.New
 
@@ -150,9 +154,12 @@ func runServer(ctx context.Context, env *Env, args []string, restart *atomic.Boo
 	}
 	// What is left of a host restore: recorded by ApplyPending, and kept
 	// until each step has been done, so a crash or a failure is retried.
+	// Unreadable, it could hide a schedule pause: a clone must not run with
+	// the old host's schedule live.
 	restoreWork, err := backup.ReadPostApply(cfg.DataDir)
 	if err != nil {
 		logger.Error("could not read the remaining host restore work", "err", err)
+		return fmt.Errorf("finish the pending host restore: %w", err)
 	}
 	saveRestoreWork := func() {
 		if err := backup.WritePostApply(cfg.DataDir, *restoreWork); err != nil {
@@ -349,7 +356,12 @@ func runServer(ctx context.Context, env *Env, args []string, restart *atomic.Boo
 		Settings: backupSettings, History: backupRuns, Runner: backupRunner, Scheduler: backupScheduler,
 		Stacks: stackSvc, Sizes: dockerEngine, HTTP: backupHTTP, Now: time.Now, Loc: time.Local, Logger: logger,
 	}
-	bg.add(backupScheduler.Run)
+	if restoreWork != nil && restoreWork.PauseSchedule {
+		// Running it now could write over the old host's archives.
+		logger.Error("backup scheduler not started: the restored schedule could not be paused; restart Stackstead to retry")
+	} else {
+		startBackupScheduler(bg, backupScheduler)
+	}
 
 	hostRestorer := backup.HostRestorer{Env: backup.HostEnv{
 		Engine: dockerEngine, DataDir: cfg.DataDir, AllowedRoots: cfg.AllowedRoots,

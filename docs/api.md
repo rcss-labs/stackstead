@@ -613,8 +613,10 @@ set. A stack that fails to start is recorded in the action log as
 `backup.restore` by `system`. The pause and the stack starts are recorded in
 `<data_dir>/restore/post-apply.json` before the restore marker is removed, so
 a pause that fails, or a crash before the stacks were started, is retried at
-the next start. If the staged restore cannot be installed, the server refuses
-to start and says why.
+the next start. Until the pause has succeeded the backup scheduler does not
+run. If the staged restore cannot be installed, or that file cannot be read,
+the server refuses to start and says why. An upload still in progress when
+setup completes is discarded when it ends (409).
 
 ## Storage
 

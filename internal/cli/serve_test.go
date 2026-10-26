@@ -480,8 +480,21 @@ func TestServeRetriesAFailedSchedulePause(t *testing.T) {
 	orig := pauseSchedule
 	t.Cleanup(func() { pauseSchedule = orig })
 	pauseSchedule = func(context.Context, *sql.DB) error { return errors.New("database is locked") }
+	origStart := startBackupScheduler
+	t.Cleanup(func() { startBackupScheduler = origStart })
+	var schedulerStarts atomic.Int32
+	startBackupScheduler = func(bg *background, s *backup.Scheduler) {
+		schedulerStarts.Add(1)
+		origStart(bg, s)
+	}
 
 	serveUntil(t, te, "stackstead listening", "start restored stack")
+	if n := schedulerStarts.Load(); n != 0 {
+		t.Errorf("the backup scheduler started %d times while the restored schedule was not paused", n)
+	}
+	if !strings.Contains(te.Err.String(), "backup scheduler not started") {
+		t.Errorf("no reason logged for holding the scheduler:\n%s", te.Err.String())
+	}
 	post, err := backup.ReadPostApply(data)
 	if err != nil || post == nil || !post.PauseSchedule || len(post.StartStacks) != 0 {
 		t.Fatalf("after a failed pause: post-apply = %+v, %v; want only the pause left", post, err)
@@ -492,6 +505,9 @@ func TestServeRetriesAFailedSchedulePause(t *testing.T) {
 	serveUntil(t, te, "stackstead listening", "paused the restored backup schedule")
 	if scheduleEnabled(t, data) {
 		t.Error("the pause was not retried on the next start")
+	}
+	if n := schedulerStarts.Load(); n != 1 {
+		t.Errorf("the backup scheduler started %d times once paused, want 1", n)
 	}
 	if post, _ := backup.ReadPostApply(data); post != nil {
 		t.Errorf("post-apply = %+v after everything was done", post)
@@ -512,5 +528,22 @@ func TestServeFinishesPostApplyWorkAfterACrash(t *testing.T) {
 	}
 	if post, _ := backup.ReadPostApply(data); post != nil {
 		t.Errorf("post-apply = %+v, want it gone", post)
+	}
+}
+
+func TestServeRefusesToStartOnUnreadableRestoreWork(t *testing.T) {
+	te, data := serveTestEnv(t)
+	dir := filepath.Join(data, "restore")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "post-apply.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := serve(ctx, te.Env, nil)
+	if err == nil || !strings.Contains(err.Error(), "finish the pending host restore") {
+		t.Fatalf("serve returned %v, want a pending host restore error", err)
 	}
 }

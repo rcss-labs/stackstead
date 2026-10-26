@@ -190,6 +190,16 @@ func (s *server) handleRestoreUpload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "upload failed: "+copyErr.Error())
 		return
 	}
+	// Setup may have been completed the normal way while this was uploading.
+	if has, err := s.opts.Auth.HasAdmin(r.Context()); err != nil || has {
+		_ = os.Remove(partial)
+		if err != nil {
+			s.internalError(w, r, err)
+			return
+		}
+		writeError(w, http.StatusConflict, "setup is already complete")
+		return
+	}
 	if err := os.Rename(partial, path); err != nil {
 		_ = os.Remove(partial)
 		s.internalError(w, r, err)
@@ -405,12 +415,21 @@ func toHostRestoreSummary(sum backup.HostSummary) apitypes.HostRestoreSummary {
 
 // removeRestoreUpload drops an uploaded archive nobody will restore: setup
 // was completed the normal way.
+// An upload still being written is left to its handler, which discards it
+// once it sees the admin.
 func (s *server) removeRestoreUpload() {
 	if s.opts.HostRestore == nil {
 		return
 	}
+	s.restore.mu.Lock()
+	defer s.restore.mu.Unlock()
+	if s.restore.uploading {
+		return
+	}
 	path := s.opts.HostRestore.UploadPath()
-	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		s.opts.Logger.Warn("remove unused restore upload", "err", err)
+	for _, p := range []string{path, path + uploadPartialSuffix} {
+		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			s.opts.Logger.Warn("remove unused restore upload", "err", err)
+		}
 	}
 }
