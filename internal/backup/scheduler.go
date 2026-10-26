@@ -16,6 +16,13 @@ const configRetryDelay = time.Minute
 
 const scheduleTrigger = "schedule"
 
+const (
+	// maxWaitStep bounds one timer so the wall clock is rechecked often.
+	maxWaitStep = time.Minute
+	// missedSlotTolerance is how late a slot may be and still run.
+	missedSlotTolerance = 2 * time.Minute
+)
+
 // Scheduler starts a backup at the configured time. It rereads the
 // configuration at startup and whenever Reload is signalled.
 type Scheduler struct {
@@ -62,39 +69,68 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}
 	reload := s.reloadCh()
 
-	// cursor keeps a run that fires early (or a clock that has not advanced)
-	// from being scheduled a second time for the same slot.
-	var cursor time.Time
 	for {
 		cfg, err := s.Config.Load(ctx)
-		var wait <-chan time.Time // nil: wait for a reload
-		var next time.Time
-		switch {
-		case err != nil:
+		if err != nil {
 			logger.Error("backup schedule: read configuration", "err", err)
-			wait = after(configRetryDelay)
-		default:
-			from := now()
-			if cursor.After(from) {
-				from = cursor
+			select {
+			case <-ctx.Done():
+				return
+			case <-reload:
+			case <-after(configRetryDelay):
 			}
-			var ok bool
-			if next, ok = NextRun(cfg.Schedule, from, loc); ok {
-				wait = after(next.Sub(now()))
-			}
+			continue
 		}
+		// NextRun is strictly after now, so a slot that just fired is not
+		// found again.
+		next, ok := NextRun(cfg.Schedule, now(), loc)
+		if !ok {
+			select {
+			case <-ctx.Done():
+				return
+			case <-reload:
+			}
+			continue
+		}
+		switch s.waitUntil(ctx, next, now, after) {
+		case waitCanceled:
+			return
+		case waitReloaded:
+			continue
+		}
+		// A suspend or clock jump can wake us long after the slot; the
+		// schedule is not caught up.
+		if late := now().Sub(next); late > missedSlotTolerance {
+			logger.Warn("backup slot missed", "slot", next, "late", late.Round(time.Second))
+			continue
+		}
+		s.fire(ctx, logger)
+	}
+}
 
+type waitResult int
+
+const (
+	waitDue waitResult = iota
+	waitReloaded
+	waitCanceled
+)
+
+// waitUntil returns when the wall clock reaches target. It waits in short
+// steps and rechecks the clock each time, because one long timer does not
+// follow a wall-clock jump or a suspend.
+func (s *Scheduler) waitUntil(ctx context.Context, target time.Time, now func() time.Time, after func(time.Duration) <-chan time.Time) waitResult {
+	for {
+		remaining := target.Sub(now())
+		if remaining <= 0 {
+			return waitDue
+		}
 		select {
 		case <-ctx.Done():
-			return
-		case <-reload:
-			cursor = time.Time{}
-		case <-wait:
-			if err != nil {
-				continue
-			}
-			cursor = next
-			s.fire(ctx, logger)
+			return waitCanceled
+		case <-s.reloadCh():
+			return waitReloaded
+		case <-after(min(remaining, maxWaitStep)):
 		}
 	}
 }
@@ -103,6 +139,8 @@ func (s *Scheduler) fire(ctx context.Context, logger *slog.Logger) {
 	_, err := s.Runner.Start(ctx, scheduleTrigger, "")
 	switch {
 	case err == nil:
+	case errors.Is(err, stacks.ErrShutdown) || ctx.Err() != nil:
+		// The server is stopping; nothing to report.
 	case errors.Is(err, stacks.ErrBusy):
 		logger.Warn("backup skipped: previous run still in progress")
 	default:

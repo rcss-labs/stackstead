@@ -69,21 +69,40 @@ func scheduledConfig(t *testing.T, clock string) Config {
 	return cfg
 }
 
+// testClock is a wall clock the tests move by hand.
+type testClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *testClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *testClock) set(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = t
+}
+
 type schedulerEnv struct {
 	*runnerEnv
 	sched *Scheduler
 	timer *fakeTimer
+	clock *testClock
 	logs  *lockedBuffer
 	done  chan struct{}
 }
 
 func startScheduler(t *testing.T, cfg Config) *schedulerEnv {
 	t.Helper()
-	env := &schedulerEnv{runnerEnv: newRunnerEnv(t, cfg), timer: newFakeTimer(), logs: &lockedBuffer{}, done: make(chan struct{})}
+	env := &schedulerEnv{runnerEnv: newRunnerEnv(t, cfg), timer: newFakeTimer(), clock: &testClock{now: runnerNow}, logs: &lockedBuffer{}, done: make(chan struct{})}
 	env.sched = &Scheduler{
 		Runner: env.runner,
 		Config: env.deps.Config,
-		Now:    func() time.Time { return runnerNow },
+		Now:    env.clock.Now,
 		After:  env.timer.After,
 		Loc:    time.UTC,
 		Logger: slog.New(slog.NewTextHandler(env.logs, nil)),
@@ -100,15 +119,20 @@ func startScheduler(t *testing.T, cfg Config) *schedulerEnv {
 	return env
 }
 
+func (env *schedulerEnv) recentRuns(t *testing.T) []Run {
+	t.Helper()
+	runs, err := env.deps.Runs.Recent(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return runs
+}
+
 func (env *schedulerEnv) waitForRuns(t *testing.T, n int) []Run {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		runs, err := env.deps.Runs.Recent(context.Background(), 10)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(runs) >= n {
+		if runs := env.recentRuns(t); len(runs) >= n {
 			return runs
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -117,17 +141,55 @@ func (env *schedulerEnv) waitForRuns(t *testing.T, n int) []Run {
 	return nil
 }
 
+// slot is today's HH:MM in UTC on the runner's test date.
+func slot(h, m int) time.Time {
+	return time.Date(runnerNow.Year(), runnerNow.Month(), runnerNow.Day(), h, m, 0, 0, time.UTC)
+}
+
 func TestSchedulerFiresAtNextRun(t *testing.T) {
-	// runnerNow is 03:00 UTC, so the next 04:30 slot is 90 minutes away.
 	env := startScheduler(t, scheduledConfig(t, "04:30"))
 	w := env.timer.next(t)
-	if w.d != 90*time.Minute {
-		t.Fatalf("waits %v, want 1h30m", w.d)
+	if w.d != time.Minute {
+		t.Fatalf("a wait of %v is not capped at one minute", w.d)
 	}
-	w.ch <- runnerNow
+	// The wall clock reaches the slot; the timer wakes the scheduler.
+	env.clock.set(slot(4, 30))
+	w.ch <- slot(4, 30)
 	runs := env.waitForRuns(t, 1)
 	if runs[0].Trigger != "schedule" {
 		t.Errorf("trigger = %q, want schedule", runs[0].Trigger)
+	}
+}
+
+func TestSchedulerDoesNotFireTwiceForOneSlot(t *testing.T) {
+	env := startScheduler(t, scheduledConfig(t, "04:30"))
+	w := env.timer.next(t)
+	env.clock.set(slot(4, 30))
+	w.ch <- slot(4, 30)
+	env.waitForRuns(t, 1)
+
+	// With the clock still on the slot, the next wake must not run again.
+	w = env.timer.next(t)
+	w.ch <- slot(4, 30)
+	env.timer.next(t)
+	time.Sleep(100 * time.Millisecond)
+	if n := len(env.recentRuns(t)); n != 1 {
+		t.Fatalf("one slot produced %d runs", n)
+	}
+}
+
+func TestSchedulerSkipsMissedSlot(t *testing.T) {
+	env := startScheduler(t, scheduledConfig(t, "04:30"))
+	w := env.timer.next(t)
+	// A suspend or clock jump: the wall clock wakes well after the slot.
+	env.clock.set(slot(4, 30).Add(3 * time.Minute))
+	w.ch <- env.clock.Now()
+	env.timer.next(t) // the scheduler is waiting for the next day's slot
+	if n := len(env.recentRuns(t)); n != 0 {
+		t.Fatalf("a missed slot ran %d backups", n)
+	}
+	if !strings.Contains(env.logs.String(), "backup slot missed") {
+		t.Errorf("log lacks missed-slot message: %s", env.logs.String())
 	}
 }
 
@@ -143,27 +205,21 @@ func TestSchedulerSkipsWhenBusy(t *testing.T) {
 	defer close(release)
 
 	w := env.timer.next(t)
-	w.ch <- runnerNow
+	env.clock.set(slot(4, 30))
+	w.ch <- slot(4, 30)
 	env.timer.next(t) // the scheduler is waiting for the following slot
 
 	if !strings.Contains(env.logs.String(), "backup skipped: previous run still in progress") {
 		t.Errorf("log lacks skip message: %s", env.logs.String())
 	}
-	runs, err := env.deps.Runs.Recent(context.Background(), 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(runs) != 0 {
-		t.Errorf("a busy slot queued %d runs", len(runs))
+	if n := len(env.recentRuns(t)); n != 0 {
+		t.Errorf("a busy slot queued %d runs", n)
 	}
 }
 
 func TestSchedulerReloadsOnConfigChange(t *testing.T) {
 	env := startScheduler(t, scheduledConfig(t, "04:30"))
-	first := env.timer.next(t)
-	if first.d != 90*time.Minute {
-		t.Fatalf("first wait %v", first.d)
-	}
+	env.timer.next(t)
 
 	cfg := scheduledConfig(t, "05:00")
 	cfg.Local = env.mustLoad(t).Local
@@ -171,10 +227,19 @@ func TestSchedulerReloadsOnConfigChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	env.sched.Reload()
-	second := env.timer.next(t)
-	if second.d != 2*time.Hour {
-		t.Fatalf("after reload waits %v, want 2h", second.d)
+	w := env.timer.next(t)
+
+	// 04:30 is no longer a slot; 05:00 is.
+	env.clock.set(slot(4, 30))
+	w.ch <- slot(4, 30)
+	w = env.timer.next(t)
+	if n := len(env.recentRuns(t)); n != 0 {
+		t.Fatalf("the old 04:30 slot ran after the change (%d runs)", n)
 	}
+	env.clock.set(slot(5, 0))
+	w.ch <- slot(5, 0)
+	env.waitForRuns(t, 1)
+	env.timer.next(t) // waiting for the next day's slot
 
 	// Turning the schedule off waits for the next reload without a timer.
 	cfg.Schedule.Enabled = false
