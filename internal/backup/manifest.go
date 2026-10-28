@@ -34,6 +34,24 @@ type Manifest struct {
 	Stacks            []ManifestStack `json:"stacks"`
 	Networks          int             `json:"networks"`
 	Items             []ItemResult    `json:"items"`
+	// Encryption is set when the archive stream is encrypted. Any new Manifest
+	// field needs a ManifestFormat bump: the sidecar MAC covers the JSON form.
+	Encryption *ManifestEncryption `json:"encryption,omitempty"`
+}
+
+// ManifestEncryption describes how an encrypted archive was keyed. The
+// passphrase itself is never recorded; KeyID tells which one an archive needs.
+type ManifestEncryption struct {
+	KeyID   string `json:"keyId"`
+	KeySalt string `json:"keySalt"` // hex
+	Argon2  struct {
+		Time      uint32 `json:"time"`
+		MemoryKiB uint32 `json:"memoryKiB"`
+		Threads   uint8  `json:"threads"`
+	} `json:"argon2"`
+	// SidecarMAC authenticates the sidecar copy of the manifest. It is empty in
+	// the in-archive manifest and is the only field excluded from the MAC.
+	SidecarMAC string `json:"sidecarMac,omitempty"`
 }
 
 // ManifestStack describes one stack held by the archive.
