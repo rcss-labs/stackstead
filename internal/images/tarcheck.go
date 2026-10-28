@@ -34,6 +34,7 @@ var (
 type tarInspector struct {
 	src  io.Reader
 	want string
+	also map[string]bool // other spellings of want that docker save may emit
 
 	pw   *io.PipeWriter
 	done chan struct{}
@@ -199,7 +200,7 @@ func (t *tarInspector) checkMetadata(name string, data []byte) error {
 		}
 	}
 	for _, n := range names {
-		if n != t.want {
+		if n != t.want && !t.also[n] {
 			return errForeignTags
 		}
 	}
@@ -263,4 +264,48 @@ func (t *tarInspector) abort() {
 	t.mu.Lock()
 	t.aborted = true
 	t.mu.Unlock()
+}
+
+// TarGuard exposes the image tar inspector to other packages: it wraps a
+// docker-save stream and fails the read of any archive that names a tag other
+// than the one ref (or its familiar spellings, such as nginx for nginx:latest
+// or library/nginx:1 for docker.io/library/nginx:1).
+type TarGuard struct{ insp *tarInspector }
+
+// ErrForeignTags is the violation a TarGuard reports for a foreign tag.
+var ErrForeignTags = errForeignTags
+
+// NewTarGuard wraps src; call Close when the consumer is done.
+func NewTarGuard(src io.Reader, ref string) *TarGuard {
+	insp := newTarInspector(src, ref)
+	insp.also = refSpellings(ref)
+	return &TarGuard{insp: insp}
+}
+
+func (g *TarGuard) Read(p []byte) (int, error) { return g.insp.Read(p) }
+
+// Violation returns the first refusal, or nil.
+func (g *TarGuard) Violation() error { return g.insp.violation() }
+
+// Close stops the inspector.
+func (g *TarGuard) Close() { g.insp.close() }
+
+// refSpellings lists the names docker save can print for ref: the implicit
+// :latest tag and the docker.io/library/ prefixes are dropped or added.
+func refSpellings(ref string) map[string]bool {
+	out := map[string]bool{}
+	bases := []string{ref}
+	for _, prefix := range []string{"docker.io/library/", "index.docker.io/library/", "docker.io/", "index.docker.io/"} {
+		if rest, ok := strings.CutPrefix(ref, prefix); ok {
+			bases = append(bases, rest)
+		}
+	}
+	for _, b := range bases {
+		out[b] = true
+		last := b[strings.LastIndex(b, "/")+1:]
+		if !strings.ContainsAny(last, ":@") {
+			out[b+":latest"] = true
+		}
+	}
+	return out
 }

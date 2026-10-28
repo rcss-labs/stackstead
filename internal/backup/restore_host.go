@@ -866,6 +866,10 @@ func (h *hostRestore) volume(hdr *tar.Header, body io.Reader) error {
 		return drain(stream)
 	}
 	mv := ms.Volumes[i]
+	if err := checkVolumeKey(mv); err != nil {
+		h.items = append(h.items, ItemResult{Kind: conflictVolume, Stack: stack, Name: mv.Name, Status: itemFailed, Note: err.Error()})
+		return drain(stream)
+	}
 	if h.stopFailed[ms.Project] {
 		h.items = append(h.items, ItemResult{Kind: conflictVolume, Stack: stack, Name: mv.Name, Status: itemSkipped, Note: "a container of the stack could not be stopped; the volume is left as it was"})
 		return drain(stream)
@@ -1021,7 +1025,7 @@ func (h *hostRestore) images(hdr *tar.Header, body io.Reader) error {
 	}
 	ref := ms.Images[i]
 	h.out("loading image " + ref + " of " + stack)
-	err := h.env.Engine.LoadImage(h.ctx, stream)
+	err := loadImageChecked(h.ctx, h.env.Engine, ref, stream)
 	if derr := drain(stream); derr != nil {
 		return derr
 	}
