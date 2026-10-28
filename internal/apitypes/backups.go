@@ -39,11 +39,23 @@ type BackupConfig struct {
 	Schedule BackupSchedule `json:"schedule"`
 	Local    BackupLocal    `json:"local"`
 	S3       BackupS3       `json:"s3"`
+	// Encryption controls archive encryption; see BackupEncryption.
+	Encryption BackupEncryption `json:"encryption"`
 	// NextRun is when the schedule fires next; absent when it is off. Ignored on PUT.
 	NextRun *time.Time `json:"nextRun,omitempty"`
 	// PausedAfterRestore is set when a host restore turned the schedule off;
 	// saving the schedule enabled clears it. Ignored on PUT.
 	PausedAfterRestore bool `json:"pausedAfterRestore"`
+}
+
+// BackupEncryption is the archive encryption setting. Passphrase is accepted
+// on PUT only and is never returned; PassphraseSet and KeyID say whether one is
+// stored and which one (the key id is also written into every archive sidecar).
+type BackupEncryption struct {
+	Enabled       bool   `json:"enabled"`
+	Passphrase    string `json:"passphrase,omitempty"`
+	PassphraseSet bool   `json:"passphraseSet"`
+	KeyID         string `json:"keyId"`
 }
 
 type BackupMount struct {

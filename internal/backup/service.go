@@ -56,6 +56,8 @@ type Service struct {
 	Now       func() time.Time
 	Loc       *time.Location
 	Logger    *slog.Logger
+	// DataDir holds backup.key, the archive passphrase.
+	DataDir string
 }
 
 func (s *Service) now() time.Time {
@@ -85,6 +87,13 @@ func (s *Service) Config(ctx context.Context) (Config, error) { return s.Setting
 // SaveConfig stores cfg and tells the scheduler to pick it up. The caller
 // validates first; an empty S3 secret keeps the stored one.
 func (s *Service) SaveConfig(ctx context.Context, cfg Config) error {
+	if cfg.Encryption.Enabled {
+		if _, ok, err := ReadKeyInfo(s.DataDir); err != nil {
+			return err
+		} else if !ok {
+			return ErrNoKeyFile
+		}
+	}
 	if err := s.Settings.Save(ctx, cfg); err != nil {
 		return err
 	}
@@ -262,4 +271,30 @@ func (s *Service) NextRun(ctx context.Context) (time.Time, bool) {
 func (s *Service) PausedAfterRestore(ctx context.Context) (bool, error) {
 	v, err := s.Settings.get(ctx, settingPausedAfterRestore)
 	return v == "true", err
+}
+
+// SetPassphrase stores a new archive passphrase. Archives written before keep
+// the passphrase they were made with; their sidecar names its key id.
+func (s *Service) SetPassphrase(ctx context.Context, passphrase string) (KeyInfo, error) {
+	return WriteKeyFile(s.DataDir, passphrase, s.now())
+}
+
+// ClearPassphrase deletes the stored passphrase and turns encryption off, so a
+// later run cannot silently fall back to plaintext without the operator
+// having chosen it.
+func (s *Service) ClearPassphrase(ctx context.Context) error {
+	if err := RemoveKeyFile(s.DataDir); err != nil {
+		return err
+	}
+	cfg, err := s.Settings.Load(ctx)
+	if err != nil {
+		return err
+	}
+	cfg.Encryption.Enabled = false
+	return s.Settings.Save(ctx, cfg)
+}
+
+// KeyInfo describes the stored passphrase without revealing it.
+func (s *Service) KeyInfo(ctx context.Context) (KeyInfo, bool, error) {
+	return ReadKeyInfo(s.DataDir)
 }

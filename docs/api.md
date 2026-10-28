@@ -558,9 +558,10 @@ is under `/api/settings`, so a connected server can forward them.
 
 | Method and path | Purpose |
 | --- | --- |
-| `GET /api/backups/config` | the schedule, local folder and S3 bucket. `s3.secretKeySet` says whether a secret is stored; the secret itself is never returned. `nextRun` is when the schedule fires next, and is absent when it is off. `pausedAfterRestore` is true after a host restore turned the schedule off, until the schedule is saved with `enabled: true` |
-| `PUT /api/backups/config` | save the same shape. `400` with the validation messages when it is invalid. An omitted or empty `s3.secretKey` keeps the stored one. Returns the saved configuration |
+| `GET /api/backups/config` | the schedule, local folder, S3 bucket and `encryption` (`enabled`, `passphraseSet`, `keyId`; the passphrase is never returned). `s3.secretKeySet` says whether a secret is stored; the secret itself is never returned. `nextRun` is when the schedule fires next, and is absent when it is off. `pausedAfterRestore` is true after a host restore turned the schedule off, until the schedule is saved with `enabled: true` |
+| `PUT /api/backups/config` | save the same shape. `400` with the validation messages when it is invalid. An omitted or empty `s3.secretKey` keeps the stored one. A non-empty `encryption.passphrase` (write-only, at least 12 characters) replaces the stored passphrase before the rest is saved: `400` `passphrase_too_short` when it is shorter, `400` `passphrase_required` when `encryption.enabled` is true and none is stored. Returns the saved configuration |
 | `DELETE /api/backups/config/s3-secret` | remove the stored S3 secret; 204 |
+| `DELETE /api/backups/config/encryption-key` | forget the archive passphrase and turn encryption off; 204. Archives already written stay encrypted and need the old passphrase |
 | `POST /api/backups/s3/test` | writes and deletes a small object with the `s3` settings in the body, using the stored secret when the body has none; 204, or `502` with the reason |
 | `GET /api/backups/stacks` | every stack with `volumes`, `images`, `stopDuring` and its `mounts` (`kind`, `name`, `target`, `bytes`; `bytes` is -1 when unknown, as for bind mounts). A stack never saved has both extras off and `stopDuring` on |
 | `PUT /api/backups/stacks/{name}` | `{volumes, images, stopDuring}` for one stack; 204, or 404 for an unknown stack |

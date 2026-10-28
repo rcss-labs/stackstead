@@ -29,10 +29,21 @@ export interface BackupS3 {
   secretKeySet: boolean;
 }
 
+export interface BackupEncryption {
+  /** Archives are encrypted and authenticated with the stored passphrase. */
+  enabled: boolean;
+  /** Write-only: sent on PUT when typed, never returned. */
+  passphrase?: string;
+  passphraseSet: boolean;
+  /** Short id of the stored passphrase; also written into every archive sidecar. */
+  keyId: string;
+}
+
 export interface BackupConfig {
   schedule: BackupSchedule;
   local: BackupLocal;
   s3: BackupS3;
+  encryption: BackupEncryption;
   /** When the schedule fires next; absent when it is off. Ignored on PUT. */
   nextRun?: string;
   /** A host restore turned the schedule off; saving it enabled clears this. Ignored on PUT. */

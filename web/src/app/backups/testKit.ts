@@ -13,6 +13,7 @@ export const sampleConfig: BackupConfig = {
     accessKeyId: 'AKIA',
     secretKeySet: true,
   },
+  encryption: { enabled: true, passphraseSet: true, keyId: '0123456789abcdef' },
   nextRun: '2026-10-27T03:00:00Z',
   pausedAfterRestore: false,
 };

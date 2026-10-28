@@ -80,3 +80,60 @@ func TestSaveConfigWithScheduleOnClearsPausedFlag(t *testing.T) {
 		t.Error("turning the schedule on kept the paused flag")
 	}
 }
+
+func TestSaveConfigRefusesEncryptionWithoutKey(t *testing.T) {
+	cs, _ := newTestConfigStore(t)
+	svc := &Service{Settings: cs, DataDir: t.TempDir()}
+	ctx := context.Background()
+	cfg := defaultConfig()
+	cfg.Encryption.Enabled = true
+	if err := svc.SaveConfig(ctx, cfg); !errors.Is(err, ErrNoKeyFile) {
+		t.Fatalf("SaveConfig err = %v, want ErrNoKeyFile", err)
+	}
+	if stored, _ := svc.Config(ctx); stored.Encryption.Enabled {
+		t.Fatal("encryption was saved as enabled without a key")
+	}
+	if _, err := svc.SetPassphrase(ctx, testPassphrase); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SaveConfig(ctx, cfg); err != nil {
+		t.Fatalf("SaveConfig with a key: %v", err)
+	}
+	if stored, _ := svc.Config(ctx); !stored.Encryption.Enabled {
+		t.Fatal("encryption not enabled")
+	}
+}
+
+func TestSetPassphraseRejectsShort(t *testing.T) {
+	cs, _ := newTestConfigStore(t)
+	svc := &Service{Settings: cs, DataDir: t.TempDir()}
+	if _, err := svc.SetPassphrase(context.Background(), "short"); !errors.Is(err, ErrPassphraseTooShort) {
+		t.Fatalf("err = %v, want ErrPassphraseTooShort", err)
+	}
+	if _, ok, _ := svc.KeyInfo(context.Background()); ok {
+		t.Fatal("a rejected passphrase left a key file")
+	}
+}
+
+func TestClearPassphraseDisablesEncryption(t *testing.T) {
+	cs, _ := newTestConfigStore(t)
+	svc := &Service{Settings: cs, DataDir: t.TempDir()}
+	ctx := context.Background()
+	if _, err := svc.SetPassphrase(ctx, testPassphrase); err != nil {
+		t.Fatal(err)
+	}
+	cfg := defaultConfig()
+	cfg.Encryption.Enabled = true
+	if err := svc.SaveConfig(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ClearPassphrase(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := svc.KeyInfo(ctx); ok {
+		t.Fatal("key file still present")
+	}
+	if stored, _ := svc.Config(ctx); stored.Encryption.Enabled {
+		t.Fatal("encryption still enabled after the passphrase was forgotten")
+	}
+}

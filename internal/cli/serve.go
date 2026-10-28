@@ -370,6 +370,7 @@ func runServer(ctx context.Context, env *Env, args []string, restart *atomic.Boo
 	backupSvc := &backup.Service{
 		Settings: backupSettings, History: backupRuns, Runner: backupRunner, Scheduler: backupScheduler,
 		Stacks: stackSvc, Sizes: dockerEngine, HTTP: backupHTTP, Now: time.Now, Loc: time.Local, Logger: logger,
+		DataDir: cfg.DataDir,
 	}
 	if restoreWork != nil && restoreWork.PauseSchedule {
 		// Running it now could write over the old host's archives.
