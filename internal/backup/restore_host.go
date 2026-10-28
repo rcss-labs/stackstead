@@ -870,13 +870,13 @@ func (h *hostRestore) volume(hdr *tar.Header, body io.Reader) error {
 		h.items = append(h.items, ItemResult{Kind: conflictVolume, Stack: stack, Name: mv.Name, Status: itemSkipped, Note: "a container of the stack could not be stopped; the volume is left as it was"})
 		return drain(stream)
 	}
-	source := mv.Name
+	var bind *bindTarget
 	if mv.Kind == volumeKindBind {
 		if archivedAsFile(hdr, prefix) {
 			h.items = append(h.items, ItemResult{Kind: conflictVolume, Stack: stack, Name: mv.Name, Status: itemSkipped, Note: noteArchivedFileBind})
 			return drain(stream)
 		}
-		resolved, skip, err := h.rs.prepareBind(mv.Name, h.restoredStackDirs())
+		target, skip, err := h.rs.prepareBind(mv.Name, h.restoredStackDirs())
 		if skip != "" || err != nil {
 			item := ItemResult{Kind: conflictVolume, Stack: stack, Name: mv.Name, Status: itemSkipped, Note: skip}
 			if err != nil {
@@ -885,10 +885,10 @@ func (h *hostRestore) volume(hdr *tar.Header, body io.Reader) error {
 			h.items = append(h.items, item)
 			return drain(stream)
 		}
-		source = resolved
+		bind = &target
 	}
 	h.out("restoring " + mv.Kind + " " + mv.Name + " of " + stack)
-	err := h.fillVolume(stack, mv, source, stream)
+	err := h.fillVolume(stack, mv, bind, stream)
 	if derr := drain(stream); derr != nil {
 		return derr
 	}
@@ -993,13 +993,20 @@ func (h *hostRestore) ensureHelper() error {
 }
 
 // fillVolume makes sure the helper image is present and replaces the
-// volume's (or bind source's) contents with stream.
-func (h *hostRestore) fillVolume(stack string, mv ManifestVolume, source string, stream io.Reader) error {
+// volume's (or, with bind set, the vetted bind source's) contents with stream.
+// A bind is vetted again after the image check, which may pull.
+func (h *hostRestore) fillVolume(stack string, mv ManifestVolume, bind *bindTarget, stream io.Reader) error {
 	if err := h.ensureHelper(); err != nil {
 		return fmt.Errorf("helper image: %w", err)
 	}
+	if bind != nil {
+		if err := h.rs.revetBind(mv.Name, h.restoredStackDirs(), *bind); err != nil {
+			return err
+		}
+		return RestoreBind(h.ctx, h.env.Engine, stack, *bind, stream)
+	}
 	labels := composeVolumeLabels(h.stacks[stack].entry.Project, mv.Name)
-	return RestoreVolume(h.ctx, h.env.Engine, stack, stacks.Mount{Kind: mv.Kind, Source: source, Target: mv.Target}, labels, stream)
+	return RestoreVolume(h.ctx, h.env.Engine, stack, stacks.Mount{Kind: mv.Kind, Source: mv.Name, Target: mv.Target}, labels, stream)
 }
 
 // images loads one archived image, stored under images/<stack>/<image key>/.
