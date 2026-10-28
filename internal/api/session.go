@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/netip"
 	"strings"
 	"time"
 
@@ -23,19 +22,13 @@ func userFrom(ctx context.Context) auth.User {
 	return u
 }
 
-// isHTTPS reports whether the browser reached the server over TLS: either
-// directly, or through a trusted proxy that says so. X-Forwarded-Proto is
-// honoured only from a configured trusted proxy (the same rule clientIP uses
-// for X-Forwarded-For); anyone else could otherwise claim HTTPS.
+// isHTTPS reports whether the browser reached the server over TLS: directly,
+// or through a proxy that says so with X-Forwarded-Proto. The header is
+// trusted from any peer, not only trusted_proxies: a client that forges it
+// merely gets a Secure cookie its own browser will not send over plain HTTP,
+// while ignoring it would hand a TLS-terminating proxy a non-Secure cookie.
 func (s *server) isHTTPS(r *http.Request) bool {
-	if r.TLS != nil {
-		return true
-	}
-	peer, err := netip.ParseAddr(remoteHost(r))
-	if err != nil || !s.isTrustedProxy(peer) {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
+	return r.TLS != nil || strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
 }
 
 // sessionToken returns the session token from the request's cookie. Both

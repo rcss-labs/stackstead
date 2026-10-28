@@ -97,13 +97,13 @@ Stackstead exists to run other web apps on the same host, so:
 
 - Serve Stackstead on a dedicated hostname (for example `stackstead.example.com`)
   that no workload shares, and publish workloads under other hostnames.
-- Serve it over HTTPS. Over TLS, either directly or through a proxy listed in
-  `trusted_proxies` that sends `X-Forwarded-Proto: https`, the session cookie is
+- Serve it over HTTPS. Over TLS, either directly or through a proxy that sends
+  `X-Forwarded-Proto: https`, the session cookie is
   named `__Host-stackstead_session` and is `Secure`, `HttpOnly`, `SameSite=Strict`,
   `Path=/` with no `Domain`. Browsers then refuse to let a sibling service
-  overwrite it and never send it over plain HTTP. `X-Forwarded-Proto` is ignored
-  from any peer that is not a trusted proxy. Without `trusted_proxies` a
-  TLS-terminating proxy is treated as plain HTTP and the unprefixed cookie is used.
+  overwrite it and never send it over plain HTTP.
+  Make the proxy set the header (as in the snippet above). A client that forges
+  it only gets a Secure cookie its own browser will not send over plain HTTP.
 - Over plain HTTP the cookie keeps the name `stackstead_session` and is not
   `Secure`, because browsers reject the `__Host-` prefix without `Secure`. The
   server accepts either name. Logout clears both.

@@ -49,12 +49,15 @@ func TestSessionCookieBehindTrustedProxyUsesHostPrefix(t *testing.T) {
 	}
 }
 
-func TestSessionCookieIgnoresForwardedProtoFromUntrustedPeer(t *testing.T) {
+// A client spoofing the header only makes its own cookie Secure; a
+// TLS-terminating proxy that is not in trusted_proxies must still get one.
+func TestSessionCookieForwardedProtoFromAnyPeerUsesHostPrefix(t *testing.T) {
 	env := newTestEnv(t, "")
 	env.createAdmin(t)
 	cookies := setCookies(loginRequest(t, env, withHeader("X-Forwarded-Proto", "https")))
-	if c := cookies["stackstead_session"]; c == nil || c.Secure || len(cookies) != 1 {
-		t.Fatalf("cookies = %v, want only the plain-named non-Secure cookie", cookies)
+	c := cookies[hostCookieName]
+	if c == nil || !c.Secure || c.Path != "/" || c.Domain != "" || len(cookies) != 1 {
+		t.Fatalf("cookies = %v, want only a Secure %s", cookies, hostCookieName)
 	}
 }
 
