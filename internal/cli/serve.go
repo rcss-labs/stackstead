@@ -379,9 +379,16 @@ func runServer(ctx context.Context, env *Env, args []string, restart *atomic.Boo
 		startBackupScheduler(bg, backupScheduler)
 	}
 
+	// A host restore compares the archive's instance id with this one's to
+	// tell a foreign archive. A failed read leaves it empty, which counts as
+	// foreign: the safe side.
+	selfID, err := hostIdentity(ctx)
+	if err != nil {
+		logger.Warn("read host identity for restore", "err", err)
+	}
 	hostRestorer := backup.HostRestorer{Env: backup.HostEnv{
 		Engine: dockerEngine, DataDir: cfg.DataDir, AllowedRoots: cfg.AllowedRoots,
-		Version: version.Version, HTTP: backupHTTP, Deferred: true,
+		Version: version.Version, HTTP: backupHTTP, Deferred: true, InstanceID: selfID.InstanceID,
 	}}
 	restartRequested := make(chan struct{})
 	var restartOnce sync.Once

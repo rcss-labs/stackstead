@@ -29,10 +29,10 @@ var (
 
 // restoreOptions are the flags of `restore`.
 type restoreOptions struct {
-	yes, noStart, pathStyle bool
-	endpoint, region        string
-	passphraseFile          string
-	allowUnencrypted        bool
+	yes, start, noStart, pathStyle bool
+	endpoint, region               string
+	passphraseFile                 string
+	allowUnencrypted               bool
 }
 
 func restoreCommand() *Command {
@@ -40,10 +40,12 @@ func restoreCommand() *Command {
 	var opts restoreOptions
 	return &Command{
 		Name: "restore", Short: "Restore this host from a backup archive (server must be stopped)",
-		Usage:   "restore <s3://bucket/key | path> [--yes] [--no-start] [--passphrase-file P] [--allow-unencrypted] [--s3-endpoint U] [--s3-region R] [--s3-path-style] [--config P]",
+		Usage:   "restore <s3://bucket/key | path> [--yes] [--start | --no-start] [--passphrase-file P] [--allow-unencrypted] [--s3-endpoint U] [--s3-region R] [--s3-path-style] [--config P]",
 		MinArgs: 1, MaxArgs: 1,
 		Long: "Restores the database, stacks, volumes and images of a whole-host archive and installs the restored database, " +
-			"then exits; stacks that were running start when the server next starts. S3 credentials are read from " +
+			"then exits; stacks that were running start when the server next starts, unless the archive comes from another " +
+			"host: those stay stopped so you can read the restored compose files first (--start overrides, --no-start " +
+			"forces it). The summary lists privileged settings and host mounts found in them. S3 credentials are read from " +
 			"AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, never from flags. An encrypted archive (.tar.gz.enc) needs " +
 			"its passphrase: --passphrase-file, else STACKSTEAD_BACKUP_PASSPHRASE, else the key file in the data " +
 			"directory, else a prompt on a terminal. The whole archive is checked before anything changes; a modified " +
@@ -53,6 +55,7 @@ func restoreCommand() *Command {
 		Flags: func(fs *flag.FlagSet) {
 			lf.register(fs)
 			fs.BoolVar(&opts.yes, "yes", false, "do not ask for confirmation")
+			fs.BoolVar(&opts.start, "start", false, "start the stacks that were running even for an archive from another host")
 			fs.BoolVar(&opts.noStart, "no-start", false, "do not start the stacks that were running")
 			fs.StringVar(&opts.endpoint, "s3-endpoint", "", "S3-compatible endpoint URL (default: AWS)")
 			fs.StringVar(&opts.region, "s3-region", "", "S3 region")
@@ -132,6 +135,9 @@ func restoreExitError(err error) error {
 }
 
 func hostRestore(ctx context.Context, env *Env, cfg config.Config, arg string, opts restoreOptions) error {
+	if opts.start && opts.noStart {
+		return exitf(ExitUsage, "--start and --no-start contradict each other")
+	}
 	src, err := parseRestoreSource(env, arg, opts)
 	if err != nil {
 		return err
@@ -171,6 +177,12 @@ func hostRestore(ctx context.Context, env *Env, cfg config.Config, arg string, o
 			return restoreExitError(err)
 		}
 		printRestoreSummary(env, arg, sum)
+		// An archive from another host is not trusted to run until the
+		// operator has looked at it; --start is that decision.
+		start := (!sum.Foreign || opts.start) && !opts.noStart
+		if start && len(sum.Risks) > 0 {
+			fmt.Fprintln(env.Stdout, "warning: starting stacks whose compose files have the settings above gives them that access to this host")
+		}
 		// Refused before the confirmation: confirming cannot make an
 		// unauthenticated archive trustworthy, only the flag says the operator
 		// vouches for where it came from.
@@ -189,7 +201,7 @@ func hostRestore(ctx context.Context, env *Env, cfg config.Config, arg string, o
 				return exitf(ExitGeneral, "restore cancelled")
 			}
 		}
-		report, err := restoreRun(ctx, src, hostEnv, backup.HostRestoreOptions{StartStacks: !opts.noStart, AllowUnencrypted: opts.allowUnencrypted, ConfirmedDigest: sum.ConflictsDigest})
+		report, err := restoreRun(ctx, src, hostEnv, backup.HostRestoreOptions{StartStacks: start, AllowUnencrypted: opts.allowUnencrypted, ConfirmedDigest: sum.ConflictsDigest})
 		if err != nil {
 			return restoreExitError(err)
 		}
@@ -244,6 +256,23 @@ func printRestoreSummary(env *Env, arg string, sum backup.HostSummary) {
 		fmt.Fprintf(env.Stdout, "encryption  key %s\n", sum.KeyID)
 	} else {
 		fmt.Fprintln(env.Stdout, unencryptedNoticeLine)
+	}
+	if sum.Foreign {
+		id := ""
+		if m.InstanceID != "" {
+			id = fmt.Sprintf(" (instance %s)", m.InstanceID[:min(8, len(m.InstanceID))])
+		}
+		fmt.Fprintf(env.Stdout, "origin     another host%s; stacks stay stopped unless --start\n", id)
+	} else {
+		fmt.Fprintln(env.Stdout, "origin     this host")
+	}
+	if len(sum.Risks) == 0 {
+		fmt.Fprintln(env.Stdout, "risks      none")
+	} else {
+		fmt.Fprintln(env.Stdout, "risks")
+		for _, r := range sum.Risks {
+			fmt.Fprintf(env.Stdout, "  %s  %s  %s\n", strings.Join(nonEmpty(r.Stack, r.Service), "/"), r.Kind, r.Detail)
+		}
 	}
 	fmt.Fprintln(env.Stdout, "This host will take over the backed-up host's identity; don't run both at once.")
 	if len(sum.Conflicts) == 0 {

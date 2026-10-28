@@ -45,6 +45,9 @@ type StackRestoreRequest struct {
 	Files, Volumes, Images bool
 	// VolumeKeys limits the volumes restored; empty means all in the archive.
 	VolumeKeys []string
+	// Start starts the restored stack once it is in place. False leaves it
+	// stopped, which is also what an omitted API field means.
+	Start bool
 	// Passphrase opens an encrypted archive; empty falls back to the key file.
 	Passphrase secret.Secret
 	// AllowUnencrypted accepts an unauthenticated plaintext archive. Planning
@@ -83,6 +86,10 @@ type StackRestorePlan struct {
 	// Encrypted and KeyID say how the archive is protected.
 	Encrypted bool
 	KeyID     string
+	// Foreign is true when the archive was written by another instance.
+	Foreign bool
+	// Risks are the host-reaching settings of the archived compose files.
+	Risks []ComposeRisk
 }
 
 // PlanEnv is the host state a plan is made against.
@@ -91,8 +98,10 @@ type PlanEnv struct {
 	AllowedRoots []string
 	StacksDir    string
 	SelfSlug     string
-	Networks     func(ctx context.Context) ([]engine.Network, error)
-	ReadCurrent  func(path string) ([]byte, error)
+	// SelfInstanceID is this host's instance id, to tell a foreign archive.
+	SelfInstanceID string
+	Networks       func(ctx context.Context) ([]engine.Network, error)
+	ReadCurrent    func(path string) ([]byte, error)
 	// ReadArchived reads a file of the stack's directory from the staged
 	// archive, by path relative to that directory. Nil leaves FileDiff.New empty.
 	ReadArchived func(rel string) ([]byte, error)
@@ -117,6 +126,7 @@ func PlanStackRestore(ctx context.Context, m Manifest, archivedEntry stacks.Entr
 		TargetName: ms.Name,
 		Origin:     archivedEntry.Origin,
 		CrossHost:  m.HostSlug != env.SelfSlug,
+		Foreign:    m.InstanceID == "" || m.InstanceID != env.SelfInstanceID,
 	}
 	if plan.Origin == "" {
 		plan.Origin = stacks.Origin(ms.Origin)

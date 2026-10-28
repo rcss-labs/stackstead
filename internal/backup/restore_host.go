@@ -117,6 +117,9 @@ type HostEnv struct {
 	Deferred bool
 	// HTTP is used for S3 sources; nil means http.DefaultClient.
 	HTTP *http.Client
+	// InstanceID is this host's own instance id; empty on a fresh host that
+	// has none yet. An archive from any other id is foreign.
+	InstanceID string
 }
 
 // Conflict is existing Docker or filesystem state a host restore meets.
@@ -142,6 +145,12 @@ type HostSummary struct {
 	// archive is also unauthenticated.
 	Encrypted bool   `json:"encrypted"`
 	KeyID     string `json:"keyId"`
+	// Foreign is true when the archive was not written by this instance, which
+	// includes every restore onto a fresh host. Callers default to leaving the
+	// stacks stopped for a foreign archive.
+	Foreign bool `json:"foreign"`
+	// Risks are the host-reaching settings of the archived compose files.
+	Risks []ComposeRisk `json:"risks"`
 }
 
 // HostReport lists the outcome of every restored item.
@@ -278,6 +287,7 @@ func inspectHost(ctx context.Context, src HostSource, env HostEnv, full, allowUn
 		}
 	}
 	var specs []engine.NetworkSpec
+	var risks []ComposeRisk
 	reachedEnd := false
 	for {
 		hdr, body, err := r.Next()
@@ -292,6 +302,11 @@ func inspectHost(ctx context.Context, src HostSource, env HostEnv, full, allowUn
 		if haveManifest && !full && !strings.HasPrefix(hdr.Name, basePrefix) {
 			break
 		}
+		found, err := scanStackFile(hdr, body)
+		if err != nil {
+			return HostSummary{}, damaged(err)
+		}
+		risks = append(risks, found...)
 		switch hdr.Name {
 		case entryNetworks:
 			if specs, err = decodeNetworks(body); err != nil {
@@ -333,6 +348,8 @@ func inspectHost(ctx context.Context, src HostSource, env HostEnv, full, allowUn
 	return HostSummary{
 		Manifest: m, Conflicts: conflicts, ConflictsDigest: conflictsDigest(conflicts),
 		Encrypted: info.Encrypted, KeyID: info.KeyID,
+		Foreign: m.InstanceID == "" || m.InstanceID != env.InstanceID,
+		Risks:   sortRisks(risks),
 	}, nil
 }
 

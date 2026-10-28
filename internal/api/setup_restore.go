@@ -445,6 +445,7 @@ func (s *server) handleRestoreProgress(w http.ResponseWriter, r *http.Request) {
 func toHostRestoreSummary(sum backup.HostSummary) apitypes.HostRestoreSummary {
 	out := apitypes.HostRestoreSummary{
 		ConflictsDigest: sum.ConflictsDigest, Encrypted: sum.Encrypted, KeyID: sum.KeyID,
+		Foreign: sum.Foreign, Risks: toComposeRisks(sum.Risks),
 		Conflicts: make([]apitypes.HostRestoreConflict, 0, len(sum.Conflicts)),
 		Manifest:  toBackupManifest(sum.Manifest),
 	}

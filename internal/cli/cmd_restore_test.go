@@ -34,6 +34,12 @@ type restoreCalls struct {
 	needPassphrase string
 	inspections    []backup.HostSource
 	runErr         error
+
+	// foreign and risks make the fake archive another host's, with those
+	// compose risks.
+	foreign    bool
+	instanceID string
+	risks      []backup.ComposeRisk
 }
 
 const fakeKeyID = "0123456789abcdef"
@@ -61,8 +67,8 @@ func fakeRestoreSeams(t *testing.T, inspectErr error) *restoreCalls {
 			sum.KeyID = fakeKeyID
 		}
 		return backup.HostSummary{
-			Encrypted: sum.Encrypted, KeyID: sum.KeyID,
-			Manifest: backup.Manifest{Host: "oldbox", Status: "partial", Stacks: []backup.ManifestStack{{Name: "web",
+			Encrypted: sum.Encrypted, KeyID: sum.KeyID, Foreign: calls.foreign, Risks: calls.risks,
+			Manifest: backup.Manifest{Host: "oldbox", Status: "partial", InstanceID: calls.instanceID, Stacks: []backup.ManifestStack{{Name: "web",
 				Volumes: []backup.ManifestVolume{{Key: "a"}, {Key: "b"}}, Images: []string{"nginx:1"}}}},
 			Conflicts:       []backup.Conflict{{Kind: "volume", Name: "web_data", Action: "overwrite"}},
 			ConflictsDigest: "digest-1",

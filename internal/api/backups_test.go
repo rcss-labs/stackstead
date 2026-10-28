@@ -37,11 +37,14 @@ type fakeBackups struct {
 	manifest *backup.Manifest
 	// planEncryption makes PlanRestore report an encrypted archive.
 	planEncryption *backup.ManifestEncryption
-	archives       []backup.ArchiveRef
-	key            *backup.KeyInfo
-	passphrase     string
-	calls          []string
-	cleared        bool
+	// planForeign and planRisks make PlanRestore report another instance's archive.
+	planForeign bool
+	planRisks   []backup.ComposeRisk
+	archives    []backup.ArchiveRef
+	key         *backup.KeyInfo
+	passphrase  string
+	calls       []string
+	cleared     bool
 }
 
 func (f *fakeBackups) PlanRestore(_ context.Context, req backup.StackRestoreRequest) (backup.StackRestorePlan, error) {
@@ -57,6 +60,7 @@ func (f *fakeBackups) PlanRestore(_ context.Context, req backup.StackRestoreRequ
 		Images:    []string{"nginx:1.27"},
 		Warnings:  []string{"volume contents are replaced and not kept"},
 		Encrypted: f.planEncryption != nil, KeyID: keyIDOf(f.planEncryption),
+		Foreign: f.planForeign, Risks: f.planRisks,
 	}, nil
 }
 
@@ -620,5 +624,35 @@ func TestBackupRestorePlanReportsEncryption(t *testing.T) {
 	var plan apitypes.BackupRestorePlan
 	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil || !plan.Encrypted || plan.KeyID != "0123456789abcdef" {
 		t.Errorf("plan = %s (%v)", rec.Body, err)
+	}
+}
+
+func TestBackupRestorePlanIncludesForeignAndRisks(t *testing.T) {
+	risk := backup.ComposeRisk{Stack: "web", File: "compose.yaml", Service: "app", Kind: "privileged", Detail: "true"}
+	fake := &fakeBackups{cfg: validBackupConfig(), planForeign: true, planRisks: []backup.ComposeRisk{risk}}
+	env, cookie := newBackupEnv(t, fake)
+	rec := env.do(t, "POST", "/api/backups/restore/plan", restoreBody(""), withCookie(cookie))
+	var plan apitypes.BackupRestorePlan
+	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil || !plan.Foreign ||
+		len(plan.Risks) != 1 || plan.Risks[0] != apitypes.BackupComposeRisk(risk) {
+		t.Errorf("plan = %s (%v)", rec.Body, err)
+	}
+
+	own := &fakeBackups{cfg: validBackupConfig()}
+	env, cookie = newBackupEnv(t, own)
+	rec = env.do(t, "POST", "/api/backups/restore/plan", restoreBody(""), withCookie(cookie))
+	if !strings.Contains(rec.Body.String(), `"risks":[]`) || !strings.Contains(rec.Body.String(), `"foreign":false`) {
+		t.Errorf("plan = %s, want foreign false and an empty risks list, not null", rec.Body)
+	}
+}
+
+func TestBackupRestorePassesStart(t *testing.T) {
+	fake := &fakeBackups{cfg: validBackupConfig()}
+	env, cookie := newBackupEnv(t, fake)
+	if rec := env.do(t, "POST", "/api/backups/restore", restoreBody(`,"start":true`), withCookie(cookie)); rec.Code != http.StatusAccepted || !fake.restoreReq.Start {
+		t.Errorf("start:true: status %d request %+v", rec.Code, fake.restoreReq)
+	}
+	if rec := env.do(t, "POST", "/api/backups/restore", restoreBody(""), withCookie(cookie)); rec.Code != http.StatusAccepted || fake.restoreReq.Start {
+		t.Errorf("omitted: status %d request %+v, want the stack left stopped", rec.Code, fake.restoreReq)
 	}
 }
