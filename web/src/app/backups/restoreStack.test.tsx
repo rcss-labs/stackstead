@@ -57,6 +57,8 @@ const plan = (over: Partial<BackupRestorePlan> = {}): BackupRestorePlan => ({
   missingNetworks: [{ name: 'edge', driver: 'bridge' }],
   crossHost: false,
   warnings: [],
+  encrypted: true,
+  keyId: '0123456789abcdef',
   ...over,
 });
 
@@ -282,5 +284,72 @@ describe('single-stack restore', () => {
     await screen.findByRole('combobox', { name: 'Stack' });
     await preview(user);
     expect(await screen.findByText(/Choose the files, the volumes or the images/i)).toBeTruthy();
+  });
+
+  it('asks for a passphrase when the plan needs one', async () => {
+    let plans = 0;
+    setup({
+      'POST /api/backups/restore/plan': () =>
+        ++plans === 1
+          ? { status: 400, body: { error: 'raw server text', code: 'passphrase_required' } }
+          : { body: plan() },
+    });
+    const user = await openDialog();
+    await screen.findByRole('combobox', { name: 'Stack' });
+    expect(screen.queryByLabelText('Archive passphrase')).toBeNull();
+    await preview(user);
+    expect(await screen.findByText(/This archive is encrypted\. Enter its passphrase/)).toBeTruthy();
+    await user.type(screen.getByLabelText('Archive passphrase'), 'open sesame passphrase');
+    await preview(user);
+    await screen.findByText('Missing networks');
+    const bodies = fake.calls.filter((c) => c.path === '/api/backups/restore/plan').map((c) => c.body as Record<string, unknown>);
+    expect('passphrase' in bodies[0]).toBe(false);
+    expect(bodies[1].passphrase).toBe('open sesame passphrase');
+    expect(screen.getByText('Encrypted · key 0123456789abcdef')).toBeTruthy();
+  });
+
+  it('requires acknowledging an unencrypted archive', async () => {
+    setup({
+      'POST /api/backups/restore/plan': { body: plan({ encrypted: false, keyId: '' }) },
+      'POST /api/backups/restore': { status: 202, body: { operation: { id: 'op-9' } } },
+    });
+    const user = await openDialog();
+    await screen.findByRole('combobox', { name: 'Stack' });
+    await preview(user);
+    expect(await screen.findByText(/This archive is not encrypted or signed/)).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: 'Restore preview' })).getByText('Unencrypted')).toBeTruthy();
+    const restore = screen.getByRole('button', { name: 'Restore stack…' });
+    await user.click(restore);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+
+    await user.click(screen.getByLabelText('I trust the source of this archive'));
+    await user.click(screen.getByRole('button', { name: 'Restore stack…' }));
+    expect(await screen.findByRole('alertdialog')).toBeTruthy();
+  });
+
+  it('sends allowUnencrypted and passphrase', async () => {
+    let plans = 0;
+    setup({
+      'POST /api/backups/restore/plan': () =>
+        ++plans === 1
+          ? { status: 400, body: { error: 'x', code: 'wrong_passphrase' } }
+          : { body: plan({ encrypted: false, keyId: '' }) },
+      'POST /api/backups/restore': { status: 202, body: { operation: { id: 'op-9' } } },
+    });
+    const user = await openDialog();
+    await screen.findByRole('combobox', { name: 'Stack' });
+    await preview(user);
+    await screen.findByText(/That passphrase does not open this archive/);
+    await user.type(screen.getByLabelText('Archive passphrase'), 'pp-one-two-three');
+    await preview(user);
+    await user.click(await screen.findByLabelText('I trust the source of this archive'));
+    await user.click(screen.getByRole('button', { name: 'Restore stack…' }));
+    const confirm = await screen.findByRole('alertdialog');
+    await user.click(within(confirm).getByRole('button', { name: 'Restore' }));
+    await screen.findByText('following op-9');
+    expect(fake.calls.find((c) => c.path === '/api/backups/restore')?.body).toMatchObject({
+      passphrase: 'pp-one-two-three',
+      allowUnencrypted: true,
+    });
   });
 });

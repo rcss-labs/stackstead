@@ -253,9 +253,22 @@ sudo systemctl start stackstead
 
 Flags: `--yes` skips the confirmation (required when stdin is not a terminal,
 else exit 2), `--no-start` leaves the stacks that were running stopped,
+`--passphrase-file P` reads the passphrase of an encrypted archive
+(`.tar.gz.enc`) from the first line of a file, `--allow-unencrypted` restores an
+archive that is neither encrypted nor authenticated,
 `--s3-endpoint URL`, `--s3-region R` and `--s3-path-style` configure an
 S3-compatible store. S3 keys are read only from `AWS_ACCESS_KEY_ID` and
-`AWS_SECRET_ACCESS_KEY`, never from flags, and are never printed. The command
+`AWS_SECRET_ACCESS_KEY`, never from flags, and are never printed. The passphrase
+of an encrypted archive comes from `--passphrase-file`, else the
+`STACKSTEAD_BACKUP_PASSPHRASE` environment variable, else the key file in the data
+directory (a restore on the same host), else a prompt on a terminal; it is never
+a flag value. The whole archive is read and verified before anything changes, so
+it is read twice (an `s3://` source is downloaded twice); a modified or truncated
+archive is refused. The summary shows `encryption  key <id>`, or `none
+(unauthenticated archive)` for an unencrypted one, which is refused before the
+confirmation unless `--allow-unencrypted` is given. The archive does not hold the
+S3 secret key, GitHub token, or peer and registry credentials; enter them again
+afterwards. The command
 prints the archive summary and the existing volumes, networks, containers and
 stack directories it would overwrite, recreate, stop or keep, asks once, restores, and
 installs the restored database right away (the old one is kept as
@@ -268,8 +281,9 @@ with `--no-start`; if the restore fails, the stopped containers are started
 again right away. Everyone is signed out and connection tokens are revoked, as
 with `db restore`. The backup schedule is turned off in the restored database, and the UI
 says so until you turn it back on. Exit codes: 5 while the server runs (or a
-restore is already pending), 6 for an archive from a newer Stackstead or a
-damaged one, 9 when some items failed to restore (the database is still
+restore is already pending), 6 for an archive from a newer Stackstead, a damaged
+or modified one, a wrong or missing passphrase, or an unencrypted one without
+`--allow-unencrypted`, 9 when some items failed to restore (the database is still
 installed; the failed items are listed), 2 for a bad source or missing S3 keys,
 3 when run as root and the data directory does not exist (root does not create
 it, so the service user is not locked out; create it with

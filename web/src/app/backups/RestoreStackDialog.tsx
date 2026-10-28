@@ -36,6 +36,10 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
   const [confirming, setConfirming] = useState(false);
   const [starting, setStarting] = useState(false);
   const [operationId, setOperationId] = useState<string>();
+  // The passphrase field appears once the server says the archive needs one; it is sent only when typed.
+  const [askPassphrase, setAskPassphrase] = useState(false);
+  const [passphrase, setPassphrase] = useState('');
+  const [allowUnencrypted, setAllowUnencrypted] = useState(false);
 
   // Identifies the latest preview request; a response for an older one is dropped.
   const planSeq = useRef(0);
@@ -68,6 +72,8 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
     volumes,
     images,
     volumeKeys: skippedKeys.size === 0 ? [] : archiveVolumes.filter((v) => !skippedKeys.has(v.key)).map((v) => v.key),
+    ...(passphrase ? { passphrase } : {}),
+    ...(plan && !plan.encrypted && allowUnencrypted ? { allowUnencrypted: true } : {}),
   });
 
   // Any change to the choices makes the shown plan stale.
@@ -76,6 +82,7 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
     planSeq.current++;
     setPlanning(false);
     setPlan(undefined);
+    setAllowUnencrypted(false);
     setError(undefined);
   }
 
@@ -85,6 +92,12 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
         return 'This stack does not exist on this server, so it can only be restored together with its files. Tick Files and preview again.';
       case 'nothing_to_restore':
         return 'Choose the files, the volumes or the images to restore.';
+      case 'passphrase_required':
+        return 'This archive is encrypted. Enter its passphrase and preview again.';
+      case 'wrong_passphrase':
+        return 'That passphrase does not open this archive. Check it and preview again.';
+      case 'archive_tampered':
+        return 'The archive failed its integrity check. Do not restore it.';
       default:
         return messageOf(e);
     }
@@ -103,6 +116,7 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
     } catch (e) {
       if (seq !== planSeq.current) return;
       if (NAME_CLASH_CODES.includes(codeOf(e) ?? '')) setOfferRename(true);
+      if (codeOf(e) === 'passphrase_required' || codeOf(e) === 'wrong_passphrase') setAskPassphrase(true);
       setError(describeError(e));
     } finally {
       if (seq === planSeq.current) setPlanning(false);
@@ -118,6 +132,7 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
     } catch (e) {
       setConfirming(false);
       if (NAME_CLASH_CODES.includes(codeOf(e) ?? '')) setOfferRename(true);
+      if (codeOf(e) === 'passphrase_required' || codeOf(e) === 'wrong_passphrase') setAskPassphrase(true);
       setError(describeError(e));
       setPlan(undefined);
     } finally {
@@ -136,6 +151,7 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
         ? 'Choose at least one volume, or untick Volumes'
         : undefined;
   const replacesVolumes = volumes && (plan?.volumes.some((v) => !v.skip) ?? false);
+  const unacknowledged = plan !== undefined && !plan.encrypted && !allowUnencrypted;
 
   const confirmMessage = plan
     ? [
@@ -237,6 +253,21 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
               </Field>
             )}
 
+            {askPassphrase && (
+              <Field label="Archive passphrase" id={`${uid}-passphrase`} hint="The passphrase this archive was encrypted with.">
+                {(control) => (
+                  <input
+                    {...control}
+                    type="password"
+                    value={passphrase}
+                    autoComplete="new-password"
+                    spellCheck={false}
+                    onChange={(e) => change(() => setPassphrase(e.target.value))}
+                  />
+                )}
+              </Field>
+            )}
+
             {error && (
               <Banner kind="danger" title="Restore">
                 {error}
@@ -244,6 +275,19 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
             )}
 
             {plan && <RestorePreview plan={plan} replacesVolumes={replacesVolumes} />}
+
+            {plan && !plan.encrypted && (
+              <>
+                <Banner
+                  kind="danger"
+                  title="This archive is not encrypted or signed. Anyone who could write to its storage could have changed it; a changed archive can run anything as root on this host."
+                />
+                <label className={styles.check}>
+                  <input type="checkbox" checked={allowUnencrypted} onChange={(e) => setAllowUnencrypted(e.target.checked)} />
+                  I trust the source of this archive
+                </label>
+              </>
+            )}
 
             <div className={styles.actions}>
               <Button variant="secondary" onClick={onClose}>
@@ -253,7 +297,11 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
                 Preview restore
               </Button>
               {plan && (
-                <Button variant="danger" onClick={() => setConfirming(true)}>
+                <Button
+                  variant="danger"
+                  disabledReason={unacknowledged ? 'Acknowledge that this archive is not encrypted first.' : undefined}
+                  onClick={() => setConfirming(true)}
+                >
                   Restore stack…
                 </Button>
               )}

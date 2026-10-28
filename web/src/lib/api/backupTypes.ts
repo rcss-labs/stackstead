@@ -122,6 +122,10 @@ export interface BackupRestoreRequest {
   images: boolean;
   /** Limits the volumes restored; empty means all of them. */
   volumeKeys: string[];
+  /** Write-only: opens an encrypted archive; empty uses the passphrase stored on the server. */
+  passphrase?: string;
+  /** Confirms restoring an archive that is neither encrypted nor authenticated. */
+  allowUnencrypted?: boolean;
 }
 
 export interface BackupFileDiff {
@@ -160,6 +164,9 @@ export interface BackupRestorePlan {
   missingNetworks: BackupRestoreNetwork[];
   crossHost: boolean;
   warnings: string[];
+  /** False for an archive with no authentication at all. */
+  encrypted: boolean;
+  keyId: string;
 }
 
 /** The 202 body of POST /api/backups/restore. */
@@ -233,6 +240,9 @@ export interface HostRestoreSummary {
   manifest: BackupManifest;
   conflicts: HostRestoreConflict[];
   conflictsDigest: string;
+  /** False for an archive that is neither encrypted nor authenticated. */
+  encrypted: boolean;
+  keyId: string;
 }
 
 export interface HostRestoreStarted {

@@ -14,6 +14,13 @@ export function RestorePreview({ plan, replacesVolumes }: { plan: BackupRestoreP
           Restores to <span className={styles.mono}>{plan.targetDir}</span>
         </strong>
         {plan.crossHost && <Tag tone="warning">Cross-host</Tag>}
+        {plan.encrypted ? (
+          <Tag tone="success" mono={false}>{`Encrypted · key ${plan.keyId}`}</Tag>
+        ) : (
+          <Tag tone="warning" mono={false}>
+            Unencrypted
+          </Tag>
+        )}
         {plan.overwrites && <Tag tone="danger">Overwrites existing stack</Tag>}
       </div>
 

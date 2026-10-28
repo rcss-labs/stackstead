@@ -42,6 +42,9 @@ export function RestoreFromBackup({ pollMs = 2000, deadlineMs = 5 * 60_000 }: { 
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [setupToken, setSetupToken] = useState('');
+  // Like the S3 secret, the passphrase lives in state only until the request that needs it is sent.
+  const [passphrase, setPassphrase] = useState('');
+  const [allowUnencrypted, setAllowUnencrypted] = useState(false);
 
   const [bucketKey, setBucketKey] = useState('');
   const [s3, setS3] = useState({
@@ -102,6 +105,16 @@ export function RestoreFromBackup({ pollMs = 2000, deadlineMs = 5 * 60_000 }: { 
       return 'A restore is already running or waiting for Stackstead to restart. Wait for the restart, then reload this page.';
     }
     if (err instanceof ApiError && err.status === 409 && err.code === undefined) return 'Setup is already complete. Sign in instead.';
+    switch (err instanceof ApiError ? err.code : undefined) {
+      case 'passphrase_required':
+        return 'This archive is encrypted. Enter its passphrase.';
+      case 'wrong_passphrase':
+        return 'That passphrase does not open this archive.';
+      case 'archive_tampered':
+        return 'The archive failed its integrity check. Do not restore it.';
+      case 'unencrypted_archive':
+        return 'This archive is not encrypted, so it cannot be checked. Review it and acknowledge it on the next step.';
+    }
     return messageOf(err);
   }
 
@@ -121,10 +134,11 @@ export function RestoreFromBackup({ pollMs = 2000, deadlineMs = 5 * 60_000 }: { 
     setSent(0);
     try {
       if (tab === 'upload' && file) await setupRestore.upload(file, setupToken.trim() || undefined, setSent);
-      const result = await setupRestore.inspect(chosen, setupToken.trim() || undefined);
+      const result = await setupRestore.inspect(chosen, setupToken.trim() || undefined, passphrase);
       setSource(chosen);
       setSummary(result);
       setConfirmed(false);
+      setAllowUnencrypted(false);
       setStage('inspected');
     } catch (err) {
       setError(explain(err));
@@ -134,12 +148,17 @@ export function RestoreFromBackup({ pollMs = 2000, deadlineMs = 5 * 60_000 }: { 
   }
 
   async function start() {
-    if (busy || !confirmed || !source || !summary) return;
+    if (busy || !confirmed || !source || !summary || (!summary.encrypted && !allowUnencrypted)) return;
     setBusy(true);
     setError('');
     try {
-      const started = await setupRestore.start(source, startStacks, summary.conflictsDigest, setupToken.trim() || undefined);
+      const started = await setupRestore.start(
+        source,
+        { startStacks, confirmedDigest: summary.conflictsDigest, allowUnencrypted: !summary.encrypted && allowUnencrypted, passphrase },
+        setupToken.trim() || undefined,
+      );
       setSetupToken('');
+      setPassphrase('');
       setS3((v) => ({ ...v, secretKey: '' }));
       setStage('running');
       follow(started.restoreToken);
@@ -147,7 +166,7 @@ export function RestoreFromBackup({ pollMs = 2000, deadlineMs = 5 * 60_000 }: { 
       if (err instanceof ApiError && err.code === 'conflicts_changed') {
         // The host changed since the user looked: show the new conflicts and ask again.
         try {
-          setSummary(await setupRestore.inspect(source, setupToken.trim() || undefined));
+          setSummary(await setupRestore.inspect(source, setupToken.trim() || undefined, passphrase));
           setConfirmed(false);
           setError('Existing Docker state changed since you reviewed it. Review the conflicts again before starting.');
         } catch (inner) {
@@ -312,6 +331,14 @@ export function RestoreFromBackup({ pollMs = 2000, deadlineMs = 5 * 60_000 }: { 
           <dt>Images</dt>
           <dd>{manifest.stacks.reduce((n, s) => n + s.images.length, 0)}</dd>
         </dl>
+        {summary.encrypted ? (
+          <p className={styles.muted}>{`Encrypted, key ${summary.keyId}`}</p>
+        ) : (
+          <Banner
+            kind="danger"
+            title="This archive is not encrypted or signed. Anyone who could write to its storage could have changed it; a changed archive can run anything as root on this host."
+          />
+        )}
         <Banner kind="warning" title="This host will take over the backed-up host's identity; don't run both at once." />
         {conflicts.length === 0 ? (
           <p className={styles.muted}>Nothing on this host conflicts with the archive.</p>
@@ -341,6 +368,12 @@ export function RestoreFromBackup({ pollMs = 2000, deadlineMs = 5 * 60_000 }: { 
             ? 'I understand this replaces the state of this host.'
             : 'I understand the items above are overwritten, recreated, stopped or kept as shown.'}
         </label>
+        {!summary.encrypted && (
+          <label className={styles.check}>
+            <input type="checkbox" checked={allowUnencrypted} onChange={(e) => setAllowUnencrypted(e.target.checked)} />
+            I trust the source of this archive
+          </label>
+        )}
         <div className={styles.actions}>
           <Button
             variant="ghost"
@@ -354,7 +387,13 @@ export function RestoreFromBackup({ pollMs = 2000, deadlineMs = 5 * 60_000 }: { 
           <Button
             variant="danger"
             loading={busy}
-            disabledReason={confirmed ? undefined : 'Confirm the conflicts first.'}
+            disabledReason={
+              !confirmed
+                ? 'Confirm the conflicts first.'
+                : !summary.encrypted && !allowUnencrypted
+                  ? 'Acknowledge that this archive is not encrypted first.'
+                  : undefined
+            }
             onClick={() => void start()}
           >
             Start restore
@@ -423,7 +462,7 @@ export function RestoreFromBackup({ pollMs = 2000, deadlineMs = 5 * 60_000 }: { 
               </>
             )}
             {selected === 'path' && (
-              <Field label="Archive path" id="restore-path" mono hint="An absolute path to the .tar.gz on this machine.">
+              <Field label="Archive path" id="restore-path" mono hint="An absolute path to the .tar.gz or .tar.gz.enc on this machine.">
                 {({ readOnly: _, ...c }) => (
                   <input {...c} value={path} autoComplete="off" spellCheck={false} onChange={(e) => setPath(e.target.value)} />
                 )}
@@ -436,7 +475,7 @@ export function RestoreFromBackup({ pollMs = 2000, deadlineMs = 5 * 60_000 }: { 
                     <input
                       {...c}
                       type="file"
-                      accept=".gz,.tgz,application/gzip"
+                      accept=".gz,.tgz,.enc,application/gzip,application/octet-stream"
                       onChange={(e) => {
                         setFile(e.target.files?.[0]);
                         setSent(0);
@@ -454,6 +493,11 @@ export function RestoreFromBackup({ pollMs = 2000, deadlineMs = 5 * 60_000 }: { 
           </div>
         )}
       </Tabs>
+      <Field label="Archive passphrase" id="restore-passphrase" hint="Needed for encrypted archives (.tar.gz.enc); leave empty otherwise.">
+        {({ readOnly: _, ...c }) => (
+          <input {...c} type="password" value={passphrase} autoComplete="new-password" spellCheck={false} onChange={(e) => setPassphrase(e.target.value)} />
+        )}
+      </Field>
       <Field label="Setup token (optional)" id="restore-token" hint="Needed unless you open this page from the machine itself.">
         {({ readOnly: _, ...c }) => (
           <input
