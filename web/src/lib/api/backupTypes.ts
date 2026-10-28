@@ -126,6 +126,18 @@ export interface BackupRestoreRequest {
   passphrase?: string;
   /** Confirms restoring an archive that is neither encrypted nor authenticated. */
   allowUnencrypted?: boolean;
+  /** Starts the stack once it is restored; omitted means the stack is left stopped. */
+  start?: boolean;
+}
+
+/** A host-reaching setting in an archived compose file. */
+export interface BackupComposeRisk {
+  stack: string;
+  file: string;
+  service: string;
+  /** privileged, cap_add, device, host_bind, host_namespace, security_opt or unparseable. */
+  kind: string;
+  detail: string;
 }
 
 export interface BackupFileDiff {
@@ -167,6 +179,9 @@ export interface BackupRestorePlan {
   /** False for an archive with no authentication at all. */
   encrypted: boolean;
   keyId: string;
+  /** The archive was written by another instance: the restore defaults to leaving the stack stopped. */
+  foreign: boolean;
+  risks: BackupComposeRisk[];
 }
 
 /** The 202 body of POST /api/backups/restore. */
@@ -243,6 +258,9 @@ export interface HostRestoreSummary {
   /** False for an archive that is neither encrypted nor authenticated. */
   encrypted: boolean;
   keyId: string;
+  /** Not written by this instance, which includes every restore onto a fresh host. */
+  foreign: boolean;
+  risks: BackupComposeRisk[];
 }
 
 export interface HostRestoreStarted {

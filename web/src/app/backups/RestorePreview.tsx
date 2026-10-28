@@ -3,6 +3,7 @@ import { formatBytes } from '$lib/format';
 import { Banner } from '../components/Banner';
 import { Tag } from '../components/Tag';
 import { DiffView } from '../stacks/DiffView';
+import { ComposeRisksBanner } from './ComposeRisksBanner';
 import styles from './backups.module.css';
 
 /** What a restore would do, from the server's plan. */
@@ -23,6 +24,8 @@ export function RestorePreview({ plan, replacesVolumes }: { plan: BackupRestoreP
         )}
         {plan.overwrites && <Tag tone="danger">Overwrites existing stack</Tag>}
       </div>
+
+      <ComposeRisksBanner risks={plan.risks} />
 
       {plan.warnings.length > 0 && (
         <Banner kind="warning" title="Warnings">

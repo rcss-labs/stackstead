@@ -253,6 +253,8 @@ sudo systemctl start stackstead
 
 Flags: `--yes` skips the confirmation (required when stdin is not a terminal,
 else exit 2), `--no-start` leaves the stacks that were running stopped,
+`--start` starts them even for an archive from another host (the default for
+such an archive is not to start them; `--start` with `--no-start` is exit 2),
 `--passphrase-file P` reads the passphrase of an encrypted archive
 (`.tar.gz.enc`) from the first line of a file, `--allow-unencrypted` restores an
 archive that is neither encrypted nor authenticated,
@@ -266,7 +268,14 @@ a flag value. The whole archive is read and verified before anything changes, so
 it is read twice (an `s3://` source is downloaded twice); a modified or truncated
 archive is refused. The summary shows `encryption  key <id>`, or `none
 (unauthenticated archive)` for an unencrypted one, which is refused before the
-confirmation unless `--allow-unencrypted` is given. The archive does not hold the
+confirmation unless `--allow-unencrypted` is given. The summary also shows
+`origin     this host` or `origin     another host (instance <first 8 of its id>);
+stacks stay stopped unless --start` (a replacement host has no id yet, so an
+archive restored onto one is always from another host), and a `risks` block with
+one `<stack>/<service>  <kind>  <detail>` line per privileged setting, added
+capability, device or host mount found in the archived compose files, or
+`risks      none`; starting stacks that have such settings prints a warning
+before the confirmation. The archive does not hold the
 S3 secret key, GitHub token, or peer and registry credentials; enter them again
 afterwards. The command
 prints the archive summary and the existing volumes, networks, containers and

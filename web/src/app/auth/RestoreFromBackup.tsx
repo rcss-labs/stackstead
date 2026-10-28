@@ -4,6 +4,7 @@ import { api, ApiError } from '$lib/api/client';
 import { setupRestore } from '$lib/api/setupRestore';
 import type { HostRestoreS3, HostRestoreSource, HostRestoreSummary } from '$lib/api/backupTypes';
 import { openSSE, type SSEHandle, type SSEMessage } from '$lib/sse/client';
+import { ComposeRisksBanner } from '../backups/ComposeRisksBanner';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { Field } from '../components/Field';
@@ -137,6 +138,8 @@ export function RestoreFromBackup({ pollMs = 2000, deadlineMs = 5 * 60_000 }: { 
       const result = await setupRestore.inspect(chosen, setupToken.trim() || undefined, passphrase);
       setSource(chosen);
       setSummary(result);
+      // An archive from another host is not trusted to run until the operator has read what it would start.
+      setStartStacks(!result.foreign);
       setConfirmed(false);
       setAllowUnencrypted(false);
       setStage('inspected');
@@ -358,10 +361,14 @@ export function RestoreFromBackup({ pollMs = 2000, deadlineMs = 5 * 60_000 }: { 
             </ul>
           </>
         )}
+        <ComposeRisksBanner risks={summary.risks} />
         <label className={styles.check}>
           <input type="checkbox" checked={startStacks} onChange={(e) => setStartStacks(e.target.checked)} />
           Start stacks that were running
         </label>
+        {summary.foreign && (
+          <p className={styles.muted}>This archive comes from another host; stacks are left stopped until you review them.</p>
+        )}
         <label className={styles.check}>
           <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
           {conflicts.length === 0
