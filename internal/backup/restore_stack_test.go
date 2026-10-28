@@ -266,7 +266,7 @@ func TestRestoreStackStartsAgainWhenArchiveIsDamaged(t *testing.T) {
 	f := webFixture(compose, true)
 	path := truncatedAfterDB(t, t.TempDir(), f, true) // no manifest.json at the end
 	raw, _ := os.ReadFile(path)
-	name := ArchiveName("old", f.manifest().CreatedAt)
+	name := ArchiveName("old", f.manifest().CreatedAt, false)
 	sidecar, _ := json.Marshal(f.manifest())
 	e.local.archives[name], e.local.sidecars[name] = raw, sidecar
 
@@ -566,7 +566,7 @@ func TestRestoreStackActionLogKeepsRestartFailure(t *testing.T) {
 	compose := e.existingStack(t, "web", "compose.yaml", "services: {}\n", true)
 	f := webFixture(compose, true)
 	raw, _ := os.ReadFile(truncatedAfterDB(t, t.TempDir(), f, true)) // fails fatally as damaged
-	name := ArchiveName("old", f.manifest().CreatedAt)
+	name := ArchiveName("old", f.manifest().CreatedAt, false)
 	sidecar, _ := json.Marshal(f.manifest())
 	e.local.archives[name], e.local.sidecars[name] = raw, sidecar
 	e.ctl.startErr = errors.New("port in use")

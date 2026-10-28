@@ -293,7 +293,7 @@ func (f hostFixture) build(t *testing.T, dir string, withSidecar bool) string {
 	if err := w.Close(m); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, ArchiveName("old", m.CreatedAt))
+	path := filepath.Join(dir, ArchiveName("old", m.CreatedAt, false))
 	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
 		t.Fatal(err)
 	}

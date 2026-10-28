@@ -113,6 +113,8 @@ type BackupArchive struct {
 	HostSlug  string    `json:"hostSlug"`
 	CreatedAt time.Time `json:"createdAt"`
 	Size      int64     `json:"size"`
+	// Encrypted is true for an encrypted archive (".tar.gz.enc").
+	Encrypted bool `json:"encrypted"`
 }
 
 // BackupRunStarted is the 202 body of POST /api/backups/run.
@@ -286,4 +288,8 @@ type BackupManifest struct {
 	Stacks            []BackupManifestStack `json:"stacks"`
 	Networks          int                   `json:"networks"`
 	Items             []BackupItem          `json:"items"`
+	// Encrypted and KeyID come from the sidecar and are display-only: the
+	// salts and MAC stay on the server.
+	Encrypted bool   `json:"encrypted"`
+	KeyID     string `json:"keyId"`
 }

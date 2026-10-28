@@ -152,6 +152,9 @@ func toBackupManifest(m backup.Manifest) apitypes.BackupManifest {
 		Stacks: make([]apitypes.BackupManifestStack, 0, len(m.Stacks)),
 		Items:  make([]apitypes.BackupItem, 0, len(m.Items)),
 	}
+	if m.Encryption != nil {
+		dto.Encrypted, dto.KeyID = true, m.Encryption.KeyID
+	}
 	for _, st := range m.Stacks {
 		row := apitypes.BackupManifestStack{
 			Name: st.Name, ComposePath: st.ComposePath, Origin: st.Origin, Project: st.Project,

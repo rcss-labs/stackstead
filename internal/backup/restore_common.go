@@ -224,6 +224,9 @@ func verifyArchiveManifest(inArchive, driving Manifest, fromSidecar bool, instal
 	if !fromSidecar {
 		return nil
 	}
+	if manifestKeyID(inArchive) != manifestKeyID(driving) {
+		return fmt.Errorf("%w: archive is keyed %q, sidecar says %q", ErrManifestMismatch, manifestKeyID(inArchive), manifestKeyID(driving))
+	}
 	if !inArchive.CreatedAt.Equal(driving.CreatedAt) || inArchive.InstanceID != driving.InstanceID ||
 		inArchive.StacksteadVersion != driving.StacksteadVersion || inArchive.Format != driving.Format {
 		return fmt.Errorf("%w: archive created %s by instance %q with version %s (format %d), sidecar says %s by %q with version %s (format %d)",
@@ -397,4 +400,12 @@ func composeVolumeLabels(project, volume string) map[string]string {
 		return nil
 	}
 	return map[string]string{"com.docker.compose.project": project, "com.docker.compose.volume": short}
+}
+
+// manifestKeyID is the key id a manifest names, or "" for a plaintext archive.
+func manifestKeyID(m Manifest) string {
+	if m.Encryption == nil {
+		return ""
+	}
+	return m.Encryption.KeyID
 }

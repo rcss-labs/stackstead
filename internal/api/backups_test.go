@@ -34,6 +34,8 @@ type fakeBackups struct {
 	planErr     error
 	manifestRef [2]string
 
+	manifest   *backup.Manifest
+	archives   []backup.ArchiveRef
 	key        *backup.KeyInfo
 	passphrase string
 	calls      []string
@@ -63,6 +65,9 @@ func (f *fakeBackups) Restore(_ context.Context, req backup.StackRestoreRequest,
 }
 func (f *fakeBackups) ArchiveManifest(_ context.Context, dest, name string) (backup.Manifest, error) {
 	f.manifestRef = [2]string{dest, name}
+	if f.manifest != nil {
+		return *f.manifest, nil
+	}
 	return backup.Manifest{Format: 1, StacksteadVersion: "1.3.0", HostSlug: "old",
 		Stacks: []backup.ManifestStack{{Name: "web", Volumes: []backup.ManifestVolume{{Key: "v-web_data", Kind: "volume", Name: "web_data"}}}}}, nil
 }
@@ -123,6 +128,9 @@ func (f *fakeBackups) Runs(context.Context, int) ([]backup.Run, error) {
 	return []backup.Run{{ID: 3, Trigger: "manual", Status: "success", StartedAt: time.Unix(1, 0).UTC()}}, nil
 }
 func (f *fakeBackups) Archives(context.Context) ([]backup.ArchiveRef, error) {
+	if f.archives != nil {
+		return f.archives, nil
+	}
 	return []backup.ArchiveRef{{Dest: "local", Name: "a.tar.gz", HostSlug: "h", CreatedAt: time.Unix(1, 0).UTC(), Size: 5}}, nil
 }
 func (f *fakeBackups) PausedAfterRestore(context.Context) (bool, error) { return f.paused, nil }
@@ -511,5 +519,45 @@ func TestBackupClearEncryptionKey(t *testing.T) {
 	}
 	if !fake.cleared {
 		t.Error("ClearPassphrase not called")
+	}
+}
+
+func TestBackupManifestExposesEncryptionFlag(t *testing.T) {
+	enc := &backup.ManifestEncryption{KeyID: "0123456789abcdef", KeySalt: "00ff", SidecarMAC: "mac-value"}
+	fake := &fakeBackups{cfg: validBackupConfig(), manifest: &backup.Manifest{Format: 1, Encryption: enc}}
+	env, cookie := newBackupEnv(t, fake)
+	rec := env.do(t, "GET", "/api/backups/archives/local/"+testArchive+"/manifest", "", withCookie(cookie))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["encrypted"] != true || got["keyId"] != "0123456789abcdef" {
+		t.Errorf("manifest = %s", rec.Body)
+	}
+	for _, leak := range []string{"keySalt", "sidecarMac", "mac-value", "00ff"} {
+		if strings.Contains(rec.Body.String(), leak) {
+			t.Errorf("manifest leaks %q: %s", leak, rec.Body)
+		}
+	}
+
+	fake.manifest = &backup.Manifest{Format: 1}
+	rec = env.do(t, "GET", "/api/backups/archives/local/"+testArchive+"/manifest", "", withCookie(cookie))
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got["encrypted"] != false || got["keyId"] != "" {
+		t.Errorf("plaintext manifest = %s (%v)", rec.Body, err)
+	}
+}
+
+func TestBackupArchivesExposeEncryptedFlag(t *testing.T) {
+	env, cookie := newBackupEnv(t, &fakeBackups{cfg: validBackupConfig(), archives: []backup.ArchiveRef{
+		{Dest: "local", Name: "a.tar.gz.enc", HostSlug: "h", Encrypted: true},
+		{Dest: "local", Name: "b.tar.gz", HostSlug: "h"},
+	}})
+	rec := env.do(t, "GET", "/api/backups/archives", "", withCookie(cookie))
+	var got []apitypes.BackupArchive
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got) != 2 || !got[0].Encrypted || got[1].Encrypted {
+		t.Fatalf("archives = %s (%v)", rec.Body, err)
 	}
 }

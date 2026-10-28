@@ -97,6 +97,8 @@ export interface BackupArchive {
   hostSlug: string;
   createdAt: string;
   size: number;
+  /** An encrypted archive (.tar.gz.enc); read from the name. */
+  encrypted: boolean;
 }
 
 /** The 202 body of POST /api/backups/run. */
@@ -196,6 +198,9 @@ export interface BackupManifest {
   stacks: BackupManifestStack[];
   networks: number;
   items: BackupItem[];
+  /** From the sidecar, display only. */
+  encrypted: boolean;
+  keyId: string;
 }
 
 // Whole-host restore from the setup screen (/api/setup/restore/...).

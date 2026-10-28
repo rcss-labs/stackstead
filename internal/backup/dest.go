@@ -33,4 +33,6 @@ type ArchiveRef struct {
 	HostSlug  string
 	CreatedAt time.Time
 	Size      int64
+	// Encrypted is read from the name; the content decides when it is opened.
+	Encrypted bool
 }

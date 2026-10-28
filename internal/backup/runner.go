@@ -294,9 +294,21 @@ func (j *job) execute() {
 		j.fatal = fmt.Errorf("read host identity: %w", err)
 		return
 	}
+	// Encryption fails closed: with it on and no usable passphrase nothing is
+	// written, so a run never silently produces a plaintext archive.
+	var key *Key
+	if cfg.Encryption.Enabled {
+		if key, err = LoadKey(d.DataDir); err != nil {
+			if errors.Is(err, ErrNoKeyFile) {
+				err = fmt.Errorf("%w: encryption is on but %s is missing; set the passphrase again or turn encryption off", ErrNoKeyFile, KeyFilePath(d.DataDir))
+			}
+			j.fatal = err
+			return
+		}
+	}
 	slug := peers.Slugify(ident.Name)
 	now := d.Now().UTC()
-	j.archive = ArchiveName(slug, now)
+	j.archive = ArchiveName(slug, now, key != nil)
 	j.manifest = Manifest{
 		Format: ManifestFormat, StacksteadVersion: d.Version, Host: ident.Name, HostSlug: slug,
 		InstanceID: ident.InstanceID, CreatedAt: now,
@@ -325,7 +337,20 @@ func (j *job) execute() {
 	}
 	j.primary, j.dw = primary, dw
 	j.sink = &countingWriter{w: dw}
-	aw := NewWriter(j.sink)
+	// archive -> gzip/tar -> [encrypt] -> counting sink -> destination
+	var ew io.WriteCloser
+	var aw *Writer
+	if key != nil {
+		if ew, err = NewEncryptWriter(j.sink, key); err != nil {
+			j.abortArchive()
+			j.fatal = err
+			return
+		}
+		aw = NewWriter(ew)
+		j.manifest.Encryption = newManifestEncryption(key)
+	} else {
+		aw = NewWriter(j.sink)
+	}
 	err = j.writeSections(aw, selections)
 	if err == nil {
 		// The in-archive manifest describes the archive's contents; upload
@@ -337,6 +362,9 @@ func (j *job) execute() {
 			j.manifest.Stacks = append(j.manifest.Stacks, *ms)
 		}
 		err = aw.Close(j.manifest)
+	}
+	if err == nil && ew != nil {
+		err = ew.Close() // seals the final chunk
 	}
 	if err == nil && j.sink.err != nil {
 		err = j.sink.err
@@ -355,7 +383,20 @@ func (j *job) execute() {
 	j.reached = append(j.reached, primary.Name())
 	j.out(fmt.Sprintf("archive written (%d bytes)", j.size))
 
-	sidecar, err := json.MarshalIndent(j.manifest, "", "  ")
+	sidecarManifest := j.manifest
+	if key != nil {
+		// The sidecar is read before the archive is, so it carries a MAC the
+		// restore checks before trusting anything in it.
+		mac, merr := key.SidecarMAC(j.manifest)
+		if merr != nil {
+			j.fatal = merr
+			return
+		}
+		enc := *j.manifest.Encryption
+		enc.SidecarMAC = mac
+		sidecarManifest.Encryption = &enc
+	}
+	sidecar, err := json.MarshalIndent(sidecarManifest, "", "  ")
 	if err != nil {
 		j.fatal = err
 		return
@@ -488,6 +529,7 @@ func (j *job) writeBase(aw *Writer) error {
 		return fmt.Errorf("archive database: %w", err)
 	}
 	j.item(ItemResult{Kind: "base", Name: "stackstead.db", Status: itemOK})
+	j.item(ItemResult{Kind: "base", Name: "credentials", Status: itemSkipped, Note: noteCredentialsStripped})
 
 	if d.ConfigPath != "" {
 		err := addHostFile(aw, "base/config.yaml", d.ConfigPath)
@@ -750,4 +792,11 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 		c.err = err
 	}
 	return n, err
+}
+
+func newManifestEncryption(k *Key) *ManifestEncryption {
+	p := k.Params()
+	enc := &ManifestEncryption{KeyID: k.ID(), KeySalt: hex.EncodeToString(p.KeySalt[:])}
+	enc.Argon2.Time, enc.Argon2.MemoryKiB, enc.Argon2.Threads = p.Time, p.MemoryKiB, p.Threads
+	return enc
 }

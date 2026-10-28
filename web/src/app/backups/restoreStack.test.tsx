@@ -13,7 +13,7 @@ vi.mock('../detail/OperationPanel', () => ({
 let fake: FakeFetch;
 afterEach(() => fake.restore());
 
-const archive: BackupArchive = { dest: 'local', name: 'a1.tar.gz', hostSlug: 'mine', createdAt: '2026-10-26T03:00:00Z', size: 1024 };
+const archive: BackupArchive = { dest: 'local', name: 'a1.tar.gz', hostSlug: 'mine', createdAt: '2026-10-26T03:00:00Z', size: 1024, encrypted: false };
 
 const manifest: BackupManifest = {
   format: 1,
@@ -25,6 +25,8 @@ const manifest: BackupManifest = {
   status: 'success',
   networks: 0,
   items: [],
+  encrypted: false,
+  keyId: '',
   stacks: ['web', 'db'].map((name) => ({
     name,
     composePath: `/s/${name}/compose.yaml`,
