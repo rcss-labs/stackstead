@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rcss-labs/stackstead/internal/auth"
 	"github.com/rcss-labs/stackstead/internal/lockfile"
@@ -824,4 +825,53 @@ func TestBackupRestorePreservesActionLog(t *testing.T) {
 	if n != 1 || target != "volume/original" {
 		t.Fatalf("restored actions = %d %q", n, target)
 	}
+}
+
+// A backup holds the sessions of the moment it was taken; restoring it must
+// not bring back one that was revoked since.
+func TestRestoreSignsEveryoneOut(t *testing.T) {
+	h := newLocalHost(t, true)
+	addAdmin(t, h.dbPath, "admin")
+	ctx := context.Background()
+	db, err := store.OpenExisting(h.dbPath, store.OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err := auth.NewService(db, time.Now, auth.WithFastHashingForTests())
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldToken, err := svc.Login(ctx, "admin", "a-long-enough-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Unix()
+	if _, err := db.Exec(`INSERT INTO connection_tokens(hash, created_at, expires_at) VALUES('tok', ?, ?)`, now, now+600); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	snap := snapshot(t, h)
+
+	env := newTestEnv(t, nil)
+	wantCode(t, runLocal(env, "db", "restore", snap, "--yes", "--config", h.cfgPath), ExitOK)
+
+	db, err = store.OpenExisting(h.dbPath, store.OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, table := range []string{"sessions", "connection_tokens"} {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n); err != nil || n != 0 {
+			t.Errorf("%s has %d rows after the restore (err %v), want 0", table, n, err)
+		}
+	}
+	svc, err = auth.NewService(db, time.Now, auth.WithFastHashingForTests())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Authenticate(ctx, oldToken); err == nil {
+		t.Error("a session from the backup still authenticates")
+	}
+	mustContain(t, "stdout", env.Out.String(), "signed out")
 }

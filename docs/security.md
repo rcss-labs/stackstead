@@ -366,6 +366,11 @@ do not leave a fresh install exposed.
 - **A restored host keeps the original's identity**, including the identity
   paired servers know it by. Do not run the original and the restored host at the
   same time; paired servers and tokens cannot tell them apart.
+- **A restore signs everyone out.** A backup holds the sessions and connection
+  tokens of the moment it was taken, so a session revoked since (after a stolen
+  cookie, say) would work again. Both `restore` and `db restore` delete every
+  session, connection token and pairing in progress before the server serves;
+  paired servers keep their credentials. Sign in again afterwards.
 - **The backup schedule comes back paused.** A restored host must not start
   writing to the original's destinations unnoticed. The pause is stored in the
   restored database and retried at every start until it is confirmed; the UI
