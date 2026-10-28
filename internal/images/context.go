@@ -2,6 +2,7 @@ package images
 
 import (
 	"archive/tar"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -99,7 +100,7 @@ func materializeOne(root *os.Root, p string, e FileEntry, b *Blobs) error {
 // the epoch, mode 0755 for executables and 0644 otherwise. The file at
 // dockerfilePath (empty means "Dockerfile") and .dockerignore are always kept,
 // whatever the ignore rules say.
-func WriteContext(w io.Writer, dir, dockerfilePath string) error {
+func WriteContext(ctx context.Context, w io.Writer, dir, dockerfilePath string) error {
 	if dockerfilePath == "" {
 		dockerfilePath = "Dockerfile"
 	}
@@ -135,6 +136,9 @@ func WriteContext(w io.Writer, dir, dockerfilePath string) error {
 		if err != nil {
 			return err
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if d.Type().IsRegular() && (p == dockerfilePath || !ignore.Excluded(p)) {
 			files = append(files, p)
 		}
@@ -147,6 +151,9 @@ func WriteContext(w io.Writer, dir, dockerfilePath string) error {
 
 	tw := tar.NewWriter(w)
 	for _, p := range files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := writeContextFile(tw, root, p); err != nil {
 			return err
 		}
