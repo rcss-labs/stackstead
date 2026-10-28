@@ -61,6 +61,15 @@ type Config struct {
 	Schedule Schedule  `json:"schedule"`
 	Local    LocalDest `json:"local"`
 	S3       S3Dest    `json:"s3"`
+	// Encryption only records whether archives are encrypted. The passphrase
+	// lives in the key file (see keyfile.go), never in the settings table:
+	// that table is inside every archive and every `db backup` copy.
+	Encryption EncryptionSettings `json:"encryption"`
+}
+
+// EncryptionSettings is the archive encryption switch.
+type EncryptionSettings struct {
+	Enabled bool `json:"enabled"`
 }
 
 // StackSelection records what a backup of one stack includes.

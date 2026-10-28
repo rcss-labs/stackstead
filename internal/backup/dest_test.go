@@ -25,22 +25,22 @@ func TestPruneLocalKeepsNewestOwnSlug(t *testing.T) {
 		}
 	}
 	for i := 0; i < 9; i++ {
-		name := ArchiveName("a", base.AddDate(0, 0, i))
+		name := ArchiveName("a", base.AddDate(0, 0, i), false)
 		touch(name)
 		touch(SidecarName(name))
 	}
 	for i := 0; i < 2; i++ {
-		touch(ArchiveName("b", base.AddDate(0, 0, i)))
+		touch(ArchiveName("b", base.AddDate(0, 0, i), false))
 	}
-	partial := ArchiveName("a", base.AddDate(0, 0, 20)) + ".partial"
+	partial := ArchiveName("a", base.AddDate(0, 0, 20), false) + ".partial"
 	touch(partial)
 
 	deleted, err := PruneLocal(LocalDest{Path: dir, KeepLast: 7}, "a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldest := ArchiveName("a", base)
-	second := ArchiveName("a", base.AddDate(0, 0, 1))
+	oldest := ArchiveName("a", base, false)
+	second := ArchiveName("a", base.AddDate(0, 0, 1), false)
 	want := []string{
 		filepath.Join(dir, oldest), filepath.Join(dir, SidecarName(oldest)),
 		filepath.Join(dir, second), filepath.Join(dir, SidecarName(second)),
@@ -63,7 +63,7 @@ func TestPruneLocalKeepsNewestOwnSlug(t *testing.T) {
 func TestLocalCreateIsAtomic(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "backups")
 	d := NewLocal(LocalDest{Enabled: true, Path: dir, KeepLast: 7})
-	name := ArchiveName("h", time.Now())
+	name := ArchiveName("h", time.Now(), false)
 	w, err := d.Create(context.Background(), name)
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +96,7 @@ func TestLocalAbortRemovesPartialAndRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	d := NewLocal(LocalDest{Enabled: true, Path: dir, KeepLast: 7})
-	name := ArchiveName("h", time.Date(2026, 5, 1, 1, 2, 3, 0, time.UTC))
+	name := ArchiveName("h", time.Date(2026, 5, 1, 1, 2, 3, 0, time.UTC), false)
 	w, _ := d.Create(ctx, name)
 	_, _ = w.Write([]byte("zzz"))
 	if err := d.Abort(ctx, name); err != nil {
@@ -116,7 +116,7 @@ func TestLocalAbortRemovesPartialAndRoundTrip(t *testing.T) {
 	}
 	// A foreign file and a partial must not be listed.
 	_ = os.WriteFile(filepath.Join(dir, "notes.txt"), nil, 0o600)
-	_ = os.WriteFile(filepath.Join(dir, ArchiveName("h", time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC))+".partial"), nil, 0o600)
+	_ = os.WriteFile(filepath.Join(dir, ArchiveName("h", time.Date(2026, 5, 2, 0, 0, 0, 0, time.UTC), false)+".partial"), nil, 0o600)
 	refs, err := d.List(ctx)
 	if err != nil || len(refs) != 1 {
 		t.Fatalf("List = %v, %v", refs, err)
@@ -230,7 +230,7 @@ func TestS3DestinationUploadAndAbort(t *testing.T) {
 	if d.Name() != "s3" {
 		t.Fatalf("Name = %q", d.Name())
 	}
-	name := ArchiveName("host", time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC))
+	name := ArchiveName("host", time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC), false)
 
 	w, err := d.Create(ctx, name)
 	if err != nil {
@@ -244,7 +244,7 @@ func TestS3DestinationUploadAndAbort(t *testing.T) {
 		t.Fatalf("object = %q, keys %v", got, f.objects)
 	}
 
-	other := ArchiveName("host", time.Date(2026, 3, 5, 5, 6, 7, 0, time.UTC))
+	other := ArchiveName("host", time.Date(2026, 3, 5, 5, 6, 7, 0, time.UTC), false)
 	w, _ = d.Create(ctx, other)
 	_, _ = w.Write([]byte("x"))
 	if err := d.Abort(ctx, other); err != nil {
@@ -260,7 +260,7 @@ func TestS3DestinationListAndSidecar(t *testing.T) {
 	f, srv := newFakeS3()
 	defer srv.Close()
 	d := NewS3(testS3Dest(srv.URL, ""), srv.Client())
-	name := ArchiveName("host", time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC))
+	name := ArchiveName("host", time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC), false)
 	f.objects[name] = []byte("12345")
 	f.objects["README.txt"] = []byte("x")
 	f.objects["stackstead-bogus.tar.gz"] = []byte("x")
@@ -311,7 +311,7 @@ func TestTestS3PutsThenDeletes(t *testing.T) {
 func TestLocalCloseAfterWriteErrorDoesNotPublish(t *testing.T) {
 	dir := t.TempDir()
 	d := NewLocal(LocalDest{Enabled: true, Path: dir, KeepLast: 7})
-	name := ArchiveName("h", time.Now())
+	name := ArchiveName("h", time.Now(), false)
 	w, err := d.Create(context.Background(), name)
 	if err != nil {
 		t.Fatal(err)
@@ -338,7 +338,7 @@ func TestLocalCloseAfterWriteErrorDoesNotPublish(t *testing.T) {
 
 func TestPruneLocalRejectsKeepLastBelowOne(t *testing.T) {
 	dir := t.TempDir()
-	name := ArchiveName("a", time.Now())
+	name := ArchiveName("a", time.Now(), false)
 	_ = os.WriteFile(filepath.Join(dir, name), nil, 0o600)
 	for _, keep := range []int{0, -1} {
 		if _, err := PruneLocal(LocalDest{Path: dir, KeepLast: keep}, "a"); err == nil {
@@ -353,7 +353,7 @@ func TestPruneLocalRejectsKeepLastBelowOne(t *testing.T) {
 func TestLocalPutSidecarIsAtomic(t *testing.T) {
 	dir := t.TempDir()
 	d := NewLocal(LocalDest{Enabled: true, Path: dir, KeepLast: 7})
-	name := ArchiveName("h", time.Now())
+	name := ArchiveName("h", time.Now(), false)
 	if err := d.PutSidecar(context.Background(), name, []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -373,11 +373,75 @@ func TestS3CreateRefusesArchiveInFlight(t *testing.T) {
 	_, srv := newFakeS3()
 	defer srv.Close()
 	d := NewS3(testS3Dest(srv.URL, ""), srv.Client())
-	name := ArchiveName("host", time.Now())
+	name := ArchiveName("host", time.Now(), false)
 	if _, err := d.Create(ctx, name); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.Create(ctx, name); err == nil {
 		t.Fatal("second Create of an in-flight archive must fail")
+	}
+}
+
+func TestLocalListMarksEncrypted(t *testing.T) {
+	dir := t.TempDir()
+	at := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	for _, name := range []string{ArchiveName("h", at, false), ArchiveName("h", at.Add(time.Hour), true)} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	refs, err := NewLocal(LocalDest{Path: dir}).List(context.Background())
+	if err != nil || len(refs) != 2 {
+		t.Fatalf("refs = %+v, %v", refs, err)
+	}
+	for _, r := range refs {
+		if want := strings.HasSuffix(r.Name, ".enc"); r.Encrypted != want {
+			t.Errorf("%s: Encrypted = %v, want %v", r.Name, r.Encrypted, want)
+		}
+	}
+}
+
+func TestS3ListMarksEncrypted(t *testing.T) {
+	f, srv := newFakeS3()
+	defer srv.Close()
+	d := NewS3(testS3Dest(srv.URL, ""), srv.Client())
+	at := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	plain, enc := ArchiveName("host", at, false), ArchiveName("host", at.Add(time.Hour), true)
+	f.objects[plain], f.objects[enc] = []byte("1"), []byte("2")
+	refs, err := d.List(context.Background())
+	if err != nil || len(refs) != 2 {
+		t.Fatalf("refs = %+v, %v", refs, err)
+	}
+	for _, r := range refs {
+		if want := r.Name == enc; r.Encrypted != want {
+			t.Errorf("%s: Encrypted = %v, want %v", r.Name, r.Encrypted, want)
+		}
+	}
+}
+
+func TestPruneLocalRemovesEncryptedArchiveAndSidecar(t *testing.T) {
+	dir := t.TempDir()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	var names []string
+	for i := 0; i < 3; i++ {
+		name := ArchiveName("a", base.AddDate(0, 0, i), true)
+		names = append(names, name)
+		for _, f := range []string{name, SidecarName(name)} {
+			if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	deleted, err := PruneLocal(LocalDest{Path: dir, KeepLast: 2}, "a")
+	if err != nil || len(deleted) != 2 {
+		t.Fatalf("deleted = %v, %v", deleted, err)
+	}
+	for _, f := range []string{names[0], SidecarName(names[0])} {
+		if _, err := os.Stat(filepath.Join(dir, f)); !os.IsNotExist(err) {
+			t.Errorf("%s was not pruned", f)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, names[2])); err != nil {
+		t.Errorf("newest archive was pruned: %v", err)
 	}
 }

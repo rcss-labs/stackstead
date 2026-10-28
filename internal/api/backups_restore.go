@@ -7,6 +7,7 @@ import (
 
 	"github.com/rcss-labs/stackstead/internal/apitypes"
 	"github.com/rcss-labs/stackstead/internal/backup"
+	"github.com/rcss-labs/stackstead/internal/secret"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 )
 
@@ -50,7 +51,8 @@ func decodeRestoreRequest(w http.ResponseWriter, r *http.Request) (backup.StackR
 		Archive: backup.ArchiveRef{Dest: dto.Archive.Dest, Name: dto.Archive.Name},
 		Stack:   dto.Stack, NewName: dto.NewName,
 		Files: dto.Files, Volumes: dto.Volumes, Images: dto.Images,
-		VolumeKeys: dto.VolumeKeys,
+		VolumeKeys: dto.VolumeKeys, Start: dto.Start,
+		Passphrase: secret.Secret(dto.Passphrase), AllowUnencrypted: dto.AllowUnencrypted,
 	}, true
 }
 
@@ -60,6 +62,8 @@ func (s *server) writeRestoreError(w http.ResponseWriter, r *http.Request, err e
 	switch {
 	case errors.Is(err, backup.ErrArchiveNewer):
 		writeCodedError(w, http.StatusBadRequest, err.Error(), codeArchiveNewer)
+	case protectionCodeOf(err) != "":
+		writeCodedError(w, http.StatusBadRequest, err.Error(), protectionCodeOf(err))
 	case errors.Is(err, stacks.ErrBusy):
 		writeCodedError(w, http.StatusConflict, "the stack is busy with another operation", codeStackBusy)
 	case errors.Is(err, backup.ErrTargetOccupied):
@@ -132,6 +136,8 @@ func toRestorePlan(p backup.StackRestorePlan) apitypes.BackupRestorePlan {
 		Images:          append([]string{}, p.Images...),
 		MissingNetworks: make([]apitypes.BackupRestoreNetwork, 0, len(p.MissingNetworks)),
 		Warnings:        append([]string{}, p.Warnings...),
+		Encrypted:       p.Encrypted, KeyID: p.KeyID,
+		Foreign: p.Foreign, Risks: toComposeRisks(p.Risks),
 	}
 	for _, d := range p.FileDiffs {
 		dto.FileDiffs = append(dto.FileDiffs, apitypes.BackupFileDiff(d))
@@ -145,12 +151,24 @@ func toRestorePlan(p backup.StackRestorePlan) apitypes.BackupRestorePlan {
 	return dto
 }
 
+// toComposeRisks converts the scan result; the list is never null on the wire.
+func toComposeRisks(risks []backup.ComposeRisk) []apitypes.BackupComposeRisk {
+	out := make([]apitypes.BackupComposeRisk, 0, len(risks))
+	for _, r := range risks {
+		out = append(out, apitypes.BackupComposeRisk(r))
+	}
+	return out
+}
+
 func toBackupManifest(m backup.Manifest) apitypes.BackupManifest {
 	dto := apitypes.BackupManifest{
 		Format: m.Format, StacksteadVersion: m.StacksteadVersion, Host: m.Host, HostSlug: m.HostSlug,
 		InstanceID: m.InstanceID, CreatedAt: m.CreatedAt, Status: m.Status, Networks: m.Networks,
 		Stacks: make([]apitypes.BackupManifestStack, 0, len(m.Stacks)),
 		Items:  make([]apitypes.BackupItem, 0, len(m.Items)),
+	}
+	if m.Encryption != nil {
+		dto.Encrypted, dto.KeyID = true, m.Encryption.KeyID
 	}
 	for _, st := range m.Stacks {
 		row := apitypes.BackupManifestStack{

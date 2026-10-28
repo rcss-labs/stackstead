@@ -1,11 +1,13 @@
 package backup
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rcss-labs/stackstead/internal/stacks"
 )
@@ -145,5 +147,29 @@ func TestRestoreStackRefusesBindWhoseKeyDoesNotMatchItsName(t *testing.T) {
 	}
 	if acts := e.restoreActions(t); len(acts) != 1 || acts[0].Result != "failed" || !strings.Contains(acts[0].Detail, "does not match") {
 		t.Errorf("action log = %+v, want the key mismatch reported", acts)
+	}
+}
+
+func TestVerifyArchiveManifestComparesKeyID(t *testing.T) {
+	base := Manifest{Format: ManifestFormat, StacksteadVersion: "1.0.0", InstanceID: "i", CreatedAt: time.Unix(10, 0).UTC()}
+	withKey := func(id string) Manifest {
+		m := base
+		m.Encryption = &ManifestEncryption{KeyID: id}
+		return m
+	}
+	for name, tc := range map[string]struct {
+		inArchive, sidecar Manifest
+		wantErr            bool
+	}{
+		"same key":                {withKey("aa"), withKey("aa"), false},
+		"different key":           {withKey("aa"), withKey("bb"), true},
+		"sidecar claims a key":    {base, withKey("aa"), true},
+		"sidecar drops encrypted": {withKey("aa"), base, true},
+		"both plaintext":          {base, base, false},
+	} {
+		err := verifyArchiveManifest(tc.inArchive, tc.sidecar, true, "1.0.0")
+		if (err != nil) != tc.wantErr || (err != nil && !errors.Is(err, ErrManifestMismatch)) {
+			t.Errorf("%s: err = %v, wantErr %v", name, err, tc.wantErr)
+		}
 	}
 }

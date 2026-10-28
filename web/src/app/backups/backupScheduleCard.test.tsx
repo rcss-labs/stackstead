@@ -101,4 +101,58 @@ describe('BackupScheduleCard', () => {
     await screen.findByText('Secret set');
     expect(screen.queryByText(/Backups were paused after a restore/)).toBeNull();
   });
+
+  describe('encryption', () => {
+    const off = { ...sampleConfig, encryption: { enabled: false, passphraseSet: false, keyId: '' } };
+    const putBody = () => calls('PUT', '/api/backups/config')[0].body as { encryption: Record<string, unknown> };
+
+    it('shows that a passphrase is set with its key id', async () => {
+      mount();
+      expect(await screen.findByText('Passphrase set · key 0123456789abcdef')).toBeTruthy();
+      expect((screen.getByLabelText('Encrypt archives') as HTMLInputElement).checked).toBe(true);
+      expect(screen.queryByText(/Archives are written in clear/)).toBeNull();
+    });
+
+    it('saves without passphrase when untouched', async () => {
+      mount({ 'PUT /api/backups/config': { body: sampleConfig } });
+      await userEvent.click(await screen.findByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(calls('PUT', '/api/backups/config')).toHaveLength(1));
+      expect('passphrase' in putBody().encryption).toBe(false);
+      expect(putBody().encryption.enabled).toBe(true);
+    });
+
+    it('sends the passphrase once typed and clears the field after saving', async () => {
+      mount({ 'PUT /api/backups/config': { body: sampleConfig } });
+      const field = (await screen.findByLabelText('Passphrase')) as HTMLInputElement;
+      await userEvent.type(field, 'a long passphrase');
+      await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(calls('PUT', '/api/backups/config')).toHaveLength(1));
+      expect(putBody().encryption.passphrase).toBe('a long passphrase');
+      await waitFor(() => expect(field.value).toBe(''));
+    });
+
+    it('warns when encryption is off', async () => {
+      mount({}, off);
+      expect(
+        await screen.findByText('Archives are written in clear; anyone who can read one can sign in as the admin.'),
+      ).toBeTruthy();
+      expect(screen.getByText('No passphrase')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Forget passphrase' })).toBeNull();
+    });
+
+    it('generates a passphrase into the field', async () => {
+      mount({}, off);
+      await userEvent.click(await screen.findByRole('button', { name: 'Generate' }));
+      const value = (screen.getByLabelText('Passphrase') as HTMLInputElement).value;
+      expect(value).toMatch(/^[A-Z2-7]{4,6}(-[A-Z2-7]{4,6}){3,}$/);
+    });
+
+    it('forgets the passphrase with a DELETE', async () => {
+      mount({ 'DELETE /api/backups/config/encryption-key': { status: 204 } });
+      await userEvent.click(await screen.findByRole('button', { name: 'Forget passphrase' }));
+      await waitFor(() => expect(calls('DELETE', '/api/backups/config/encryption-key')).toHaveLength(1));
+      expect(await screen.findByText('No passphrase')).toBeTruthy();
+      expect((screen.getByLabelText('Encrypt archives') as HTMLInputElement).checked).toBe(false);
+    });
+  });
 });

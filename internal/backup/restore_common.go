@@ -86,9 +86,13 @@ func (rs *rootSet) close() {
 // prepareBind makes sure a bind source is inside an allowed root, creates it
 // through that root's os.Root when missing, and returns it with symlinks
 // resolved (rechecked against the resolved roots). Docker runs as root, so a
-// bind source is the one way a crafted archive could reach anywhere on the
-// host; anything outside the roots, or covering more than the bind's own data
-// (see bindCovers), is skipped with a reason.
+// bind source is one way a crafted archive could make Stackstead write
+// outside the allowed roots; this keeps the restore's own writes inside them,
+// and anything outside the roots, or covering more than the bind's own data
+// (see bindCovers), is skipped with a reason. It does not limit what a
+// restored compose file can do once started: that file may itself be
+// privileged or mount "/:/host". Stackstead only warns about that (see
+// ScanComposeRisks) and leaves a foreign archive's stacks stopped by default.
 //
 // The result is a bindTarget, not the leaf path: the helper mounts the vetted
 // root and works on the relative path inside the container, so a symlink
@@ -223,6 +227,9 @@ func verifyArchiveManifest(inArchive, driving Manifest, fromSidecar bool, instal
 	}
 	if !fromSidecar {
 		return nil
+	}
+	if manifestKeyID(inArchive) != manifestKeyID(driving) {
+		return fmt.Errorf("%w: archive is keyed %q, sidecar says %q", ErrManifestMismatch, manifestKeyID(inArchive), manifestKeyID(driving))
 	}
 	if !inArchive.CreatedAt.Equal(driving.CreatedAt) || inArchive.InstanceID != driving.InstanceID ||
 		inArchive.StacksteadVersion != driving.StacksteadVersion || inArchive.Format != driving.Format {
@@ -397,4 +404,12 @@ func composeVolumeLabels(project, volume string) map[string]string {
 		return nil
 	}
 	return map[string]string{"com.docker.compose.project": project, "com.docker.compose.volume": short}
+}
+
+// manifestKeyID is the key id a manifest names, or "" for a plaintext archive.
+func manifestKeyID(m Manifest) string {
+	if m.Encryption == nil {
+		return ""
+	}
+	return m.Encryption.KeyID
 }

@@ -85,7 +85,7 @@ refusal. The script refuses to run over a package install in the same way (exit 
 | binary | `/usr/bin/stackstead` | `/usr/local/bin/stackstead` |
 | service unit | `/usr/lib/systemd/system/stackstead.service` | `/etc/systemd/system/stackstead.service` |
 | config | `/etc/stackstead/config.yaml` (0640 root:stackstead, kept on upgrade) | same, written only if absent |
-| data (database) | `/var/lib/stackstead` (0700 stackstead) | same |
+| data (database) | `/var/lib/stackstead` (0700 stackstead). It also holds `backup.key`, the backup archive passphrase: keep a copy of it apart from the archives, or encrypted archives cannot be restored | same |
 | default stacks folder | `/opt/stacks` (created 2775 stackstead:docker; an existing one is never changed or removed) | same |
 | uninstall helper | your package manager | `/usr/local/share/stackstead/install.sh --uninstall` |
 

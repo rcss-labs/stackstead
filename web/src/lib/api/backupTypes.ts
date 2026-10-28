@@ -29,10 +29,21 @@ export interface BackupS3 {
   secretKeySet: boolean;
 }
 
+export interface BackupEncryption {
+  /** Archives are encrypted and authenticated with the stored passphrase. */
+  enabled: boolean;
+  /** Write-only: sent on PUT when typed, never returned. */
+  passphrase?: string;
+  passphraseSet: boolean;
+  /** Short id of the stored passphrase; also written into every archive sidecar. */
+  keyId: string;
+}
+
 export interface BackupConfig {
   schedule: BackupSchedule;
   local: BackupLocal;
   s3: BackupS3;
+  encryption: BackupEncryption;
   /** When the schedule fires next; absent when it is off. Ignored on PUT. */
   nextRun?: string;
   /** A host restore turned the schedule off; saving it enabled clears this. Ignored on PUT. */
@@ -86,6 +97,8 @@ export interface BackupArchive {
   hostSlug: string;
   createdAt: string;
   size: number;
+  /** An encrypted archive (.tar.gz.enc); read from the name. */
+  encrypted: boolean;
 }
 
 /** The 202 body of POST /api/backups/run. */
@@ -109,6 +122,22 @@ export interface BackupRestoreRequest {
   images: boolean;
   /** Limits the volumes restored; empty means all of them. */
   volumeKeys: string[];
+  /** Write-only: opens an encrypted archive; empty uses the passphrase stored on the server. */
+  passphrase?: string;
+  /** Confirms restoring an archive that is neither encrypted nor authenticated. */
+  allowUnencrypted?: boolean;
+  /** Starts the stack once it is restored; omitted means the stack is left stopped. */
+  start?: boolean;
+}
+
+/** A host-reaching setting in an archived compose file. */
+export interface BackupComposeRisk {
+  stack: string;
+  file: string;
+  service: string;
+  /** privileged, cap_add, device, host_bind, host_namespace, security_opt or unparseable. */
+  kind: string;
+  detail: string;
 }
 
 export interface BackupFileDiff {
@@ -147,6 +176,12 @@ export interface BackupRestorePlan {
   missingNetworks: BackupRestoreNetwork[];
   crossHost: boolean;
   warnings: string[];
+  /** False for an archive with no authentication at all. */
+  encrypted: boolean;
+  keyId: string;
+  /** The archive was written by another instance: the restore defaults to leaving the stack stopped. */
+  foreign: boolean;
+  risks: BackupComposeRisk[];
 }
 
 /** The 202 body of POST /api/backups/restore. */
@@ -185,6 +220,9 @@ export interface BackupManifest {
   stacks: BackupManifestStack[];
   networks: number;
   items: BackupItem[];
+  /** From the sidecar, display only. */
+  encrypted: boolean;
+  keyId: string;
 }
 
 // Whole-host restore from the setup screen (/api/setup/restore/...).
@@ -217,6 +255,12 @@ export interface HostRestoreSummary {
   manifest: BackupManifest;
   conflicts: HostRestoreConflict[];
   conflictsDigest: string;
+  /** False for an archive that is neither encrypted nor authenticated. */
+  encrypted: boolean;
+  keyId: string;
+  /** Not written by this instance, which includes every restore onto a fresh host. */
+  foreign: boolean;
+  risks: BackupComposeRisk[];
 }
 
 export interface HostRestoreStarted {

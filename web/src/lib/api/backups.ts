@@ -28,6 +28,7 @@ export function createBackupsApi(base: string) {
     config: () => call<BackupConfig>('GET', '/config'),
     saveConfig: (config: BackupConfig) => call<BackupConfig>('PUT', '/config', config),
     clearS3Secret: () => call<void>('DELETE', '/config/s3-secret'),
+    clearEncryptionKey: () => call<void>('DELETE', '/config/encryption-key'),
     testS3: (s3: BackupS3) => call<void>('POST', '/s3/test', s3),
     stacks: () => call<BackupStack[]>('GET', '/stacks'),
     setStack: (name: string, settings: BackupStackSettings) =>

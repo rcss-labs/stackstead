@@ -39,6 +39,10 @@ const summary = {
   },
   conflicts: [{ kind: 'volume', name: 'web_data', action: 'overwrite' }],
   conflictsDigest: 'dg1',
+  encrypted: true,
+  keyId: '0123456789abcdef',
+  foreign: false,
+  risks: [],
 };
 
 async function mountRestore(routes: Routes = {}) {
@@ -130,6 +134,45 @@ describe('Restore from backup', () => {
       startStacks: true,
       confirmedDigest: 'dg1',
     });
+  });
+
+  it('defaults start off for a foreign archive and lists compose risks', async () => {
+    const user = await mountRestore({
+      'POST /api/setup/restore/inspect': {
+        body: {
+          ...summary,
+          foreign: true,
+          risks: [
+            { stack: 'web', file: 'compose.yaml', service: 'app', kind: 'privileged', detail: 'true' },
+            { stack: 'web', file: 'compose.yaml', service: 'app', kind: 'host_bind', detail: '/:/host' },
+            { stack: 'db', file: 'compose.yaml', service: 'pg', kind: 'cap_add', detail: 'SYS_ADMIN' },
+          ],
+        },
+      },
+      'POST /api/setup/restore/start': { status: 202, body: { restoreToken: 'rt', operation: { id: 'op', state: 'running' } } },
+    });
+    stream = installFakeStream({ '/api/setup/restore/progress': [] });
+    await inspectPath(user);
+    expect((screen.getByLabelText('Start stacks that were running') as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByText('This archive comes from another host; stacks are left stopped until you review them.')).toBeTruthy();
+    expect(screen.getByText('Privileged settings in the restored compose files')).toBeTruthy();
+    expect(screen.getByText('app · privileged · true')).toBeTruthy();
+    expect(screen.getByText('app · host_bind · /:/host')).toBeTruthy();
+    expect(screen.getByText('pg · cap_add · SYS_ADMIN')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'db' })).toBeTruthy();
+
+    await user.click(screen.getByLabelText(/I understand/));
+    await user.click(screen.getByRole('button', { name: 'Start restore' }));
+    await waitFor(() => expect(calls('POST', '/api/setup/restore/start')).toHaveLength(1));
+    expect(calls('POST', '/api/setup/restore/start')[0].body).toMatchObject({ startStacks: false });
+  });
+
+  it('defaults start on for the same instance', async () => {
+    const user = await mountRestore();
+    await inspectPath(user);
+    expect((screen.getByLabelText('Start stacks that were running') as HTMLInputElement).checked).toBe(true);
+    expect(screen.queryByText(/comes from another host/)).toBeNull();
+    expect(screen.queryByText('Privileged settings in the restored compose files')).toBeNull();
   });
 
   it('polls the setup status after the stream ends and routes to login', async () => {
@@ -266,4 +309,72 @@ describe('Restore progress after the stream ends', () => {
     await screen.findByText('beta', {}, { timeout: 4000 });
     expect(screen.getAllByText('alpha')).toHaveLength(1);
   }, 10_000);
+});
+
+describe('Restore of encrypted and unencrypted archives', () => {
+  const startRoute = { status: 202, body: { restoreToken: 'rt', operation: { id: 'op', state: 'running' } } };
+
+  it('sends the passphrase with inspect and start', async () => {
+    const user = await mountRestore({ 'POST /api/setup/restore/start': startRoute });
+    stream = installFakeStream({ '/api/setup/restore/progress': [] });
+    await user.click(screen.getByRole('tab', { name: 'Path' }));
+    await user.type(screen.getByLabelText('Archive path'), '/backups/a.tar.gz.enc');
+    await user.type(screen.getByLabelText('Archive passphrase'), 'open sesame passphrase');
+    await user.click(screen.getByRole('button', { name: 'Inspect archive' }));
+    await screen.findByText('web_data');
+    expect(calls('POST', '/api/setup/restore/inspect')[0].body).toMatchObject({ passphrase: 'open sesame passphrase' });
+    expect(screen.getByText('Encrypted, key 0123456789abcdef')).toBeTruthy();
+    expect(screen.queryByText(/not encrypted or signed/)).toBeNull();
+
+    await user.click(screen.getByLabelText(/I understand/));
+    await user.click(screen.getByRole('button', { name: 'Start restore' }));
+    await waitFor(() => expect(calls('POST', '/api/setup/restore/start')).toHaveLength(1));
+    expect(calls('POST', '/api/setup/restore/start')[0].body).toMatchObject({
+      passphrase: 'open sesame passphrase',
+      allowUnencrypted: false,
+    });
+  });
+
+  it('omits the passphrase when none was typed', async () => {
+    const user = await mountRestore();
+    await inspectPath(user);
+    expect('passphrase' in (calls('POST', '/api/setup/restore/inspect')[0].body as object)).toBe(false);
+  });
+
+  it('requires acknowledging an unencrypted archive before starting', async () => {
+    const user = await mountRestore({
+      'POST /api/setup/restore/inspect': { body: { ...summary, encrypted: false, keyId: '' } },
+      'POST /api/setup/restore/start': startRoute,
+    });
+    stream = installFakeStream({ '/api/setup/restore/progress': [] });
+    await inspectPath(user);
+    expect(
+      screen.getByText(/This archive is not encrypted or signed\. Anyone who could write to its storage could have changed it/),
+    ).toBeTruthy();
+    await user.click(screen.getByLabelText(/I understand/));
+    await user.click(screen.getByRole('button', { name: 'Start restore' }));
+    expect(calls('POST', '/api/setup/restore/start')).toHaveLength(0);
+
+    await user.click(screen.getByLabelText('I trust the source of this archive'));
+    await user.click(screen.getByRole('button', { name: 'Start restore' }));
+    await waitFor(() => expect(calls('POST', '/api/setup/restore/start')).toHaveLength(1));
+    expect(calls('POST', '/api/setup/restore/start')[0].body).toMatchObject({ allowUnencrypted: true });
+  });
+
+  it.each([
+    ['passphrase_required', 'This archive is encrypted. Enter its passphrase.'],
+    ['wrong_passphrase', 'That passphrase does not open this archive.'],
+    ['archive_tampered', 'The archive failed its integrity check. Do not restore it.'],
+    ['unencrypted_archive', 'This archive is not encrypted'],
+  ])('explains %s', async (code, text) => {
+    const user = await mountRestore({
+      'POST /api/setup/restore/inspect': { status: 422, body: { error: 'raw server text', code } },
+    });
+    await user.click(screen.getByRole('tab', { name: 'Path' }));
+    await user.type(screen.getByLabelText('Archive path'), '/backups/a.tar.gz.enc');
+    await user.click(screen.getByRole('button', { name: 'Inspect archive' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain(text);
+    expect(alert.textContent).not.toContain('raw server text');
+  });
 });

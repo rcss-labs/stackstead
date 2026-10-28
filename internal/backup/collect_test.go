@@ -14,8 +14,13 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/rcss-labs/stackstead/internal/engine"
+	"github.com/rcss-labs/stackstead/internal/images"
+	"github.com/rcss-labs/stackstead/internal/peers"
+	"github.com/rcss-labs/stackstead/internal/registry"
+	"github.com/rcss-labs/stackstead/internal/secret"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 	"github.com/rcss-labs/stackstead/internal/store"
 )
@@ -26,7 +31,7 @@ func archiveNames(t *testing.T, w *Writer, buf *bytes.Buffer) []string {
 	if err := w.Close(Manifest{}); err != nil {
 		t.Fatal(err)
 	}
-	r, err := NewReader(buf)
+	r, err := newPlainReader(buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,5 +312,88 @@ func TestCollectStackFilesKeepsFileBinds(t *testing.T) {
 	want := []string{"base/stacks/web/", "base/stacks/web/compose.yaml", "base/stacks/web/nginx.conf"}
 	if got := archiveNames(t, w, &buf); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
+func TestCollectDBStripsSecrets(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "live.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	const (
+		s3Secret   = "S3-SECRET-VALUE-0001"
+		ghToken    = "GITHUB-TOKEN-VALUE-0002"
+		peerCred   = "PEER-CREDENTIAL-VALUE-0003"
+		ecrSecret  = "ECR-SECRET-VALUE-0004"
+		hubToken   = "HUB-TOKEN-VALUE-0005"
+		peerMarker = "peer-marker-name"
+		regMarker  = "registry-marker-name"
+		instanceID = "instance-id-marker"
+		userMarker = "user-marker-name"
+	)
+	cfg := defaultConfig()
+	cfg.S3 = S3Dest{Bucket: "b", SecretKey: secret.Secret(s3Secret)}
+	if err := NewConfigStore(db).Save(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := images.NewSettingsStore(db).SetGitHubToken(ctx, secret.Secret(ghToken)); err != nil {
+		t.Fatal(err)
+	}
+	if err := peers.NewStore(db, time.Now).InsertPeer(ctx, peers.Peer{
+		InstanceID: "peer-1", Name: peerMarker, URL: "https://peer.example", OutCredential: peers.Secret(peerCred), State: peers.StateActive,
+	}, ""); err != nil {
+		t.Fatal(err)
+	}
+	rs := registry.NewStore(db, time.Now)
+	for _, r := range []registry.Registry{
+		{Name: regMarker, Kind: registry.KindECR, Host: "1.dkr.ecr.eu-west-1.amazonaws.com", ECR: registry.ECR{Region: "eu-west-1", SecretAccessKey: secret.Secret(ecrSecret)}},
+		{Name: regMarker + "-hub", Kind: registry.KindDockerHub, Hub: registry.Hub{Username: "u", Token: secret.Secret(hubToken)}},
+	} {
+		if _, err := rs.Create(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, q := range []string{
+		`INSERT INTO settings(key, value) VALUES('instance_id', '` + instanceID + `')`,
+		`INSERT INTO users(username, password_hash, created_at) VALUES('` + userMarker + `', 'hash', 1)`,
+	} {
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	path, cleanup, err := CollectDB(ctx, db, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secretValue := range []string{s3Secret, ghToken, peerCred, ecrSecret, hubToken} {
+		if bytes.Contains(raw, []byte(secretValue)) {
+			t.Errorf("snapshot bytes contain %q", secretValue)
+		}
+	}
+	for _, marker := range []string{peerMarker, regMarker, instanceID, userMarker} {
+		if !bytes.Contains(raw, []byte(marker)) {
+			t.Errorf("snapshot lost the non-secret %q", marker)
+		}
+	}
+	snap, err := store.OpenExisting(path, store.OpenOptions{ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snap.Close()
+	var id string
+	if err := snap.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'instance_id'`).Scan(&id); err != nil || id != instanceID {
+		t.Fatalf("instance_id = %q, %v", id, err)
+	}
+	// The live database is untouched.
+	if got, _ := NewConfigStore(db).Load(ctx); got.S3.SecretKey.Reveal() != s3Secret {
+		t.Fatal("stripping the snapshot changed the live database")
 	}
 }

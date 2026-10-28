@@ -19,6 +19,9 @@ type BackupAPI interface {
 	Config(ctx context.Context) (backup.Config, error)
 	SaveConfig(ctx context.Context, cfg backup.Config) error
 	ClearS3Secret(ctx context.Context) error
+	SetPassphrase(ctx context.Context, passphrase string) (backup.KeyInfo, error)
+	ClearPassphrase(ctx context.Context) error
+	KeyInfo(ctx context.Context) (backup.KeyInfo, bool, error)
 	TestS3(ctx context.Context, cfg backup.S3Dest) error
 	Selections(ctx context.Context) ([]backup.StackSelectionView, error)
 	SetSelection(ctx context.Context, sel backup.StackSelection) error
@@ -35,10 +38,12 @@ type BackupAPI interface {
 var _ BackupAPI = (*backup.Service)(nil)
 
 const (
-	codeBackupRunning = "backup_running"
-	defaultRunsLimit  = 20
-	maxRunsLimit      = 100
-	manualTrigger     = "manual"
+	codeBackupRunning      = "backup_running"
+	codePassphraseTooShort = "passphrase_too_short"
+	codePassphraseRequired = "passphrase_required"
+	defaultRunsLimit       = 20
+	maxRunsLimit           = 100
+	manualTrigger          = "manual"
 )
 
 func (s *server) registerBackupRoutes(mux *http.ServeMux) {
@@ -46,6 +51,7 @@ func (s *server) registerBackupRoutes(mux *http.ServeMux) {
 	route("GET /api/backups/config", s.handleBackupConfig)
 	route("PUT /api/backups/config", s.handleBackupSaveConfig)
 	route("DELETE /api/backups/config/s3-secret", s.handleBackupClearSecret)
+	route("DELETE /api/backups/config/encryption-key", s.handleBackupClearEncryptionKey)
 	route("POST /api/backups/s3/test", s.handleBackupTestS3)
 	route("GET /api/backups/stacks", s.handleBackupStacks)
 	route("PUT /api/backups/stacks/{name}", s.handleBackupSetStack)
@@ -60,6 +66,10 @@ func (s *server) backupConfigDTO(ctx context.Context, cfg backup.Config) (apityp
 	if err != nil {
 		return apitypes.BackupConfig{}, err
 	}
+	key, keySet, err := s.opts.Backups.KeyInfo(ctx)
+	if err != nil {
+		return apitypes.BackupConfig{}, err
+	}
 	dto := apitypes.BackupConfig{
 		Schedule: apitypes.BackupSchedule{
 			Enabled: cfg.Schedule.Enabled, Frequency: cfg.Schedule.Frequency,
@@ -71,6 +81,7 @@ func (s *server) backupConfigDTO(ctx context.Context, cfg backup.Config) (apityp
 			Endpoint: cfg.S3.Endpoint, PathStyle: cfg.S3.PathStyle, AccessKeyID: cfg.S3.AccessKeyID,
 			SecretKeySet: cfg.S3.SecretKey != "",
 		},
+		Encryption:         apitypes.BackupEncryption{Enabled: cfg.Encryption.Enabled, PassphraseSet: keySet, KeyID: key.KeyID},
 		PausedAfterRestore: paused,
 	}
 	if next, ok := s.opts.Backups.NextRun(ctx); ok {
@@ -85,8 +96,9 @@ func backupConfigFromDTO(dto apitypes.BackupConfig) backup.Config {
 			Enabled: dto.Schedule.Enabled, Frequency: dto.Schedule.Frequency,
 			Weekday: time.Weekday(dto.Schedule.Weekday), Time: dto.Schedule.Time,
 		},
-		Local: backup.LocalDest{Enabled: dto.Local.Enabled, Path: dto.Local.Path, KeepLast: dto.Local.KeepLast},
-		S3:    backupS3FromDTO(dto.S3),
+		Local:      backup.LocalDest{Enabled: dto.Local.Enabled, Path: dto.Local.Path, KeepLast: dto.Local.KeepLast},
+		S3:         backupS3FromDTO(dto.S3),
+		Encryption: backup.EncryptionSettings{Enabled: dto.Encryption.Enabled},
 	}
 }
 
@@ -122,7 +134,22 @@ func (s *server) handleBackupSaveConfig(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if req.Encryption.Passphrase != "" {
+		// Store the passphrase first: enabling encryption needs it on disk.
+		if _, err := s.opts.Backups.SetPassphrase(r.Context(), req.Encryption.Passphrase); err != nil {
+			if errors.Is(err, backup.ErrPassphraseTooShort) {
+				writeCodedError(w, http.StatusBadRequest, "the passphrase must be at least 12 characters", codePassphraseTooShort)
+				return
+			}
+			s.internalError(w, r, err)
+			return
+		}
+	}
 	if err := s.opts.Backups.SaveConfig(r.Context(), cfg); err != nil {
+		if errors.Is(err, backup.ErrNoKeyFile) {
+			writeCodedError(w, http.StatusBadRequest, "set a passphrase before turning encryption on", codePassphraseRequired)
+			return
+		}
 		s.internalError(w, r, err)
 		return
 	}
@@ -141,6 +168,14 @@ func (s *server) handleBackupSaveConfig(w http.ResponseWriter, r *http.Request) 
 
 func (s *server) handleBackupClearSecret(w http.ResponseWriter, r *http.Request) {
 	if err := s.opts.Backups.ClearS3Secret(r.Context()); err != nil {
+		s.internalError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) handleBackupClearEncryptionKey(w http.ResponseWriter, r *http.Request) {
+	if err := s.opts.Backups.ClearPassphrase(r.Context()); err != nil {
 		s.internalError(w, r, err)
 		return
 	}

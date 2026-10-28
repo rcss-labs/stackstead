@@ -170,6 +170,7 @@ type memDest struct {
 	name      string
 	createErr error
 	onClose   func()
+	onOpen    func(archive string) // runs at the start of every Open, before the bytes are read
 	mu        sync.Mutex
 	archives  map[string][]byte
 	sidecars  map[string][]byte
@@ -217,6 +218,9 @@ func (d *memDest) PutSidecar(_ context.Context, archive string, manifest []byte)
 }
 func (d *memDest) List(context.Context) ([]ArchiveRef, error) { return nil, nil }
 func (d *memDest) Open(_ context.Context, archive string) (io.ReadCloser, error) {
+	if d.onOpen != nil {
+		d.onOpen(archive)
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return io.NopCloser(bytes.NewReader(d.archives[archive])), nil
@@ -381,7 +385,7 @@ func tarOf(t *testing.T, files map[string][]byte) []byte {
 // readArchive returns the entry names in archive order and the manifest.
 func readArchive(t *testing.T, data []byte) ([]string, Manifest) {
 	t.Helper()
-	r, err := NewReader(bytes.NewReader(data))
+	r, err := newPlainReader(bytes.NewReader(data))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -440,7 +444,7 @@ func TestRunnerBaseOnlyArchive(t *testing.T) {
 		t.Fatalf("run = %+v", run)
 	}
 	name, data := env.local.only(t)
-	if run.Archive != name || name != ArchiveName("test-host", runnerNow) || run.Size != int64(len(data)) {
+	if run.Archive != name || name != ArchiveName("test-host", runnerNow, false) || run.Size != int64(len(data)) {
 		t.Errorf("archive = %q size %d, run = %+v", name, len(data), run)
 	}
 	names, m := readArchive(t, data)
@@ -864,5 +868,162 @@ func TestRunnerKeepsFileBindsOutOfVolumeData(t *testing.T) {
 	want := ItemResult{Kind: "volume", Stack: "web", Name: outside, Status: "skipped", Note: "file bind outside the stack directory is not backed up"}
 	if !slices.Contains(m.Items, want) {
 		t.Errorf("no skipped item for %s: %+v", outside, m.Items)
+	}
+}
+
+const runnerPassphrase = "runner test passphrase"
+
+// decryptArchive decrypts an encrypted archive with key.
+func decryptArchive(t *testing.T, data []byte, key *Key) []byte {
+	t.Helper()
+	d, err := NewDecryptReader(bytes.NewReader(data), func(KeyParams, string) (*Key, error) { return key, nil })
+	if err != nil {
+		t.Fatalf("open encrypted archive: %v", err)
+	}
+	plain, err := io.ReadAll(d)
+	if err != nil {
+		t.Fatalf("decrypt archive: %v", err)
+	}
+	return plain
+}
+
+func encryptedOnly(t *testing.T) Config {
+	cfg := localOnly(t)
+	cfg.Encryption.Enabled = true
+	return cfg
+}
+
+func TestRunWritesEncryptedArchiveWhenEnabled(t *testing.T) {
+	env := newRunnerEnv(t, encryptedOnly(t))
+	info, err := WriteKeyFile(env.dataDir, runnerPassphrase, runnerNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stack := env.addStack(t, "web", stacks.StatusRunning)
+	writeTree(t, filepath.Dir(stack.ComposePath), map[string]string{".env": "DB_PASSWORD=env-marker-hunter2\n"})
+	env.newRunner()
+
+	run := env.run(t)
+	if run.Status != "success" || run.Error != "" {
+		t.Fatalf("run = %+v", run)
+	}
+	name, data := env.local.only(t)
+	if !strings.HasSuffix(name, ".tar.gz.enc") || name != ArchiveName("test-host", runnerNow, true) || run.Archive != name || run.Size != int64(len(data)) {
+		t.Fatalf("archive %q size %d, run %+v", name, len(data), run)
+	}
+	if !bytes.HasPrefix(data, []byte("SSBACKUP")) {
+		t.Fatalf("archive starts with %q, want the encryption magic", data[:8])
+	}
+	if bytes.Contains(data, []byte("env-marker-hunter2")) || bytes.Contains(data, []byte("DB_PASSWORD")) {
+		t.Fatal("the .env content is visible in the stored archive")
+	}
+
+	key, err := LoadKey(env.dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key.ID() != info.KeyID {
+		t.Fatalf("key id = %q, want %q", key.ID(), info.KeyID)
+	}
+	names, m := readArchive(t, decryptArchive(t, data, key))
+	if names[len(names)-1] != ManifestEntryName {
+		t.Errorf("manifest is not last: %v", names)
+	}
+	if m.Encryption == nil || m.Encryption.KeyID != key.ID() || m.Encryption.SidecarMAC != "" {
+		t.Fatalf("in-archive encryption block = %+v, want the key id and no MAC", m.Encryption)
+	}
+
+	sidecar, err := env.local.ReadSidecar(context.Background(), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := key.VerifySidecar(sidecar); err != nil {
+		t.Fatalf("sidecar MAC: %v", err)
+	}
+	if sidecar.Encryption.KeyID != key.ID() || sidecar.Encryption.KeySalt == "" {
+		t.Errorf("sidecar encryption = %+v", sidecar.Encryption)
+	}
+	var skipped bool
+	for _, it := range run.Items {
+		if it.Kind == "base" && it.Name == "credentials" && it.Status == "skipped" && strings.Contains(it.Note, "never archived") {
+			skipped = true
+		}
+	}
+	if !skipped {
+		t.Errorf("run items lack the credentials note: %+v", run.Items)
+	}
+}
+
+func TestRunFailsClosedWithoutKeyFile(t *testing.T) {
+	env := newRunnerEnv(t, encryptedOnly(t))
+	env.local.createErr = errors.New("Create must not be called")
+	env.addStack(t, "web", stacks.StatusRunning)
+	env.newRunner()
+
+	run := env.run(t)
+	if run.Status != "failed" {
+		t.Fatalf("run = %+v, want failed", run)
+	}
+	if !strings.Contains(run.Error, KeyFilePath(env.dataDir)) || strings.Contains(run.Error, "Create must not") {
+		t.Errorf("error = %q, want it to name the key file path and not reach a destination", run.Error)
+	}
+	if len(env.local.archives) != 0 || len(env.local.aborted) != 0 {
+		t.Errorf("destination touched: %v %v", env.local.archives, env.local.aborted)
+	}
+}
+
+func TestRunPlaintextWhenEncryptionOff(t *testing.T) {
+	env := newRunnerEnv(t, localOnly(t))
+	env.addStack(t, "web", stacks.StatusRunning)
+	env.newRunner()
+
+	run := env.run(t)
+	if run.Status != "success" {
+		t.Fatalf("run = %+v", run)
+	}
+	name, data := env.local.only(t)
+	if !strings.HasSuffix(name, ".tar.gz") || strings.HasSuffix(name, ".enc") {
+		t.Fatalf("name = %q", name)
+	}
+	_, m := readArchive(t, data)
+	if m.Encryption != nil {
+		t.Fatalf("manifest.Encryption = %+v, want nil", m.Encryption)
+	}
+	sidecar, err := env.local.ReadSidecar(context.Background(), name)
+	if err != nil || sidecar.Encryption != nil {
+		t.Fatalf("sidecar = %+v, %v", sidecar, err)
+	}
+	var skipped bool
+	for _, it := range run.Items {
+		skipped = skipped || (it.Name == "credentials" && it.Status == "skipped")
+	}
+	if !skipped {
+		t.Error("credentials are stripped from plaintext archives too, and the run should say so")
+	}
+}
+
+func TestRunUploadsEncryptedBytesUnchanged(t *testing.T) {
+	cfg := encryptedOnly(t)
+	cfg.S3 = S3Dest{Enabled: true, Bucket: "bkt", Region: "us-east-1"}
+	env := newRunnerEnv(t, cfg)
+	if _, err := WriteKeyFile(env.dataDir, runnerPassphrase, runnerNow); err != nil {
+		t.Fatal(err)
+	}
+	env.runner.newLocal = NewLocal
+
+	run := env.run(t)
+	if run.Status != "success" || !reflect.DeepEqual(run.Destinations, []string{destLocal, destS3}) {
+		t.Fatalf("run = %+v", run)
+	}
+	local, err := os.ReadFile(filepath.Join(cfg.Local.Path, run.Archive))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name, data := env.s3.only(t); name != run.Archive || !bytes.Equal(data, local) || !strings.HasSuffix(name, ".enc") {
+		t.Errorf("uploaded %q (%d bytes), local %d bytes", name, len(data), len(local))
+	}
+	sidecar := env.s3.sidecars[run.Archive]
+	if !bytes.Contains(sidecar, []byte("sidecarMac")) {
+		t.Errorf("S3 sidecar is not MACed: %s", sidecar)
 	}
 }

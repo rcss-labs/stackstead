@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/rcss-labs/stackstead/internal/engine"
+	"github.com/rcss-labs/stackstead/internal/secret"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 	"github.com/rcss-labs/stackstead/internal/store"
 )
@@ -167,6 +168,9 @@ type hostFixture struct {
 	volData  map[string]map[string]string            // "<stack>/<key>" -> inner tar files
 	images   map[string]map[string]map[string]string // stack -> image ref -> inner tar files
 	items    []ItemResult                            // manifest items; a failed image is left out of Images
+	key      *Key                                    // when set the archive is encrypted and its sidecar carries a MAC
+	// instanceID is the writing instance recorded in the manifest.
+	instanceID string
 }
 
 // archivedDB builds the database a backup would hold and returns its bytes.
@@ -230,7 +234,7 @@ func addBytes(t *testing.T, w *Writer, name string, data []byte) {
 }
 
 func (f hostFixture) manifest() Manifest {
-	m := Manifest{Format: ManifestFormat, StacksteadVersion: f.version, Host: "old", HostSlug: "old", CreatedAt: time.Date(2026, 10, 1, 3, 0, 0, 0, time.UTC), Status: "complete", Networks: len(f.networks)}
+	m := Manifest{Format: ManifestFormat, StacksteadVersion: f.version, Host: "old", HostSlug: "old", InstanceID: f.instanceID, CreatedAt: time.Date(2026, 10, 1, 3, 0, 0, 0, time.UTC), Status: "complete", Networks: len(f.networks)}
 	for _, e := range f.stacks {
 		m.Stacks = append(m.Stacks, ManifestStack{
 			Name: e.Name, ComposePath: e.ComposePath, Origin: string(e.Origin), Project: e.Project,
@@ -239,6 +243,25 @@ func (f hostFixture) manifest() Manifest {
 		})
 	}
 	m.Items = f.items
+	if f.key != nil {
+		m.Encryption = newManifestEncryption(f.key)
+	}
+	return m
+}
+
+// signedManifest is the manifest as the sidecar carries it: with the MAC of an
+// encrypted archive.
+func (f hostFixture) signedManifest() Manifest {
+	m := f.manifest()
+	if f.key != nil {
+		mac, err := f.key.SidecarMAC(m)
+		if err != nil {
+			panic(err)
+		}
+		enc := *m.Encryption
+		enc.SidecarMAC = mac
+		m.Encryption = &enc
+	}
 	return m
 }
 
@@ -259,7 +282,15 @@ func (f hostFixture) imageRefs(stack string) []string {
 func (f hostFixture) build(t *testing.T, dir string, withSidecar bool) string {
 	t.Helper()
 	var buf bytes.Buffer
+	var ew io.WriteCloser
 	w := NewWriter(&buf)
+	if f.key != nil {
+		var err error
+		if ew, err = NewEncryptWriter(&buf, f.key); err != nil {
+			t.Fatal(err)
+		}
+		w = NewWriter(ew)
+	}
 	addBytes(t, w, "base/stackstead.db", archivedDB(t, f.stacks, f.schedule))
 	addBytes(t, w, "base/config.yaml", []byte("listen: :8080\n"))
 	nets, _ := json.Marshal(append([]engine.NetworkSpec{}, f.networks...))
@@ -293,12 +324,17 @@ func (f hostFixture) build(t *testing.T, dir string, withSidecar bool) string {
 	if err := w.Close(m); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, ArchiveName("old", m.CreatedAt))
+	if ew != nil {
+		if err := ew.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(dir, ArchiveName("old", m.CreatedAt, f.key != nil))
 	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if withSidecar {
-		writeSidecar(t, path, m)
+		writeSidecar(t, path, f.signedManifest())
 	}
 	return path
 }
@@ -365,7 +401,7 @@ func pathSource(p string) HostSource { return HostSource{Kind: "path", Path: p} 
 func (s *hostSetup) restore(t *testing.T, path string) (HostReport, error) {
 	t.Helper()
 	sum, _ := InspectHost(context.Background(), pathSource(path), s.env)
-	return RestoreHost(context.Background(), pathSource(path), s.env, true, sum.ConflictsDigest)
+	return RestoreHost(context.Background(), pathSource(path), s.env, HostRestoreOptions{StartStacks: true, AllowUnencrypted: true, ConfirmedDigest: sum.ConflictsDigest})
 }
 
 // assertHostUntouched checks the anti-goal: no Docker changes and no stack files.
@@ -819,7 +855,7 @@ func TestHostRestoreSkipsBindOutsideRoots(t *testing.T) {
 			t.Errorf("conflict lists a path outside the roots: %+v", c)
 		}
 	}
-	report, err := RestoreHost(context.Background(), pathSource(path), s.env, true, sum.ConflictsDigest)
+	report, err := RestoreHost(context.Background(), pathSource(path), s.env, HostRestoreOptions{StartStacks: true, AllowUnencrypted: true, ConfirmedDigest: sum.ConflictsDigest})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -915,7 +951,7 @@ func TestHostRestoreRefusesChangedConflicts(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.eng.volumes = map[string]bool{"web_data": true} // appeared after the user confirmed
-	_, err = RestoreHost(context.Background(), pathSource(path), s.env, true, sum.ConflictsDigest)
+	_, err = RestoreHost(context.Background(), pathSource(path), s.env, HostRestoreOptions{StartStacks: true, AllowUnencrypted: true, ConfirmedDigest: sum.ConflictsDigest})
 	if !errors.Is(err, ErrConflictsChanged) {
 		t.Fatalf("err = %v, want ErrConflictsChanged", err)
 	}
@@ -948,7 +984,7 @@ func TestHostRestoreAcceptsBaseFilesBeforeDatabase(t *testing.T) {
 	if !slices.Contains(sum.Conflicts, Conflict{Kind: "network", Name: "backend", Action: "keep"}) {
 		t.Errorf("a late networks.json was not seen: %+v", sum.Conflicts)
 	}
-	if _, err := RestoreHost(context.Background(), pathSource(path), s.env, true, sum.ConflictsDigest); err != nil {
+	if _, err := RestoreHost(context.Background(), pathSource(path), s.env, HostRestoreOptions{StartStacks: true, AllowUnencrypted: true, ConfirmedDigest: sum.ConflictsDigest}); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Contains(s.eng.changes(), "network:lan") {
@@ -1169,6 +1205,7 @@ func (s *hostSetup) webContainers() {
 // again after the restart even when the user did not ask to start stacks.
 func TestHostRestoreStopsContainersWhoseVolumesAreReplaced(t *testing.T) {
 	s := newHostSetup(t)
+	s.env.InstanceID, s.fixture.instanceID = "mine", "mine" // this host's own archive
 	s.webContainers()
 	path := s.fixture.build(t, t.TempDir(), true)
 
@@ -1185,7 +1222,7 @@ func TestHostRestoreStopsContainersWhoseVolumesAreReplaced(t *testing.T) {
 			t.Errorf("conflicts lack %+v: %+v", want, sum.Conflicts)
 		}
 	}
-	if _, err := RestoreHost(context.Background(), pathSource(path), s.env, false, sum.ConflictsDigest); err != nil {
+	if _, err := RestoreHost(context.Background(), pathSource(path), s.env, HostRestoreOptions{StartStacks: false, AllowUnencrypted: true, ConfirmedDigest: sum.ConflictsDigest}); err != nil {
 		t.Fatal(err)
 	}
 	calls := s.eng.changes()
@@ -1240,21 +1277,209 @@ func TestHostRestoreStartsStoppedContainersWhenItFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The archive's own manifest, read last, no longer matches the sidecar.
-	other := s.fixture.manifest()
-	other.CreatedAt = other.CreatedAt.Add(time.Hour)
-	writeSidecar(t, path, other)
-	sum2, err := InspectHost(context.Background(), pathSource(path), s.env)
-	if err != nil || sum2.ConflictsDigest != sum.ConflictsDigest {
-		t.Fatalf("inspect again: %v", err)
+	// The pre-scan catches a bad archive before anything is stopped, so the
+	// archive is cut short after the scan, as the restore pass is about to read it.
+	s.env.Accepted = func() {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.WriteFile(path, raw[:len(raw)-100], 0o600); err != nil {
+			t.Error(err)
+		}
 	}
 
-	if _, err := RestoreHost(context.Background(), pathSource(path), s.env, true, sum2.ConflictsDigest); err == nil {
-		t.Fatal("restore succeeded although the sidecar does not match")
+	if _, err := RestoreHost(context.Background(), pathSource(path), s.env, HostRestoreOptions{StartStacks: true, AllowUnencrypted: true, ConfirmedDigest: sum.ConflictsDigest}); err == nil {
+		t.Fatal("restore succeeded although the archive was cut short")
 	}
 	calls := s.eng.changes()
 	stop, start := indexOf(calls, "container-stop:c1"), indexOf(calls, "container-start:c1")
 	if stop < 0 || start < stop {
 		t.Errorf("calls = %v, want web-app-1 stopped and started again", calls)
+	}
+}
+
+const hostTestPassphrase = "host fixture passphrase"
+
+// encrypt turns the fixture's archive into an encrypted one and pads the volume
+// data with incompressible bytes, so the volumes/ section spans several chunks
+// and lies well after the stack files.
+func (s *hostSetup) encrypt(t *testing.T) *Key {
+	t.Helper()
+	s.fixture.key = testKeyFor(t, hostTestPassphrase, 7)
+	s.fixture.volData["web/v-web_data"]["data/big.bin"] = string(randomBytes(t, 300_000))
+	return s.fixture.key
+}
+
+func encSource(path, passphrase string) HostSource {
+	return HostSource{Kind: SourcePath, Path: path, Passphrase: secret.Secret(passphrase)}
+}
+
+// restoreFrom inspects and restores like the setup screen: the fast inspection
+// first, then the restore with the confirmed digest.
+func (s *hostSetup) restoreFrom(t *testing.T, src HostSource, allowUnencrypted bool) (HostReport, error) {
+	t.Helper()
+	sum, err := InspectHost(context.Background(), src, s.env)
+	if err != nil {
+		return HostReport{}, err
+	}
+	return RestoreHost(context.Background(), src, s.env, HostRestoreOptions{StartStacks: true, AllowUnencrypted: allowUnencrypted, ConfirmedDigest: sum.ConflictsDigest})
+}
+
+func flipByte(t *testing.T, path string, at func(n int) int) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw[at(len(raw))] ^= 0x01
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (s *hostSetup) assertStagingEmpty(t *testing.T) {
+	t.Helper()
+	if entries, err := os.ReadDir(restoreDir(s.env.DataDir)); err == nil && len(entries) != 0 {
+		t.Errorf("restore staging still holds %v", dirEntries(t, restoreDir(s.env.DataDir)))
+	}
+}
+
+func TestHostRestoreDecryptsEncryptedArchive(t *testing.T) {
+	s := newHostSetup(t)
+	s.encrypt(t)
+	path := s.fixture.build(t, t.TempDir(), true)
+
+	report, err := s.restoreFrom(t, encSource(path, hostTestPassphrase), false)
+	if err != nil {
+		t.Fatalf("restore: %v (items %+v)", err, report.Items)
+	}
+	if got := readFile(t, filepath.Join(s.rootA, "web", "compose.yaml")); got != "services: {app: {image: nginx}}\n" {
+		t.Errorf("restored compose = %q", got)
+	}
+	pending := readPending(t, s.env.DataDir)
+	if _, err := os.Stat(pending.StagedDB); err != nil {
+		t.Errorf("staged database missing: %v", err)
+	}
+	if len(s.eng.puts) != 1 || len(s.eng.puts[0]["data/big.bin"]) != 300_000 {
+		t.Errorf("volume contents were not restored from the decrypted stream")
+	}
+}
+
+// Criterion 1 of SEC-12: a modified encrypted archive fails with a typed
+// error before any host change. The flipped byte lies in volumes/, far past
+// the stack files, so only a full pre-scan can catch it in time.
+func TestHostRestoreRefusesTamperedEncryptedArchiveBeforeChanges(t *testing.T) {
+	for _, withSidecar := range []bool{true, false} {
+		s := newHostSetup(t)
+		s.encrypt(t)
+		path := s.fixture.build(t, t.TempDir(), withSidecar)
+		flipByte(t, path, func(n int) int { return n * 4 / 5 })
+
+		_, err := s.restoreFrom(t, encSource(path, hostTestPassphrase), false)
+		if !errors.Is(err, ErrArchiveTampered) {
+			t.Fatalf("sidecar=%v: err = %v, want ErrArchiveTampered", withSidecar, err)
+		}
+		s.assertHostUntouched(t)
+		s.assertStagingEmpty(t)
+	}
+}
+
+// The same holds for a plaintext archive that is cut off after its stack
+// files, with a sidecar: the fast inspection looks only at base/.
+func TestHostRestoreRefusesTruncatedAfterStackFilesBeforeChanges(t *testing.T) {
+	s := newHostSetup(t)
+	s.fixture.volData["web/v-web_data"]["data/big.bin"] = string(randomBytes(t, 300_000))
+	path := s.fixture.build(t, t.TempDir(), true)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw[:len(raw)*3/4], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.restoreFrom(t, pathSource(path), true); err == nil {
+		t.Fatal("restore of a truncated archive succeeded")
+	}
+	s.assertHostUntouched(t)
+	s.assertStagingEmpty(t)
+}
+
+func TestHostRestoreRefusesUnencryptedWithoutAcknowledgement(t *testing.T) {
+	s := newHostSetup(t)
+	path := s.fixture.build(t, t.TempDir(), true)
+	if _, err := s.restoreFrom(t, pathSource(path), false); !errors.Is(err, ErrUnencryptedArchive) {
+		t.Fatalf("err = %v, want ErrUnencryptedArchive", err)
+	}
+	s.assertHostUntouched(t)
+	s.assertStagingEmpty(t)
+
+	// Inspection is read-only and always allowed, and says the archive is plain.
+	sum, err := InspectHost(context.Background(), pathSource(path), s.env)
+	if err != nil || sum.Encrypted || sum.KeyID != "" {
+		t.Fatalf("inspect = %+v, %v", sum, err)
+	}
+	if _, err := s.restoreFrom(t, pathSource(path), true); err != nil {
+		t.Fatalf("restore with the acknowledgement: %v", err)
+	}
+	readPending(t, s.env.DataDir)
+}
+
+func TestHostRestoreRefusesWrongPassphrase(t *testing.T) {
+	s := newHostSetup(t)
+	s.encrypt(t)
+	path := s.fixture.build(t, t.TempDir(), true)
+	if _, err := s.restoreFrom(t, encSource(path, "not the passphrase"), false); !errors.Is(err, ErrWrongPassphrase) {
+		t.Fatalf("wrong passphrase: err = %v, want ErrWrongPassphrase", err)
+	}
+	if _, err := s.restoreFrom(t, pathSource(path), false); !errors.Is(err, ErrPassphraseRequired) {
+		t.Fatalf("no passphrase: err = %v, want ErrPassphraseRequired", err)
+	}
+	s.assertHostUntouched(t)
+}
+
+func TestHostRestoreRejectsSidecarWithBadMAC(t *testing.T) {
+	s := newHostSetup(t)
+	key := s.encrypt(t)
+	path := s.fixture.build(t, t.TempDir(), true)
+	m := s.fixture.signedManifest()
+	m.Stacks[0].Volumes = []ManifestVolume{{Key: "v-x", Kind: "bind", Name: "/etc", Target: "/x"}}
+	writeSidecar(t, path, m) // edited, MAC no longer matches
+	if err := key.VerifySidecar(m); err == nil {
+		t.Fatal("test setup: the edited sidecar still verifies")
+	}
+	_, err := InspectHost(context.Background(), encSource(path, hostTestPassphrase), s.env)
+	if !errors.Is(err, ErrManifestMismatch) {
+		t.Fatalf("err = %v, want ErrManifestMismatch", err)
+	}
+	s.assertHostUntouched(t)
+}
+
+func TestHostRestoreRefusesUnauthenticatedSidecarForEncryptedArchive(t *testing.T) {
+	s := newHostSetup(t)
+	s.encrypt(t)
+	path := s.fixture.build(t, t.TempDir(), true)
+	plain := s.fixture.manifest()
+	plain.Encryption = nil
+	writeSidecar(t, path, plain)
+	_, err := InspectHost(context.Background(), encSource(path, hostTestPassphrase), s.env)
+	if !errors.Is(err, ErrManifestMismatch) {
+		t.Fatalf("err = %v, want ErrManifestMismatch", err)
+	}
+}
+
+func TestInspectHostReportsEncryption(t *testing.T) {
+	s := newHostSetup(t)
+	key := s.encrypt(t)
+	for _, withSidecar := range []bool{true, false} {
+		path := s.fixture.build(t, t.TempDir(), withSidecar)
+		sum, err := InspectHost(context.Background(), encSource(path, hostTestPassphrase), s.env)
+		if err != nil {
+			t.Fatalf("sidecar=%v: %v", withSidecar, err)
+		}
+		if !sum.Encrypted || sum.KeyID != key.ID() {
+			t.Errorf("sidecar=%v: summary encrypted=%v key=%q, want key %q", withSidecar, sum.Encrypted, sum.KeyID, key.ID())
+		}
 	}
 }

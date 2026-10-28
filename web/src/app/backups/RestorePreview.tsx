@@ -3,6 +3,7 @@ import { formatBytes } from '$lib/format';
 import { Banner } from '../components/Banner';
 import { Tag } from '../components/Tag';
 import { DiffView } from '../stacks/DiffView';
+import { ComposeRisksBanner } from './ComposeRisksBanner';
 import styles from './backups.module.css';
 
 /** What a restore would do, from the server's plan. */
@@ -14,8 +15,17 @@ export function RestorePreview({ plan, replacesVolumes }: { plan: BackupRestoreP
           Restores to <span className={styles.mono}>{plan.targetDir}</span>
         </strong>
         {plan.crossHost && <Tag tone="warning">Cross-host</Tag>}
+        {plan.encrypted ? (
+          <Tag tone="success" mono={false}>{`Encrypted · key ${plan.keyId}`}</Tag>
+        ) : (
+          <Tag tone="warning" mono={false}>
+            Unencrypted
+          </Tag>
+        )}
         {plan.overwrites && <Tag tone="danger">Overwrites existing stack</Tag>}
       </div>
+
+      <ComposeRisksBanner risks={plan.risks} />
 
       {plan.warnings.length > 0 && (
         <Banner kind="warning" title="Warnings">

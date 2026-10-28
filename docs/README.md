@@ -90,7 +90,7 @@ What Stackstead exposes and how to run it safely.
 - [Storage cleanup](security.md#storage-cleanup): permanent volume deletion, protections and action logging.
 - [Remote access](security.md#remote-access): TLS reverse proxy settings and the HTTP/1.1 connection limit.
 - [First-run setup](security.md#first-run-setup) and [Password change](security.md#password-change).
-- [Backups and restore](security.md#backups-and-restore): unencrypted archives, S3 policy, restore confinement, whole-host restore.
+- [Backups and restore](security.md#backups-and-restore): archive encryption, S3 policy, restore confinement, whole-host restore.
 
 ### [Building and development](development.md)
 

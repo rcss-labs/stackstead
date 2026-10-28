@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -32,6 +33,18 @@ type fakeBackups struct {
 	restoreErr  error
 	planErr     error
 	manifestRef [2]string
+
+	manifest *backup.Manifest
+	// planEncryption makes PlanRestore report an encrypted archive.
+	planEncryption *backup.ManifestEncryption
+	// planForeign and planRisks make PlanRestore report another instance's archive.
+	planForeign bool
+	planRisks   []backup.ComposeRisk
+	archives    []backup.ArchiveRef
+	key         *backup.KeyInfo
+	passphrase  string
+	calls       []string
+	cleared     bool
 }
 
 func (f *fakeBackups) PlanRestore(_ context.Context, req backup.StackRestoreRequest) (backup.StackRestorePlan, error) {
@@ -46,7 +59,16 @@ func (f *fakeBackups) PlanRestore(_ context.Context, req backup.StackRestoreRequ
 		Volumes:   []backup.PlannedVolume{{Key: "b-1", Kind: "bind", Name: "/etc", Target: "/x", Skip: true, Reason: "outside allowed roots"}},
 		Images:    []string{"nginx:1.27"},
 		Warnings:  []string{"volume contents are replaced and not kept"},
+		Encrypted: f.planEncryption != nil, KeyID: keyIDOf(f.planEncryption),
+		Foreign: f.planForeign, Risks: f.planRisks,
 	}, nil
+}
+
+func keyIDOf(e *backup.ManifestEncryption) string {
+	if e == nil {
+		return ""
+	}
+	return e.KeyID
 }
 func (f *fakeBackups) Restore(_ context.Context, req backup.StackRestoreRequest, user string) (stacks.Operation, error) {
 	f.restoreReq, f.restoreUser = req, user
@@ -57,12 +79,39 @@ func (f *fakeBackups) Restore(_ context.Context, req backup.StackRestoreRequest,
 }
 func (f *fakeBackups) ArchiveManifest(_ context.Context, dest, name string) (backup.Manifest, error) {
 	f.manifestRef = [2]string{dest, name}
+	if f.manifest != nil {
+		return *f.manifest, nil
+	}
 	return backup.Manifest{Format: 1, StacksteadVersion: "1.3.0", HostSlug: "old",
 		Stacks: []backup.ManifestStack{{Name: "web", Volumes: []backup.ManifestVolume{{Key: "v-web_data", Kind: "volume", Name: "web_data"}}}}}, nil
 }
 
 func (f *fakeBackups) Config(context.Context) (backup.Config, error) { return f.cfg, nil }
+func (f *fakeBackups) SetPassphrase(_ context.Context, passphrase string) (backup.KeyInfo, error) {
+	f.calls = append(f.calls, "set-passphrase")
+	if len(passphrase) < 12 {
+		return backup.KeyInfo{}, backup.ErrPassphraseTooShort
+	}
+	f.passphrase = passphrase
+	f.key = &backup.KeyInfo{KeyID: "0123456789abcdef", CreatedAt: time.Unix(5, 0).UTC()}
+	return *f.key, nil
+}
+func (f *fakeBackups) ClearPassphrase(context.Context) error {
+	f.cleared, f.key = true, nil
+	f.cfg.Encryption.Enabled = false
+	return nil
+}
+func (f *fakeBackups) KeyInfo(context.Context) (backup.KeyInfo, bool, error) {
+	if f.key == nil {
+		return backup.KeyInfo{}, false, nil
+	}
+	return *f.key, true, nil
+}
 func (f *fakeBackups) SaveConfig(_ context.Context, cfg backup.Config) error {
+	f.calls = append(f.calls, "save-config")
+	if cfg.Encryption.Enabled && f.key == nil {
+		return backup.ErrNoKeyFile
+	}
 	f.saved = &cfg
 	f.cfg = cfg
 	return nil
@@ -93,6 +142,9 @@ func (f *fakeBackups) Runs(context.Context, int) ([]backup.Run, error) {
 	return []backup.Run{{ID: 3, Trigger: "manual", Status: "success", StartedAt: time.Unix(1, 0).UTC()}}, nil
 }
 func (f *fakeBackups) Archives(context.Context) ([]backup.ArchiveRef, error) {
+	if f.archives != nil {
+		return f.archives, nil
+	}
 	return []backup.ArchiveRef{{Dest: "local", Name: "a.tar.gz", HostSlug: "h", CreatedAt: time.Unix(1, 0).UTC(), Size: 5}}, nil
 }
 func (f *fakeBackups) PausedAfterRestore(context.Context) (bool, error) { return f.paused, nil }
@@ -387,5 +439,220 @@ func TestRestoreAPIBadRequestCodes(t *testing.T) {
 	rec = env.do(t, "GET", "/api/backups/archives/local/notes.txt/manifest", "", withCookie(cookie))
 	if rec.Code != http.StatusBadRequest || errorCode(t, rec.Body.Bytes()) != "bad_archive_ref" {
 		t.Errorf("manifest ref: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestBackupConfigNeverReturnsPassphrase(t *testing.T) {
+	const phrase = "a-very-secret-passphrase"
+	cfg := validBackupConfig()
+	cfg.Encryption.Enabled = true
+	fake := &fakeBackups{cfg: cfg, key: &backup.KeyInfo{KeyID: "0123456789abcdef"}, passphrase: phrase}
+	env, cookie := newBackupEnv(t, fake)
+
+	check := func(label string, rec *httptest.ResponseRecorder) {
+		t.Helper()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d: %s", label, rec.Code, rec.Body)
+		}
+		if strings.Contains(rec.Body.String(), phrase) || strings.Contains(rec.Body.String(), "redacted") {
+			t.Errorf("%s body leaks the passphrase: %s", label, rec.Body)
+		}
+		var got struct {
+			Encryption map[string]any `json:"encryption"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if _, present := got.Encryption["passphrase"]; present {
+			t.Errorf("%s response has a passphrase field", label)
+		}
+		if got.Encryption["passphraseSet"] != true || got.Encryption["keyId"] != "0123456789abcdef" || got.Encryption["enabled"] != true {
+			t.Errorf("%s encryption = %v", label, got.Encryption)
+		}
+	}
+	check("GET", env.do(t, "GET", "/api/backups/config", "", withCookie(cookie)))
+	body := `{"schedule":{"enabled":false,"frequency":"daily","weekday":0,"time":"04:15"},"local":{"enabled":false,"path":"","keepLast":3},"s3":{},"encryption":{"enabled":true,"passphrase":"` + phrase + `"}}`
+	check("PUT", env.do(t, "PUT", "/api/backups/config", body, withCookie(cookie)))
+}
+
+func TestBackupSaveConfigSetsPassphraseThenEnables(t *testing.T) {
+	fake := &fakeBackups{cfg: validBackupConfig()}
+	env, cookie := newBackupEnv(t, fake)
+	body := `{"schedule":{"enabled":false,"frequency":"daily","weekday":0,"time":"04:15"},"local":{"enabled":false,"path":"","keepLast":3},"s3":{},"encryption":{"enabled":true,"passphrase":"twelve chars+ phrase"}}`
+	rec := env.do(t, "PUT", "/api/backups/config", body, withCookie(cookie))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	if !reflect.DeepEqual(fake.calls, []string{"set-passphrase", "save-config"}) {
+		t.Errorf("calls = %v, want the passphrase stored before the configuration", fake.calls)
+	}
+	if fake.saved == nil || !fake.saved.Encryption.Enabled || fake.passphrase != "twelve chars+ phrase" {
+		t.Errorf("saved = %+v passphrase set = %v", fake.saved, fake.passphrase != "")
+	}
+}
+
+func TestBackupSaveConfigEnabledWithoutPassphraseIs400(t *testing.T) {
+	fake := &fakeBackups{cfg: validBackupConfig()}
+	env, cookie := newBackupEnv(t, fake)
+	body := `{"schedule":{"enabled":false,"frequency":"daily","weekday":0,"time":"04:15"},"local":{"enabled":false,"path":"","keepLast":3},"s3":{},"encryption":{"enabled":true}}`
+	rec := env.do(t, "PUT", "/api/backups/config", body, withCookie(cookie))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	var eb apitypes.ErrorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &eb); err != nil || eb.Code != "passphrase_required" {
+		t.Errorf("body = %s (%v)", rec.Body, err)
+	}
+}
+
+func TestBackupSaveConfigShortPassphraseIs400(t *testing.T) {
+	fake := &fakeBackups{cfg: validBackupConfig()}
+	env, cookie := newBackupEnv(t, fake)
+	body := `{"schedule":{"enabled":false,"frequency":"daily","weekday":0,"time":"04:15"},"local":{"enabled":false,"path":"","keepLast":3},"s3":{},"encryption":{"enabled":true,"passphrase":"short"}}`
+	rec := env.do(t, "PUT", "/api/backups/config", body, withCookie(cookie))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	var eb apitypes.ErrorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &eb); err != nil || eb.Code != "passphrase_too_short" {
+		t.Errorf("body = %s (%v)", rec.Body, err)
+	}
+	if fake.saved != nil {
+		t.Error("configuration saved despite the rejected passphrase")
+	}
+}
+
+func TestBackupClearEncryptionKey(t *testing.T) {
+	cfg := validBackupConfig()
+	cfg.Encryption.Enabled = true
+	fake := &fakeBackups{cfg: cfg, key: &backup.KeyInfo{KeyID: "0123456789abcdef"}}
+	env, cookie := newBackupEnv(t, fake)
+	rec := env.do(t, "DELETE", "/api/backups/config/encryption-key", "", withCookie(cookie))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	if !fake.cleared {
+		t.Error("ClearPassphrase not called")
+	}
+}
+
+func TestBackupManifestExposesEncryptionFlag(t *testing.T) {
+	enc := &backup.ManifestEncryption{KeyID: "0123456789abcdef", KeySalt: "00ff", SidecarMAC: "mac-value"}
+	fake := &fakeBackups{cfg: validBackupConfig(), manifest: &backup.Manifest{Format: 1, Encryption: enc}}
+	env, cookie := newBackupEnv(t, fake)
+	rec := env.do(t, "GET", "/api/backups/archives/local/"+testArchive+"/manifest", "", withCookie(cookie))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["encrypted"] != true || got["keyId"] != "0123456789abcdef" {
+		t.Errorf("manifest = %s", rec.Body)
+	}
+	for _, leak := range []string{"keySalt", "sidecarMac", "mac-value", "00ff"} {
+		if strings.Contains(rec.Body.String(), leak) {
+			t.Errorf("manifest leaks %q: %s", leak, rec.Body)
+		}
+	}
+
+	fake.manifest = &backup.Manifest{Format: 1}
+	rec = env.do(t, "GET", "/api/backups/archives/local/"+testArchive+"/manifest", "", withCookie(cookie))
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got["encrypted"] != false || got["keyId"] != "" {
+		t.Errorf("plaintext manifest = %s (%v)", rec.Body, err)
+	}
+}
+
+func TestBackupArchivesExposeEncryptedFlag(t *testing.T) {
+	env, cookie := newBackupEnv(t, &fakeBackups{cfg: validBackupConfig(), archives: []backup.ArchiveRef{
+		{Dest: "local", Name: "a.tar.gz.enc", HostSlug: "h", Encrypted: true},
+		{Dest: "local", Name: "b.tar.gz", HostSlug: "h"},
+	}})
+	rec := env.do(t, "GET", "/api/backups/archives", "", withCookie(cookie))
+	var got []apitypes.BackupArchive
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got) != 2 || !got[0].Encrypted || got[1].Encrypted {
+		t.Fatalf("archives = %s (%v)", rec.Body, err)
+	}
+}
+
+func TestBackupRestoreErrorCodes(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		code string
+	}{
+		{backup.ErrArchiveTampered, "archive_tampered"},
+		{fmt.Errorf("%w: %w", backup.ErrArchiveDamaged, backup.ErrArchiveTampered), "archive_tampered"},
+		{backup.ErrWrongPassphrase, "wrong_passphrase"},
+		{backup.ErrPassphraseRequired, "passphrase_required"},
+		{backup.ErrUnencryptedArchive, "unencrypted_archive"},
+	} {
+		fake := &fakeBackups{cfg: validBackupConfig(), restoreErr: tc.err, planErr: tc.err}
+		env, cookie := newBackupEnv(t, fake)
+		for _, path := range []string{"/api/backups/restore", "/api/backups/restore/plan"} {
+			rec := env.do(t, "POST", path, restoreBody(""), withCookie(cookie))
+			if rec.Code != http.StatusBadRequest || errorCode(t, rec.Body.Bytes()) != tc.code {
+				t.Errorf("%s with %v = %d %s, want 400 %s", path, tc.err, rec.Code, rec.Body, tc.code)
+			}
+		}
+	}
+}
+
+func TestBackupRestorePassesPassphraseAndAcknowledgement(t *testing.T) {
+	fake := &fakeBackups{cfg: validBackupConfig()}
+	env, cookie := newBackupEnv(t, fake)
+	rec := env.do(t, "POST", "/api/backups/restore", restoreBody(`,"passphrase":"restore passphrase","allowUnencrypted":true`), withCookie(cookie))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	if fake.restoreReq.Passphrase.Reveal() != "restore passphrase" || !fake.restoreReq.AllowUnencrypted {
+		t.Errorf("request = %+v", fake.restoreReq)
+	}
+	rec = env.do(t, "POST", "/api/backups/restore/plan", restoreBody(`,"passphrase":"restore passphrase"`), withCookie(cookie))
+	if rec.Code != http.StatusOK || fake.restoreReq.Passphrase.Reveal() != "restore passphrase" || fake.restoreReq.AllowUnencrypted {
+		t.Errorf("plan: status %d request %+v", rec.Code, fake.restoreReq)
+	}
+	if strings.Contains(rec.Body.String(), "restore passphrase") {
+		t.Errorf("the plan echoes the passphrase: %s", rec.Body)
+	}
+}
+
+func TestBackupRestorePlanReportsEncryption(t *testing.T) {
+	fake := &fakeBackups{cfg: validBackupConfig(), planEncryption: &backup.ManifestEncryption{KeyID: "0123456789abcdef"}}
+	env, cookie := newBackupEnv(t, fake)
+	rec := env.do(t, "POST", "/api/backups/restore/plan", restoreBody(""), withCookie(cookie))
+	var plan apitypes.BackupRestorePlan
+	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil || !plan.Encrypted || plan.KeyID != "0123456789abcdef" {
+		t.Errorf("plan = %s (%v)", rec.Body, err)
+	}
+}
+
+func TestBackupRestorePlanIncludesForeignAndRisks(t *testing.T) {
+	risk := backup.ComposeRisk{Stack: "web", File: "compose.yaml", Service: "app", Kind: "privileged", Detail: "true"}
+	fake := &fakeBackups{cfg: validBackupConfig(), planForeign: true, planRisks: []backup.ComposeRisk{risk}}
+	env, cookie := newBackupEnv(t, fake)
+	rec := env.do(t, "POST", "/api/backups/restore/plan", restoreBody(""), withCookie(cookie))
+	var plan apitypes.BackupRestorePlan
+	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil || !plan.Foreign ||
+		len(plan.Risks) != 1 || plan.Risks[0] != apitypes.BackupComposeRisk(risk) {
+		t.Errorf("plan = %s (%v)", rec.Body, err)
+	}
+
+	own := &fakeBackups{cfg: validBackupConfig()}
+	env, cookie = newBackupEnv(t, own)
+	rec = env.do(t, "POST", "/api/backups/restore/plan", restoreBody(""), withCookie(cookie))
+	if !strings.Contains(rec.Body.String(), `"risks":[]`) || !strings.Contains(rec.Body.String(), `"foreign":false`) {
+		t.Errorf("plan = %s, want foreign false and an empty risks list, not null", rec.Body)
+	}
+}
+
+func TestBackupRestorePassesStart(t *testing.T) {
+	fake := &fakeBackups{cfg: validBackupConfig()}
+	env, cookie := newBackupEnv(t, fake)
+	if rec := env.do(t, "POST", "/api/backups/restore", restoreBody(`,"start":true`), withCookie(cookie)); rec.Code != http.StatusAccepted || !fake.restoreReq.Start {
+		t.Errorf("start:true: status %d request %+v", rec.Code, fake.restoreReq)
+	}
+	if rec := env.do(t, "POST", "/api/backups/restore", restoreBody(""), withCookie(cookie)); rec.Code != http.StatusAccepted || fake.restoreReq.Start {
+		t.Errorf("omitted: status %d request %+v, want the stack left stopped", rec.Code, fake.restoreReq)
 	}
 }
