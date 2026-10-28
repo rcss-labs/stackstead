@@ -91,7 +91,7 @@ func (n *peerNode) login() {
 	}
 	resp.Body.Close()
 	for _, c := range resp.Cookies() {
-		if c.Name == "stackstead_session" {
+		if strings.HasSuffix(c.Name, "stackstead_session") {
 			n.cookie = c
 		}
 	}

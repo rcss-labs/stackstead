@@ -224,19 +224,24 @@ func TestSetupRestoreUploadStreamsToDisk(t *testing.T) {
 
 func TestSetupRestoreProgressRequiresRestoreToken(t *testing.T) {
 	env := newRestoreEnv(t, "tok-123")
-	if rec := env.do(t, http.MethodGet, "/api/setup/restore/progress?token=anything", "", fromLoopback); rec.Code != http.StatusForbidden {
+	if rec := env.do(t, http.MethodGet, "/api/setup/restore/progress", "", fromLoopback, withHeader("X-Restore-Token", "anything")); rec.Code != http.StatusForbidden {
 		t.Errorf("progress with no restore running = %d, want 403", rec.Code)
 	}
 	started := env.start(t)
 	env.ops.Wait(started.Operation.ID)
-	for _, target := range []string{"/api/setup/restore/progress", "/api/setup/restore/progress?token=wrong", "/api/setup/restore/progress?token=tok-123"} {
-		if rec := env.do(t, http.MethodGet, target, "", fromLoopback); rec.Code != http.StatusForbidden {
-			t.Errorf("%s = %d, want 403", target, rec.Code)
+	for name, opts := range map[string][]func(*http.Request){
+		"no token":                 {fromLoopback},
+		"wrong header":             {fromLoopback, withHeader("X-Restore-Token", "wrong")},
+		"setup token in header":    {fromLoopback, withHeader("X-Restore-Token", "tok-123")},
+		"restore token in the URL": {fromLoopback, func(r *http.Request) { r.URL.RawQuery = "token=" + started.RestoreToken }},
+	} {
+		if rec := env.do(t, http.MethodGet, "/api/setup/restore/progress", "", opts...); rec.Code != http.StatusForbidden {
+			t.Errorf("%s = %d, want 403", name, rec.Code)
 		}
 	}
 	// The restore token works even once an admin exists (the setup gate has closed).
 	env.createAdmin(t)
-	rec := env.do(t, http.MethodGet, "/api/setup/restore/progress?token="+started.RestoreToken, "")
+	rec := env.do(t, http.MethodGet, "/api/setup/restore/progress", "", withHeader("X-Restore-Token", started.RestoreToken))
 	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "text/event-stream" {
 		t.Fatalf("progress with the restore token = %d %q", rec.Code, rec.Header().Get("Content-Type"))
 	}

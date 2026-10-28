@@ -105,7 +105,7 @@ func newForwardRig(t *testing.T, upstream *httptest.Server, tls peers.TLSOptions
 	}
 	resp.Body.Close()
 	for _, c := range resp.Cookies() {
-		if c.Name == "stackstead_session" {
+		if strings.HasSuffix(c.Name, "stackstead_session") {
 			rig.cookie = c
 		}
 	}

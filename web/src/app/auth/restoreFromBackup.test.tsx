@@ -145,7 +145,8 @@ describe('Restore from backup', () => {
     await user.click(screen.getByLabelText(/I understand/));
     await user.click(screen.getByRole('button', { name: 'Start restore' }));
     await screen.findByText('restoring volumes');
-    expect(stream.requests[0].path).toContain('token=rt');
+    expect(stream.requests[0].path).not.toContain('rt'); // the token stays out of the URL (proxy logs)
+    expect(stream.requests[0].headers.get('X-Restore-Token')).toBe('rt');
     stream?.close('/api/setup/restore/progress'); // the server re-execs: no `done` event
     await waitFor(() => expect(currentPath()).toBe('/login'), { timeout: 6000 });
     expect(polls).toBeGreaterThanOrEqual(2);

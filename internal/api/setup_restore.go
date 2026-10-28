@@ -394,7 +394,7 @@ func (s *server) restartAfterRestore(opID string) {
 // not the setup gate, authorises it: the gate closes as the restore installs
 // the old admin, and the browser must keep following the progress.
 func (s *server) handleRestoreProgress(w http.ResponseWriter, r *http.Request) {
-	given := r.URL.Query().Get("token")
+	given := r.Header.Get("X-Restore-Token") // not the URL: proxies log query strings
 	s.restore.mu.Lock()
 	token, opID := s.restore.token, s.restore.opID
 	s.restore.mu.Unlock()
