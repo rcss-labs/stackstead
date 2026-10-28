@@ -236,7 +236,9 @@ any time. To restore: `sudo systemctl stop stackstead`, then
 `sudo -u stackstead stackstead db restore /backups/stackstead.db --yes`, then
 start the service. The restored database is a self-contained copy (any WAL
 content is folded in), and the previous one is kept next to it as
-`stackstead.db.bak-<UTC timestamp>`. Sessions are whatever the backup holds.
+`stackstead.db.bak-<UTC timestamp>`. Restore signs everyone out: all
+sessions, connection tokens and pairings still in progress are deleted (paired
+servers keep working).
 
 **Whole-host restore.** `stackstead restore <s3://bucket/key | path>` restores a
 whole-host backup archive (database, stack files, volumes, images) on a host
@@ -263,7 +265,8 @@ emptied and refilled (shown as "stopped during restore"); a project whose
 container will not stop keeps its volumes, which are reported as skipped. The
 stacks start when the server next starts, including those stopped here even
 with `--no-start`; if the restore fails, the stopped containers are started
-again right away. The backup schedule is turned off in the restored database, and the UI
+again right away. Everyone is signed out and connection tokens are revoked, as
+with `db restore`. The backup schedule is turned off in the restored database, and the UI
 says so until you turn it back on. Exit codes: 5 while the server runs (or a
 restore is already pending), 6 for an archive from a newer Stackstead or a
 damaged one, 9 when some items failed to restore (the database is still

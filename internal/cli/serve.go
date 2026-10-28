@@ -179,6 +179,18 @@ func runServer(ctx context.Context, env *Env, args []string, restart *atomic.Boo
 	if installed != nil {
 		logger.Info("installed the restored database")
 	}
+	// A restored database carries the sessions and tokens of the backup. They
+	// are deleted before anything serves; a failure refuses to start, because a
+	// revoked session must not come back.
+	if restoreWork != nil && restoreWork.RevokeAccess {
+		if err := store.RevokeAccess(ctx, db); err != nil {
+			logger.Error("could not revoke the restored sessions and tokens", "err", err)
+			return fmt.Errorf("finish the pending host restore: %w", err)
+		}
+		logger.Info("signed everyone out of the restored database")
+		restoreWork.RevokeAccess = false
+		saveRestoreWork()
+	}
 	if restoreWork != nil && restoreWork.PauseSchedule {
 		if err := pauseSchedule(ctx, db); err != nil {
 			logger.Error("could not pause the restored backup schedule; retrying at the next start", "err", err)
