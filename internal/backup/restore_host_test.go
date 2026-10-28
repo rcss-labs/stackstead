@@ -839,8 +839,12 @@ func TestHostRestoreSkipsBindOutsideRoots(t *testing.T) {
 	if slices.Contains(mounted, outsideBind) || slices.Contains(mounted, linkedBind) || slices.ContainsFunc(mounted, func(m string) bool { return strings.Contains(m, "linked-target") }) {
 		t.Errorf("a bind outside the roots was mounted: %v", mounted)
 	}
-	if !slices.Contains(mounted, resolvedInRoot) {
-		t.Errorf("in-root bind not mounted by its resolved path %s: %v", resolvedInRoot, mounted)
+	resolvedRootA, err := filepath.EvalSymlinks(s.rootA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(mounted, resolvedRootA) || slices.Contains(mounted, resolvedInRoot) {
+		t.Errorf("in-root bind %s should be mounted through its allowed root %s, not by its own path: %v", resolvedInRoot, resolvedRootA, mounted)
 	}
 	for _, b := range []string{outsideBind, linkedBind} {
 		if !slices.ContainsFunc(report.Items, func(it ItemResult) bool {

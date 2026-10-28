@@ -310,7 +310,7 @@ func TestRestoreVolumeRemovesHelperOnError(t *testing.T) {
 		{"put fails", &restoreEngine{putErr: errors.New("disk full")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := RestoreVolume(context.Background(), tc.eng, "web", stacks.Mount{Kind: "bind", Source: "/srv/data", Target: "/data"}, nil, strings.NewReader(""))
+			err := RestoreBind(context.Background(), tc.eng, "web", bindTarget{Root: "/srv", Rel: "data"}, innerTar(t, map[string]string{"data/": ""}))
 			if err == nil {
 				t.Fatal("no error")
 			}

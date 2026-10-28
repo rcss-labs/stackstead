@@ -850,17 +850,19 @@ func (sr *stackRestore) volume(hdr *tar.Header, body io.Reader) error {
 		sr.item(ItemResult{Kind: conflictVolume, Stack: sr.plan.TargetName, Name: pv.Name, Status: itemFailed, Note: err.Error()})
 		return drain(stream)
 	}
-	source := pv.Name
+	var bind *bindTarget
+	var protected []string
 	if pv.Kind == volumeKindBind {
 		if archivedAsFile(hdr, sr.volumePrefix+key+"/") {
 			sr.item(ItemResult{Kind: conflictVolume, Stack: sr.plan.TargetName, Name: pv.Name, Status: itemSkipped, Note: noteArchivedFileBind})
 			return drain(stream)
 		}
 		// Without the stack list the bind cannot be vetted, so it is not mounted.
+		var target bindTarget
+		var skip string
 		protected, err := sr.protectedDirs()
-		var resolved, skip string
 		if err == nil {
-			resolved, skip, err = sr.rs.prepareBind(pv.Name, protected)
+			target, skip, err = sr.rs.prepareBind(pv.Name, protected)
 		}
 		if skip != "" || err != nil {
 			it := ItemResult{Kind: conflictVolume, Stack: sr.plan.TargetName, Name: pv.Name, Status: itemSkipped, Note: skip}
@@ -870,12 +872,19 @@ func (sr *stackRestore) volume(hdr *tar.Header, body io.Reader) error {
 			sr.item(it)
 			return drain(stream)
 		}
-		source = resolved
+		bind = &target
 	}
 	sr.out("restoring " + pv.Kind + " " + pv.Name)
 	err := sr.ensureHelper()
-	if err == nil {
-		mount := stacks.Mount{Kind: pv.Kind, Source: source, Target: pv.Target}
+	switch {
+	case err != nil:
+	case bind != nil:
+		// Vet again: the helper image check above may have pulled.
+		if err = sr.rs.revetBind(pv.Name, protected, *bind); err == nil {
+			err = RestoreBind(sr.ctx, sr.r.d.Engine, sr.plan.TargetName, *bind, stream)
+		}
+	default:
+		mount := stacks.Mount{Kind: pv.Kind, Source: pv.Name, Target: pv.Target}
 		err = RestoreVolume(sr.ctx, sr.r.d.Engine, sr.plan.TargetName, mount, composeVolumeLabels(sr.plan.Project, pv.Name), stream)
 	}
 	if derr := drain(stream); derr != nil {
