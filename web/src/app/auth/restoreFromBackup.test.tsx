@@ -41,6 +41,8 @@ const summary = {
   conflictsDigest: 'dg1',
   encrypted: true,
   keyId: '0123456789abcdef',
+  foreign: false,
+  risks: [],
 };
 
 async function mountRestore(routes: Routes = {}) {
@@ -132,6 +134,45 @@ describe('Restore from backup', () => {
       startStacks: true,
       confirmedDigest: 'dg1',
     });
+  });
+
+  it('defaults start off for a foreign archive and lists compose risks', async () => {
+    const user = await mountRestore({
+      'POST /api/setup/restore/inspect': {
+        body: {
+          ...summary,
+          foreign: true,
+          risks: [
+            { stack: 'web', file: 'compose.yaml', service: 'app', kind: 'privileged', detail: 'true' },
+            { stack: 'web', file: 'compose.yaml', service: 'app', kind: 'host_bind', detail: '/:/host' },
+            { stack: 'db', file: 'compose.yaml', service: 'pg', kind: 'cap_add', detail: 'SYS_ADMIN' },
+          ],
+        },
+      },
+      'POST /api/setup/restore/start': { status: 202, body: { restoreToken: 'rt', operation: { id: 'op', state: 'running' } } },
+    });
+    stream = installFakeStream({ '/api/setup/restore/progress': [] });
+    await inspectPath(user);
+    expect((screen.getByLabelText('Start stacks that were running') as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByText('This archive comes from another host; stacks are left stopped until you review them.')).toBeTruthy();
+    expect(screen.getByText('Privileged settings in the restored compose files')).toBeTruthy();
+    expect(screen.getByText('app · privileged · true')).toBeTruthy();
+    expect(screen.getByText('app · host_bind · /:/host')).toBeTruthy();
+    expect(screen.getByText('pg · cap_add · SYS_ADMIN')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'db' })).toBeTruthy();
+
+    await user.click(screen.getByLabelText(/I understand/));
+    await user.click(screen.getByRole('button', { name: 'Start restore' }));
+    await waitFor(() => expect(calls('POST', '/api/setup/restore/start')).toHaveLength(1));
+    expect(calls('POST', '/api/setup/restore/start')[0].body).toMatchObject({ startStacks: false });
+  });
+
+  it('defaults start on for the same instance', async () => {
+    const user = await mountRestore();
+    await inspectPath(user);
+    expect((screen.getByLabelText('Start stacks that were running') as HTMLInputElement).checked).toBe(true);
+    expect(screen.queryByText(/comes from another host/)).toBeNull();
+    expect(screen.queryByText('Privileged settings in the restored compose files')).toBeNull();
   });
 
   it('polls the setup status after the stream ends and routes to login', async () => {

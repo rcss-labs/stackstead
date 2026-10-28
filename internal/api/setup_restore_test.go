@@ -517,3 +517,22 @@ func TestSetupRestoreErrorCodes(t *testing.T) {
 		}
 	}
 }
+
+func TestSetupRestoreSummaryIncludesForeignAndRisks(t *testing.T) {
+	env := newRestoreEnv(t, "")
+	risk := backup.ComposeRisk{Stack: "web", File: "compose.yaml", Service: "app", Kind: "host_bind", Detail: "/:/host"}
+	env.fake.summary = backup.HostSummary{Manifest: backup.Manifest{Host: "old"}, ConflictsDigest: "digest-1", Foreign: true, Risks: []backup.ComposeRisk{risk}}
+	body := `{"source":{"kind":"path","path":"/srv/backups/a.tar.gz"}}`
+	rec := env.do(t, http.MethodPost, "/api/setup/restore/inspect", body, fromLoopback)
+	var sum apitypes.HostRestoreSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &sum); err != nil || !sum.Foreign ||
+		len(sum.Risks) != 1 || sum.Risks[0] != apitypes.BackupComposeRisk(risk) {
+		t.Errorf("summary = %s (%v)", rec.Body, err)
+	}
+
+	env.fake.summary = backup.HostSummary{Manifest: backup.Manifest{Host: "old"}, ConflictsDigest: "digest-1"}
+	rec = env.do(t, http.MethodPost, "/api/setup/restore/inspect", body, fromLoopback)
+	if !strings.Contains(rec.Body.String(), `"risks":[]`) {
+		t.Errorf("summary = %s, want an empty risks list, not null", rec.Body)
+	}
+}

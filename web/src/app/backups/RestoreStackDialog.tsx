@@ -40,6 +40,8 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
   const [askPassphrase, setAskPassphrase] = useState(false);
   const [passphrase, setPassphrase] = useState('');
   const [allowUnencrypted, setAllowUnencrypted] = useState(false);
+  // Starting the restored stack is opt-in for an archive from another host; the plan sets the default.
+  const [startAfter, setStartAfter] = useState(false);
 
   // Identifies the latest preview request; a response for an older one is dropped.
   const planSeq = useRef(0);
@@ -112,6 +114,7 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
       const next = await api.restorePlan(request());
       if (seq !== planSeq.current) return;
       setPlan(next);
+      setStartAfter(!next.foreign);
       if (next.overwrites || next.crossHost) setOfferRename(true);
     } catch (e) {
       if (seq !== planSeq.current) return;
@@ -126,7 +129,7 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
   async function start() {
     setStarting(true);
     try {
-      const started = await api.restore(request());
+      const started = await api.restore({ ...request(), start: startAfter });
       setConfirming(false);
       setOperationId(started.operation.id);
     } catch (e) {
@@ -275,6 +278,18 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
             )}
 
             {plan && <RestorePreview plan={plan} replacesVolumes={replacesVolumes} />}
+
+            {plan && (
+              <>
+                <label className={styles.check}>
+                  <input type="checkbox" checked={startAfter} onChange={(e) => setStartAfter(e.target.checked)} />
+                  Start the stack after restoring
+                </label>
+                {plan.foreign && (
+                  <p className={styles.muted}>This archive comes from another host; the stack is left stopped until you review it.</p>
+                )}
+              </>
+            )}
 
             {plan && !plan.encrypted && (
               <>

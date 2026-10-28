@@ -419,7 +419,37 @@ read them). The settings screen warns while it is off.
   a helper container, never by Stackstead directly on the host.
 - Bind mounts are restored only under `allowed_roots`. A bind outside them, or
   one that covers an allowed root, a stack directory or the data directory, is
-  skipped and reported, never emptied.
+  skipped and reported, never emptied. That confines what the *restore itself*
+  writes. It does not limit what a restored compose file can do once started:
+  the file can itself be `privileged`, add capabilities, pass devices, join the
+  host's namespaces or mount `/:/host`, and Docker runs it as root. Stackstead
+  only warns about this; it does not refuse such files.
+- **An archive from another host is not started by default.** An archive whose
+  instance id is not this host's (every restore onto a fresh host, a backup
+  planted or swapped in storage, a stack taken from a colleague's server) is
+  *foreign*. Whole-host and single-stack restores leave its stacks stopped unless
+  you ask to start them (the "Start" tick box, `start` and `startStacks` in the
+  API, `--start` on the CLI), so the restored files can be read first. A
+  restore of the same instance's archive starts what was running, as before.
+  This includes a project whose running containers the restore had to stop
+  because their volumes are replaced: for a foreign archive it stays stopped
+  (the report says `left stopped: archive comes from another host`) instead
+  of coming back on the restored compose file. For your own archive such a
+  project is still brought back after the restart even without a request to
+  start stacks. If a restore fails, the original containers are restarted
+  unchanged.
+- **A risk summary lists the host-reaching settings before you confirm.** Every
+  restore preview, the CLI summary and the setup screen list, per stack, each
+  `privileged` service, added capability (`cap_add`), device, bind mount of a
+  host path (absolute, `~` or `..`, or a `${VARIABLE}` that could expand to
+  one), `pid`/`ipc`/`network_mode`/`userns_mode`/`cgroup: host`, disabled
+  security profile (`unconfined`, `label:disable`) and volume `device:` path found
+  in the stack's compose files (`compose*.y*ml`, `docker-compose*.y*ml` and other
+  YAML files at the top of the stack directory), or a file that cannot be
+  parsed. The scan reads the files as plain YAML: nothing is interpolated or
+  executed, files over 4 MiB are not parsed, and anything the compose file
+  inherits from `.env`, includes (`include:`, `extends`) or another file is not
+  followed. A clean summary is not a safety guarantee.
 - Restoring a single stack first copies that stack's files (compose files,
   `.env` and the rest of its directory, not bind data) to
   `<data_dir>/backups/pre-restore/<stack>-<UTC timestamp>/`. A whole-host

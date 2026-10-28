@@ -253,6 +253,8 @@ sudo systemctl start stackstead
 
 Flags: `--yes` skips the confirmation (required when stdin is not a terminal,
 else exit 2), `--no-start` leaves the stacks that were running stopped,
+`--start` starts them even for an archive from another host (the default for
+such an archive is not to start them; `--start` with `--no-start` is exit 2),
 `--passphrase-file P` reads the passphrase of an encrypted archive
 (`.tar.gz.enc`) from the first line of a file, `--allow-unencrypted` restores an
 archive that is neither encrypted nor authenticated,
@@ -266,7 +268,14 @@ a flag value. The whole archive is read and verified before anything changes, so
 it is read twice (an `s3://` source is downloaded twice); a modified or truncated
 archive is refused. The summary shows `encryption  key <id>`, or `none
 (unauthenticated archive)` for an unencrypted one, which is refused before the
-confirmation unless `--allow-unencrypted` is given. The archive does not hold the
+confirmation unless `--allow-unencrypted` is given. The summary also shows
+`origin     this host` or `origin     another host (instance <first 8 of its id>);
+stacks stay stopped unless --start` (a replacement host has no id yet, so an
+archive restored onto one is always from another host), and a `risks` block with
+one `<stack>/<service>  <kind>  <detail>` line per privileged setting, added
+capability, device or host mount found in the archived compose files, or
+`risks      none`; starting stacks that have such settings prints a warning
+before the confirmation. The archive does not hold the
 S3 secret key, GitHub token, or peer and registry credentials; enter them again
 afterwards. The command
 prints the archive summary and the existing volumes, networks, containers and
@@ -277,7 +286,8 @@ projects whose volumes are replaced are stopped before their volumes are
 emptied and refilled (shown as "stopped during restore"); a project whose
 container will not stop keeps its volumes, which are reported as skipped. The
 stacks start when the server next starts, including those stopped here even
-with `--no-start`; if the restore fails, the stopped containers are started
+with `--no-start` (except for an archive from another host without `--start`:
+those stay stopped and are listed as `left stopped`); if the restore fails, the stopped containers are started
 again right away. Everyone is signed out and connection tokens are revoked, as
 with `db restore`. The backup schedule is turned off in the restored database, and the UI
 says so until you turn it back on. Exit codes: 5 while the server runs (or a

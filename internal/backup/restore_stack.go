@@ -2,6 +2,7 @@ package backup
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -347,6 +348,7 @@ type stackRestore struct {
 	rc          io.Closer
 	ar          *Reader
 	info        ArchiveInfo
+	risks       []ComposeRisk // from planWithDiff
 	stageDir    string
 	archived    stacks.Entry // the stack's row in the archived database, if any
 	archivedRel string       // the compose file's name in the archived stack directory
@@ -532,7 +534,7 @@ func (sr *stackRestore) planEnv() (PlanEnv, error) {
 	}
 	return PlanEnv{
 		Registry: sr.r.d.Registry, AllowedRoots: sr.r.d.AllowedRoots, StacksDir: sr.r.d.StacksDir,
-		SelfSlug: peers.Slugify(ident.Name), Networks: sr.r.d.Engine.Networks, ReadCurrent: os.ReadFile,
+		SelfSlug: peers.Slugify(ident.Name), SelfInstanceID: ident.InstanceID, Networks: sr.r.d.Engine.Networks, ReadCurrent: os.ReadFile,
 		ArchivedNetworks: sr.networks,
 	}, nil
 }
@@ -545,6 +547,7 @@ func (sr *stackRestore) makePlan(env PlanEnv) error {
 	if !plan.Overwrites && !sr.req.Files {
 		return ErrFilesRequired
 	}
+	plan.Risks = sr.risks
 	sr.plan = plan
 	return nil
 }
@@ -569,6 +572,7 @@ func (sr *stackRestore) planWithDiff() error {
 		return err
 	}
 	var compose []byte
+	var risks []ComposeRisk
 	found := false
 	for {
 		hdr, body, ok, err := sr.next()
@@ -578,13 +582,24 @@ func (sr *stackRestore) planWithDiff() error {
 		if !ok || !strings.HasPrefix(hdr.Name, basePrefix) {
 			break
 		}
-		if hdr.Name == sr.stackPrefix+sr.archivedRel && hdr.Typeflag == tar.TypeReg {
-			if compose, err = io.ReadAll(io.LimitReader(body, maxArchivedCompose)); err != nil {
+		if !strings.HasPrefix(hdr.Name, sr.stackPrefix) || hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		// One read feeds both the diff and the risk scan.
+		var captured bytes.Buffer
+		found2, err := scanStackFile(hdr, io.TeeReader(io.LimitReader(body, maxArchivedCompose+1), &captured))
+		if err != nil {
+			return damaged(err)
+		}
+		risks = append(risks, found2...)
+		if hdr.Name == sr.stackPrefix+sr.archivedRel {
+			if compose, err = io.ReadAll(io.LimitReader(io.MultiReader(&captured, body), maxArchivedCompose)); err != nil {
 				return damaged(err)
 			}
 			found = true
 		}
 	}
+	sr.risks = sortRisks(risks)
 	env, err := sr.planEnv()
 	if err != nil {
 		return err
@@ -605,7 +620,7 @@ func (sr *stackRestore) item(it ItemResult) {
 	}
 }
 
-// execute performs the restore. A stack stopped here, or a new stack that
+// execute performs the restore. With req.Start, a stack stopped here, or a new stack that
 // was running at backup time, is started on every path once it exists.
 func (sr *stackRestore) execute() error {
 	if err := sr.planAtStackFiles(); err != nil {
@@ -663,12 +678,19 @@ func (sr *stackRestore) stopIfRunning() error {
 }
 
 // startAgain starts the stack when it was stopped here, or when it is new and
-// was running at backup time. It runs even when the restore is cancelled.
+// was running at backup time, but only when the request asks for it: without
+// Start it records that the stack was left stopped. It runs even when the
+// restore is cancelled.
 func (sr *stackRestore) startAgain() {
 	if !sr.stopped && (!sr.registered || !sr.ms.WasRunning) {
 		return
 	}
 	name := sr.plan.TargetName
+	if !sr.req.Start {
+		// The restored files are not trusted until the operator has seen them.
+		sr.item(ItemResult{Kind: "stack", Stack: name, Name: "start", Status: itemSkipped, Note: "left stopped as requested"})
+		return
+	}
 	sr.out("starting " + name)
 	startCtx, cancel := context.WithTimeout(context.WithoutCancel(sr.ctx), restartTimeout)
 	defer cancel()

@@ -121,6 +121,8 @@ func (e *restoreEnv) run(t *testing.T, req StackRestoreRequest) stacks.Operation
 	t.Helper()
 	// Most fixtures are plaintext archives; encrypted ones need no acknowledgement.
 	req.AllowUnencrypted = req.AllowUnencrypted || !IsEncryptedName(req.Archive.Name)
+	// Starting is opt-in; runExact leaves it to the request.
+	req.Start = true
 	op, err := e.runner.RestoreStack(context.Background(), req, "alice")
 	if err != nil {
 		t.Fatalf("RestoreStack: %v", err)

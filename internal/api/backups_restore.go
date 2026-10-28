@@ -51,7 +51,7 @@ func decodeRestoreRequest(w http.ResponseWriter, r *http.Request) (backup.StackR
 		Archive: backup.ArchiveRef{Dest: dto.Archive.Dest, Name: dto.Archive.Name},
 		Stack:   dto.Stack, NewName: dto.NewName,
 		Files: dto.Files, Volumes: dto.Volumes, Images: dto.Images,
-		VolumeKeys: dto.VolumeKeys,
+		VolumeKeys: dto.VolumeKeys, Start: dto.Start,
 		Passphrase: secret.Secret(dto.Passphrase), AllowUnencrypted: dto.AllowUnencrypted,
 	}, true
 }
@@ -137,6 +137,7 @@ func toRestorePlan(p backup.StackRestorePlan) apitypes.BackupRestorePlan {
 		MissingNetworks: make([]apitypes.BackupRestoreNetwork, 0, len(p.MissingNetworks)),
 		Warnings:        append([]string{}, p.Warnings...),
 		Encrypted:       p.Encrypted, KeyID: p.KeyID,
+		Foreign: p.Foreign, Risks: toComposeRisks(p.Risks),
 	}
 	for _, d := range p.FileDiffs {
 		dto.FileDiffs = append(dto.FileDiffs, apitypes.BackupFileDiff(d))
@@ -148,6 +149,15 @@ func toRestorePlan(p backup.StackRestorePlan) apitypes.BackupRestorePlan {
 		dto.MissingNetworks = append(dto.MissingNetworks, apitypes.BackupRestoreNetwork{Name: n.Name, Driver: n.Driver})
 	}
 	return dto
+}
+
+// toComposeRisks converts the scan result; the list is never null on the wire.
+func toComposeRisks(risks []backup.ComposeRisk) []apitypes.BackupComposeRisk {
+	out := make([]apitypes.BackupComposeRisk, 0, len(risks))
+	for _, r := range risks {
+		out = append(out, apitypes.BackupComposeRisk(r))
+	}
+	return out
 }
 
 func toBackupManifest(m backup.Manifest) apitypes.BackupManifest {

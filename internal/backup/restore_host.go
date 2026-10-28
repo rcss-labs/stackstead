@@ -117,6 +117,9 @@ type HostEnv struct {
 	Deferred bool
 	// HTTP is used for S3 sources; nil means http.DefaultClient.
 	HTTP *http.Client
+	// InstanceID is this host's own instance id; empty on a fresh host that
+	// has none yet. An archive from any other id is foreign.
+	InstanceID string
 }
 
 // Conflict is existing Docker or filesystem state a host restore meets.
@@ -142,6 +145,12 @@ type HostSummary struct {
 	// archive is also unauthenticated.
 	Encrypted bool   `json:"encrypted"`
 	KeyID     string `json:"keyId"`
+	// Foreign is true when the archive was not written by this instance, which
+	// includes every restore onto a fresh host. Callers default to leaving the
+	// stacks stopped for a foreign archive.
+	Foreign bool `json:"foreign"`
+	// Risks are the host-reaching settings of the archived compose files.
+	Risks []ComposeRisk `json:"risks"`
 }
 
 // HostReport lists the outcome of every restored item.
@@ -278,6 +287,7 @@ func inspectHost(ctx context.Context, src HostSource, env HostEnv, full, allowUn
 		}
 	}
 	var specs []engine.NetworkSpec
+	var risks []ComposeRisk
 	reachedEnd := false
 	for {
 		hdr, body, err := r.Next()
@@ -292,6 +302,11 @@ func inspectHost(ctx context.Context, src HostSource, env HostEnv, full, allowUn
 		if haveManifest && !full && !strings.HasPrefix(hdr.Name, basePrefix) {
 			break
 		}
+		found, err := scanStackFile(hdr, body)
+		if err != nil {
+			return HostSummary{}, damaged(err)
+		}
+		risks = append(risks, found...)
 		switch hdr.Name {
 		case entryNetworks:
 			if specs, err = decodeNetworks(body); err != nil {
@@ -333,7 +348,15 @@ func inspectHost(ctx context.Context, src HostSource, env HostEnv, full, allowUn
 	return HostSummary{
 		Manifest: m, Conflicts: conflicts, ConflictsDigest: conflictsDigest(conflicts),
 		Encrypted: info.Encrypted, KeyID: info.KeyID,
+		Foreign: isForeign(m, env),
+		Risks:   sortRisks(risks),
 	}, nil
+}
+
+// isForeign reports an archive not written by this instance; a host with no
+// id yet owns no archive.
+func isForeign(m Manifest, env HostEnv) bool {
+	return m.InstanceID == "" || m.InstanceID != env.InstanceID
 }
 
 func decodeArchiveManifest(body io.Reader) (Manifest, error) {
@@ -570,7 +593,7 @@ func RestoreHost(ctx context.Context, src HostSource, env HostEnv, opts HostRest
 	if opts.StartStacks {
 		p.StartStacks = h.stacksToStart()
 	}
-	p.StartStacks = h.withStoppedStacks(p.StartStacks)
+	p.StartStacks = h.withStoppedStacks(p.StartStacks, isForeign(sum.Manifest, env) && !opts.StartStacks)
 	if err := writePending(env.DataDir, p); err != nil {
 		h.startStopped()
 		return HostReport{Items: h.report()}, fmt.Errorf("record pending restore: %w", err)
@@ -1039,13 +1062,22 @@ func (h *hostRestore) stopForVolumes() {
 }
 
 // withStoppedStacks adds to start the restored stacks whose containers were
-// stopped here, so they come back after the restart.
-func (h *hostRestore) withStoppedStacks(start []string) []string {
+// stopped here, so they come back after the restart. They come back on the
+// restored compose files, so with leaveStopped (a foreign archive nobody asked to start)
+// they stay stopped instead, with an item saying so. (A restore that fails
+// restarts the original containers unchanged, see startStopped.)
+func (h *hostRestore) withStoppedStacks(start []string, leaveStopped bool) []string {
 	for _, s := range h.manifest.Stacks {
 		t, ok := h.stacks[s.Name]
-		if ok && t.skipped == "" && h.stoppedProjects[s.Project] && !slices.Contains(start, s.Name) {
-			start = append(start, s.Name)
+		if !ok || t.skipped != "" || !h.stoppedProjects[s.Project] || slices.Contains(start, s.Name) {
+			continue
 		}
+		if leaveStopped {
+			h.items = append(h.items, ItemResult{Kind: "stack", Stack: s.Name, Name: "start", Status: itemSkipped, Note: "left stopped: archive comes from another host"})
+			h.out("skipped: stack " + s.Name + " left stopped: archive comes from another host; start it after reviewing its compose files")
+			continue
+		}
+		start = append(start, s.Name)
 	}
 	return start
 }

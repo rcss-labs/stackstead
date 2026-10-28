@@ -169,6 +169,8 @@ type hostFixture struct {
 	images   map[string]map[string]map[string]string // stack -> image ref -> inner tar files
 	items    []ItemResult                            // manifest items; a failed image is left out of Images
 	key      *Key                                    // when set the archive is encrypted and its sidecar carries a MAC
+	// instanceID is the writing instance recorded in the manifest.
+	instanceID string
 }
 
 // archivedDB builds the database a backup would hold and returns its bytes.
@@ -232,7 +234,7 @@ func addBytes(t *testing.T, w *Writer, name string, data []byte) {
 }
 
 func (f hostFixture) manifest() Manifest {
-	m := Manifest{Format: ManifestFormat, StacksteadVersion: f.version, Host: "old", HostSlug: "old", CreatedAt: time.Date(2026, 10, 1, 3, 0, 0, 0, time.UTC), Status: "complete", Networks: len(f.networks)}
+	m := Manifest{Format: ManifestFormat, StacksteadVersion: f.version, Host: "old", HostSlug: "old", InstanceID: f.instanceID, CreatedAt: time.Date(2026, 10, 1, 3, 0, 0, 0, time.UTC), Status: "complete", Networks: len(f.networks)}
 	for _, e := range f.stacks {
 		m.Stacks = append(m.Stacks, ManifestStack{
 			Name: e.Name, ComposePath: e.ComposePath, Origin: string(e.Origin), Project: e.Project,
@@ -1203,6 +1205,7 @@ func (s *hostSetup) webContainers() {
 // again after the restart even when the user did not ask to start stacks.
 func TestHostRestoreStopsContainersWhoseVolumesAreReplaced(t *testing.T) {
 	s := newHostSetup(t)
+	s.env.InstanceID, s.fixture.instanceID = "mine", "mine" // this host's own archive
 	s.webContainers()
 	path := s.fixture.build(t, t.TempDir(), true)
 

@@ -145,6 +145,21 @@ type BackupRestoreRequest struct {
 	// AllowUnencrypted confirms restoring an archive that is not authenticated.
 	Passphrase       string `json:"passphrase,omitempty"`
 	AllowUnencrypted bool   `json:"allowUnencrypted"`
+	// Start starts the stack once it is restored. Omitted means false: the
+	// stack is left stopped.
+	Start bool `json:"start"`
+}
+
+// BackupComposeRisk is a host-reaching setting in an archived compose file:
+// a privileged service, an added capability, a device, a host bind mount, a
+// host namespace or a disabled security profile. Kind is privileged, cap_add,
+// device, host_bind, host_namespace, security_opt or unparseable.
+type BackupComposeRisk struct {
+	Stack   string `json:"stack"`
+	File    string `json:"file"`
+	Service string `json:"service"`
+	Kind    string `json:"kind"`
+	Detail  string `json:"detail"`
 }
 
 type BackupFileDiff struct {
@@ -188,6 +203,10 @@ type BackupRestorePlan struct {
 	// Encrypted is false for an archive with no authentication at all.
 	Encrypted bool   `json:"encrypted"`
 	KeyID     string `json:"keyId"`
+	// Foreign is true when the archive was written by another instance; the
+	// restore then defaults to leaving the stack stopped.
+	Foreign bool                `json:"foreign"`
+	Risks   []BackupComposeRisk `json:"risks"`
 }
 
 // BackupRestoreStarted is the 202 body of POST /api/backups/restore.
@@ -287,6 +306,10 @@ type HostRestoreSummary struct {
 	ConflictsDigest string                `json:"conflictsDigest"`
 	Encrypted       bool                  `json:"encrypted"`
 	KeyID           string                `json:"keyId"`
+	// Foreign is true when the archive was not written by this instance,
+	// which includes every restore onto a fresh host.
+	Foreign bool                `json:"foreign"`
+	Risks   []BackupComposeRisk `json:"risks"`
 }
 
 // BackupManifest is an archive's manifest, as GET

@@ -59,6 +59,8 @@ const plan = (over: Partial<BackupRestorePlan> = {}): BackupRestorePlan => ({
   warnings: [],
   encrypted: true,
   keyId: '0123456789abcdef',
+  foreign: false,
+  risks: [],
   ...over,
 });
 
@@ -351,5 +353,53 @@ describe('single-stack restore', () => {
       passphrase: 'pp-one-two-three',
       allowUnencrypted: true,
     });
+  });
+
+  it('start is unticked for a foreign plan and sent as false', async () => {
+    setup({
+      'POST /api/backups/restore/plan': { body: plan({ foreign: true }) },
+      'POST /api/backups/restore': { status: 202, body: { operation: { id: 'op-9' } } },
+    });
+    const user = await openDialog();
+    await screen.findByRole('combobox', { name: 'Stack' });
+    await preview(user);
+    const start = (await screen.findByLabelText('Start the stack after restoring')) as HTMLInputElement;
+    expect(start.checked).toBe(false);
+    expect(screen.getByText(/comes from another host/)).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Restore stack…' }));
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Restore' }));
+    await screen.findByText('following op-9');
+    expect(fake.calls.find((c) => c.path === '/api/backups/restore')?.body).toMatchObject({ start: false });
+  });
+
+  it('start is ticked for the same instance and sent as true', async () => {
+    setup({
+      'POST /api/backups/restore/plan': { body: plan() },
+      'POST /api/backups/restore': { status: 202, body: { operation: { id: 'op-9' } } },
+    });
+    const user = await openDialog();
+    await screen.findByRole('combobox', { name: 'Stack' });
+    await preview(user);
+    expect(((await screen.findByLabelText('Start the stack after restoring')) as HTMLInputElement).checked).toBe(true);
+    await user.click(screen.getByRole('button', { name: 'Restore stack…' }));
+    await user.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Restore' }));
+    await screen.findByText('following op-9');
+    expect(fake.calls.find((c) => c.path === '/api/backups/restore')?.body).toMatchObject({ start: true });
+    // Only the restore carries it: a plan request is a preview.
+    expect('start' in (fake.calls.find((c) => c.path === '/api/backups/restore/plan')?.body as object)).toBe(false);
+  });
+
+  it('shows compose risks in the preview', async () => {
+    setup({
+      'POST /api/backups/restore/plan': {
+        body: plan({ foreign: true, risks: [{ stack: 'web', file: 'compose.yaml', service: 'app', kind: 'device', detail: '/dev/sda' }] }),
+      },
+    });
+    const user = await openDialog();
+    await screen.findByRole('combobox', { name: 'Stack' });
+    await preview(user);
+    const region = await screen.findByRole('region', { name: 'Restore preview' });
+    expect(within(region).getByText('Privileged settings in the restored compose files')).toBeTruthy();
+    expect(within(region).getByText('app · device · /dev/sda')).toBeTruthy();
   });
 });
