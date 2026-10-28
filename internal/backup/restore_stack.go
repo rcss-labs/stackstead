@@ -846,6 +846,10 @@ func (sr *stackRestore) volume(hdr *tar.Header, body io.Reader) error {
 		sr.item(ItemResult{Kind: conflictVolume, Stack: sr.plan.TargetName, Name: pv.Name, Status: itemSkipped, Note: noteBackupFailed})
 		return drain(stream)
 	}
+	if err := checkVolumeKey(sr.ms.Volumes[j]); err != nil {
+		sr.item(ItemResult{Kind: conflictVolume, Stack: sr.plan.TargetName, Name: pv.Name, Status: itemFailed, Note: err.Error()})
+		return drain(stream)
+	}
 	source := pv.Name
 	if pv.Kind == volumeKindBind {
 		if archivedAsFile(hdr, sr.volumePrefix+key+"/") {
@@ -927,7 +931,7 @@ func (sr *stackRestore) image(hdr *tar.Header, body io.Reader) error {
 		return drain(stream)
 	}
 	sr.out("loading image " + ref)
-	err := sr.r.d.Engine.LoadImage(sr.ctx, stream)
+	err := loadImageChecked(sr.ctx, sr.r.d.Engine, ref, stream)
 	if derr := drain(stream); derr != nil {
 		return derr
 	}
