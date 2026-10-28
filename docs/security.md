@@ -431,11 +431,13 @@ read them). The settings screen warns while it is off.
   you ask to start them (the "Start" tick box, `start` and `startStacks` in the
   API, `--start` on the CLI), so the restored files can be read first. A
   restore of the same instance's archive starts what was running, as before.
-  One exception: a project whose running containers the restore had to stop
-  (because their volumes are replaced) is brought back after the restart even
-  when you did not ask to start stacks, and by then it runs the restored
-  compose file; read the "stopped during restore" conflicts before confirming
-  a foreign archive.
+  This includes a project whose running containers the restore had to stop
+  because their volumes are replaced: for a foreign archive it stays stopped
+  (the report says `left stopped: archive comes from another host`) instead
+  of coming back on the restored compose file. For your own archive such a
+  project is still brought back after the restart even without a request to
+  start stacks. If a restore fails, the original containers are restarted
+  unchanged.
 - **A risk summary lists the host-reaching settings before you confirm.** Every
   restore preview, the CLI summary and the setup screen list, per stack, each
   `privileged` service, added capability (`cap_add`), device, bind mount of a

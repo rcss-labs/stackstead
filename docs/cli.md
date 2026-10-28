@@ -286,7 +286,8 @@ projects whose volumes are replaced are stopped before their volumes are
 emptied and refilled (shown as "stopped during restore"); a project whose
 container will not stop keeps its volumes, which are reported as skipped. The
 stacks start when the server next starts, including those stopped here even
-with `--no-start`; if the restore fails, the stopped containers are started
+with `--no-start` (except for an archive from another host without `--start`:
+those stay stopped and are listed as `left stopped`); if the restore fails, the stopped containers are started
 again right away. Everyone is signed out and connection tokens are revoked, as
 with `db restore`. The backup schedule is turned off in the restored database, and the UI
 says so until you turn it back on. Exit codes: 5 while the server runs (or a

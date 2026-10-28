@@ -1205,6 +1205,7 @@ func (s *hostSetup) webContainers() {
 // again after the restart even when the user did not ask to start stacks.
 func TestHostRestoreStopsContainersWhoseVolumesAreReplaced(t *testing.T) {
 	s := newHostSetup(t)
+	s.env.InstanceID, s.fixture.instanceID = "mine", "mine" // this host's own archive
 	s.webContainers()
 	path := s.fixture.build(t, t.TempDir(), true)
 

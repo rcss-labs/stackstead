@@ -136,3 +136,41 @@ func TestPlanRestoreReportsForeignAndRisks(t *testing.T) {
 		t.Errorf("own archive: foreign=%v err=%v, want not foreign", plan.Foreign, err)
 	}
 }
+
+// A foreign archive's compose files must not run unreviewed: a project whose
+// containers were stopped to replace its volumes stays stopped when starting
+// was not requested, and the report says why.
+func TestHostRestoreForeignWithoutStartLeavesStoppedProjectsStopped(t *testing.T) {
+	s := newHostSetup(t)
+	s.env.InstanceID = "mine"
+	s.fixture.instanceID = "other"
+	s.webContainers()
+	path := s.fixture.build(t, t.TempDir(), true)
+	sum, err := InspectHost(context.Background(), pathSource(path), s.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := RestoreHost(context.Background(), pathSource(path), s.env, HostRestoreOptions{StartStacks: false, AllowUnencrypted: true, ConfirmedDigest: sum.ConflictsDigest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := readPending(t, s.env.DataDir); len(p.StartStacks) != 0 {
+		t.Errorf("start stacks = %v, want none for a foreign archive", p.StartStacks)
+	}
+	want := ItemResult{Kind: "stack", Stack: "web", Name: "start", Status: itemSkipped, Note: "left stopped: archive comes from another host"}
+	if !slices.Contains(report.Items, want) {
+		t.Errorf("items = %+v, want %+v", report.Items, want)
+	}
+
+	// With start requested the operator has chosen to run it.
+	s2 := newHostSetup(t)
+	s2.env.InstanceID, s2.fixture.instanceID = "mine", "other"
+	s2.webContainers()
+	path = s2.fixture.build(t, t.TempDir(), true)
+	if _, err := RestoreHost(context.Background(), pathSource(path), s2.env, HostRestoreOptions{StartStacks: true, AllowUnencrypted: true, ConfirmedDigest: sum.ConflictsDigest}); err != nil {
+		t.Fatal(err)
+	}
+	if p := readPending(t, s2.env.DataDir); !slices.Contains(p.StartStacks, "web") {
+		t.Errorf("start stacks = %v, want web when start was requested", p.StartStacks)
+	}
+}
