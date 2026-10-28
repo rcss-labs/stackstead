@@ -170,6 +170,7 @@ type memDest struct {
 	name      string
 	createErr error
 	onClose   func()
+	onOpen    func(archive string) // runs at the start of every Open, before the bytes are read
 	mu        sync.Mutex
 	archives  map[string][]byte
 	sidecars  map[string][]byte
@@ -217,6 +218,9 @@ func (d *memDest) PutSidecar(_ context.Context, archive string, manifest []byte)
 }
 func (d *memDest) List(context.Context) ([]ArchiveRef, error) { return nil, nil }
 func (d *memDest) Open(_ context.Context, archive string) (io.ReadCloser, error) {
+	if d.onOpen != nil {
+		d.onOpen(archive)
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return io.NopCloser(bytes.NewReader(d.archives[archive])), nil
@@ -381,7 +385,7 @@ func tarOf(t *testing.T, files map[string][]byte) []byte {
 // readArchive returns the entry names in archive order and the manifest.
 func readArchive(t *testing.T, data []byte) ([]string, Manifest) {
 	t.Helper()
-	r, err := NewReader(bytes.NewReader(data))
+	r, err := newPlainReader(bytes.NewReader(data))
 	if err != nil {
 		t.Fatal(err)
 	}

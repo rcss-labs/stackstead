@@ -34,12 +34,14 @@ type fakeBackups struct {
 	planErr     error
 	manifestRef [2]string
 
-	manifest   *backup.Manifest
-	archives   []backup.ArchiveRef
-	key        *backup.KeyInfo
-	passphrase string
-	calls      []string
-	cleared    bool
+	manifest *backup.Manifest
+	// planEncryption makes PlanRestore report an encrypted archive.
+	planEncryption *backup.ManifestEncryption
+	archives       []backup.ArchiveRef
+	key            *backup.KeyInfo
+	passphrase     string
+	calls          []string
+	cleared        bool
 }
 
 func (f *fakeBackups) PlanRestore(_ context.Context, req backup.StackRestoreRequest) (backup.StackRestorePlan, error) {
@@ -54,7 +56,15 @@ func (f *fakeBackups) PlanRestore(_ context.Context, req backup.StackRestoreRequ
 		Volumes:   []backup.PlannedVolume{{Key: "b-1", Kind: "bind", Name: "/etc", Target: "/x", Skip: true, Reason: "outside allowed roots"}},
 		Images:    []string{"nginx:1.27"},
 		Warnings:  []string{"volume contents are replaced and not kept"},
+		Encrypted: f.planEncryption != nil, KeyID: keyIDOf(f.planEncryption),
 	}, nil
+}
+
+func keyIDOf(e *backup.ManifestEncryption) string {
+	if e == nil {
+		return ""
+	}
+	return e.KeyID
 }
 func (f *fakeBackups) Restore(_ context.Context, req backup.StackRestoreRequest, user string) (stacks.Operation, error) {
 	f.restoreReq, f.restoreUser = req, user
@@ -559,5 +569,56 @@ func TestBackupArchivesExposeEncryptedFlag(t *testing.T) {
 	var got []apitypes.BackupArchive
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got) != 2 || !got[0].Encrypted || got[1].Encrypted {
 		t.Fatalf("archives = %s (%v)", rec.Body, err)
+	}
+}
+
+func TestBackupRestoreErrorCodes(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		code string
+	}{
+		{backup.ErrArchiveTampered, "archive_tampered"},
+		{fmt.Errorf("%w: %w", backup.ErrArchiveDamaged, backup.ErrArchiveTampered), "archive_tampered"},
+		{backup.ErrWrongPassphrase, "wrong_passphrase"},
+		{backup.ErrPassphraseRequired, "passphrase_required"},
+		{backup.ErrUnencryptedArchive, "unencrypted_archive"},
+	} {
+		fake := &fakeBackups{cfg: validBackupConfig(), restoreErr: tc.err, planErr: tc.err}
+		env, cookie := newBackupEnv(t, fake)
+		for _, path := range []string{"/api/backups/restore", "/api/backups/restore/plan"} {
+			rec := env.do(t, "POST", path, restoreBody(""), withCookie(cookie))
+			if rec.Code != http.StatusBadRequest || errorCode(t, rec.Body.Bytes()) != tc.code {
+				t.Errorf("%s with %v = %d %s, want 400 %s", path, tc.err, rec.Code, rec.Body, tc.code)
+			}
+		}
+	}
+}
+
+func TestBackupRestorePassesPassphraseAndAcknowledgement(t *testing.T) {
+	fake := &fakeBackups{cfg: validBackupConfig()}
+	env, cookie := newBackupEnv(t, fake)
+	rec := env.do(t, "POST", "/api/backups/restore", restoreBody(`,"passphrase":"restore passphrase","allowUnencrypted":true`), withCookie(cookie))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	if fake.restoreReq.Passphrase.Reveal() != "restore passphrase" || !fake.restoreReq.AllowUnencrypted {
+		t.Errorf("request = %+v", fake.restoreReq)
+	}
+	rec = env.do(t, "POST", "/api/backups/restore/plan", restoreBody(`,"passphrase":"restore passphrase"`), withCookie(cookie))
+	if rec.Code != http.StatusOK || fake.restoreReq.Passphrase.Reveal() != "restore passphrase" || fake.restoreReq.AllowUnencrypted {
+		t.Errorf("plan: status %d request %+v", rec.Code, fake.restoreReq)
+	}
+	if strings.Contains(rec.Body.String(), "restore passphrase") {
+		t.Errorf("the plan echoes the passphrase: %s", rec.Body)
+	}
+}
+
+func TestBackupRestorePlanReportsEncryption(t *testing.T) {
+	fake := &fakeBackups{cfg: validBackupConfig(), planEncryption: &backup.ManifestEncryption{KeyID: "0123456789abcdef"}}
+	env, cookie := newBackupEnv(t, fake)
+	rec := env.do(t, "POST", "/api/backups/restore/plan", restoreBody(""), withCookie(cookie))
+	var plan apitypes.BackupRestorePlan
+	if err := json.Unmarshal(rec.Body.Bytes(), &plan); err != nil || !plan.Encrypted || plan.KeyID != "0123456789abcdef" {
+		t.Errorf("plan = %s (%v)", rec.Body, err)
 	}
 }

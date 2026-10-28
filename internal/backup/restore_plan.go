@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/rcss-labs/stackstead/internal/secret"
 	"io"
 	"io/fs"
 	"os"
@@ -44,6 +45,11 @@ type StackRestoreRequest struct {
 	Files, Volumes, Images bool
 	// VolumeKeys limits the volumes restored; empty means all in the archive.
 	VolumeKeys []string
+	// Passphrase opens an encrypted archive; empty falls back to the key file.
+	Passphrase secret.Secret
+	// AllowUnencrypted accepts an unauthenticated plaintext archive. Planning
+	// never needs it: it only reads.
+	AllowUnencrypted bool
 }
 
 // FileDiff pairs a file's current content on this host with its archived content.
@@ -74,6 +80,9 @@ type StackRestorePlan struct {
 	MissingNetworks []engine.NetworkSpec
 	CrossHost       bool
 	Warnings        []string
+	// Encrypted and KeyID say how the archive is protected.
+	Encrypted bool
+	KeyID     string
 }
 
 // PlanEnv is the host state a plan is made against.

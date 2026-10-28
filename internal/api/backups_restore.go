@@ -7,6 +7,7 @@ import (
 
 	"github.com/rcss-labs/stackstead/internal/apitypes"
 	"github.com/rcss-labs/stackstead/internal/backup"
+	"github.com/rcss-labs/stackstead/internal/secret"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 )
 
@@ -51,6 +52,7 @@ func decodeRestoreRequest(w http.ResponseWriter, r *http.Request) (backup.StackR
 		Stack:   dto.Stack, NewName: dto.NewName,
 		Files: dto.Files, Volumes: dto.Volumes, Images: dto.Images,
 		VolumeKeys: dto.VolumeKeys,
+		Passphrase: secret.Secret(dto.Passphrase), AllowUnencrypted: dto.AllowUnencrypted,
 	}, true
 }
 
@@ -60,6 +62,8 @@ func (s *server) writeRestoreError(w http.ResponseWriter, r *http.Request, err e
 	switch {
 	case errors.Is(err, backup.ErrArchiveNewer):
 		writeCodedError(w, http.StatusBadRequest, err.Error(), codeArchiveNewer)
+	case protectionCodeOf(err) != "":
+		writeCodedError(w, http.StatusBadRequest, err.Error(), protectionCodeOf(err))
 	case errors.Is(err, stacks.ErrBusy):
 		writeCodedError(w, http.StatusConflict, "the stack is busy with another operation", codeStackBusy)
 	case errors.Is(err, backup.ErrTargetOccupied):
@@ -132,6 +136,7 @@ func toRestorePlan(p backup.StackRestorePlan) apitypes.BackupRestorePlan {
 		Images:          append([]string{}, p.Images...),
 		MissingNetworks: make([]apitypes.BackupRestoreNetwork, 0, len(p.MissingNetworks)),
 		Warnings:        append([]string{}, p.Warnings...),
+		Encrypted:       p.Encrypted, KeyID: p.KeyID,
 	}
 	for _, d := range p.FileDiffs {
 		dto.FileDiffs = append(dto.FileDiffs, apitypes.BackupFileDiff(d))

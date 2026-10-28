@@ -27,9 +27,9 @@ func (h HostRestorer) Inspect(ctx context.Context, src HostSource) (HostSummary,
 // Restore is RestoreHost with this restorer's environment. out receives the
 // progress lines, and accepted is called once the confirmed conflicts still
 // match and before the host changes; either may be nil.
-func (h HostRestorer) Restore(ctx context.Context, src HostSource, startStacks bool, confirmedDigest string, out func(string), accepted func()) (HostReport, error) {
+func (h HostRestorer) Restore(ctx context.Context, src HostSource, opts HostRestoreOptions, out func(string), accepted func()) (HostReport, error) {
 	env := h.Env
 	env.Out = out
 	env.Accepted = accepted
-	return RestoreHost(ctx, src, env, startStacks, confirmedDigest)
+	return RestoreHost(ctx, src, env, opts)
 }

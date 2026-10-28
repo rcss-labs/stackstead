@@ -2,6 +2,7 @@ package backup
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
@@ -10,6 +11,8 @@ import (
 	"io"
 	"path"
 	"strings"
+
+	"github.com/rcss-labs/stackstead/internal/secret"
 )
 
 var (
@@ -161,6 +164,7 @@ func (w *Writer) Close(m Manifest) error {
 
 // Reader reads an archive written by Writer, validating entry paths.
 type Reader struct {
+	raw      io.Reader // the decrypted stream under gz, nil for a plaintext archive
 	gz       *gzip.Reader
 	tr       *tar.Reader
 	lastName string
@@ -173,8 +177,9 @@ type pendingEntry struct {
 	body io.Reader
 }
 
-// NewReader opens the gzip stream of an archive.
-func NewReader(r io.Reader) (*Reader, error) {
+// newPlainReader opens the gzip stream of a plaintext archive. Everything
+// outside this file reads archives through OpenArchive.
+func newPlainReader(r io.Reader) (*Reader, error) {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
 		return nil, fmt.Errorf("backup: not a gzip archive: %w", err)
@@ -202,6 +207,21 @@ func (r *Reader) Next() (*tar.Header, io.Reader, error) {
 	}
 	r.lastName = hdr.Name
 	return hdr, r.tr, nil
+}
+
+// Finish reads the rest of the stream once Next has returned io.EOF. The tar
+// reader stops at its end marker, so without this the gzip trailer and, for
+// an encrypted archive, the final chunk would never be checked.
+func (r *Reader) Finish() error {
+	if _, err := io.Copy(io.Discard, r.gz); err != nil {
+		return damaged(fmt.Errorf("end of archive: %w", err))
+	}
+	if r.raw != nil {
+		if _, err := io.Copy(io.Discard, r.raw); err != nil {
+			return damaged(fmt.Errorf("end of archive: %w", err))
+		}
+	}
+	return nil
 }
 
 // Unread hands one entry back so the next Next call returns it again.
@@ -444,4 +464,95 @@ func stripPrefix(name, prefix string) (string, bool) {
 		return rest, true
 	}
 	return "", false
+}
+
+// OpenOptions say how OpenArchive finds the passphrase of an encrypted archive
+// and whether a plaintext archive is acceptable.
+type OpenOptions struct {
+	// Passphrase is used when set; it wins over KeyDir.
+	Passphrase secret.Secret
+	// KeyDir is tried for <KeyDir>/backup.key when Passphrase is empty.
+	KeyDir string
+	// AllowUnencrypted accepts a plaintext (unauthenticated) archive.
+	AllowUnencrypted bool
+}
+
+// ArchiveInfo describes how an opened archive was protected.
+type ArchiveInfo struct {
+	Encrypted bool
+	KeyID     string
+	key       *Key
+}
+
+// resolver finds the key of an encrypted archive from its header: the explicit
+// passphrase first, then the key file. Either is derived with the header's own
+// parameters, so an archive keeps opening whatever the defaults become.
+func (o OpenOptions) resolver() KeyResolver {
+	return func(p KeyParams, keyID string) (*Key, error) {
+		if o.Passphrase != "" {
+			return DeriveKey(o.Passphrase.Reveal(), p)
+		}
+		if o.KeyDir != "" {
+			kf, ok, err := readKeyFile(o.KeyDir)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				k, err := DeriveKey(kf.Passphrase, p)
+				if err != nil {
+					return nil, err
+				}
+				if k.ID() != keyID {
+					return nil, fmt.Errorf("%w: the stored passphrase is key %s, the archive was written with key %s", ErrWrongPassphrase, kf.KeyID, keyID)
+				}
+				return k, nil
+			}
+		}
+		return nil, ErrPassphraseRequired
+	}
+}
+
+// OpenArchive opens an archive stream, encrypted or not, and is the only way
+// archives are read. An encrypted archive is authenticated chunk by chunk as
+// it is read; a plaintext one is refused unless opts.AllowUnencrypted says the
+// caller has been told it is unauthenticated.
+func OpenArchive(r io.Reader, opts OpenOptions) (*Reader, ArchiveInfo, error) {
+	br := bufio.NewReaderSize(r, 64<<10)
+	encrypted, err := sniffEncrypted(br)
+	if err != nil {
+		return nil, ArchiveInfo{}, err
+	}
+	if encrypted {
+		var key *Key
+		resolve := opts.resolver()
+		dr, err := NewDecryptReader(br, func(p KeyParams, id string) (*Key, error) {
+			k, err := resolve(p, id)
+			key = k
+			return k, err
+		})
+		if err != nil {
+			return nil, ArchiveInfo{}, err
+		}
+		rd, err := newPlainReader(dr)
+		if err != nil {
+			if errors.Is(err, ErrArchiveTampered) {
+				return nil, ArchiveInfo{}, errors.Unwrap(err) // drop the "not a gzip archive" prefix
+			}
+			return nil, ArchiveInfo{}, damaged(err)
+		}
+		rd.raw = dr
+		return rd, ArchiveInfo{Encrypted: true, KeyID: dr.KeyID(), key: key}, nil
+	}
+	head, _ := br.Peek(2)
+	if len(head) < 2 || head[0] != 0x1f || head[1] != 0x8b {
+		return nil, ArchiveInfo{}, damaged(errors.New("not a Stackstead archive"))
+	}
+	if !opts.AllowUnencrypted {
+		return nil, ArchiveInfo{}, ErrUnencryptedArchive
+	}
+	rd, err := newPlainReader(br)
+	if err != nil {
+		return nil, ArchiveInfo{}, damaged(err)
+	}
+	return rd, ArchiveInfo{}, nil
 }

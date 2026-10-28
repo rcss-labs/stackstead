@@ -33,6 +33,7 @@ type fakeHostRestore struct {
 	gotSource backup.HostSource
 	gotStart  bool
 	gotDigest string
+	gotOpts   backup.HostRestoreOptions
 	inspected []backup.HostSource
 }
 
@@ -45,9 +46,9 @@ func (f *fakeHostRestore) Inspect(_ context.Context, src backup.HostSource) (bac
 	return f.summary, f.earlyErr
 }
 
-func (f *fakeHostRestore) Restore(_ context.Context, src backup.HostSource, startStacks bool, digest string, out func(string), accepted func()) (backup.HostReport, error) {
+func (f *fakeHostRestore) Restore(_ context.Context, src backup.HostSource, opts backup.HostRestoreOptions, out func(string), accepted func()) (backup.HostReport, error) {
 	f.mu.Lock()
-	f.gotSource, f.gotStart, f.gotDigest = src, startStacks, digest
+	f.gotSource, f.gotStart, f.gotDigest, f.gotOpts = src, opts.StartStacks, opts.ConfirmedDigest, opts
 	f.mu.Unlock()
 	if f.earlyErr != nil {
 		return backup.HostReport{}, f.earlyErr
@@ -448,6 +449,71 @@ func TestSetupDuringAnUploadDiscardsIt(t *testing.T) {
 	for _, p := range []string{env.fake.upload, env.fake.upload + ".partial"} {
 		if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("%s was kept after setup completed", filepath.Base(p))
+		}
+	}
+}
+
+func TestSetupRestoreInspectPassesPassphrase(t *testing.T) {
+	env := newRestoreEnv(t, "")
+	env.fake.summary = backup.HostSummary{Manifest: backup.Manifest{Host: "old"}, ConflictsDigest: "digest-1", Encrypted: true, KeyID: "0123456789abcdef"}
+	body := `{"source":{"kind":"path","path":"/srv/backups/a.tar.gz.enc"},"passphrase":"open sesame passphrase"}`
+	rec := env.do(t, http.MethodPost, "/api/setup/restore/inspect", body, fromLoopback)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("inspect = %d %s", rec.Code, rec.Body)
+	}
+	if got := env.fake.inspected; len(got) != 1 || got[0].Passphrase.Reveal() != "open sesame passphrase" {
+		t.Errorf("inspected = %+v, want the passphrase passed to the engine", got)
+	}
+	var sum apitypes.HostRestoreSummary
+	if err := json.Unmarshal(rec.Body.Bytes(), &sum); err != nil || !sum.Encrypted || sum.KeyID != "0123456789abcdef" {
+		t.Errorf("summary = %s (%v)", rec.Body, err)
+	}
+	if strings.Contains(rec.Body.String(), "open sesame") {
+		t.Errorf("the response echoes the passphrase: %s", rec.Body)
+	}
+}
+
+func TestSetupRestoreStartPassesAcknowledgement(t *testing.T) {
+	env := newRestoreEnv(t, "")
+	body := `{"source":{"kind":"path","path":"/srv/backups/a.tar.gz"},"startStacks":false,"confirmedDigest":"digest-1","allowUnencrypted":true,"passphrase":"p-for-start"}`
+	rec := env.do(t, http.MethodPost, "/api/setup/restore/start", body, fromLoopback)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("start = %d %s", rec.Code, rec.Body)
+	}
+	env.fake.mu.Lock()
+	defer env.fake.mu.Unlock()
+	if !env.fake.gotOpts.AllowUnencrypted || env.fake.gotOpts.StartStacks || env.fake.gotOpts.ConfirmedDigest != "digest-1" {
+		t.Errorf("options = %+v", env.fake.gotOpts)
+	}
+	if env.fake.gotSource.Passphrase.Reveal() != "p-for-start" {
+		t.Errorf("source passphrase = %q", env.fake.gotSource.Passphrase.Reveal())
+	}
+}
+
+func TestSetupRestoreErrorCodes(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		code string
+	}{
+		{backup.ErrArchiveTampered, "archive_tampered"},
+		{fmt.Errorf("damaged: %w", backup.ErrArchiveTampered), "archive_tampered"},
+		{backup.ErrWrongPassphrase, "wrong_passphrase"},
+		{backup.ErrPassphraseRequired, "passphrase_required"},
+		{backup.ErrUnencryptedArchive, "unencrypted_archive"},
+		{fmt.Errorf("%w: %w", backup.ErrArchiveDamaged, backup.ErrArchiveTampered), "archive_tampered"},
+	} {
+		env := newRestoreEnv(t, "")
+		env.fake.earlyErr = tc.err
+		for path, body := range map[string]string{
+			"/api/setup/restore/inspect": `{"source":{"kind":"path","path":"/a.tar.gz"}}`,
+			"/api/setup/restore/start":   `{"source":{"kind":"path","path":"/a.tar.gz"},"confirmedDigest":"digest-1"}`,
+		} {
+			rec := env.do(t, http.MethodPost, path, body, fromLoopback)
+			var e apitypes.ErrorBody
+			_ = json.Unmarshal(rec.Body.Bytes(), &e)
+			if rec.Code != http.StatusUnprocessableEntity || e.Code != tc.code {
+				t.Errorf("%s with %v = %d %s, want 422 %s", path, tc.err, rec.Code, rec.Body, tc.code)
+			}
 		}
 	}
 }

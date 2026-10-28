@@ -32,7 +32,7 @@ func TestHostRestoreFromUploadInStagingDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := restorer.Restore(context.Background(), src, true, sum.ConflictsDigest, nil, nil); err != nil {
+	if _, err := restorer.Restore(context.Background(), src, HostRestoreOptions{StartStacks: true, AllowUnencrypted: true, ConfirmedDigest: sum.ConflictsDigest}, nil, nil); err != nil {
 		t.Fatalf("restore from upload: %v", err)
 	}
 	readPending(t, s.env.DataDir)
@@ -48,12 +48,12 @@ func TestHostRestoreReportsAcceptanceOnlyWhenConfirmed(t *testing.T) {
 	}
 
 	accepted := 0
-	_, err = restorer.Restore(context.Background(), pathSource(path), true, "stale-digest", nil, func() { accepted++ })
+	_, err = restorer.Restore(context.Background(), pathSource(path), HostRestoreOptions{StartStacks: true, AllowUnencrypted: true, ConfirmedDigest: "stale-digest"}, nil, func() { accepted++ })
 	if !errors.Is(err, ErrConflictsChanged) || accepted != 0 {
 		t.Fatalf("stale digest: err = %v, accepted %d times; want ErrConflictsChanged and no acceptance", err, accepted)
 	}
 	var changesAtAccept []string
-	_, err = restorer.Restore(context.Background(), pathSource(path), true, sum.ConflictsDigest, nil, func() {
+	_, err = restorer.Restore(context.Background(), pathSource(path), HostRestoreOptions{StartStacks: true, AllowUnencrypted: true, ConfirmedDigest: sum.ConflictsDigest}, nil, func() {
 		accepted++
 		changesAtAccept = s.eng.changes()
 	})

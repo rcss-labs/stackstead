@@ -141,6 +141,10 @@ type BackupRestoreRequest struct {
 	Images  bool   `json:"images"`
 	// VolumeKeys limits the volumes restored; empty means all of them.
 	VolumeKeys []string `json:"volumeKeys"`
+	// Passphrase opens an encrypted archive; empty uses the stored one.
+	// AllowUnencrypted confirms restoring an archive that is not authenticated.
+	Passphrase       string `json:"passphrase,omitempty"`
+	AllowUnencrypted bool   `json:"allowUnencrypted"`
 }
 
 type BackupFileDiff struct {
@@ -181,6 +185,9 @@ type BackupRestorePlan struct {
 	MissingNetworks []BackupRestoreNetwork `json:"missingNetworks"`
 	CrossHost       bool                   `json:"crossHost"`
 	Warnings        []string               `json:"warnings"`
+	// Encrypted is false for an archive with no authentication at all.
+	Encrypted bool   `json:"encrypted"`
+	KeyID     string `json:"keyId"`
 }
 
 // BackupRestoreStarted is the 202 body of POST /api/backups/restore.
@@ -241,6 +248,8 @@ type HostRestoreUploaded struct {
 type HostRestoreInspectRequest struct {
 	Source     HostRestoreSource `json:"source"`
 	SetupToken string            `json:"setupToken"`
+	// Passphrase opens an encrypted archive; empty uses the key file, if any.
+	Passphrase string `json:"passphrase,omitempty"`
 }
 
 // HostRestoreStartRequest starts the restore. ConfirmedDigest is the
@@ -250,6 +259,9 @@ type HostRestoreStartRequest struct {
 	StartStacks     bool              `json:"startStacks"`
 	ConfirmedDigest string            `json:"confirmedDigest"`
 	SetupToken      string            `json:"setupToken"`
+	Passphrase      string            `json:"passphrase,omitempty"`
+	// AllowUnencrypted confirms restoring an archive that is not authenticated.
+	AllowUnencrypted bool `json:"allowUnencrypted"`
 }
 
 // HostRestoreStarted is the 202 body of POST /api/setup/restore/start.
@@ -273,6 +285,8 @@ type HostRestoreSummary struct {
 	Manifest        BackupManifest        `json:"manifest"`
 	Conflicts       []HostRestoreConflict `json:"conflicts"`
 	ConflictsDigest string                `json:"conflictsDigest"`
+	Encrypted       bool                  `json:"encrypted"`
+	KeyID           string                `json:"keyId"`
 }
 
 // BackupManifest is an archive's manifest, as GET

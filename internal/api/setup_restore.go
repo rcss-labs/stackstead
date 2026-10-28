@@ -28,7 +28,7 @@ type HostRestoreAPI interface {
 	Inspect(ctx context.Context, src backup.HostSource) (backup.HostSummary, error)
 	// Restore stages the restore. It calls accepted once the archive and the
 	// confirmed conflicts check out, before the host changes.
-	Restore(ctx context.Context, src backup.HostSource, startStacks bool, confirmedDigest string, out func(string), accepted func()) (backup.HostReport, error)
+	Restore(ctx context.Context, src backup.HostSource, opts backup.HostRestoreOptions, out func(string), accepted func()) (backup.HostReport, error)
 }
 
 // RestoreOperations runs the restore as an operation; *stacks.Ops satisfies it.
@@ -64,7 +64,34 @@ const (
 	codeConflictsChanged = "conflicts_changed"
 	codeArchiveNewer     = "archive_newer"
 	codeArchiveDamaged   = "archive_damaged"
+
+	// Refusals that are about the archive's protection, not its structure.
+	codeArchiveTampered    = "archive_tampered"
+	codeWrongPassphrase    = "wrong_passphrase"
+	codePassphraseNeeded   = "passphrase_required"
+	codeUnencryptedArchive = "unencrypted_archive"
 )
+
+// protectionCode maps the typed refusals about an archive's authenticity to
+// their error code. They are checked before ErrArchiveDamaged, which wraps them.
+func protectionCodeOf(err error) string {
+	code, _ := protectionCode(err)
+	return code
+}
+
+func protectionCode(err error) (string, bool) {
+	switch {
+	case errors.Is(err, backup.ErrArchiveTampered):
+		return codeArchiveTampered, true
+	case errors.Is(err, backup.ErrWrongPassphrase):
+		return codeWrongPassphrase, true
+	case errors.Is(err, backup.ErrPassphraseRequired):
+		return codePassphraseNeeded, true
+	case errors.Is(err, backup.ErrUnencryptedArchive):
+		return codeUnencryptedArchive, true
+	}
+	return "", false
+}
 
 // restoreState is the single whole-host restore: the operation running it
 // and the token that authorises its progress stream.
@@ -210,7 +237,13 @@ func (s *server) handleRestoreUpload(w http.ResponseWriter, r *http.Request) {
 
 // hostSource turns the wire source into the engine's. An upload always means
 // this server's upload file, whatever path the client sends.
-func (s *server) hostSource(src apitypes.HostRestoreSource) (backup.HostSource, string) {
+func (s *server) hostSource(src apitypes.HostRestoreSource, passphrase string) (backup.HostSource, string) {
+	hs, msg := s.hostSourceOf(src)
+	hs.Passphrase = secret.Secret(passphrase)
+	return hs, msg
+}
+
+func (s *server) hostSourceOf(src apitypes.HostRestoreSource) (backup.HostSource, string) {
 	switch src.Kind {
 	case backup.SourceUpload:
 		return backup.HostSource{Kind: backup.SourceUpload, Path: s.opts.HostRestore.UploadPath()}, ""
@@ -242,6 +275,8 @@ func writeRestoreError(w http.ResponseWriter, err error) {
 		writeCodedError(w, http.StatusConflict, err.Error(), codeRestorePending)
 	case errors.Is(err, backup.ErrArchiveNewer):
 		writeCodedError(w, http.StatusUnprocessableEntity, err.Error(), codeArchiveNewer)
+	case protectionCodeOf(err) != "":
+		writeCodedError(w, http.StatusUnprocessableEntity, err.Error(), protectionCodeOf(err))
 	case errors.Is(err, backup.ErrArchiveDamaged), errors.Is(err, backup.ErrManifestMismatch), errors.Is(err, backup.ErrUnsafePath):
 		writeCodedError(w, http.StatusUnprocessableEntity, err.Error(), codeArchiveDamaged)
 	default:
@@ -255,7 +290,7 @@ func (s *server) handleRestoreInspect(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) || !s.setupGate(w, r, req.SetupToken) {
 		return
 	}
-	src, msg := s.hostSource(req.Source)
+	src, msg := s.hostSource(req.Source, req.Passphrase)
 	if msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
 		return
@@ -276,7 +311,7 @@ func (s *server) handleRestoreStart(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) || !s.setupGate(w, r, req.SetupToken) {
 		return
 	}
-	src, msg := s.hostSource(req.Source)
+	src, msg := s.hostSource(req.Source, req.Passphrase)
 	if msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
 		return
@@ -286,7 +321,9 @@ func (s *server) handleRestoreStart(w http.ResponseWriter, r *http.Request) {
 	var acceptOnce sync.Once
 	early := make(chan error, 1)
 	run := func(ctx context.Context, out func(string)) error {
-		_, err := s.opts.HostRestore.Restore(ctx, src, req.StartStacks, req.ConfirmedDigest, out,
+		_, err := s.opts.HostRestore.Restore(ctx, src, backup.HostRestoreOptions{
+			StartStacks: req.StartStacks, AllowUnencrypted: req.AllowUnencrypted, ConfirmedDigest: req.ConfirmedDigest,
+		}, out,
 			func() { acceptOnce.Do(func() { close(accepted) }) })
 		if err == nil && src.Kind == backup.SourceUpload {
 			// The archive is staged; the upload is no longer needed.
@@ -407,9 +444,9 @@ func (s *server) handleRestoreProgress(w http.ResponseWriter, r *http.Request) {
 
 func toHostRestoreSummary(sum backup.HostSummary) apitypes.HostRestoreSummary {
 	out := apitypes.HostRestoreSummary{
-		ConflictsDigest: sum.ConflictsDigest,
-		Conflicts:       make([]apitypes.HostRestoreConflict, 0, len(sum.Conflicts)),
-		Manifest:        toBackupManifest(sum.Manifest),
+		ConflictsDigest: sum.ConflictsDigest, Encrypted: sum.Encrypted, KeyID: sum.KeyID,
+		Conflicts: make([]apitypes.HostRestoreConflict, 0, len(sum.Conflicts)),
+		Manifest:  toBackupManifest(sum.Manifest),
 	}
 	for _, c := range sum.Conflicts {
 		out.Conflicts = append(out.Conflicts, apitypes.HostRestoreConflict(c))

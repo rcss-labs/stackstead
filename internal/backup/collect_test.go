@@ -31,7 +31,7 @@ func archiveNames(t *testing.T, w *Writer, buf *bytes.Buffer) []string {
 	if err := w.Close(Manifest{}); err != nil {
 		t.Fatal(err)
 	}
-	r, err := NewReader(buf)
+	r, err := newPlainReader(buf)
 	if err != nil {
 		t.Fatal(err)
 	}
