@@ -3,6 +3,9 @@ package images
 import (
 	"archive/tar"
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -41,7 +44,7 @@ func TestMaterializeAndWriteContext(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := WriteContext(&buf, dir, ""); err != nil {
+	if err := WriteContext(context.Background(), &buf, dir, ""); err != nil {
 		t.Fatal(err)
 	}
 	tr := tar.NewReader(&buf)
@@ -106,10 +109,10 @@ func TestWriteContextNegatedIgnoreAndSizeStable(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "a.log"), []byte("x"), 0o644)
 	os.WriteFile(filepath.Join(dir, "keep.log"), []byte("x"), 0o644)
 	var one, two bytes.Buffer
-	if err := WriteContext(&one, dir, ""); err != nil {
+	if err := WriteContext(context.Background(), &one, dir, ""); err != nil {
 		t.Fatal(err)
 	}
-	WriteContext(&two, dir, "")
+	WriteContext(context.Background(), &two, dir, "")
 	if !bytes.Equal(one.Bytes(), two.Bytes()) {
 		t.Fatal("tar is not reproducible")
 	}
@@ -150,7 +153,7 @@ func TestWriteContextKeepsNestedDockerfile(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "app.txt"), []byte("x"), 0o644)
 	os.WriteFile(filepath.Join(dir, ".dockerignore"), []byte("build\n*.Dockerfile\n.dockerignore\n"), 0o644)
 	var buf bytes.Buffer
-	if err := WriteContext(&buf, dir, "build/prod.Dockerfile"); err != nil {
+	if err := WriteContext(context.Background(), &buf, dir, "build/prod.Dockerfile"); err != nil {
 		t.Fatal(err)
 	}
 	tr := tar.NewReader(&buf)
@@ -164,5 +167,24 @@ func TestWriteContextKeepsNestedDockerfile(t *testing.T) {
 	}
 	if !reflect.DeepEqual(names, []string{".dockerignore", "app.txt", "build/prod.Dockerfile"}) {
 		t.Fatalf("%v", names)
+	}
+}
+
+func TestWriteContextStopsWhenCancelled(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 50; i++ {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%02d", i)), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var buf bytes.Buffer
+	err := WriteContext(ctx, &buf, dir, "f00")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if buf.Len() > 0 {
+		t.Fatalf("wrote %d bytes after cancellation", buf.Len())
 	}
 }

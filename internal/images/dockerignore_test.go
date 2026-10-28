@@ -3,6 +3,7 @@ package images
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDockerignoreLongLine(t *testing.T) {
@@ -58,5 +59,25 @@ func TestDockerignore(t *testing.T) {
 	}
 	if _, err := ParseDockerignore([]byte("[")); err == nil {
 		t.Error("bad pattern accepted")
+	}
+}
+
+func TestDockerignoreRepeatedDoubleStarIsLinear(t *testing.T) {
+	ig, err := ParseDockerignore([]byte(strings.Repeat("**/", 1000) + "zz\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deep := strings.Repeat("d/", 99) + "f"
+	start := time.Now()
+	for i := 0; i < 200; i++ {
+		if ig.Excluded(deep) {
+			t.Fatal("path without a zz segment excluded")
+		}
+	}
+	if !ig.Excluded(strings.Repeat("d/", 99) + "zz") {
+		t.Fatal("path ending in zz not excluded")
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("matching took %v, want under 1s", took)
 	}
 }
