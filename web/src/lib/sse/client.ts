@@ -9,6 +9,8 @@ export type SSEStatus = 'connecting' | 'open' | 'reconnecting' | 'closed' | 'una
 
 export interface SSEOptions {
   url: string;
+  /** Extra request headers, sent on every connect. */
+  headers?: Record<string, string>;
   /** A function is asked on every connect (first included) and overrides the id tracked internally. */
   lastEventId?: string | (() => string | undefined);
   onMessage(m: SSEMessage): void;
@@ -104,7 +106,7 @@ export function openSSE(o: SSEOptions): SSEHandle {
       }, heartbeatMs);
     };
 
-    const headers: Record<string, string> = { Accept: 'text/event-stream' };
+    const headers: Record<string, string> = { ...o.headers, Accept: 'text/event-stream' };
     const id = typeof o.lastEventId === 'function' ? o.lastEventId() : trackedId;
     if (id) headers['Last-Event-ID'] = id;
 

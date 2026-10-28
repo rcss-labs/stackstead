@@ -23,10 +23,13 @@ import (
 )
 
 const (
-	sessionCookie  = "stackstead_session"
-	checksHeader   = "X-Stackstead-Checks"
-	maxErrorBody   = 1 << 20
-	defaultTimeout = 30 * time.Second
+	sessionCookie = "stackstead_session"
+	// Servers reached over HTTPS name the cookie with the __Host- prefix. The
+	// client reads either, and always sends the plain name, which servers accept.
+	hostSessionCookie = "__Host-" + sessionCookie
+	checksHeader      = "X-Stackstead-Checks"
+	maxErrorBody      = 1 << 20
+	defaultTimeout    = 30 * time.Second
 )
 
 // errRedirectHost is returned by CheckRedirect when a redirect leaves the
@@ -256,7 +259,7 @@ func (c *Client) Login(ctx context.Context, username, password string) (string, 
 	}
 	resp := http.Response{Header: hdr}
 	for _, ck := range resp.Cookies() {
-		if ck.Name == sessionCookie && ck.Value != "" {
+		if (ck.Name == sessionCookie || ck.Name == hostSessionCookie) && ck.Value != "" {
 			expires := ck.Expires
 			if ck.MaxAge > 0 {
 				expires = c.now().Add(time.Duration(ck.MaxAge) * time.Second)

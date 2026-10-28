@@ -60,8 +60,8 @@ func (s *server) usesPeerCredential(r *http.Request) bool {
 	if s.opts.Peers == nil || r.Header.Get(peers.PeerHeader) == "" {
 		return false
 	}
-	_, err := r.Cookie(sessionCookieName)
-	return err != nil
+	_, ok := sessionToken(r)
+	return !ok
 }
 
 // denyPeerRoutes refuses denylisted routes before the mux sees them. The mux

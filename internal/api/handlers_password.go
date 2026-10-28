@@ -23,8 +23,8 @@ func (s *server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "too many failed login attempts, try again later")
 		return
 	}
-	cookie, _ := r.Cookie(sessionCookieName) // present: requireSession checked it
-	err := s.opts.Auth.ChangePassword(r.Context(), userFrom(r.Context()).ID, req.Current, req.New, cookie.Value)
+	token, _ := sessionToken(r) // present: requireSession checked it
+	err := s.opts.Auth.ChangePassword(r.Context(), userFrom(r.Context()).ID, req.Current, req.New, token)
 	switch {
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		writeError(w, http.StatusForbidden, "current password is incorrect")

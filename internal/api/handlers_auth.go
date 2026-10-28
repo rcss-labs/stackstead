@@ -161,17 +161,17 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.opts.Limiter.Reset(ip)
-	setSessionCookie(w, r, token, auth.SessionTTL)
+	s.setSessionCookie(w, r, token, auth.SessionTTL)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	cookie, _ := r.Cookie(sessionCookieName) // present: requireSession checked it
-	if err := s.opts.Auth.Logout(r.Context(), cookie.Value); err != nil {
+	token, _ := sessionToken(r) // present: requireSession checked it
+	if err := s.opts.Auth.Logout(r.Context(), token); err != nil {
 		s.internalError(w, r, err)
 		return
 	}
-	clearSessionCookie(w, r)
+	s.clearSessionCookie(w, r)
 	w.WriteHeader(http.StatusNoContent)
 }
 

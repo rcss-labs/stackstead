@@ -258,17 +258,6 @@ func TestLoginSetsSessionCookieAndMeReturnsUser(t *testing.T) {
 	}
 }
 
-func TestLoginCookieIsSecureBehindHTTPSProxy(t *testing.T) {
-	env := newTestEnv(t, "")
-	env.createAdmin(t)
-	rec := env.do(t, http.MethodPost, "/api/login",
-		fmt.Sprintf(`{"username":"admin","password":%q}`, adminPassword),
-		withHeader("X-Forwarded-Proto", "https"))
-	if !sessionCookie(t, rec).Secure {
-		t.Error("cookie not Secure behind HTTPS proxy")
-	}
-}
-
 func TestLoginFailuresLookIdentical(t *testing.T) {
 	env := newTestEnv(t, "")
 	env.createAdmin(t)

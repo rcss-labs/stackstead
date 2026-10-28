@@ -236,7 +236,8 @@ export function RestoreFromBackup({ pollMs = 2000, deadlineMs = 5 * 60_000 }: { 
       }
     }
     sse.current = openSSE({
-      url: `/api/setup/restore/progress?token=${encodeURIComponent(token)}`,
+      url: '/api/setup/restore/progress',
+      headers: { 'X-Restore-Token': token },
       onMessage,
       onStatus: (status) => {
         if (status === 'open') streamIsLive();

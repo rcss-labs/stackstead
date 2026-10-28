@@ -16,7 +16,7 @@ access is equivalent to root. Treat the Stackstead login like a root password.
   trust model is unchanged: the same root-equivalent access Stackstead already
   has.
 - There is one admin account. Passwords are hashed with argon2id, sessions use
-  an HTTP-only, SameSite=Strict cookie, and login is rate-limited per client address (see [Remote access](#remote-access) for proxies).
+  an HTTP-only, SameSite=Strict cookie (`__Host-` prefixed and Secure over HTTPS; see [Give Stackstead its own hostname](#give-stackstead-its-own-hostname-and-use-https)), and login is rate-limited per client address (see [Remote access](#remote-access) for proxies).
 - Open event, log and terminal streams end when their session does: at once
   for logout, a password change (other sessions) or a reset, when the session
   expires, and within 30 seconds for a reset run from the host command line
@@ -71,6 +71,7 @@ proxy_set_header Upgrade $http_upgrade;
 proxy_set_header Connection $connection_upgrade;   # map $http_upgrade $connection_upgrade { default upgrade; '' close; }
 proxy_set_header Host $http_host;
 proxy_set_header X-Forwarded-For $remote_addr;
+proxy_set_header X-Forwarded-Proto $scheme;
 ```
 
 Login and password-change attempts are rate-limited per client address (five
@@ -85,6 +86,29 @@ the header is malformed. From any other peer the header is ignored, since a
 client can forge it. Make the proxy overwrite the header (`$remote_addr` above
 does; `$proxy_add_x_forwarded_for` appends to a client-supplied one, which
 Stackstead also handles).
+
+### Give Stackstead its own hostname, and use HTTPS
+
+Browsers do not isolate cookies by port (RFC 6265 section 8.5). A session
+cookie set by `http://nas.lan:8420` is also sent to `http://nas.lan:8080`, so
+every other web app on the same hostname receives the admin's session token,
+which is root-equivalent, and over plain HTTP it travels in clear text.
+Stackstead exists to run other web apps on the same host, so:
+
+- Serve Stackstead on a dedicated hostname (for example `stackstead.example.com`)
+  that no workload shares, and publish workloads under other hostnames.
+- Serve it over HTTPS. Over TLS, either directly or through a proxy that sends
+  `X-Forwarded-Proto: https`, the session cookie is
+  named `__Host-stackstead_session` and is `Secure`, `HttpOnly`, `SameSite=Strict`,
+  `Path=/` with no `Domain`. Browsers then refuse to let a sibling service
+  overwrite it and never send it over plain HTTP.
+  Make the proxy set the header (as in the snippet above). A client that forges
+  it only gets a Secure cookie its own browser will not send over plain HTTP.
+- Over plain HTTP the cookie keeps the name `stackstead_session` and is not
+  `Secure`, because browsers reject the `__Host-` prefix without `Secure`. The
+  server accepts either name. Logout clears both.
+
+Sessions have a fixed 7-day lifetime; there is no idle timeout.
 
 Each open browser tab keeps an `/api/events` stream plus the active tab's own
 stream (logs, metrics or an operation). HTTP/1.1 allows only 6 connections per
@@ -166,7 +190,7 @@ so treat it like the rest of the signed-in surface.
 
 - **Origin check.** The Origin header's host[:port] must equal the request's
   `Host` (case-insensitive), otherwise the server answers 403 `bad_origin`.
-  The scheme is not compared, because the documented nginx setup does not
+  The scheme is not compared, because not every proxy setup does
   forward `X-Forwarded-Proto`. This blocks cross-site WebSocket hijacking with
   the admin's cookie. A missing Origin is allowed: browsers always send one,
   and any other client still needs a valid credential.
