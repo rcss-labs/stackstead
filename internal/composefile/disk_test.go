@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"testing"
 )
 
@@ -161,5 +162,55 @@ func TestSaveKeepsSymlinkAndWritesTarget(t *testing.T) {
 	}
 	if got := readFile(t, target+".bak"); got != "v1\n" {
 		t.Errorf("backup next to target = %q, want v1", got)
+	}
+}
+
+// withUmask sets the process umask for the test. The umask is process-wide,
+// so tests using it must not call t.Parallel.
+func withUmask(t *testing.T, mask int) {
+	t.Helper()
+	old := syscall.Umask(mask)
+	t.Cleanup(func() { syscall.Umask(old) })
+}
+
+func TestSaveNewFileHonoursUmask(t *testing.T) {
+	for _, tc := range []struct {
+		umask int
+		want  os.FileMode
+	}{{0o077, 0o600}, {0o007, 0o660}, {0o022, 0o644}} {
+		withUmask(t, tc.umask)
+		path := filepath.Join(t.TempDir(), "compose.yaml")
+		if err := Save(path, []byte("services: {}\n"), ""); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != tc.want {
+			t.Errorf("umask %04o: mode = %v, want %v", tc.umask, info.Mode().Perm(), tc.want)
+		}
+	}
+}
+
+func TestSaveExistingFileKeepsModeDespiteUmask(t *testing.T) {
+	withUmask(t, 0o077)
+	path := filepath.Join(t.TempDir(), "compose.yaml")
+	writeFile(t, path, "v1\n", 0o644)
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, hash, _ := Load(path)
+	if err := Save(path, []byte("v2\n"), hash); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	for _, p := range []string{path, path + ".bak"} {
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o644 {
+			t.Errorf("%s mode = %v, want 0644 kept", filepath.Base(p), info.Mode().Perm())
+		}
 	}
 }

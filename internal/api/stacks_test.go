@@ -275,6 +275,24 @@ func TestImportStack(t *testing.T) {
 	}
 }
 
+func TestImportStackReturnsWarnings(t *testing.T) {
+	fake := newFakeStacks()
+	fake.summary.Warnings = []string{"/srv/x is writable by everyone (mode 0777)"}
+	env, cookie := newStacksEnv(t, fake)
+	rec := env.do(t, "POST", "/api/stacks/import", `{"path":"/srv/x/compose.yaml"}`, withCookie(cookie))
+	if rec.Code != 201 || !strings.Contains(rec.Body.String(), `"warnings":["/srv/x is writable by everyone (mode 0777)"]`) {
+		t.Fatalf("import = %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestImportStackWithoutWarningsOmitsField(t *testing.T) {
+	env, cookie := newStacksEnv(t, newFakeStacks())
+	rec := env.do(t, "POST", "/api/stacks/import", `{"path":"/srv/x/compose.yaml"}`, withCookie(cookie))
+	if rec.Code != 201 || strings.Contains(rec.Body.String(), `"warnings"`) {
+		t.Fatalf("import = %d %s", rec.Code, rec.Body)
+	}
+}
+
 func TestListAndGetStack(t *testing.T) {
 	env, cookie := newStacksEnv(t, newFakeStacks())
 	rec := env.do(t, "GET", "/api/stacks", "", withCookie(cookie))

@@ -42,7 +42,7 @@ type (
 func toSummary(s stacks.Summary) summaryDTO {
 	return summaryDTO{Name: s.Name, Path: s.Path, Project: s.Project, Origin: string(s.Origin),
 		Status: string(s.Status), ServiceCount: s.Services, Running: s.Running,
-		Health: apitypes.HealthCounts(s.Health), Ports: nonNil(s.Ports)}
+		Health: apitypes.HealthCounts(s.Health), Ports: nonNil(s.Ports), Warnings: s.Warnings}
 }
 
 // nonNil keeps empty lists encoding as [] instead of null.
