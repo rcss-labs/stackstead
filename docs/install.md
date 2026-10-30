@@ -207,7 +207,7 @@ recovers once the proxy lets Stackstead's peer requests through.
 
 - The `stackstead` user is in the `docker` group. Docker access is root-equivalent on the host, so anyone
   who controls the web UI controls the machine. The unit's hardening (`NoNewPrivileges`, `ProtectSystem=full`,
-  `PrivateTmp`, kernel and cgroup protections, an empty capability set) limits accidents in Stackstead's own
+  `PrivateTmp`, `PrivateDevices`, address-family and namespace restrictions, kernel, clock, hostname and cgroup protections, an empty capability set) limits accidents in Stackstead's own
   process; it is defense in depth, not a security boundary.
 - It listens on `127.0.0.1` by default. For remote access use an authenticating TLS reverse proxy
   ([security.md](security.md)).

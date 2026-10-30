@@ -183,10 +183,12 @@ func assertServiceRunning(t *testing.T, s *scenario, bin, version string, fresh 
 	if len(ps) < 3 || ps[0] != "stackstead" || ps[1] != "stackstead" || !strings.Contains(ps[2], "docker") {
 		t.Errorf("service process user/group/supgrp = %v, want stackstead stackstead ...docker...", ps)
 	}
-	props := s.shOK("systemctl show stackstead -p ProtectSystem -p NoNewPrivileges -p PrivateTmp -p UMask")
+	props := s.shOK("systemctl show stackstead -p ProtectSystem -p NoNewPrivileges -p PrivateTmp -p PrivateDevices -p RestrictNamespaces -p UMask")
 	expectContains(t, "unit properties", props, "ProtectSystem=full")
 	expectContains(t, "unit properties", props, "NoNewPrivileges=yes")
 	expectContains(t, "unit properties", props, "PrivateTmp=yes")
+	expectContains(t, "unit properties", props, "PrivateDevices=yes")
+	expectContains(t, "unit properties", props, "RestrictNamespaces=yes")
 	expectContains(t, "unit properties", props, "UMask=0007")
 	expectEqual(t, "installed version", s.shOK(bin+" version --short"), "v"+version)
 	// as the service user: config, database and server must be fine; Docker is absent here, so exit 7 is the healthy answer
