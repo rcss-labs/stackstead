@@ -276,11 +276,12 @@ func writeDockerfile(stackDir, path string, content []byte, expectedHash *string
 }
 
 // writeDockerfileInRoot writes the Dockerfile at rel (relative to the root's
-// folder): missing folders are created (0755), a final symlink is refused,
+// folder): missing folders are created (0777), a final symlink is refused,
 // expectedHash is checked unless nil ("" means the file must not exist), and
-// the content goes to a temp file renamed into place. The new file is 0644; an
-// existing file keeps its mode. rollback undoes the write and removes the
-// folders this call created.
+// the content goes to a temp file renamed into place. The new file is 0666;
+// the process umask narrows new folders and files, and an existing file keeps
+// its mode. rollback undoes the write and removes the folders this call
+// created.
 func writeDockerfileInRoot(root *os.Root, rel string, content []byte, expectedHash *string) (hash string, rollback func() error, err error) {
 	hash, undo, err := writeIn(root, rel, content, expectedHash)
 	if err != nil {
@@ -331,17 +332,14 @@ func writeIn(root *os.Root, rel string, content []byte, expectedHash *string) (h
 		if !errors.Is(err, fs.ErrNotExist) {
 			return fail(err)
 		}
-		if err := root.Mkdir(dir, 0o755); err != nil {
+		if err := root.Mkdir(dir, 0o777); err != nil { // the umask narrows it
 			return fail(err)
 		}
 		created = append(created, dir)
-		if err := root.Chmod(dir, 0o755); err != nil {
-			return fail(err)
-		}
 	}
 
 	var old []byte
-	mode := fs.FileMode(0o644)
+	mode := fs.FileMode(0o666) // new file: the umask narrows it
 	exists := false
 	info, err := root.Lstat(rel)
 	switch {
@@ -376,12 +374,12 @@ func writeIn(root *os.Root, rel string, content []byte, expectedHash *string) (h
 			return "", noop, ErrDockerfileConflict
 		}
 	}
-	if err := writeAtomicIn(root, rel, content, mode); err != nil {
+	if err := writeAtomicIn(root, rel, content, mode, exists); err != nil {
 		return fail(err)
 	}
 	undo = func(root *os.Root) error {
 		if exists {
-			return writeAtomicIn(root, rel, old, mode)
+			return writeAtomicIn(root, rel, old, mode, true)
 		}
 		return errors.Join(root.Remove(rel), removeDirs(root))
 	}
@@ -389,8 +387,9 @@ func writeIn(root *os.Root, rel string, content []byte, expectedHash *string) (h
 }
 
 // writeAtomicIn writes rel through a temp file in the same folder and renames
-// it into place, all inside root.
-func writeAtomicIn(root *os.Root, rel string, data []byte, mode fs.FileMode) error {
+// it into place, all inside root. With exact, the file gets mode whatever the
+// umask; otherwise mode is the creation mode and the umask narrows it.
+func writeAtomicIn(root *os.Root, rel string, data []byte, mode fs.FileMode, exact bool) error {
 	var suffix [8]byte
 	if _, err := rand.Read(suffix[:]); err != nil {
 		return err
@@ -401,7 +400,10 @@ func writeAtomicIn(root *os.Root, rel string, data []byte, mode fs.FileMode) err
 		return err
 	}
 	if _, err = f.Write(data); err == nil {
-		if err = f.Chmod(mode); err == nil {
+		if exact {
+			err = f.Chmod(mode)
+		}
+		if err == nil {
 			err = f.Sync()
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/rcss-labs/stackstead/internal/composefile"
@@ -460,5 +461,46 @@ func TestWriteDockerfileInRootRefusesEscape(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
 		t.Errorf("outside dir has %d entries", len(entries))
+	}
+}
+
+func TestWriteDockerfileHonoursUmask(t *testing.T) {
+	for _, tc := range []struct {
+		umask         int
+		dir, fileMode os.FileMode
+	}{{0o077, 0o700, 0o600}, {0o007, 0o770, 0o660}} {
+		old := syscall.Umask(tc.umask) // process-wide: no t.Parallel in this test
+		stack, _ := filepath.EvalSymlinks(t.TempDir())
+		target := filepath.Join(stack, "web", "Dockerfile")
+		_, _, err := stacks.WriteDockerfile(stack, target, []byte("FROM x\n"), nil)
+		syscall.Umask(old)
+		if err != nil {
+			t.Fatal(err)
+		}
+		di, _ := os.Stat(filepath.Join(stack, "web"))
+		fi, _ := os.Stat(target)
+		if di.Mode().Perm() != tc.dir || fi.Mode().Perm() != tc.fileMode {
+			t.Errorf("umask %04o: dir %v file %v, want %v %v", tc.umask, di.Mode().Perm(), fi.Mode().Perm(), tc.dir, tc.fileMode)
+		}
+	}
+}
+
+func TestWriteDockerfileExistingKeepsModeDespiteUmask(t *testing.T) {
+	old := syscall.Umask(0o077)
+	defer syscall.Umask(old)
+	stack, _ := filepath.EvalSymlinks(t.TempDir())
+	existing := filepath.Join(stack, "Dockerfile")
+	if err := os.WriteFile(existing, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(existing, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hash := composefile.Hash([]byte("old\n"))
+	if _, _, err := stacks.WriteDockerfile(stack, existing, []byte("new\n"), &hash); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(existing); fi.Mode().Perm() != 0o644 {
+		t.Errorf("mode = %v, want 0644 kept", fi.Mode().Perm())
 	}
 }
