@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	defaultHubBase  = "https://hub.docker.com"
-	hubServerAddr   = "https://index.docker.io/v1/"
-	hubRejectedText = "Docker Hub rejected the username or token"
+	defaultHubBase    = "https://hub.docker.com"
+	hubServerAddr     = "https://index.docker.io/v1/"
+	hubRejectedText   = "Docker Hub rejected the username or token"
+	hubRedirectedText = "Docker Hub redirected the sign-in request; redirects are refused so credentials stay with Docker Hub"
 )
 
 // HubProvider tests and authenticates Docker Hub connections. Base and Client
@@ -34,11 +35,17 @@ func (p *HubProvider) base() string {
 	return defaultHubBase
 }
 
+// client never follows a redirect: the login body and token must not be
+// replayed to another host or scheme. An injected client is copied so the
+// refusal applies to it too, without mutating the caller's value.
 func (p *HubProvider) client() *http.Client {
+	c := &http.Client{Timeout: 15 * time.Second}
 	if p.Client != nil {
-		return p.Client
+		copied := *p.Client
+		c = &copied
 	}
-	return &http.Client{Timeout: 15 * time.Second}
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return c
 }
 
 // Test signs in against Docker Hub's auth endpoint. The response body is never
@@ -65,6 +72,9 @@ func (p *HubProvider) Test(ctx context.Context, r Registry) (TestResult, error) 
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return TestResult{OK: false, Host: HubHost, Message: hubRedirectedText}, nil
+	}
 	switch resp.StatusCode {
 	case http.StatusOK:
 		return TestResult{OK: true, Host: HubHost, Message: "Signed in as " + r.Hub.Username}, nil

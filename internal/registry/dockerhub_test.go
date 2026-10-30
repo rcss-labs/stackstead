@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -42,6 +43,39 @@ func TestHubTestOKAndRejected(t *testing.T) {
 	res, err = p.Test(context.Background(), hubRegistry("hub", "bad"))
 	if err != nil || res.OK || res.Message != "Docker Hub rejected the username or token" {
 		t.Fatalf("rejected case: %+v, %v", res, err)
+	}
+}
+
+func TestHubTestRefusesRedirects(t *testing.T) {
+	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		for _, injected := range []bool{false, true} {
+			name := http.StatusText(status) + " default client"
+			if injected {
+				name = http.StatusText(status) + " injected client"
+			}
+			t.Run(name, func(t *testing.T) {
+				var targetHits atomic.Int32
+				target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+					targetHits.Add(1)
+				}))
+				t.Cleanup(target.Close)
+				hub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					http.Redirect(w, r, target.URL+r.URL.Path, status)
+				}))
+				t.Cleanup(hub.Close)
+				p := &HubProvider{Base: hub.URL}
+				if injected {
+					p.Client = hub.Client()
+				}
+				res, err := p.Test(context.Background(), hubRegistry("hub", "tok"))
+				if err != nil || res.OK {
+					t.Fatalf("redirect case: %+v, %v; want a failed test", res, err)
+				}
+				if hits := targetHits.Load(); hits != 0 {
+					t.Errorf("redirect target received %d requests, want 0", hits)
+				}
+			})
+		}
 	}
 }
 
