@@ -17,6 +17,19 @@ access is equivalent to root. Treat the Stackstead login like a root password.
   has.
 - There is one admin account. Passwords are hashed with argon2id, sessions use
   an HTTP-only, SameSite=Strict cookie (`__Host-` prefixed and Secure over HTTPS; see [Give Stackstead its own hostname](#give-stackstead-its-own-hostname-and-use-https)), and login is rate-limited per client address (see [Remote access](#remote-access) for proxies).
+- **CSRF.** One middleware guards every unsafe (POST, PUT, PATCH, DELETE)
+  `/api/` request, in addition to `SameSite=Strict`, which does not stop other
+  pages on the same site (another app on the same host, a sibling subdomain).
+  The request is refused with 403 `bad_origin` when the browser says it is
+  `cross-site` or `same-site` (`Sec-Fetch-Site`), or, when that header is
+  absent, when the `Origin` host[:port] differs from `Host`. Requests with
+  neither header (the CLI, scripts) and server-to-server peer requests, which
+  use the peer credential instead of the cookie, are not browser traffic and
+  pass. Behind a reverse proxy a modern browser sends `Sec-Fetch-Site:
+  same-origin`, which passes whatever `Host` the proxy forwards. Limitation:
+  an older browser without `Sec-Fetch-Site` falls back to the Origin check, so
+  the proxy must forward the original `Host` (see [Remote access](#remote-access));
+  otherwise its unsafe requests are refused.
 - Open event, log and terminal streams end when their session does: at once
   for logout, a password change (other sessions) or a reset, when the session
   expires, and within 30 seconds for a reset run from the host command line

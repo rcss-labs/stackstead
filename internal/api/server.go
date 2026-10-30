@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -209,13 +210,35 @@ func New(opts Options) http.Handler {
 		writeError(w, http.StatusNotFound, "not found")
 	}))
 	mux.Handle("/", spaHandler(opts.Static))
-	return nosniff(s.denyPeerRoutes(mux))
+	return nosniff(s.rejectCrossOrigin(s.denyPeerRoutes(mux)))
 }
 
 // nosniff stops browsers from second-guessing Content-Type on any response.
 func nosniff(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// rejectCrossOrigin is the one CSRF defence for every unsafe /api/ request, so
+// a handler that skips decodeJSON (multipart, bodiless POSTs) is still covered
+// and SameSite=Strict is not the only barrier against same-site pages.
+// Browsers send Sec-Fetch-Site (or at least Origin) on unsafe requests; the
+// check allows same-origin and, when only Origin is present, an Origin whose
+// host equals Host. Requests with neither header (the CLI, curl) are not
+// browser traffic and still need a credential. Peer-credential requests carry
+// no cookie, so they are not forgeable by a browser either.
+func (s *server) rejectCrossOrigin(next http.Handler) http.Handler {
+	cop := http.NewCrossOriginProtection()
+	cop.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeCodedError(w, http.StatusForbidden, "cross-origin request refused", codeBadOrigin)
+	}))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") && !s.usesPeerCredential(r) {
+			cop.Handler(next).ServeHTTP(w, r)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
