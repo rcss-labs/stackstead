@@ -57,11 +57,12 @@ export function StackImportScreen() {
       const { data, checksPartial } = await api.importStack(trimmed);
       void refreshStacks();
       refreshRunningOps();
+      const notes: string[] = [];
+      if (checksPartial) notes.push('port/IP conflict checks could not run (Docker unreachable)');
+      if (data.warnings?.length) notes.push(`other local users can modify the compose file: ${data.warnings.join('; ')}`);
       toasts.push({
-        kind: checksPartial ? 'warning' : 'success',
-        message: checksPartial
-          ? `Stack ${data.name} imported, but port/IP conflict checks could not run (Docker unreachable).`
-          : `Stack ${data.name} imported`,
+        kind: notes.length > 0 ? 'warning' : 'success',
+        message: notes.length > 0 ? `Stack ${data.name} imported, but ${notes.join(', and ')}.` : `Stack ${data.name} imported`,
       });
       navigate(href(`/stacks/${encodeURIComponent(data.name)}`));
     } catch (err) {

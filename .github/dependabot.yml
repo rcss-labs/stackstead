@@ -1,0 +1,15 @@
+# Keeps SHA-pinned actions and pinned Go, npm modules current with weekly update PRs.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly

@@ -36,11 +36,22 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
 ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+PrivateDevices=true
+RestrictNamespaces=true
+# AF_UNIX: the Docker socket. AF_INET/AF_INET6: the web UI, peers, update checks.
+# AF_NETLINK: Go's net.Interfaces (host network listing) asks the kernel over netlink.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 RestrictSUIDSGID=true
 RestrictRealtime=true
 LockPersonality=true
 SystemCallArchitectures=native
 CapabilityBoundingSet=
+# Deliberately left out: ProcSubset=pid (hides /proc/stat, meminfo, loadavg and
+# /proc/net, which the host metrics read), ProtectProc= and MemoryDenyWriteExecute=
+# (ProtectProc/ProcSubset need systemd 247, this unit supports 245; MDWE is inherited
+# by the docker compose child processes and has not been tested against them).
 
 [Install]
 WantedBy=multi-user.target

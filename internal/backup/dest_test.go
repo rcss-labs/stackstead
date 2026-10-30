@@ -445,3 +445,32 @@ func TestPruneLocalRemovesEncryptedArchiveAndSidecar(t *testing.T) {
 		t.Errorf("newest archive was pruned: %v", err)
 	}
 }
+
+// oversizedSidecar is valid JSON that exceeds maxSmallJSON.
+func oversizedSidecar() []byte {
+	return []byte(`{"hostSlug":"h","pad":"` + strings.Repeat("a", maxSmallJSON) + `"}`)
+}
+
+func TestLocalReadSidecarRefusesOversized(t *testing.T) {
+	ctx := context.Background()
+	d := NewLocal(LocalDest{Enabled: true, Path: t.TempDir(), KeepLast: 7})
+	name := ArchiveName("h", time.Date(2026, 5, 1, 1, 2, 3, 0, time.UTC), false)
+	if err := d.PutSidecar(ctx, name, oversizedSidecar()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.ReadSidecar(ctx, name); err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("ReadSidecar error = %v, want a too-large refusal", err)
+	}
+}
+
+func TestS3ReadSidecarRefusesOversized(t *testing.T) {
+	ctx := context.Background()
+	f, srv := newFakeS3()
+	defer srv.Close()
+	d := NewS3(testS3Dest(srv.URL, ""), srv.Client())
+	name := ArchiveName("h", time.Date(2026, 5, 1, 1, 2, 3, 0, time.UTC), false)
+	f.objects[SidecarName(name)] = oversizedSidecar()
+	if _, err := d.ReadSidecar(ctx, name); err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("ReadSidecar error = %v, want a too-large refusal", err)
+	}
+}

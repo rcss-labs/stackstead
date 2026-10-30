@@ -665,6 +665,11 @@ type hostRestore struct {
 	stopped         []engine.Container
 	stoppedProjects map[string]bool
 	stopFailed      map[string]bool
+
+	// SEC-15: directories of the stacks registered in the current database,
+	// read once when the first bind is vetted.
+	liveDirs []string
+	liveRead bool
 }
 
 func (h *hostRestore) out(line string) {
@@ -809,6 +814,8 @@ func (h *hostRestore) stageDatabase(body io.Reader) error {
 		t := &stackTarget{entry: e, dir: filepath.Dir(e.ComposePath)}
 		if !filepath.IsAbs(e.ComposePath) || !underAnyRoot(t.dir, h.env.AllowedRoots) {
 			t.skipped = fmt.Sprintf("%s is %s", t.dir, reasonOutsideRoots)
+		} else if overlapsDir(t.dir, h.env.DataDir) {
+			t.skipped = fmt.Sprintf("%s overlaps the Stackstead data directory", t.dir)
 		}
 		h.stacks[e.Name] = t
 		h.order = append(h.order, e.Name)
@@ -994,7 +1001,12 @@ func (h *hostRestore) volume(hdr *tar.Header, body io.Reader) error {
 			h.items = append(h.items, ItemResult{Kind: conflictVolume, Stack: stack, Name: mv.Name, Status: itemSkipped, Note: noteArchivedFileBind})
 			return drain(stream)
 		}
-		target, skip, err := h.rs.prepareBind(mv.Name, h.restoredStackDirs())
+		protected, err := h.protectedDirs()
+		var target bindTarget
+		var skip string
+		if err == nil {
+			target, skip, err = h.rs.prepareBind(mv.Name, protected)
+		}
 		if skip != "" || err != nil {
 			item := ItemResult{Kind: conflictVolume, Stack: stack, Name: mv.Name, Status: itemSkipped, Note: skip}
 			if err != nil {
@@ -1111,6 +1123,57 @@ func (h *hostRestore) restoredStackDirs() []string {
 	return dirs
 }
 
+// protectedDirs lists the directories a bind source must not contain: those
+// of the stacks being restored and of every stack registered in the host's
+// current database, so emptying a bind never wipes a stack the archive lacks.
+// The data dir is checked by bindCovers itself.
+func (h *hostRestore) protectedDirs() ([]string, error) {
+	if !h.liveRead {
+		dirs, err := liveStackDirs(h.ctx, h.env.DataDir)
+		if err != nil {
+			return nil, err
+		}
+		h.liveDirs, h.liveRead = dirs, true
+	}
+	return append(h.restoredStackDirs(), h.liveDirs...), nil
+}
+
+// liveStackDirs reads the stack directories from the database in dataDir.
+// A host without a database has none; one that cannot be read fails, because
+// the bind cannot then be vetted.
+func liveStackDirs(ctx context.Context, dataDir string) ([]string, error) {
+	db, err := store.OpenExisting(filepath.Join(dataDir, liveDBName), store.OpenOptions{ReadOnly: true, AllowOlderSchema: true})
+	if errors.Is(err, store.ErrNoDatabase) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read registered stacks: %w", err)
+	}
+	defer db.Close()
+	entries, err := stacks.NewRegistry(db, time.Now).List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list registered stacks: %w", err)
+	}
+	dirs := make([]string, 0, len(entries))
+	for _, e := range entries {
+		dirs = append(dirs, filepath.Dir(e.ComposePath))
+	}
+	return dirs, nil
+}
+
+// overlapsDir reports whether a and b are the same directory or one holds the
+// other, comparing both as given and with symlinks resolved.
+func overlapsDir(a, b string) bool {
+	for _, x := range withResolved(a) {
+		for _, y := range withResolved(b) {
+			if underRoot(x, y) || underRoot(y, x) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (h *hostRestore) ensureHelper() error {
 	if !h.helperTried {
 		h.helperTried = true
@@ -1127,7 +1190,11 @@ func (h *hostRestore) fillVolume(stack string, mv ManifestVolume, bind *bindTarg
 		return fmt.Errorf("helper image: %w", err)
 	}
 	if bind != nil {
-		if err := h.rs.revetBind(mv.Name, h.restoredStackDirs(), *bind); err != nil {
+		protected, err := h.protectedDirs()
+		if err != nil {
+			return err
+		}
+		if err := h.rs.revetBind(mv.Name, protected, *bind); err != nil {
 			return err
 		}
 		return RestoreBind(h.ctx, h.env.Engine, stack, *bind, stream)

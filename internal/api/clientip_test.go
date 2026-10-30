@@ -119,3 +119,31 @@ func TestLoginLimiterForwardedChains(t *testing.T) {
 		})
 	}
 }
+
+func TestLoginLimiterBlocksWholeIPv6Prefix(t *testing.T) {
+	env := newEnvWith(t, "", nil)
+	env.createAdmin(t)
+	for range 5 {
+		wrongLogin(t, env, fromPeer("[2001:db8:1:2::1]"))
+	}
+	if got := wrongLogin(t, env, fromPeer("[2001:db8:1:2:aaaa:bbbb:cccc:dddd]")); got != http.StatusTooManyRequests {
+		t.Errorf("other address in the same /64 = %d, want 429", got)
+	}
+	if got := rightLogin(t, env, fromPeer("[2001:db8:1:3::1]")); got != http.StatusNoContent {
+		t.Errorf("different /64 correct login = %d, want 204", got)
+	}
+}
+
+func TestLoginLimiterKeepsIPv4PerAddress(t *testing.T) {
+	env := newEnvWith(t, "", nil)
+	env.createAdmin(t)
+	for range 5 {
+		wrongLogin(t, env, fromPeer("192.0.2.1"))
+	}
+	if got := wrongLogin(t, env, fromPeer("192.0.2.1")); got != http.StatusTooManyRequests {
+		t.Errorf("same IPv4 = %d, want 429", got)
+	}
+	if got := rightLogin(t, env, fromPeer("192.0.2.2")); got != http.StatusNoContent {
+		t.Errorf("neighbouring IPv4 = %d, want 204", got)
+	}
+}

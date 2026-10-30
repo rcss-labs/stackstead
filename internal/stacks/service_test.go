@@ -2338,3 +2338,98 @@ func TestAddServiceStrictNamesAndRemoveExistingComposeName(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// ---- Import: writable by others ----
+
+func importFrom(t *testing.T, h *harness, dirMode os.FileMode) stacks.Summary {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, dirMode); err != nil {
+		t.Fatal(err)
+	}
+	ext := filepath.Join(dir, "docker-compose.yml")
+	if err := os.WriteFile(ext, []byte(externalYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum, err := h.svc.Import(context.Background(), ext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sum
+}
+
+func TestImportWarnsWhenFolderIsWorldWritable(t *testing.T) {
+	sum := importFrom(t, newHarness(t), 0o777)
+	if len(sum.Warnings) != 1 || !strings.Contains(sum.Warnings[0], filepath.Dir(sum.Path)) {
+		t.Errorf("warnings = %q, want one naming %s", sum.Warnings, filepath.Dir(sum.Path))
+	}
+}
+
+func TestImportNormalFolderHasNoWarnings(t *testing.T) {
+	if sum := importFrom(t, newHarness(t), 0o755); len(sum.Warnings) != 0 {
+		t.Errorf("warnings = %q, want none", sum.Warnings)
+	}
+}
+
+func TestUntrustedWritersRules(t *testing.T) {
+	me, gid := uint32(os.Getuid()), uint32(os.Getgid())
+	mk := func(dirMode os.FileMode, fileMode os.FileMode) (dir, file string) {
+		dir = t.TempDir()
+		if err := os.Chmod(dir, dirMode); err != nil {
+			t.Fatal(err)
+		}
+		file = filepath.Join(dir, "compose.yaml")
+		if err := os.WriteFile(file, []byte(externalYAML), fileMode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(file, fileMode); err != nil {
+			t.Fatal(err)
+		}
+		return dir, file
+	}
+	owner := stacks.WriteTrust{UIDs: []uint32{me, 0}, GIDs: []uint32{gid, 0}}
+	// Ancestors of the temp dir are root's or sticky; only the dir and file differ.
+	dir, file := mk(0o755, 0o644)
+	if w := stacks.UntrustedWriters(file, owner); len(w) != 0 {
+		t.Errorf("0755 dir, 0644 file: %q, want none", w)
+	}
+	if w := stacks.UntrustedWriters(file, stacks.WriteTrust{}); len(w) < 2 {
+		t.Errorf("owner outside the trust set: %q, want the file and its folder flagged", w)
+	}
+	_, file = mk(0o755, 0o666)
+	if w := stacks.UntrustedWriters(file, owner); len(w) != 1 || !strings.Contains(w[0], file) {
+		t.Errorf("world-writable file: %q, want just the file", w)
+	}
+	// Group write is fine for a trusted group and a risk for any other.
+	dir, file = mk(0o775, 0o664)
+	if w := stacks.UntrustedWriters(file, owner); len(w) != 0 {
+		t.Errorf("group-writable by a trusted group: %q, want none", w)
+	}
+	// Root stays trusted: the root-owned ancestors would be flagged otherwise
+	// whenever the tests do not run as root.
+	if w := stacks.UntrustedWriters(file, stacks.WriteTrust{UIDs: []uint32{me, 0}}); len(w) != 2 {
+		t.Errorf("group-writable by another group: %q, want file and folder", w)
+	}
+	// A sticky world-writable folder directly holding the file lets others plant
+	// sibling files (.env), so it counts; the 0644 file in it does not.
+	dir, file = mk(0o777|os.ModeSticky, 0o644)
+	if w := stacks.UntrustedWriters(file, owner); len(w) != 1 || !strings.Contains(w[0], dir) {
+		t.Errorf("sticky world-writable folder: %q, want the folder", w)
+	}
+	// Higher up, a sticky world-writable ancestor only matters if the entry
+	// below it is not ours, and that entry is checked on its own.
+	sub := filepath.Join(dir, "app")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file = filepath.Join(sub, "compose.yaml")
+	if err := os.WriteFile(file, []byte(externalYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if w := stacks.UntrustedWriters(file, owner); len(w) != 0 {
+		t.Errorf("sticky ancestor, our folder below: %q, want none", w)
+	}
+	if w := stacks.UntrustedWriters(file, stacks.WriteTrust{GIDs: []uint32{gid, 0}}); len(w) == 0 {
+		t.Error("sticky ancestor, entry below owned by an untrusted user: want it flagged")
+	}
+}

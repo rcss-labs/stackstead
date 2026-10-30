@@ -3,6 +3,7 @@ package s3
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -246,5 +247,22 @@ func TestPathStyleVsVirtualHost(t *testing.T) {
 				t.Errorf("path not percent-encoded: %s", ct.got.URL.EscapedPath())
 			}
 		})
+	}
+}
+
+func TestListStopsAtObjectCap(t *testing.T) {
+	f := &fakeS3{t: t, pages: map[string]string{
+		"": `<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>tok2</NextContinuationToken>
+<Contents><Key>p/a</Key><Size>1</Size></Contents><Contents><Key>p/b</Key><Size>1</Size></Contents></ListBucketResult>`,
+		"tok2": `<ListBucketResult><IsTruncated>false</IsTruncated>
+<Contents><Key>p/c</Key><Size>1</Size></Contents></ListBucketResult>`,
+	}}
+	srv := httptest.NewServer(f)
+	defer srv.Close()
+	c := f.newClient(srv.URL)
+	c.maxObjects = 2
+	objs, err := c.List(t.Context(), "p/")
+	if !errors.Is(err, ErrListTooLarge) || objs != nil {
+		t.Fatalf("List = %+v, %v; want ErrListTooLarge", objs, err)
 	}
 }

@@ -26,6 +26,9 @@ type StackSummary struct {
 	Ports []string `json:"ports"`
 	// LibraryUpdates counts services whose library image has a newer tag.
 	LibraryUpdates int `json:"libraryUpdates"`
+	// Warnings is set by import only: paths of the compose file that users
+	// other than root, the service user and the docker group can modify.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 type HealthCounts struct {

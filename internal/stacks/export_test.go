@@ -27,3 +27,18 @@ var (
 	WriteDockerfile       = writeDockerfile
 	WriteDockerfileInRoot = writeDockerfileInRoot
 )
+
+// WriteTrust is the trusted users and groups of the import writability check.
+type WriteTrust struct{ UIDs, GIDs []uint32 }
+
+// UntrustedWriters runs the import writability check against an explicit trust set.
+func UntrustedWriters(path string, t WriteTrust) []string {
+	trust := writeTrust{uids: map[uint32]bool{}, gids: map[uint32]bool{}}
+	for _, u := range t.UIDs {
+		trust.uids[u] = true
+	}
+	for _, g := range t.GIDs {
+		trust.gids[g] = true
+	}
+	return untrustedWriters(path, trust)
+}
