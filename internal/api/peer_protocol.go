@@ -130,7 +130,10 @@ func (s *server) requirePeer(helloOnly bool, next func(http.ResponseWriter, *htt
 			s.internalError(w, r, err)
 			return
 		}
-		next(w, r, peer)
+		// Unpairing ends the peer's open streams.
+		ctx, stop := s.opts.Peers.WatchPeer(r.Context(), peer.InstanceID)
+		defer stop()
+		next(w, r.WithContext(ctx), peer)
 	}
 }
 
