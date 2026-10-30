@@ -43,10 +43,11 @@ type imgEngine struct {
 	gate    chan struct{}
 	started chan struct{}
 
-	failBuild bool   // builds end in an error
-	saveData  string // bytes SaveImage streams; empty makes it fail
-	arch      string // Arch answer; default amd64
-	loadRef   string // ref LoadImage makes present
+	failBuild  bool          // builds end in an error
+	saveData   string        // bytes SaveImage streams; empty makes it fail
+	saveStream io.ReadCloser // when set, SaveImage returns it instead of saveData
+	arch       string        // Arch answer; default amd64
+	loadRef    string        // ref LoadImage makes present
 }
 
 func (f *imgEngine) Build(ctx context.Context, in io.Reader, opts engine.BuildOptions, out func(string)) (engine.BuildResult, error) {
@@ -90,6 +91,9 @@ func (f *imgEngine) TagImage(context.Context, string, string, string) error { re
 func (f *imgEngine) SaveImage(context.Context, string) (io.ReadCloser, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.saveStream != nil {
+		return f.saveStream, nil
+	}
 	if f.saveData == "" {
 		return nil, errors.New("unused")
 	}
