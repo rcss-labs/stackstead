@@ -439,7 +439,7 @@ var knownUnitKeys = map[string]map[string]bool{
 		"StateDirectory", "StateDirectoryMode", "UMask", "NoNewPrivileges", "PrivateTmp", "ProtectSystem",
 		"ProtectKernelTunables", "ProtectKernelModules", "ProtectKernelLogs", "ProtectControlGroups", "ProtectClock",
 		"ProtectHostname", "RestrictSUIDSGID", "RestrictRealtime", "RestrictNamespaces", "LockPersonality",
-		"SystemCallArchitectures", "CapabilityBoundingSet", "AmbientCapabilities"),
+		"SystemCallArchitectures", "CapabilityBoundingSet", "AmbientCapabilities", "PrivateDevices", "RestrictAddressFamilies"),
 	"Install": set("WantedBy"),
 }
 
@@ -525,6 +525,21 @@ func TestUnitHasNoUnknownDirectives(t *testing.T) {
 	for key, want := range map[string]string{"NoNewPrivileges": "true", "UMask": "0007", "StateDirectory": "stackstead", "StateDirectoryMode": "0700", "User": "stackstead"} {
 		if got := get(key); !reflect.DeepEqual(got, []string{want}) {
 			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+	for key, want := range map[string]string{
+		"PrivateDevices": "true", "ProtectClock": "true", "ProtectHostname": "true", "RestrictNamespaces": "true",
+		// AF_NETLINK is needed by net.Interfaces; dropping it breaks the interface list.
+		"RestrictAddressFamilies": "AF_UNIX AF_INET AF_INET6 AF_NETLINK",
+	} {
+		if got := get(key); !reflect.DeepEqual(got, []string{want}) {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+	// These would break host metrics or are unsupported on systemd 245.
+	for _, key := range []string{"ProcSubset", "ProtectProc", "MemoryDenyWriteExecute"} {
+		if len(get(key)) != 0 {
+			t.Errorf("%s must not be set (see the comment in the unit)", key)
 		}
 	}
 	if len(get("ProtectHome")) != 0 {
