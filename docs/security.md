@@ -277,7 +277,13 @@ The peer image surface is read-only: `GET /api/peer/images`, `GET
 They accept only the peer credential (a session cookie does not reach them),
 answer 401 `peer_not_paired` otherwise, and expose no build logs, build
 output, push targets or registry credentials; failed versions are not served.
-Sharing reaches directly paired servers only.
+The `/api/peer/images` routes serve this server's own images only, so a peer
+cannot read another server's library through them. The operator routes
+differ: forwarded to `/api/images`, a peer credential is treated as an
+operator and gets the merged library, including the images of this server's
+own paired servers, and can fetch them here. Pairing is not transitive for
+the peer routes, but it is for what a paired server can reach through
+forwarding.
 
 What a peer credential can do with images: read the owner's library and
 usage, download any succeeded version's archive (so a paired server can read
