@@ -108,7 +108,7 @@ func ApplyPending(dataDir string, now time.Time) (*Pending, error) {
 	}
 	// The post-start work is recorded before the pending marker goes, so a
 	// crash or a failed step from here on is finished by a later start.
-	if err := WritePostApply(dataDir, PostApply{StartStacks: p.StartStacks, PauseSchedule: p.PauseSchedule}); err != nil {
+	if err := WritePostApply(dataDir, PostApply{StartStacks: p.StartStacks, PauseSchedule: p.PauseSchedule, RevokeAccess: true}); err != nil {
 		return nil, fmt.Errorf("record post-restore work: %w", err)
 	}
 	for _, name := range []string{staged + "-wal", staged + "-shm", markerPath} {
@@ -146,6 +146,9 @@ func PauseScheduleAfterRestore(ctx context.Context, db *sql.DB) error {
 type PostApply struct {
 	StartStacks   []string `json:"startStacks"`
 	PauseSchedule bool     `json:"pauseSchedule"`
+	// RevokeAccess is set until the restored database's sessions, connection
+	// tokens and pending pairings have been deleted (store.RevokeAccess).
+	RevokeAccess bool `json:"revokeAccess,omitempty"`
 }
 
 // ReadPostApply returns the post-start work a host restore left, or nil when
@@ -168,7 +171,7 @@ func ReadPostApply(dataDir string) (*PostApply, error) {
 // WritePostApply records the work still to do; with nothing left it removes
 // the marker.
 func WritePostApply(dataDir string, p PostApply) error {
-	if !p.PauseSchedule && len(p.StartStacks) == 0 {
+	if !p.PauseSchedule && !p.RevokeAccess && len(p.StartStacks) == 0 {
 		err := os.Remove(filepath.Join(restoreDir(dataDir), postApplyFile))
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err

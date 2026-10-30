@@ -29,8 +29,10 @@ var (
 
 // restoreOptions are the flags of `restore`.
 type restoreOptions struct {
-	yes, noStart, pathStyle bool
-	endpoint, region        string
+	yes, start, noStart, pathStyle bool
+	endpoint, region               string
+	passphraseFile                 string
+	allowUnencrypted               bool
 }
 
 func restoreCommand() *Command {
@@ -38,19 +40,28 @@ func restoreCommand() *Command {
 	var opts restoreOptions
 	return &Command{
 		Name: "restore", Short: "Restore this host from a backup archive (server must be stopped)",
-		Usage:   "restore <s3://bucket/key | path> [--yes] [--no-start] [--s3-endpoint U] [--s3-region R] [--s3-path-style] [--config P]",
+		Usage:   "restore <s3://bucket/key | path> [--yes] [--start | --no-start] [--passphrase-file P] [--allow-unencrypted] [--s3-endpoint U] [--s3-region R] [--s3-path-style] [--config P]",
 		MinArgs: 1, MaxArgs: 1,
 		Long: "Restores the database, stacks, volumes and images of a whole-host archive and installs the restored database, " +
-			"then exits; stacks that were running start when the server next starts. S3 credentials are read from " +
-			"AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, never from flags. Exits 5 while the server runs, 6 for an " +
-			"archive from a newer Stackstead or a damaged one.",
+			"then exits; stacks that were running start when the server next starts, unless the archive comes from another " +
+			"host: those stay stopped so you can read the restored compose files first (--start overrides, --no-start " +
+			"forces it). The summary lists privileged settings and host mounts found in them. S3 credentials are read from " +
+			"AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, never from flags. An encrypted archive (.tar.gz.enc) needs " +
+			"its passphrase: --passphrase-file, else STACKSTEAD_BACKUP_PASSPHRASE, else the key file in the data " +
+			"directory, else a prompt on a terminal. The whole archive is checked before anything changes; a modified " +
+			"archive is refused. An unencrypted archive cannot be authenticated and is refused unless you pass " +
+			"--allow-unencrypted. Exits 5 while the server runs, 6 for an archive from a newer Stackstead, a damaged " +
+			"or modified one, a wrong or missing passphrase, or an unencrypted one without --allow-unencrypted.",
 		Flags: func(fs *flag.FlagSet) {
 			lf.register(fs)
 			fs.BoolVar(&opts.yes, "yes", false, "do not ask for confirmation")
+			fs.BoolVar(&opts.start, "start", false, "start the stacks that were running even for an archive from another host")
 			fs.BoolVar(&opts.noStart, "no-start", false, "do not start the stacks that were running")
 			fs.StringVar(&opts.endpoint, "s3-endpoint", "", "S3-compatible endpoint URL (default: AWS)")
 			fs.StringVar(&opts.region, "s3-region", "", "S3 region")
 			fs.BoolVar(&opts.pathStyle, "s3-path-style", false, "use path-style S3 addressing")
+			fs.StringVar(&opts.passphraseFile, "passphrase-file", "", "file holding the archive passphrase (first line)")
+			fs.BoolVar(&opts.allowUnencrypted, "allow-unencrypted", false, "restore an archive that is neither encrypted nor authenticated")
 		},
 		Run: func(ctx context.Context, env *Env, _ *globalFlags, args []string) error {
 			cfg, _, err := loadLocalConfig(env, lf)
@@ -100,10 +111,21 @@ func hostRestoreEnv(env *Env, cfg config.Config) backup.HostEnv {
 	}
 }
 
+const (
+	passphraseEnv         = "STACKSTEAD_BACKUP_PASSPHRASE"
+	hintPassphrase        = "pass --passphrase-file or set " + passphraseEnv
+	hintAllowUnencrypted  = "pass --allow-unencrypted if you trust the source of this archive"
+	unencryptedNoticeLine = "encryption  none (unauthenticated archive)"
+)
+
 // restoreExitError maps a refused restore to an exit code.
 func restoreExitError(err error) error {
 	switch {
-	case errors.Is(err, backup.ErrArchiveNewer), errors.Is(err, backup.ErrArchiveDamaged),
+	case errors.Is(err, backup.ErrUnencryptedArchive):
+		return &ExitError{Code: ExitValidation, Err: fmt.Errorf("%w; %s", err, hintAllowUnencrypted)}
+	case errors.Is(err, backup.ErrPassphraseRequired), errors.Is(err, backup.ErrWrongPassphrase):
+		return &ExitError{Code: ExitValidation, Err: fmt.Errorf("%w; %s", err, hintPassphrase)}
+	case errors.Is(err, backup.ErrArchiveNewer), errors.Is(err, backup.ErrArchiveDamaged), errors.Is(err, backup.ErrArchiveTampered),
 		errors.Is(err, backup.ErrManifestMismatch), errors.Is(err, backup.ErrUnsafePath):
 		return &ExitError{Code: ExitValidation, Err: err}
 	case errors.Is(err, backup.ErrConflictsChanged), errors.Is(err, backup.ErrRestorePending):
@@ -113,12 +135,24 @@ func restoreExitError(err error) error {
 }
 
 func hostRestore(ctx context.Context, env *Env, cfg config.Config, arg string, opts restoreOptions) error {
+	if opts.start && opts.noStart {
+		return exitf(ExitUsage, "--start and --no-start contradict each other")
+	}
 	src, err := parseRestoreSource(env, arg, opts)
 	if err != nil {
 		return err
 	}
 	if err := checkOwnership(cfg); err != nil {
 		return err
+	}
+	if opts.passphraseFile != "" {
+		pass, err := readSecret(ctx, env, secretSource{File: opts.passphraseFile}, "", false)
+		if err != nil {
+			return err
+		}
+		src.Passphrase = secret.Secret(pass)
+	} else if pass := env.Getenv(passphraseEnv); pass != "" {
+		src.Passphrase = secret.Secret(pass)
 	}
 	// A replacement host has no data directory yet; the stacks directories are created as stacks are restored.
 	// Root must not create it: the service user would then be locked out of it.
@@ -131,10 +165,30 @@ func hostRestore(ctx context.Context, env *Env, cfg config.Config, arg string, o
 	return withExclusiveLock(cfg, func() error {
 		hostEnv := hostRestoreEnv(env, cfg)
 		sum, err := restoreInspect(ctx, src, hostEnv)
+		if errors.Is(err, backup.ErrPassphraseRequired) && stdinIsTerminal(env) {
+			pass, perr := readSecret(ctx, env, secretSource{}, "Archive passphrase: ", false)
+			if perr != nil {
+				return perr
+			}
+			src.Passphrase = secret.Secret(pass)
+			sum, err = restoreInspect(ctx, src, hostEnv)
+		}
 		if err != nil {
 			return restoreExitError(err)
 		}
 		printRestoreSummary(env, arg, sum)
+		// An archive from another host is not trusted to run until the
+		// operator has looked at it; --start is that decision.
+		start := (!sum.Foreign || opts.start) && !opts.noStart
+		if start && len(sum.Risks) > 0 {
+			fmt.Fprintln(env.Stdout, "warning: starting stacks whose compose files have the settings above gives them that access to this host")
+		}
+		// Refused before the confirmation: confirming cannot make an
+		// unauthenticated archive trustworthy, only the flag says the operator
+		// vouches for where it came from.
+		if !sum.Encrypted && !opts.allowUnencrypted {
+			return restoreExitError(backup.ErrUnencryptedArchive)
+		}
 		if !opts.yes {
 			if !stdinIsTerminal(env) {
 				return exitf(ExitUsage, "restore overwrites the conflicts above; pass --yes to confirm")
@@ -147,7 +201,7 @@ func hostRestore(ctx context.Context, env *Env, cfg config.Config, arg string, o
 				return exitf(ExitGeneral, "restore cancelled")
 			}
 		}
-		report, err := restoreRun(ctx, src, hostEnv, !opts.noStart, sum.ConflictsDigest)
+		report, err := restoreRun(ctx, src, hostEnv, backup.HostRestoreOptions{StartStacks: start, AllowUnencrypted: opts.allowUnencrypted, ConfirmedDigest: sum.ConflictsDigest})
 		if err != nil {
 			return restoreExitError(err)
 		}
@@ -198,6 +252,28 @@ func printRestoreSummary(env *Env, arg string, sum backup.HostSummary) {
 	}
 	fmt.Fprintf(env.Stdout, "archive    %s\nhost       %s (Stackstead %s, %s)\nstatus     %s\nstacks     %d\nvolumes    %d\nimages     %d\n",
 		arg, m.Host, m.StacksteadVersion, m.CreatedAt.Format(time.RFC3339), m.Status, len(m.Stacks), volumes, images)
+	if sum.Encrypted {
+		fmt.Fprintf(env.Stdout, "encryption  key %s\n", sum.KeyID)
+	} else {
+		fmt.Fprintln(env.Stdout, unencryptedNoticeLine)
+	}
+	if sum.Foreign {
+		id := ""
+		if m.InstanceID != "" {
+			id = fmt.Sprintf(" (instance %s)", m.InstanceID[:min(8, len(m.InstanceID))])
+		}
+		fmt.Fprintf(env.Stdout, "origin     another host%s; stacks stay stopped unless --start\n", id)
+	} else {
+		fmt.Fprintln(env.Stdout, "origin     this host")
+	}
+	if len(sum.Risks) == 0 {
+		fmt.Fprintln(env.Stdout, "risks      none")
+	} else {
+		fmt.Fprintln(env.Stdout, "risks")
+		for _, r := range sum.Risks {
+			fmt.Fprintf(env.Stdout, "  %s  %s  %s\n", strings.Join(nonEmpty(r.Stack, r.Service), "/"), r.Kind, r.Detail)
+		}
+	}
 	fmt.Fprintln(env.Stdout, "This host will take over the backed-up host's identity; don't run both at once.")
 	if len(sum.Conflicts) == 0 {
 		fmt.Fprintln(env.Stdout, "conflicts  none")

@@ -16,7 +16,7 @@ access is equivalent to root. Treat the Stackstead login like a root password.
   trust model is unchanged: the same root-equivalent access Stackstead already
   has.
 - There is one admin account. Passwords are hashed with argon2id, sessions use
-  an HTTP-only, SameSite=Strict cookie, and login is rate-limited per client address (see [Remote access](#remote-access) for proxies).
+  an HTTP-only, SameSite=Strict cookie (`__Host-` prefixed and Secure over HTTPS; see [Give Stackstead its own hostname](#give-stackstead-its-own-hostname-and-use-https)), and login is rate-limited per client address (see [Remote access](#remote-access) for proxies).
 - **CSRF.** One middleware guards every unsafe (POST, PUT, PATCH, DELETE)
   `/api/` request, in addition to `SameSite=Strict`, which does not stop other
   pages on the same site (another app on the same host, a sibling subdomain).
@@ -84,6 +84,7 @@ proxy_set_header Upgrade $http_upgrade;
 proxy_set_header Connection $connection_upgrade;   # map $http_upgrade $connection_upgrade { default upgrade; '' close; }
 proxy_set_header Host $http_host;
 proxy_set_header X-Forwarded-For $remote_addr;
+proxy_set_header X-Forwarded-Proto $scheme;
 ```
 
 Login and password-change attempts are rate-limited per client address (five
@@ -98,6 +99,29 @@ the header is malformed. From any other peer the header is ignored, since a
 client can forge it. Make the proxy overwrite the header (`$remote_addr` above
 does; `$proxy_add_x_forwarded_for` appends to a client-supplied one, which
 Stackstead also handles).
+
+### Give Stackstead its own hostname, and use HTTPS
+
+Browsers do not isolate cookies by port (RFC 6265 section 8.5). A session
+cookie set by `http://nas.lan:8420` is also sent to `http://nas.lan:8080`, so
+every other web app on the same hostname receives the admin's session token,
+which is root-equivalent, and over plain HTTP it travels in clear text.
+Stackstead exists to run other web apps on the same host, so:
+
+- Serve Stackstead on a dedicated hostname (for example `stackstead.example.com`)
+  that no workload shares, and publish workloads under other hostnames.
+- Serve it over HTTPS. Over TLS, either directly or through a proxy that sends
+  `X-Forwarded-Proto: https`, the session cookie is
+  named `__Host-stackstead_session` and is `Secure`, `HttpOnly`, `SameSite=Strict`,
+  `Path=/` with no `Domain`. Browsers then refuse to let a sibling service
+  overwrite it and never send it over plain HTTP.
+  Make the proxy set the header (as in the snippet above). A client that forges
+  it only gets a Secure cookie its own browser will not send over plain HTTP.
+- Over plain HTTP the cookie keeps the name `stackstead_session` and is not
+  `Secure`, because browsers reject the `__Host-` prefix without `Secure`. The
+  server accepts either name. Logout clears both.
+
+Sessions have a fixed 7-day lifetime; there is no idle timeout.
 
 Each open browser tab keeps an `/api/events` stream plus the active tab's own
 stream (logs, metrics or an operation). HTTP/1.1 allows only 6 connections per
@@ -179,7 +203,7 @@ so treat it like the rest of the signed-in surface.
 
 - **Origin check.** The Origin header's host[:port] must equal the request's
   `Host` (case-insensitive), otherwise the server answers 403 `bad_origin`.
-  The scheme is not compared, because the documented nginx setup does not
+  The scheme is not compared, because not every proxy setup does
   forward `X-Forwarded-Proto`. This blocks cross-site WebSocket hijacking with
   the admin's cookie. A missing Origin is allowed: browsers always send one,
   and any other client still needs a valid credential.
@@ -225,12 +249,13 @@ stored at rest in the SQLite database under the data directory, which is 0700.
 They are write-only through the API (a view carries a single `configured` flag,
 plus the non-secret ECR access key id), are never forwarded to peers, and are
 redacted from logs, action history, error messages and push output. `stackstead db backup` includes
-the registry credentials, so a backup is as sensitive as the database. The
+the registry credentials, so a backup is as sensitive as the database (backup
+archives do not: see [Backups and restore](#backups-and-restore)). The
 `/api/settings/registries` routes are on the peer denylist. The GitHub token
 (for images built from a repository) is stored the same way: in SQLite under
 the 0700 data directory, write-only (`GET /api/settings/github` answers only
 `{configured, login}`), never forwarded to peers, redacted from logs, action
-history and errors, and included in `stackstead db backup`. It is sent only to
+history and errors, and included in `stackstead db backup` (not in backup archives). It is sent only to
 the GitHub API; the tarball download follows one redirect to the archive host
 and the token is dropped on a redirect to another host, so it is never sent
 to the archive host. `/api/settings/github` is on the peer
@@ -314,12 +339,60 @@ stack's files; one outside it (such as `/etc/localtime`) is not backed up, and
 the run lists it as skipped. A build-only service whose image no container
 shows is also listed as skipped.
 
-**Archives are not encrypted.** An archive holds the `.env` files and compose
-files of every stack, the whole database (password hashes, session tokens and
-paired-server tokens), and the stored S3 secret key and registry credentials.
-Anyone who can read an archive can sign in as the admin, impersonate the host to
-its peers and push to its registries. Keep archives where only the Stackstead
-operator can read them.
+**Archives can be encrypted, and should be.** An archive holds the `.env` files
+and compose files of every stack and the database: password hashes and session
+tokens, and the peers' and registries' non-secret settings. Anyone who can read an
+unencrypted archive can sign in as the admin. Turn on **Encrypt archives** in
+the backup settings (or keep archives where only the Stackstead operator can
+read them). The settings screen warns while it is off.
+
+- **Credentials are never archived**, encrypted or not: the S3 secret key, the
+  GitHub token, the paired servers' outgoing credentials and the registry
+  secrets are removed from the archived database. A clone restored from an
+  archive therefore cannot write to the original's bucket, call its peers or
+  push to its registries, even if the passphrase leaks. After a restore you
+  enter the S3 secret, the GitHub token and the registry credentials again and
+  pair the peers again. (`stackstead db backup` still copies the whole database,
+  credentials included.)
+- **Format.** The archive stream is `gzip(tar)` sealed in 64 KiB chunks with
+  ChaCha20-Poly1305. The key comes from your passphrase with Argon2id (64 MiB,
+  3 passes) and HKDF-SHA256. A header (magic, Argon2 parameters, salts, key id)
+  is authenticated with every chunk; each chunk's nonce is a counter plus a
+  final-chunk flag. A flipped byte anywhere, a truncated, reordered, duplicated
+  or extended archive all fail authentication (`archive_tampered`, exit 6). A
+  wrong passphrase is told apart before any data is read (`wrong_passphrase`).
+  Encrypted archives end in `.tar.gz.enc`.
+- **Where the passphrase lives.** Scheduled runs need it unattended, so it is
+  stored in `<data_dir>/backup.key` (mode 0600, never archived, never returned
+  by the API; the API shows only whether one is set and its short key id). It
+  protects archives that leave the host, such as an S3 bucket or an offsite copy
+  and a leaked read-only key. It does not protect against anyone who can read the data
+  directory, such as an operator with service-user access; they can read it like
+  the database (a paired peer has comparable reach, see
+  [Connected servers](#connected-servers)). Back it up apart
+  from the archives (see [Installing](install.md#where-things-go)). **If you lose the
+  passphrase the archives cannot be recovered.** If the key file is missing while
+  encryption is on, a run fails instead of writing a plaintext archive.
+- **Changing the passphrase** affects later archives only. Each archive's sidecar
+  and manifest carry the key id of the passphrase it needs, shown in the
+  archive list and the restore preview. Old archives are not re-encrypted.
+- **What stays visible.** The manifest sidecar next to an archive is plaintext, so
+  listing and previews work without the passphrase: it shows the host name, stack
+  names, compose paths, bind sources and image names to anyone who can read the
+  bucket. It carries an HMAC under a key derived from the passphrase, and a
+  restore uses it only after the HMAC checks and it matches the manifest inside
+  the encrypted archive.
+- **Restores.** An unencrypted archive cannot be authenticated, so a restore
+  refuses it unless you acknowledge it (the "I trust the source of this archive"
+  box, `allowUnencrypted` in the API, `--allow-unencrypted` on the CLI): a
+  changed archive can run anything as root on the host. Before anything on the
+  host changes, the restore reads and verifies the whole archive, so the archive
+  is read twice and an S3 archive is downloaded twice. The passphrase for a
+  restore comes from the request, the CLI's `--passphrase-file`, the
+  `STACKSTEAD_BACKUP_PASSPHRASE` environment variable, the key file in the data
+  directory, or a terminal prompt, in that order.
+- This is symmetric: anyone holding the passphrase, such as a compromised host,
+  can forge an archive. There is no separate signing key.
 
 - The local folder is created `0700` and its files `0600`. A folder you point
   at an existing, wider-open directory is your responsibility.
@@ -359,7 +432,37 @@ operator can read them.
   a helper container, never by Stackstead directly on the host.
 - Bind mounts are restored only under `allowed_roots`. A bind outside them, or
   one that covers an allowed root, a stack directory or the data directory, is
-  skipped and reported, never emptied.
+  skipped and reported, never emptied. That confines what the *restore itself*
+  writes. It does not limit what a restored compose file can do once started:
+  the file can itself be `privileged`, add capabilities, pass devices, join the
+  host's namespaces or mount `/:/host`, and Docker runs it as root. Stackstead
+  only warns about this; it does not refuse such files.
+- **An archive from another host is not started by default.** An archive whose
+  instance id is not this host's (every restore onto a fresh host, a backup
+  planted or swapped in storage, a stack taken from a colleague's server) is
+  *foreign*. Whole-host and single-stack restores leave its stacks stopped unless
+  you ask to start them (the "Start" tick box, `start` and `startStacks` in the
+  API, `--start` on the CLI), so the restored files can be read first. A
+  restore of the same instance's archive starts what was running, as before.
+  This includes a project whose running containers the restore had to stop
+  because their volumes are replaced: for a foreign archive it stays stopped
+  (the report says `left stopped: archive comes from another host`) instead
+  of coming back on the restored compose file. For your own archive such a
+  project is still brought back after the restart even without a request to
+  start stacks. If a restore fails, the original containers are restarted
+  unchanged.
+- **A risk summary lists the host-reaching settings before you confirm.** Every
+  restore preview, the CLI summary and the setup screen list, per stack, each
+  `privileged` service, added capability (`cap_add`), device, bind mount of a
+  host path (absolute, `~` or `..`, or a `${VARIABLE}` that could expand to
+  one), `pid`/`ipc`/`network_mode`/`userns_mode`/`cgroup: host`, disabled
+  security profile (`unconfined`, `label:disable`) and volume `device:` path found
+  in the stack's compose files (`compose*.y*ml`, `docker-compose*.y*ml` and other
+  YAML files at the top of the stack directory), or a file that cannot be
+  parsed. The scan reads the files as plain YAML: nothing is interpolated or
+  executed, files over 4 MiB are not parsed, and anything the compose file
+  inherits from `.env`, includes (`include:`, `extends`) or another file is not
+  followed. A clean summary is not a safety guarantee.
 - Restoring a single stack first copies that stack's files (compose files,
   `.env` and the rest of its directory, not bind data) to
   `<data_dir>/backups/pre-restore/<stack>-<UTC timestamp>/`. A whole-host
@@ -379,6 +482,11 @@ do not leave a fresh install exposed.
 - **A restored host keeps the original's identity**, including the identity
   paired servers know it by. Do not run the original and the restored host at the
   same time; paired servers and tokens cannot tell them apart.
+- **A restore signs everyone out.** A backup holds the sessions and connection
+  tokens of the moment it was taken, so a session revoked since (after a stolen
+  cookie, say) would work again. Both `restore` and `db restore` delete every
+  session, connection token and pairing in progress before the server serves;
+  paired servers keep their credentials. Sign in again afterwards.
 - **The backup schedule comes back paused.** A restored host must not start
   writing to the original's destinations unnoticed. The pause is stored in the
   restored database and retried at every start until it is confirmed; the UI

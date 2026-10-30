@@ -262,10 +262,14 @@ func (s *Service) build(ctx context.Context, img Image, v Version, ref string, a
 		emit(fmt.Sprintf("building %s from revision %d", ref, v.Revision))
 	}
 	pr, pw := io.Pipe()
+	// The writer stops with the build: cancelling wctx ends it between files
+	// and closing pr fails any write it is blocked in.
+	wctx, stopWriter := context.WithCancel(ctx)
+	defer stopWriter()
 	written := make(chan struct{})
 	go func() {
 		defer close(written)
-		pw.CloseWithError(WriteContext(pw, tmp, img.DockerfilePath))
+		pw.CloseWithError(WriteContext(wctx, pw, tmp, img.DockerfilePath))
 	}()
 	res, err := s.eng.Build(ctx, pr, engine.BuildOptions{
 		Tags:       []string{ref},
@@ -273,6 +277,7 @@ func (s *Service) build(ctx context.Context, img Image, v Version, ref string, a
 		BuildArgs:  args,
 		Labels:     map[string]string{"stackstead.image": img.Slug, "stackstead.version": v.ID},
 	}, emit)
+	stopWriter()
 	pr.Close()
 	<-written
 	if err != nil {

@@ -203,6 +203,17 @@ func TestConnectionRefusedStaysMatchable(t *testing.T) {
 	}
 }
 
+func TestLoginAcceptsHostPrefixedSessionCookie(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "__Host-stackstead_session", Value: "tok", MaxAge: 3600, Path: "/", Secure: true})
+		w.WriteHeader(204)
+	})
+	sess, _, err := c.Login(context.Background(), "admin", "pw")
+	if err != nil || sess != "tok" {
+		t.Fatalf("Login = %q %v, want the __Host- cookie's token", sess, err)
+	}
+}
+
 func TestLoginReturnsSessionAndExpiry(t *testing.T) {
 	c, got := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, &http.Cookie{Name: "stackstead_session", Value: "tok", MaxAge: 3600, Path: "/"})

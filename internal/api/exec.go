@@ -202,8 +202,7 @@ func (s *server) handleContainerExec(w http.ResponseWriter, r *http.Request) {
 
 // execAuthorizer re-validates the credential the session started with.
 func (s *server) execAuthorizer(r *http.Request) func(context.Context) bool {
-	if cookie, err := r.Cookie(sessionCookieName); err == nil {
-		token := cookie.Value
+	if token, ok := sessionToken(r); ok {
 		return func(ctx context.Context) bool {
 			_, err := s.opts.Auth.Authenticate(ctx, token)
 			return err == nil

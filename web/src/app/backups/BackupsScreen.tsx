@@ -7,6 +7,7 @@ import { Button } from '../components/Button';
 import { EmptyState } from '../components/EmptyState';
 import { RelativeTime } from '../components/RelativeTime';
 import { Spinner } from '../components/Spinner';
+import { Tag } from '../components/Tag';
 import { Tabs } from '../components/Tabs';
 import { useServer } from '../servers/ServerContext';
 import { BackupRunsList } from './BackupRunsList';
@@ -65,7 +66,12 @@ function ArchivesTab({ api, ownSlug }: { api: ReturnType<typeof createBackupsApi
               <tbody>
                 {list.map((a) => (
                   <tr key={`${a.dest}:${a.name}`}>
-                    <td className={styles.mono}>{a.name}</td>
+                    <td className={styles.mono}>
+                      {a.name}{' '}
+                      <Tag tone={a.encrypted ? 'success' : 'warning'} mono={false}>
+                        {a.encrypted ? 'Encrypted' : 'Unencrypted'}
+                      </Tag>
+                    </td>
                     <td>{a.dest === 's3' ? 'S3' : 'Local'}</td>
                     <td>
                       <RelativeTime iso={a.createdAt} />

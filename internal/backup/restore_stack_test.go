@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/rcss-labs/stackstead/internal/actionlog"
+	"github.com/rcss-labs/stackstead/internal/secret"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 )
 
@@ -86,7 +87,7 @@ func (e *restoreEnv) addArchive(t *testing.T, f hostFixture) ArchiveRef {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sidecar, _ := json.Marshal(f.manifest())
+	sidecar, _ := json.Marshal(f.signedManifest())
 	name := filepath.Base(path)
 	e.local.archives[name] = raw
 	e.local.sidecars[name] = sidecar
@@ -118,6 +119,10 @@ func (e *restoreEnv) existingStack(t *testing.T, name, file, content string, run
 // run restores and waits for the operation to end.
 func (e *restoreEnv) run(t *testing.T, req StackRestoreRequest) stacks.Operation {
 	t.Helper()
+	// Most fixtures are plaintext archives; encrypted ones need no acknowledgement.
+	req.AllowUnencrypted = req.AllowUnencrypted || !IsEncryptedName(req.Archive.Name)
+	// Starting is opt-in; runExact leaves it to the request.
+	req.Start = true
 	op, err := e.runner.RestoreStack(context.Background(), req, "alice")
 	if err != nil {
 		t.Fatalf("RestoreStack: %v", err)
@@ -260,17 +265,35 @@ func TestRestoreStackStartsEvenIfVolumeFails(t *testing.T) {
 	}
 }
 
+// cutAfterVerification swaps the archive for the (damaged) file at cutPath once
+// the restore has read it for its pre-scan: preflight opens it first, the
+// pre-scan second, and the restore pass third. The pre-scan refuses a damaged
+// archive before anything is stopped, so a failure after the stop needs the
+// damage to appear later.
+func (e *restoreEnv) cutAfterVerification(t *testing.T, ref ArchiveRef, cutPath string) {
+	t.Helper()
+	cut, err := os.ReadFile(cutPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opens := 0
+	e.local.onOpen = func(archive string) {
+		if opens++; opens == 3 {
+			e.local.mu.Lock()
+			e.local.archives[archive] = cut
+			e.local.mu.Unlock()
+		}
+	}
+}
+
 func TestRestoreStackStartsAgainWhenArchiveIsDamaged(t *testing.T) {
 	e := newRestoreEnv(t)
 	compose := e.existingStack(t, "web", "compose.yaml", "services: {}\n", true)
 	f := webFixture(compose, true)
-	path := truncatedAfterDB(t, t.TempDir(), f, true) // no manifest.json at the end
-	raw, _ := os.ReadFile(path)
-	name := ArchiveName("old", f.manifest().CreatedAt)
-	sidecar, _ := json.Marshal(f.manifest())
-	e.local.archives[name], e.local.sidecars[name] = raw, sidecar
+	ref := e.addArchive(t, f)
+	e.cutAfterVerification(t, ref, truncatedAfterDB(t, t.TempDir(), f, true)) // no manifest.json at the end
 
-	op := e.run(t, StackRestoreRequest{Archive: ArchiveRef{Dest: destLocal, Name: name}, Stack: "web", Files: true})
+	op := e.run(t, StackRestoreRequest{Archive: ref, Stack: "web", Files: true})
 	if op.State != stacks.OpFailed || !strings.Contains(op.Error, "damaged") {
 		t.Fatalf("operation = %+v, want failed as damaged", op)
 	}
@@ -310,7 +333,7 @@ func TestRestoreVolumeRemovesHelperOnError(t *testing.T) {
 		{"put fails", &restoreEngine{putErr: errors.New("disk full")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := RestoreVolume(context.Background(), tc.eng, "web", stacks.Mount{Kind: "bind", Source: "/srv/data", Target: "/data"}, nil, strings.NewReader(""))
+			err := RestoreBind(context.Background(), tc.eng, "web", bindTarget{Root: "/srv", Rel: "data"}, innerTar(t, map[string]string{"data/": ""}))
 			if err == nil {
 				t.Fatal("no error")
 			}
@@ -396,7 +419,7 @@ func TestRestoreStackRefusesBeforeStarting(t *testing.T) {
 	f := webFixture(compose, true)
 	f.version = "9.0.0"
 	ref := e.addArchive(t, f)
-	if _, err := e.runner.RestoreStack(context.Background(), StackRestoreRequest{Archive: ref, Stack: "web", Files: true}, "alice"); !errors.Is(err, ErrArchiveNewer) {
+	if _, err := e.runner.RestoreStack(context.Background(), StackRestoreRequest{Archive: ref, Stack: "web", Files: true, AllowUnencrypted: true}, "alice"); !errors.Is(err, ErrArchiveNewer) {
 		t.Errorf("newer archive err = %v, want ErrArchiveNewer", err)
 	}
 
@@ -407,7 +430,7 @@ func TestRestoreStackRefusesBeforeStarting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = e.runner.RestoreStack(context.Background(), StackRestoreRequest{Archive: ref, Stack: "web", Files: true}, "alice")
+	_, err = e.runner.RestoreStack(context.Background(), StackRestoreRequest{Archive: ref, Stack: "web", Files: true, AllowUnencrypted: true}, "alice")
 	close(gate)
 	e.deps.Ops.Wait(busy.ID)
 	if !errors.Is(err, stacks.ErrBusy) {
@@ -480,7 +503,7 @@ func TestRestoreStackRefusesTakenProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	ref := e.addArchive(t, webFixture(filepath.Join(e.outside, "web", "compose.yaml"), false))
-	_, err := e.runner.RestoreStack(context.Background(), StackRestoreRequest{Archive: ref, Stack: "web", NewName: "web2", Files: true, Volumes: true}, "alice")
+	_, err := e.runner.RestoreStack(context.Background(), StackRestoreRequest{Archive: ref, Stack: "web", NewName: "web2", Files: true, Volumes: true, AllowUnencrypted: true}, "alice")
 	if !errors.Is(err, stacks.ErrProjectTaken) {
 		t.Fatalf("err = %v, want ErrProjectTaken", err)
 	}
@@ -565,13 +588,11 @@ func TestRestoreStackActionLogKeepsRestartFailure(t *testing.T) {
 	e := newRestoreEnv(t)
 	compose := e.existingStack(t, "web", "compose.yaml", "services: {}\n", true)
 	f := webFixture(compose, true)
-	raw, _ := os.ReadFile(truncatedAfterDB(t, t.TempDir(), f, true)) // fails fatally as damaged
-	name := ArchiveName("old", f.manifest().CreatedAt)
-	sidecar, _ := json.Marshal(f.manifest())
-	e.local.archives[name], e.local.sidecars[name] = raw, sidecar
+	ref := e.addArchive(t, f)
+	e.cutAfterVerification(t, ref, truncatedAfterDB(t, t.TempDir(), f, true)) // fails fatally as damaged, after the stop
 	e.ctl.startErr = errors.New("port in use")
 
-	e.run(t, StackRestoreRequest{Archive: ArchiveRef{Dest: destLocal, Name: name}, Stack: "web", Files: true})
+	e.run(t, StackRestoreRequest{Archive: ref, Stack: "web", Files: true})
 	if acts := e.restoreActions(t); len(acts) != 1 || !strings.Contains(acts[0].Detail, "left stopped") {
 		t.Errorf("action log = %+v, want the failed restart in the detail", acts)
 	}
@@ -654,5 +675,119 @@ func TestRestoreStackKeepsFileBindFromStackFiles(t *testing.T) {
 	lines, _ := e.deps.Ops.Lines(op.ID)
 	if !slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "skipped: volume "+conf) }) {
 		t.Errorf("no skipped line for the file bind: %q", lines)
+	}
+}
+
+const stackTestPassphrase = "stack fixture passphrase"
+
+// encryptedWeb is webFixture, encrypted, with enough incompressible volume
+// data that volumes/ spans several chunks.
+func encryptedWeb(t *testing.T, composePath string, running bool) hostFixture {
+	t.Helper()
+	f := webFixture(composePath, running)
+	f.key = testKeyFor(t, stackTestPassphrase, 5)
+	f.volData["web/v-web_data"]["big.bin"] = string(randomBytes(t, 300_000))
+	return f
+}
+
+func TestStackRestoreDecryptsEncryptedArchive(t *testing.T) {
+	e := newRestoreEnv(t)
+	compose := e.existingStack(t, "web", "compose.yaml", "services: {app: {image: old}}\n", false)
+	ref := e.addArchive(t, encryptedWeb(t, compose, false))
+
+	op := e.run(t, StackRestoreRequest{Archive: ref, Stack: "web", Files: true, Volumes: true, Passphrase: secret.Secret(stackTestPassphrase)})
+	if op.State != stacks.OpSucceeded {
+		t.Fatalf("operation = %+v", op)
+	}
+	if got := readFile(t, compose); got != "services: {app: {image: new}}\n" {
+		t.Errorf("compose = %q", got)
+	}
+	if len(e.eng.puts) != 1 || len(e.eng.puts[0]["big.bin"]) != 300_000 {
+		t.Error("volume contents were not restored from the decrypted stream")
+	}
+}
+
+// Criterion 1 of SEC-12 for a single stack: the whole archive is verified
+// before the running stack is stopped or its files are copied away.
+func TestStackRestoreRefusesTamperedBeforeStopping(t *testing.T) {
+	e := newRestoreEnv(t)
+	compose := e.existingStack(t, "web", "compose.yaml", "services: {app: {image: old}}\n", true)
+	ref := e.addArchive(t, encryptedWeb(t, compose, true))
+	raw := e.local.archives[ref.Name]
+	raw[len(raw)*4/5] ^= 0x01
+
+	op := e.run(t, StackRestoreRequest{Archive: ref, Stack: "web", Files: true, Volumes: true, Passphrase: secret.Secret(stackTestPassphrase)})
+	if op.State != stacks.OpFailed || !strings.Contains(op.Error, "failed authentication") {
+		t.Fatalf("operation = %+v, want failed authentication", op)
+	}
+	if calls := e.eng.changes(); len(calls) != 0 {
+		t.Errorf("the host was changed: %v", calls)
+	}
+	if _, err := os.Stat(filepath.Join(e.dataDir, "backups", "pre-restore")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a pre-restore copy was made: %v", err)
+	}
+	if got := readFile(t, compose); got != "services: {app: {image: old}}\n" {
+		t.Errorf("compose was overwritten: %q", got)
+	}
+}
+
+func TestStackRestoreRequiresAcknowledgementForPlaintext(t *testing.T) {
+	e := newRestoreEnv(t)
+	compose := e.existingStack(t, "web", "compose.yaml", "services: {}\n", false)
+	ref := e.addArchive(t, webFixture(compose, false))
+	_, err := e.runner.RestoreStack(context.Background(), StackRestoreRequest{Archive: ref, Stack: "web", Files: true}, "alice")
+	if !errors.Is(err, ErrUnencryptedArchive) {
+		t.Fatalf("err = %v, want ErrUnencryptedArchive", err)
+	}
+	if calls := e.eng.changes(); len(calls) != 0 {
+		t.Errorf("the host was changed: %v", calls)
+	}
+	if op := e.run(t, StackRestoreRequest{Archive: ref, Stack: "web", Files: true, AllowUnencrypted: true}); op.State != stacks.OpSucceeded {
+		t.Fatalf("with the acknowledgement: %+v", op)
+	}
+}
+
+func TestPlanRestoreReportsEncryption(t *testing.T) {
+	e := newRestoreEnv(t)
+	compose := e.existingStack(t, "web", "compose.yaml", "services: {}\n", false)
+	f := encryptedWeb(t, compose, false)
+	ref := e.addArchive(t, f)
+	plan, err := e.runner.PlanRestore(context.Background(), StackRestoreRequest{Archive: ref, Stack: "web", Files: true, Passphrase: secret.Secret(stackTestPassphrase)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Encrypted || plan.KeyID != f.key.ID() {
+		t.Errorf("plan encrypted=%v key=%q, want key %q", plan.Encrypted, plan.KeyID, f.key.ID())
+	}
+
+	plainRef := e.addArchive(t, webFixture(compose, false))
+	plan, err = e.runner.PlanRestore(context.Background(), StackRestoreRequest{Archive: plainRef, Stack: "web", Files: true})
+	if err != nil || plan.Encrypted || plan.KeyID != "" {
+		t.Errorf("plaintext plan = %+v, %v", plan, err)
+	}
+}
+
+func TestPlanRestorePassphraseRequiredWithoutKeyFile(t *testing.T) {
+	e := newRestoreEnv(t)
+	compose := e.existingStack(t, "web", "compose.yaml", "services: {}\n", false)
+	ref := e.addArchive(t, encryptedWeb(t, compose, false))
+	_, err := e.runner.PlanRestore(context.Background(), StackRestoreRequest{Archive: ref, Stack: "web", Files: true})
+	if !errors.Is(err, ErrPassphraseRequired) {
+		t.Fatalf("no passphrase: err = %v, want ErrPassphraseRequired", err)
+	}
+	_, err = e.runner.PlanRestore(context.Background(), StackRestoreRequest{Archive: ref, Stack: "web", Files: true, Passphrase: secret.Secret("wrong passphrase")})
+	if !errors.Is(err, ErrWrongPassphrase) {
+		t.Fatalf("wrong passphrase: err = %v, want ErrWrongPassphrase", err)
+	}
+}
+
+func TestArchiveManifestOfEncryptedArchiveIsDisplayOnly(t *testing.T) {
+	e := newRestoreEnv(t)
+	compose := e.existingStack(t, "web", "compose.yaml", "services: {}\n", false)
+	f := encryptedWeb(t, compose, false)
+	ref := e.addArchive(t, f)
+	m, err := e.runner.ArchiveManifest(context.Background(), ref.Dest, ref.Name)
+	if err != nil || m.Encryption == nil || m.Encryption.KeyID != f.key.ID() {
+		t.Fatalf("manifest = %+v, %v", m.Encryption, err)
 	}
 }

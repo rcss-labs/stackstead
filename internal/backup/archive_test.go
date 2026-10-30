@@ -7,8 +7,12 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/rcss-labs/stackstead/internal/secret"
 )
 
 type innerEntry struct {
@@ -92,7 +96,7 @@ func TestArchiveRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r, err := NewReader(&archive)
+	r, err := newPlainReader(&archive)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +156,7 @@ func archiveWithEntries(t *testing.T, hdrs ...*tar.Header) *Reader {
 	if err := w.gz.Close(); err != nil {
 		t.Fatal(err)
 	}
-	r, err := NewReader(&buf)
+	r, err := newPlainReader(&buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +265,7 @@ func TestAddTarStreamCanonicalisesAbsoluteInnerNames(t *testing.T) {
 	if err := w.Close(Manifest{}); err != nil {
 		t.Fatal(err)
 	}
-	r, _ := NewReader(&buf)
+	r, _ := newPlainReader(&buf)
 	h, _, err := r.Next()
 	if err != nil || h.Name != "volumes/web/data/etc/x" {
 		t.Fatalf("name = %v, err = %v", h, err)
@@ -326,7 +330,7 @@ func TestLinksRoundTripThroughArchive(t *testing.T) {
 	if err := w.Close(Manifest{}); err != nil {
 		t.Fatal(err)
 	}
-	r, err := NewReader(&buf)
+	r, err := newPlainReader(&buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +360,7 @@ func TestArchiveStoresHardlinkTargetWithPrefix(t *testing.T) {
 	if err := w.Close(Manifest{}); err != nil {
 		t.Fatal(err)
 	}
-	r, _ := NewReader(&buf)
+	r, _ := newPlainReader(&buf)
 	for {
 		h, _, err := r.Next()
 		if err != nil {
@@ -397,7 +401,7 @@ func TestTarStreamUnderBoundsMemory(t *testing.T) {
 	if err := w.Close(Manifest{}); err != nil {
 		t.Fatal(err)
 	}
-	r, err := NewReader(&buf)
+	r, err := newPlainReader(&buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +439,7 @@ func TestReaderTruncatedArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r, err := NewReader(bytes.NewReader(buf.Bytes()[:buf.Len()*3/4]))
+	r, err := newPlainReader(bytes.NewReader(buf.Bytes()[:buf.Len()*3/4]))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -488,7 +492,7 @@ func TestTarStreamUnderRebuilds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r, err := NewReader(&buf)
+	r, err := newPlainReader(&buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -511,5 +515,167 @@ func TestTarStreamUnderRebuilds(t *testing.T) {
 	}
 	if h, _, err = r.Next(); err != nil || h.Name != "manifest.json" {
 		t.Fatalf("expected manifest after streams, got %v, %v", h, err)
+	}
+}
+
+// archiveBytes returns a small archive, encrypted with key when it is not nil.
+func archiveBytes(t *testing.T, key *Key) []byte { return archiveBytesSized(t, key, 2) }
+
+// archiveBytesSized is archiveBytes with a database entry of dbSize
+// incompressible bytes, so the archive can span several encrypted chunks.
+func archiveBytesSized(t *testing.T, key *Key, dbSize int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	var ew io.WriteCloser
+	w := NewWriter(&buf)
+	if key != nil {
+		var err error
+		if ew, err = NewEncryptWriter(&buf, key); err != nil {
+			t.Fatal(err)
+		}
+		w = NewWriter(ew)
+	}
+	addBytes(t, w, "base/stackstead.db", randomBytes(t, dbSize))
+	if err := w.Close(Manifest{Format: ManifestFormat}); err != nil {
+		t.Fatal(err)
+	}
+	if ew != nil {
+		if err := ew.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return buf.Bytes()
+}
+
+func entryNames(t *testing.T, r *Reader) []string {
+	t.Helper()
+	var names []string
+	for {
+		h, _, err := r.Next()
+		if errors.Is(err, io.EOF) {
+			return names
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, h.Name)
+	}
+}
+
+func TestOpenArchiveDetectsPlaintextAndEncrypted(t *testing.T) {
+	key := testKeyFor(t, "open archive passphrase", 1)
+	r, info, err := OpenArchive(bytes.NewReader(archiveBytes(t, key)), OpenOptions{Passphrase: secret.Secret("open archive passphrase")})
+	if err != nil || !info.Encrypted || info.KeyID != key.ID() {
+		t.Fatalf("encrypted: info = %+v, err = %v", info, err)
+	}
+	if got := entryNames(t, r); !slices.Equal(got, []string{"base/stackstead.db", ManifestEntryName}) {
+		t.Errorf("entries = %v", got)
+	}
+	r, info, err = OpenArchive(bytes.NewReader(archiveBytes(t, nil)), OpenOptions{AllowUnencrypted: true})
+	if err != nil || info.Encrypted || info.KeyID != "" {
+		t.Fatalf("plaintext: info = %+v, err = %v", info, err)
+	}
+	if got := entryNames(t, r); len(got) != 2 {
+		t.Errorf("entries = %v", got)
+	}
+}
+
+func TestOpenArchiveRefusesPlaintextWithoutAcknowledgement(t *testing.T) {
+	_, _, err := OpenArchive(bytes.NewReader(archiveBytes(t, nil)), OpenOptions{})
+	if !errors.Is(err, ErrUnencryptedArchive) {
+		t.Fatalf("err = %v, want ErrUnencryptedArchive", err)
+	}
+}
+
+func TestOpenArchiveRefusesGarbage(t *testing.T) {
+	_, _, err := OpenArchive(strings.NewReader("this is not an archive at all"), OpenOptions{AllowUnencrypted: true})
+	if !errors.Is(err, ErrArchiveDamaged) {
+		t.Fatalf("err = %v, want ErrArchiveDamaged", err)
+	}
+}
+
+func TestOpenArchiveNeedsAPassphrase(t *testing.T) {
+	data := archiveBytes(t, testKeyFor(t, "open archive passphrase", 1))
+	_, _, err := OpenArchive(bytes.NewReader(data), OpenOptions{KeyDir: t.TempDir()})
+	if !errors.Is(err, ErrPassphraseRequired) {
+		t.Fatalf("err = %v, want ErrPassphraseRequired", err)
+	}
+}
+
+func TestOpenArchiveUsesKeyFileInKeyDir(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := WriteKeyFile(dir, "key file passphrase", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	key, err := LoadKey(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, info, err := OpenArchive(bytes.NewReader(archiveBytes(t, key)), OpenOptions{KeyDir: dir})
+	if err != nil || !info.Encrypted {
+		t.Fatalf("info = %+v, err = %v", info, err)
+	}
+	if got := entryNames(t, r); len(got) != 2 {
+		t.Errorf("entries = %v", got)
+	}
+}
+
+func TestOpenArchiveExplicitPassphraseWinsOverKeyFile(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := WriteKeyFile(dir, "key file passphrase", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	data := archiveBytes(t, testKeyFor(t, "explicit passphrase!", 2))
+	if _, _, err := OpenArchive(bytes.NewReader(data), OpenOptions{KeyDir: dir}); !errors.Is(err, ErrWrongPassphrase) {
+		t.Fatalf("key file alone: err = %v, want ErrWrongPassphrase", err)
+	}
+	if _, _, err := OpenArchive(bytes.NewReader(data), OpenOptions{KeyDir: dir, Passphrase: secret.Secret("explicit passphrase!")}); err != nil {
+		t.Fatalf("explicit passphrase: %v", err)
+	}
+}
+
+func TestOpenArchiveWrongKeyFileNamesBothKeyIDs(t *testing.T) {
+	dir := t.TempDir()
+	stored, err := WriteKeyFile(dir, "key file passphrase", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	archiveKey := testKeyFor(t, "explicit passphrase!", 2)
+	_, _, err = OpenArchive(bytes.NewReader(archiveBytes(t, archiveKey)), OpenOptions{KeyDir: dir})
+	if !errors.Is(err, ErrWrongPassphrase) {
+		t.Fatalf("err = %v, want ErrWrongPassphrase", err)
+	}
+	if !strings.Contains(err.Error(), stored.KeyID) || !strings.Contains(err.Error(), archiveKey.ID()) {
+		t.Errorf("error %q should name the stored key %s and the archive key %s", err, stored.KeyID, archiveKey.ID())
+	}
+	if strings.Contains(err.Error(), "key file passphrase") {
+		t.Error("the error leaks the passphrase")
+	}
+}
+
+// Finish reads the rest of the stream, so damage after the last tar entry
+// (the gzip trailer, the final encrypted chunk) is found too.
+func TestReaderFinishDetectsTamperedTail(t *testing.T) {
+	key := testKeyFor(t, "open archive passphrase", 1)
+	data := archiveBytesSized(t, key, 200_000)
+	data[len(data)-1] ^= 0x01
+	r, _, err := OpenArchive(bytes.NewReader(data), OpenOptions{Passphrase: secret.Secret("open archive passphrase")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		_, _, err := r.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			if !errors.Is(err, ErrArchiveTampered) {
+				t.Fatalf("Next: %v", err)
+			}
+			return
+		}
+	}
+	if err := r.Finish(); !errors.Is(err, ErrArchiveTampered) {
+		t.Fatalf("Finish err = %v, want ErrArchiveTampered", err)
 	}
 }

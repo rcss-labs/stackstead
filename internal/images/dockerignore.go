@@ -35,11 +35,16 @@ func ParseDockerignore(src []byte) (*Ignore, error) {
 		if line == "" || line == "." {
 			continue
 		}
-		rule.segments = strings.Split(line, "/")
-		for _, s := range rule.segments {
+		for _, s := range strings.Split(line, "/") {
+			// Consecutive "**" are equivalent to one.
 			if s == "**" {
+				if n := len(rule.segments); n > 0 && rule.segments[n-1] == "**" {
+					continue
+				}
+				rule.segments = append(rule.segments, s)
 				continue
 			}
+			rule.segments = append(rule.segments, s)
 			if _, err := path.Match(s, ""); err != nil {
 				return nil, fmt.Errorf(".dockerignore: bad pattern %q: %w", line, err)
 			}
@@ -49,30 +54,39 @@ func ParseDockerignore(src []byte) (*Ignore, error) {
 	return ig, nil
 }
 
-func matchSegments(pat, segs []string) bool {
-	if len(pat) == 0 {
-		return len(segs) == 0
-	}
-	if pat[0] == "**" {
-		for i := 0; i <= len(segs); i++ {
-			if matchSegments(pat[1:], segs[i:]) {
-				return true
-			}
-		}
-		return false
-	}
-	if len(segs) == 0 {
-		return false
-	}
-	ok, err := path.Match(pat[0], segs[0])
-	return err == nil && ok && matchSegments(pat[1:], segs[1:])
-}
-
 // matches reports whether the rule matches the path or any folder above it
 // (a matching folder covers everything inside).
+//
+// It runs one pass over the pattern, tracking which path positions can be
+// reached after each pattern element: O(pattern x path) however many "**"
+// the pattern holds. reach[j] means the first j path segments are consumed.
 func (r ignoreRule) matches(segs []string) bool {
-	for n := 1; n <= len(segs); n++ {
-		if matchSegments(r.segments, segs[:n]) {
+	reach := make([]bool, len(segs)+1)
+	next := make([]bool, len(segs)+1)
+	reach[0] = true
+	for _, elem := range r.segments {
+		clear(next)
+		if elem == "**" {
+			seen := false
+			for j := range reach {
+				seen = seen || reach[j]
+				next[j] = seen
+			}
+		} else {
+			for j := 0; j < len(segs); j++ {
+				if !reach[j] {
+					continue
+				}
+				if ok, err := path.Match(elem, segs[j]); err == nil && ok {
+					next[j+1] = true
+				}
+			}
+		}
+		reach, next = next, reach
+	}
+	// A match on any non-empty prefix of the path excludes it.
+	for _, ok := range reach[1:] {
+		if ok {
 			return true
 		}
 	}

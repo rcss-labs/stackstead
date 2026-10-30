@@ -86,37 +86,84 @@ func (rs *rootSet) close() {
 // prepareBind makes sure a bind source is inside an allowed root, creates it
 // through that root's os.Root when missing, and returns it with symlinks
 // resolved (rechecked against the resolved roots). Docker runs as root, so a
-// bind source is the one way a crafted archive could reach anywhere on the
-// host; anything outside the roots, or covering more than the bind's own data
-// (see bindCovers), is skipped with a reason.
-func (rs *rootSet) prepareBind(source string, stackDirs []string) (resolved, skip string, err error) {
+// bind source is one way a crafted archive could make Stackstead write
+// outside the allowed roots; this keeps the restore's own writes inside them,
+// and anything outside the roots, or covering more than the bind's own data
+// (see bindCovers), is skipped with a reason. It does not limit what a
+// restored compose file can do once started: that file may itself be
+// privileged or mount "/:/host". Stackstead only warns about that (see
+// ScanComposeRisks) and leaves a foreign archive's stacks stopped by default.
+//
+// The result is a bindTarget, not the leaf path: the helper mounts the vetted
+// root and works on the relative path inside the container, so a symlink
+// swapped in after this check resolves in the container's view, not the host's.
+func (rs *rootSet) prepareBind(source string, stackDirs []string) (target bindTarget, skip string, err error) {
 	if !filepath.IsAbs(source) || !underAnyRoot(source, rs.allowed) {
-		return "", "bind source is " + reasonOutsideRoots, nil
+		return bindTarget{}, "bind source is " + reasonOutsideRoots, nil
 	}
 	if _, statErr := os.Lstat(source); errors.Is(statErr, fs.ErrNotExist) {
 		rootDir, rel, _ := rs.allowedRootOf(source)
 		root, err := rs.openRoot(rootDir)
 		if err != nil {
-			return "", "", err
+			return bindTarget{}, "", err
 		}
 		if err := root.MkdirAll(rel, 0o755); err != nil {
-			return "", "", fmt.Errorf("create bind source: %w", err)
+			return bindTarget{}, "", fmt.Errorf("create bind source: %w", err)
 		}
 	}
-	resolved, err = filepath.EvalSymlinks(source)
+	resolved, err := filepath.EvalSymlinks(source)
 	if err != nil {
-		return "", "", err
+		return bindTarget{}, "", err
 	}
 	if isFile(resolved) {
-		return "", noteBindIsFile, nil
+		return bindTarget{}, noteBindIsFile, nil
 	}
 	if !underAnyRoot(resolved, resolvedRoots(rs.allowed)) {
-		return "", "bind source resolves to " + resolved + ", " + reasonOutsideRoots, nil
+		return bindTarget{}, "bind source resolves to " + resolved + ", " + reasonOutsideRoots, nil
 	}
 	if reason := bindCovers(resolved, rs.allowed, stackDirs, rs.dataDir); reason != "" {
-		return "", reason, nil
+		return bindTarget{}, reason, nil
 	}
-	return resolved, "", nil
+	root, rel, ok := narrowestRoot(resolved, resolvedRoots(rs.allowed))
+	if !ok {
+		return bindTarget{}, "bind source resolves to " + resolved + ", " + reasonOutsideRoots, nil
+	}
+	return bindTarget{Root: root, Rel: rel}, "", nil
+}
+
+// revetBind repeats the vetting right before the helper starts and fails if
+// the source no longer resolves to the target vetted earlier.
+func (rs *rootSet) revetBind(source string, stackDirs []string, want bindTarget) error {
+	got, skip, err := rs.prepareBind(source, stackDirs)
+	switch {
+	case err != nil:
+		return err
+	case skip != "":
+		return fmt.Errorf("bind source %s changed while restoring: %s", source, skip)
+	case got != want:
+		return fmt.Errorf("bind source %s changed while restoring: now %s, was %s", source, got, want)
+	}
+	return nil
+}
+
+// bindTarget is a vetted bind source: Rel inside Root, both resolved. Root is
+// what a helper container mounts.
+type bindTarget struct {
+	Root string
+	Rel  string
+}
+
+func (b bindTarget) String() string { return filepath.Join(b.Root, b.Rel) }
+
+// narrowestRoot picks the deepest of roots containing p, so the helper sees as
+// little of the host as the configured roots allow.
+func narrowestRoot(p string, roots []string) (root, rel string, ok bool) {
+	for _, r := range roots {
+		if r2, in := plainRel(p, r); in && (!ok || len(r) > len(root)) {
+			root, rel, ok = r, r2, true
+		}
+	}
+	return root, rel, ok
 }
 
 const (
@@ -180,6 +227,9 @@ func verifyArchiveManifest(inArchive, driving Manifest, fromSidecar bool, instal
 	}
 	if !fromSidecar {
 		return nil
+	}
+	if manifestKeyID(inArchive) != manifestKeyID(driving) {
+		return fmt.Errorf("%w: archive is keyed %q, sidecar says %q", ErrManifestMismatch, manifestKeyID(inArchive), manifestKeyID(driving))
 	}
 	if !inArchive.CreatedAt.Equal(driving.CreatedAt) || inArchive.InstanceID != driving.InstanceID ||
 		inArchive.StacksteadVersion != driving.StacksteadVersion || inArchive.Format != driving.Format {
@@ -354,4 +404,12 @@ func composeVolumeLabels(project, volume string) map[string]string {
 		return nil
 	}
 	return map[string]string{"com.docker.compose.project": project, "com.docker.compose.volume": short}
+}
+
+// manifestKeyID is the key id a manifest names, or "" for a plaintext archive.
+func manifestKeyID(m Manifest) string {
+	if m.Encryption == nil {
+		return ""
+	}
+	return m.Encryption.KeyID
 }

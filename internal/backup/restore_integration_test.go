@@ -164,7 +164,7 @@ func TestStackBackupRestoreRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	op, err = runner.RestoreStack(ctx, StackRestoreRequest{Archive: ArchiveRef{Dest: destLocal, Name: run.Archive}, Stack: name, Files: true, Volumes: true}, "it")
+	op, err = runner.RestoreStack(ctx, StackRestoreRequest{Archive: ArchiveRef{Dest: destLocal, Name: run.Archive}, Stack: name, Files: true, Volumes: true, AllowUnencrypted: true, Start: true}, "it")
 	if err != nil {
 		t.Fatalf("RestoreStack: %v", err)
 	}

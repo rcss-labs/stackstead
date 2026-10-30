@@ -140,7 +140,7 @@ func (d *localDest) List(_ context.Context) ([]ArchiveRef, error) {
 		if err != nil {
 			continue
 		}
-		refs = append(refs, ArchiveRef{Dest: destLocal, Name: e.Name(), HostSlug: slug, CreatedAt: created, Size: info.Size()})
+		refs = append(refs, ArchiveRef{Dest: destLocal, Name: e.Name(), HostSlug: slug, CreatedAt: created, Size: info.Size(), Encrypted: IsEncryptedName(e.Name())})
 	}
 	return refs, nil
 }

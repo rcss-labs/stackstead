@@ -244,7 +244,7 @@ func dbRestore(ctx context.Context, env *Env, cfg config.Config, src string, yes
 			if !stdinIsTerminal(env) {
 				return exitf(ExitUsage, "restore replaces %s; pass --yes to confirm", current)
 			}
-			question := fmt.Sprintf("Replace %s with %s? The current database is kept as a .bak file; sessions will be whatever the backup holds.", current, src)
+			question := fmt.Sprintf("Replace %s with %s? The current database is kept as a .bak file; everyone is signed out and connection tokens are revoked.", current, src)
 			if ok, err := confirm(env, question, false); err != nil {
 				return err
 			} else if !ok {
@@ -274,9 +274,33 @@ func dbRestore(ctx context.Context, env *Env, cfg config.Config, src string, yes
 		if bak != "" {
 			fmt.Fprintf(env.Stdout, "previous database kept as %s\n", bak)
 		}
-		fmt.Fprintf(env.Stdout, "restored %s from %s (schema %d)\n", current, src, schema)
+		if err := revokeRestoredAccess(ctx, current); err != nil {
+			return fmt.Errorf("the database was restored but its sessions and tokens could not be revoked; "+
+				"restore again before starting the server: %w", err)
+		}
+		fmt.Fprintf(env.Stdout, "restored %s from %s (schema %d); everyone is signed out and connection tokens are revoked\n", current, src, schema)
 		return nil
 	})
+}
+
+// revokeRestoredAccess migrates the restored database and deletes its
+// sessions, connection tokens and pending pairings, so nothing the backup
+// held can be used once the server starts.
+func revokeRestoredAccess(ctx context.Context, path string) error {
+	db, err := store.Open(path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := store.RevokeAccess(ctx, db); err != nil {
+		return err
+	}
+	// Leave the restored database as a single file (no -wal/-shm); the server
+	// switches it back to WAL when it opens it.
+	if _, err := db.ExecContext(ctx, `PRAGMA journal_mode=DELETE`); err != nil {
+		return fmt.Errorf("leave WAL mode on the restored database: %w", err)
+	}
+	return nil
 }
 
 // openRestoreSource opens src read-only and refuses anything that is not a

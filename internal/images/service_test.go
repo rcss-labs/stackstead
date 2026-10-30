@@ -35,6 +35,7 @@ type fakeEngine struct {
 	buildErr error
 	block    chan struct{} // when set, Build waits for it to close (or ctx)
 	started  chan struct{} // closed when Build begins, if set
+	skipRead bool          // Build ignores the tar and returns when ctx ends
 
 	calls      []string // tag/push/remove calls, in order
 	pushErr    func(auth engine.RegistryAuth) error
@@ -63,6 +64,10 @@ func (f *fakeEngine) Build(ctx context.Context, tarIn io.Reader, opts engine.Bui
 	f.mu.Unlock()
 	if started != nil {
 		close(started)
+	}
+	if f.skipRead {
+		<-ctx.Done()
+		return engine.BuildResult{}, ctx.Err()
 	}
 	files := map[string]string{}
 	tr := tar.NewReader(tarIn)

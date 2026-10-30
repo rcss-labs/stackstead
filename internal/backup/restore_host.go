@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/rcss-labs/stackstead/internal/engine"
+	"github.com/rcss-labs/stackstead/internal/secret"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 	"github.com/rcss-labs/stackstead/internal/store"
 )
@@ -85,6 +86,20 @@ type HostSource struct {
 	Path string
 	S3   S3Dest
 	Key  string
+	// Passphrase opens an encrypted archive; empty falls back to the key file
+	// in the data directory.
+	Passphrase secret.Secret
+}
+
+// HostRestoreOptions are the choices of one RestoreHost call.
+type HostRestoreOptions struct {
+	// StartStacks starts the stacks that were running once the restore is applied.
+	StartStacks bool
+	// AllowUnencrypted accepts an archive that is neither encrypted nor
+	// authenticated; without it RestoreHost refuses one.
+	AllowUnencrypted bool
+	// ConfirmedDigest is the ConflictsDigest the user confirmed.
+	ConfirmedDigest string
 }
 
 // HostEnv is what a host restore works against.
@@ -102,6 +117,9 @@ type HostEnv struct {
 	Deferred bool
 	// HTTP is used for S3 sources; nil means http.DefaultClient.
 	HTTP *http.Client
+	// InstanceID is this host's own instance id; empty on a fresh host that
+	// has none yet. An archive from any other id is foreign.
+	InstanceID string
 }
 
 // Conflict is existing Docker or filesystem state a host restore meets.
@@ -123,6 +141,16 @@ type HostSummary struct {
 	// ConflictsDigest identifies Conflicts. The user confirms them once and
 	// RestoreHost requires the digest back.
 	ConflictsDigest string `json:"conflictsDigest"`
+	// Encrypted and KeyID say how the archive is protected; an unencrypted
+	// archive is also unauthenticated.
+	Encrypted bool   `json:"encrypted"`
+	KeyID     string `json:"keyId"`
+	// Foreign is true when the archive was not written by this instance, which
+	// includes every restore onto a fresh host. Callers default to leaving the
+	// stacks stopped for a foreign archive.
+	Foreign bool `json:"foreign"`
+	// Risks are the host-reaching settings of the archived compose files.
+	Risks []ComposeRisk `json:"risks"`
 }
 
 // HostReport lists the outcome of every restored item.
@@ -189,60 +217,126 @@ func checkManifest(m Manifest, installed string) error {
 }
 
 func damaged(err error) error {
-	if errors.Is(err, ErrUnsafePath) {
-		return err
+	// These already say what is wrong; calling them damage would send the
+	// operator looking for a corrupt file instead of a wrong passphrase.
+	for _, typed := range []error{ErrUnsafePath, ErrArchiveTampered, ErrWrongPassphrase, ErrPassphraseRequired, ErrUnencryptedArchive} {
+		if errors.Is(err, typed) {
+			return err
+		}
 	}
 	return fmt.Errorf("%w: %w", ErrArchiveDamaged, err)
+}
+
+// archiveOptions says how a host source's archive is opened: with the
+// source's passphrase, else the key file in the data directory.
+func archiveOptions(src HostSource, env HostEnv, allowUnencrypted bool) OpenOptions {
+	return OpenOptions{Passphrase: src.Passphrase, KeyDir: env.DataDir, AllowUnencrypted: allowUnencrypted}
+}
+
+// trustSidecar decides whether a sidecar may drive a restore. For an encrypted
+// archive the sidecar must carry a valid MAC under the archive's own key and
+// the same key id; a plaintext archive must not have a sidecar claiming
+// encryption (that would hide a downgrade).
+func trustSidecar(m Manifest, info ArchiveInfo) error {
+	if !info.Encrypted {
+		if m.Encryption != nil {
+			return fmt.Errorf("%w: the sidecar says the archive is encrypted but it is not", ErrManifestMismatch)
+		}
+		return nil
+	}
+	if m.Encryption == nil || m.Encryption.KeyID != info.KeyID {
+		return fmt.Errorf("%w: the sidecar does not carry the archive's key id", ErrManifestMismatch)
+	}
+	return info.key.VerifySidecar(m)
 }
 
 // InspectHost reads the manifest of a whole-host archive and lists what
 // already exists on this host. With a sidecar it reads only the base/ section
 // of the archive (for networks.json); without one it reads the archive to its
 // end for manifest.json, which also proves the archive is complete. It
-// refuses an archive from a newer Stackstead. It changes nothing.
+// refuses an archive from a newer Stackstead. It changes nothing, so it also
+// accepts an unencrypted archive: HostSummary.Encrypted says which it is.
+// Chunks of an encrypted archive are authenticated as they are read, but only
+// RestoreHost reads (and so verifies) all of it before changing anything.
 func InspectHost(ctx context.Context, src HostSource, env HostEnv) (HostSummary, error) {
+	return inspectHost(ctx, src, env, false, true)
+}
+
+// inspectHost is InspectHost; full also reads every entry to the end of the
+// stream and compares the in-archive manifest with the sidecar, so any
+// modification or truncation anywhere in the archive is found before the
+// caller changes the host.
+func inspectHost(ctx context.Context, src HostSource, env HostEnv, full, allowUnencrypted bool) (HostSummary, error) {
 	m, haveManifest := readHostSidecar(ctx, src, env.HTTP)
-	if haveManifest {
-		if err := checkManifest(m, env.Version); err != nil {
-			return HostSummary{}, err
-		}
-	}
+	fromSidecar := haveManifest
 	rc, err := OpenHostSource(ctx, src, env.HTTP)
 	if err != nil {
 		return HostSummary{}, err
 	}
 	defer rc.Close()
-	r, err := NewReader(rc)
+	r, info, err := OpenArchive(rc, archiveOptions(src, env, allowUnencrypted))
 	if err != nil {
 		return HostSummary{}, damaged(err)
 	}
+	if fromSidecar {
+		if err := trustSidecar(m, info); err != nil {
+			return HostSummary{}, err
+		}
+		if err := checkManifest(m, env.Version); err != nil {
+			return HostSummary{}, err
+		}
+	}
 	var specs []engine.NetworkSpec
+	var risks []ComposeRisk
+	reachedEnd := false
 	for {
 		hdr, body, err := r.Next()
 		if errors.Is(err, io.EOF) {
+			reachedEnd = true
 			break
 		}
 		if err != nil {
 			return HostSummary{}, damaged(err)
 		}
 		// With a sidecar, only base/ is needed: networks.json lives there.
-		if haveManifest && !strings.HasPrefix(hdr.Name, basePrefix) {
+		if haveManifest && !full && !strings.HasPrefix(hdr.Name, basePrefix) {
 			break
 		}
+		found, err := scanStackFile(hdr, body)
+		if err != nil {
+			return HostSummary{}, damaged(err)
+		}
+		risks = append(risks, found...)
 		switch hdr.Name {
 		case entryNetworks:
 			if specs, err = decodeNetworks(body); err != nil {
 				return HostSummary{}, err
 			}
 		case ManifestEntryName:
-			if m, err = decodeArchiveManifest(body); err != nil {
+			inArchive, err := decodeArchiveManifest(body)
+			if err != nil {
 				return HostSummary{}, err
+			}
+			if fromSidecar {
+				if err := verifyArchiveManifest(inArchive, m, true, env.Version); err != nil {
+					return HostSummary{}, err
+				}
+			} else {
+				m = inArchive
 			}
 			haveManifest = true
 		}
 	}
+	if reachedEnd {
+		if err := r.Finish(); err != nil {
+			return HostSummary{}, err
+		}
+	}
 	if !haveManifest {
 		return HostSummary{}, damaged(errors.New("manifest.json is missing"))
+	}
+	if full && !reachedEnd {
+		return HostSummary{}, damaged(errors.New("the archive ended without reaching manifest.json"))
 	}
 	if err := checkManifest(m, env.Version); err != nil {
 		return HostSummary{}, err
@@ -251,7 +345,18 @@ func InspectHost(ctx context.Context, src HostSource, env HostEnv) (HostSummary,
 	if err != nil {
 		return HostSummary{}, err
 	}
-	return HostSummary{Manifest: m, Conflicts: conflicts, ConflictsDigest: conflictsDigest(conflicts)}, nil
+	return HostSummary{
+		Manifest: m, Conflicts: conflicts, ConflictsDigest: conflictsDigest(conflicts),
+		Encrypted: info.Encrypted, KeyID: info.KeyID,
+		Foreign: isForeign(m, env),
+		Risks:   sortRisks(risks),
+	}, nil
+}
+
+// isForeign reports an archive not written by this instance; a host with no
+// id yet owns no archive.
+func isForeign(m Manifest, env HostEnv) bool {
+	return m.InstanceID == "" || m.InstanceID != env.InstanceID
 }
 
 func decodeArchiveManifest(body io.Reader) (Manifest, error) {
@@ -414,25 +519,34 @@ func failedInManifest(m Manifest, kind, stack, name string) bool {
 	})
 }
 
-// RestoreHost restores a whole-host archive in one streaming pass: it stages
-// and verifies the database, writes each stack's files to its original path
-// (skipping paths outside the allowed roots), creates missing networks,
+// RestoreHost restores a whole-host archive. It first reads and verifies the
+// whole archive (every chunk of an encrypted one is authenticated, every entry
+// walked, the in-archive manifest compared with the sidecar), so a modified or
+// truncated archive is refused before the host changes. A second pass then
+// stages and verifies the database, writes each stack's files to its original
+// path (skipping paths outside the allowed roots), creates missing networks,
 // refills volumes and loads images, and finally writes the pending marker
 // that ApplyPending acts on at the next start. The live database is never
-// touched.
+// touched. The archive is read twice; an S3 source is downloaded twice.
 //
-// confirmedDigest is the ConflictsDigest the user confirmed; a fresh
-// inspection that differs refuses the restore before anything changes. Any
-// error before stack files are written leaves the host as it was. With a
-// sidecar there is no full pre-scan, so an archive damaged after the stack
-// files fails the restore with those files (and anything restored before the
-// damage) already in place; no pending marker is written then.
-func RestoreHost(ctx context.Context, src HostSource, env HostEnv, startStacks bool, confirmedDigest string) (HostReport, error) {
-	sum, err := InspectHost(ctx, src, env)
+// opts.ConfirmedDigest is the ConflictsDigest the user confirmed; a fresh
+// inspection that differs refuses the restore before anything changes. An
+// unencrypted archive, which cannot be authenticated, is refused unless
+// opts.AllowUnencrypted. Any error before stack files are written leaves the
+// host as it was; an I/O failure in the second pass after that point leaves
+// what was restored before it in place and writes no pending marker.
+func RestoreHost(ctx context.Context, src HostSource, env HostEnv, opts HostRestoreOptions) (HostReport, error) {
+	// Read the whole archive first: decrypting and authenticating every chunk
+	// and walking every entry means a flipped byte in volumes/ is found before
+	// stack files are written, not after.
+	if env.Out != nil {
+		env.Out("verifying the archive")
+	}
+	sum, err := inspectHost(ctx, src, env, true, opts.AllowUnencrypted)
 	if err != nil {
 		return HostReport{}, err
 	}
-	if sum.ConflictsDigest != confirmedDigest {
+	if sum.ConflictsDigest != opts.ConfirmedDigest {
 		return HostReport{}, ErrConflictsChanged
 	}
 	dir := restoreDir(env.DataDir)
@@ -460,7 +574,7 @@ func RestoreHost(ctx context.Context, src HostSource, env HostEnv, startStacks b
 		return HostReport{}, err
 	}
 	defer rc.Close()
-	r, err := NewReader(rc)
+	r, _, err := OpenArchive(rc, archiveOptions(src, env, opts.AllowUnencrypted))
 	if err != nil {
 		return HostReport{}, damaged(err)
 	}
@@ -476,10 +590,10 @@ func RestoreHost(ctx context.Context, src HostSource, env HostEnv, startStacks b
 		return HostReport{Items: h.report()}, err
 	}
 	p := Pending{StagedDB: filepath.Join(dir, stagedDBName), PauseSchedule: true}
-	if startStacks {
+	if opts.StartStacks {
 		p.StartStacks = h.stacksToStart()
 	}
-	p.StartStacks = h.withStoppedStacks(p.StartStacks)
+	p.StartStacks = h.withStoppedStacks(p.StartStacks, isForeign(sum.Manifest, env) && !opts.StartStacks)
 	if err := writePending(env.DataDir, p); err != nil {
 		h.startStopped()
 		return HostReport{Items: h.report()}, fmt.Errorf("record pending restore: %w", err)
@@ -866,17 +980,21 @@ func (h *hostRestore) volume(hdr *tar.Header, body io.Reader) error {
 		return drain(stream)
 	}
 	mv := ms.Volumes[i]
+	if err := checkVolumeKey(mv); err != nil {
+		h.items = append(h.items, ItemResult{Kind: conflictVolume, Stack: stack, Name: mv.Name, Status: itemFailed, Note: err.Error()})
+		return drain(stream)
+	}
 	if h.stopFailed[ms.Project] {
 		h.items = append(h.items, ItemResult{Kind: conflictVolume, Stack: stack, Name: mv.Name, Status: itemSkipped, Note: "a container of the stack could not be stopped; the volume is left as it was"})
 		return drain(stream)
 	}
-	source := mv.Name
+	var bind *bindTarget
 	if mv.Kind == volumeKindBind {
 		if archivedAsFile(hdr, prefix) {
 			h.items = append(h.items, ItemResult{Kind: conflictVolume, Stack: stack, Name: mv.Name, Status: itemSkipped, Note: noteArchivedFileBind})
 			return drain(stream)
 		}
-		resolved, skip, err := h.rs.prepareBind(mv.Name, h.restoredStackDirs())
+		target, skip, err := h.rs.prepareBind(mv.Name, h.restoredStackDirs())
 		if skip != "" || err != nil {
 			item := ItemResult{Kind: conflictVolume, Stack: stack, Name: mv.Name, Status: itemSkipped, Note: skip}
 			if err != nil {
@@ -885,10 +1003,10 @@ func (h *hostRestore) volume(hdr *tar.Header, body io.Reader) error {
 			h.items = append(h.items, item)
 			return drain(stream)
 		}
-		source = resolved
+		bind = &target
 	}
 	h.out("restoring " + mv.Kind + " " + mv.Name + " of " + stack)
-	err := h.fillVolume(stack, mv, source, stream)
+	err := h.fillVolume(stack, mv, bind, stream)
 	if derr := drain(stream); derr != nil {
 		return derr
 	}
@@ -944,13 +1062,22 @@ func (h *hostRestore) stopForVolumes() {
 }
 
 // withStoppedStacks adds to start the restored stacks whose containers were
-// stopped here, so they come back after the restart.
-func (h *hostRestore) withStoppedStacks(start []string) []string {
+// stopped here, so they come back after the restart. They come back on the
+// restored compose files, so with leaveStopped (a foreign archive nobody asked to start)
+// they stay stopped instead, with an item saying so. (A restore that fails
+// restarts the original containers unchanged, see startStopped.)
+func (h *hostRestore) withStoppedStacks(start []string, leaveStopped bool) []string {
 	for _, s := range h.manifest.Stacks {
 		t, ok := h.stacks[s.Name]
-		if ok && t.skipped == "" && h.stoppedProjects[s.Project] && !slices.Contains(start, s.Name) {
-			start = append(start, s.Name)
+		if !ok || t.skipped != "" || !h.stoppedProjects[s.Project] || slices.Contains(start, s.Name) {
+			continue
 		}
+		if leaveStopped {
+			h.items = append(h.items, ItemResult{Kind: "stack", Stack: s.Name, Name: "start", Status: itemSkipped, Note: "left stopped: archive comes from another host"})
+			h.out("skipped: stack " + s.Name + " left stopped: archive comes from another host; start it after reviewing its compose files")
+			continue
+		}
+		start = append(start, s.Name)
 	}
 	return start
 }
@@ -993,13 +1120,20 @@ func (h *hostRestore) ensureHelper() error {
 }
 
 // fillVolume makes sure the helper image is present and replaces the
-// volume's (or bind source's) contents with stream.
-func (h *hostRestore) fillVolume(stack string, mv ManifestVolume, source string, stream io.Reader) error {
+// volume's (or, with bind set, the vetted bind source's) contents with stream.
+// A bind is vetted again after the image check, which may pull.
+func (h *hostRestore) fillVolume(stack string, mv ManifestVolume, bind *bindTarget, stream io.Reader) error {
 	if err := h.ensureHelper(); err != nil {
 		return fmt.Errorf("helper image: %w", err)
 	}
+	if bind != nil {
+		if err := h.rs.revetBind(mv.Name, h.restoredStackDirs(), *bind); err != nil {
+			return err
+		}
+		return RestoreBind(h.ctx, h.env.Engine, stack, *bind, stream)
+	}
 	labels := composeVolumeLabels(h.stacks[stack].entry.Project, mv.Name)
-	return RestoreVolume(h.ctx, h.env.Engine, stack, stacks.Mount{Kind: mv.Kind, Source: source, Target: mv.Target}, labels, stream)
+	return RestoreVolume(h.ctx, h.env.Engine, stack, stacks.Mount{Kind: mv.Kind, Source: mv.Name, Target: mv.Target}, labels, stream)
 }
 
 // images loads one archived image, stored under images/<stack>/<image key>/.
@@ -1021,7 +1155,7 @@ func (h *hostRestore) images(hdr *tar.Header, body io.Reader) error {
 	}
 	ref := ms.Images[i]
 	h.out("loading image " + ref + " of " + stack)
-	err := h.env.Engine.LoadImage(h.ctx, stream)
+	err := loadImageChecked(h.ctx, h.env.Engine, ref, stream)
 	if derr := drain(stream); derr != nil {
 		return derr
 	}

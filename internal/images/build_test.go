@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rcss-labs/stackstead/internal/engine"
+	"github.com/rcss-labs/stackstead/internal/stacks"
 )
 
 func TestBuildTagTaken(t *testing.T) {
@@ -230,5 +231,35 @@ func TestBuildDeletedImageDuringStart(t *testing.T) {
 	h.svc.beforeBuildLock = func() { h.svc.Delete(ctx, "alice", "app") }
 	if _, _, err := h.svc.Build(ctx, "alice", "app", BuildRequest{Tag: "1"}); !errors.Is(err, ErrImageNotFound) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestBuildCancelDuringContextWritingEndsPromptly(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.create(t, "app")
+	// A pathological ignore file keeps the context writer busy, so the build
+	// must not wait for it once cancelled.
+	_, err := h.svc.Upload(ctx, "alice", "app", []UploadFile{
+		upload(".dockerignore", strings.Repeat("**/", 40)+"zz\n"),
+		upload(strings.Repeat("d/", 40)+"f", "x"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.eng.started = make(chan struct{})
+	h.eng.skipRead = true
+	_, op, err := h.svc.Build(ctx, "alice", "app", BuildRequest{Tag: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-h.eng.started
+	h.ops.Cancel(op.ID)
+	done := make(chan stacks.Operation, 1)
+	go func() { done <- h.waitOp(t, op.ID) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("build did not end promptly after cancellation")
 	}
 }

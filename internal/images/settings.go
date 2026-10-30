@@ -12,7 +12,7 @@ import (
 
 // Settings keys owned by the image library.
 const (
-	settingGitHubToken = "github_token"
+	SettingGitHubToken = "github_token"
 	settingGitHubLogin = "github_login"
 	// settingDefaultRetention holds JSON {"keepLast":n,"keepDays":n}; a missing
 	// key means {0,0}, which keeps every version.
@@ -61,7 +61,7 @@ func (s *SettingsStore) set(ctx context.Context, key, value string) error {
 
 // GitHubToken returns the stored GitHub token, empty when none is set.
 func (s *SettingsStore) GitHubToken(ctx context.Context) (secret.Secret, error) {
-	v, err := s.get(ctx, settingGitHubToken)
+	v, err := s.get(ctx, SettingGitHubToken)
 	return secret.Secret(v), err
 }
 
@@ -70,20 +70,20 @@ func (s *SettingsStore) GitHubToken(ctx context.Context) (secret.Secret, error) 
 func (s *SettingsStore) SetGitHubToken(ctx context.Context, t secret.Secret) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("write setting %s: %w", settingGitHubToken, err)
+		return fmt.Errorf("write setting %s: %w", SettingGitHubToken, err)
 	}
 	defer tx.Rollback()
 	if t == "" {
-		_, err = tx.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, settingGitHubToken)
+		_, err = tx.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, SettingGitHubToken)
 	} else {
 		_, err = tx.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?)
-			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, settingGitHubToken, t.Reveal())
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, SettingGitHubToken, t.Reveal())
 	}
 	if err == nil {
 		_, err = tx.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, settingGitHubLogin)
 	}
 	if err != nil {
-		return fmt.Errorf("write setting %s: %w", settingGitHubToken, err)
+		return fmt.Errorf("write setting %s: %w", SettingGitHubToken, err)
 	}
 	return tx.Commit()
 }
@@ -100,7 +100,7 @@ func (s *SettingsStore) SetGitHubLoginFor(ctx context.Context, token secret.Secr
 	res, err := s.db.ExecContext(ctx, `INSERT INTO settings(key, value)
 		SELECT ?, ? WHERE EXISTS (SELECT 1 FROM settings WHERE key = ? AND value = ?)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-		settingGitHubLogin, login, settingGitHubToken, token.Reveal())
+		settingGitHubLogin, login, SettingGitHubToken, token.Reveal())
 	if err != nil {
 		return false, fmt.Errorf("write setting %s: %w", settingGitHubLogin, err)
 	}

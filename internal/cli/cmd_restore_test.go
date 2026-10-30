@@ -26,7 +26,23 @@ type restoreCalls struct {
 	digest    string
 	applied   int
 	report    backup.HostReport
+	opts      backup.HostRestoreOptions
+
+	// plain makes the fake archive unencrypted; needPassphrase makes inspection
+	// fail with ErrPassphraseRequired (ErrWrongPassphrase) until it is given.
+	plain          bool
+	needPassphrase string
+	inspections    []backup.HostSource
+	runErr         error
+
+	// foreign and risks make the fake archive another host's, with those
+	// compose risks.
+	foreign    bool
+	instanceID string
+	risks      []backup.ComposeRisk
 }
+
+const fakeKeyID = "0123456789abcdef"
 
 // fakeRestoreSeams replaces the engine seams and records what the command asked of them.
 func fakeRestoreSeams(t *testing.T, inspectErr error) *restoreCalls {
@@ -36,18 +52,33 @@ func fakeRestoreSeams(t *testing.T, inspectErr error) *restoreCalls {
 	t.Cleanup(func() { restoreInspect, restoreRun, restoreApply = origI, origR, origA })
 	restoreInspect = func(_ context.Context, src backup.HostSource, _ backup.HostEnv) (backup.HostSummary, error) {
 		calls.inspected = src
+		calls.inspections = append(calls.inspections, src)
 		if inspectErr != nil {
 			return backup.HostSummary{}, inspectErr
 		}
+		if calls.needPassphrase != "" && src.Passphrase.Reveal() != calls.needPassphrase {
+			if src.Passphrase == "" {
+				return backup.HostSummary{}, backup.ErrPassphraseRequired
+			}
+			return backup.HostSummary{}, backup.ErrWrongPassphrase
+		}
+		sum := backup.HostSummary{Encrypted: !calls.plain}
+		if sum.Encrypted {
+			sum.KeyID = fakeKeyID
+		}
 		return backup.HostSummary{
-			Manifest: backup.Manifest{Host: "oldbox", Status: "partial", Stacks: []backup.ManifestStack{{Name: "web",
+			Encrypted: sum.Encrypted, KeyID: sum.KeyID, Foreign: calls.foreign, Risks: calls.risks,
+			Manifest: backup.Manifest{Host: "oldbox", Status: "partial", InstanceID: calls.instanceID, Stacks: []backup.ManifestStack{{Name: "web",
 				Volumes: []backup.ManifestVolume{{Key: "a"}, {Key: "b"}}, Images: []string{"nginx:1"}}}},
 			Conflicts:       []backup.Conflict{{Kind: "volume", Name: "web_data", Action: "overwrite"}},
 			ConflictsDigest: "digest-1",
 		}, nil
 	}
-	restoreRun = func(_ context.Context, src backup.HostSource, _ backup.HostEnv, start bool, digest string) (backup.HostReport, error) {
-		calls.restored, calls.started, calls.digest = src, start, digest
+	restoreRun = func(_ context.Context, src backup.HostSource, _ backup.HostEnv, opts backup.HostRestoreOptions) (backup.HostReport, error) {
+		calls.restored, calls.started, calls.digest, calls.opts = src, opts.StartStacks, opts.ConfirmedDigest, opts
+		if calls.runErr != nil {
+			return calls.report, calls.runErr
+		}
 		return calls.report, nil
 	}
 	restoreApply = func(string, time.Time) (*backup.Pending, error) { calls.applied++; return nil, nil }
@@ -194,5 +225,121 @@ func TestHostRestoreAsRootRefusesToCreateDataDir(t *testing.T) {
 	// the hint must be the root command that creates it with the right owner.
 	if want := "install -d -o stackstead -m 0700 " + h.dataDir; !strings.Contains(err.Error(), want) {
 		t.Errorf("hint = %q, want it to suggest %q", err, want)
+	}
+}
+
+func TestRestoreRequiresAllowUnencryptedForPlaintextArchive(t *testing.T) {
+	h := newLocalHost(t, true)
+	calls := fakeRestoreSeams(t, nil)
+	calls.plain = true
+	env := newTestEnv(t, nil)
+	err := runRestore(env, "/tmp/a.tar.gz", "--yes", "--config", h.cfgPath)
+	wantCode(t, err, ExitValidation)
+	mustContain(t, "error", errMessage(err), "--allow-unencrypted")
+	if calls.restored.Kind != "" || calls.applied != 0 {
+		t.Error("an unencrypted archive was restored without the flag")
+	}
+
+	env = newTestEnv(t, nil)
+	wantCode(t, runRestore(env, "/tmp/a.tar.gz", "--yes", "--allow-unencrypted", "--config", h.cfgPath), ExitOK)
+	if !calls.opts.AllowUnencrypted || calls.restored.Kind == "" {
+		t.Errorf("with the flag: opts = %+v, restored = %+v", calls.opts, calls.restored)
+	}
+}
+
+func TestRestoreReadsPassphraseFromFile(t *testing.T) {
+	h := newLocalHost(t, true)
+	calls := fakeRestoreSeams(t, nil)
+	calls.needPassphrase = "file passphrase value"
+	pf := filepath.Join(t.TempDir(), "pass")
+	if err := os.WriteFile(pf, []byte("file passphrase value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// An environment value must lose against the explicit file.
+	env := newTestEnv(t, map[string]string{"STACKSTEAD_BACKUP_PASSPHRASE": "env passphrase"})
+	wantCode(t, runRestore(env, "/tmp/a.tar.gz", "--yes", "--passphrase-file", pf, "--config", h.cfgPath), ExitOK)
+	if calls.inspected.Passphrase.Reveal() != "file passphrase value" || calls.restored.Passphrase.Reveal() != "file passphrase value" {
+		t.Errorf("inspected %q restored %q", calls.inspected.Passphrase.Reveal(), calls.restored.Passphrase.Reveal())
+	}
+	if strings.Contains(env.Out.String()+env.Err.String(), "file passphrase value") {
+		t.Error("the passphrase was printed")
+	}
+}
+
+func TestRestoreReadsPassphraseFromEnv(t *testing.T) {
+	h := newLocalHost(t, true)
+	calls := fakeRestoreSeams(t, nil)
+	calls.needPassphrase = "env passphrase value"
+	env := newTestEnv(t, map[string]string{"STACKSTEAD_BACKUP_PASSPHRASE": "env passphrase value"})
+	wantCode(t, runRestore(env, "/tmp/a.tar.gz", "--yes", "--config", h.cfgPath), ExitOK)
+	if calls.restored.Passphrase.Reveal() != "env passphrase value" {
+		t.Errorf("restored with %q", calls.restored.Passphrase.Reveal())
+	}
+}
+
+func TestRestorePromptsForPassphraseOnTTY(t *testing.T) {
+	h := newLocalHost(t, true)
+	calls := fakeRestoreSeams(t, nil)
+	calls.needPassphrase = "typed passphrase value"
+	stubPasswords(t, "typed passphrase value")
+	env := newTestEnv(t, nil)
+	env.IsTerminal = func(uintptr) bool { return true }
+	wantCode(t, runRestore(env, "/tmp/a.tar.gz", "--yes", "--config", h.cfgPath), ExitOK)
+	if len(calls.inspections) != 2 || calls.inspections[0].Passphrase != "" || calls.inspections[1].Passphrase.Reveal() != "typed passphrase value" {
+		t.Errorf("inspections = %+v, want one without and one with the typed passphrase", calls.inspections)
+	}
+	if calls.restored.Passphrase.Reveal() != "typed passphrase value" {
+		t.Errorf("restored with %q", calls.restored.Passphrase.Reveal())
+	}
+}
+
+func TestRestoreWithoutPassphraseOrTTYExits6WithHint(t *testing.T) {
+	h := newLocalHost(t, true)
+	calls := fakeRestoreSeams(t, nil)
+	calls.needPassphrase = "whatever"
+	err := runRestore(newTestEnv(t, nil), "/tmp/a.tar.gz", "--yes", "--config", h.cfgPath)
+	wantCode(t, err, ExitValidation)
+	mustContain(t, "error", errMessage(err), "--passphrase-file", "STACKSTEAD_BACKUP_PASSPHRASE")
+	if calls.restored.Kind != "" {
+		t.Error("restore ran without a passphrase")
+	}
+}
+
+func TestRestoreSummaryShowsEncryptionKey(t *testing.T) {
+	h := newLocalHost(t, true)
+	calls := fakeRestoreSeams(t, nil)
+	env := newTestEnv(t, nil)
+	wantCode(t, runRestore(env, "/tmp/a.tar.gz", "--yes", "--config", h.cfgPath), ExitOK)
+	mustContain(t, "stdout", env.Out.String(), "encryption  key "+fakeKeyID)
+
+	calls.plain = true
+	env = newTestEnv(t, nil)
+	_ = runRestore(env, "/tmp/a.tar.gz", "--yes", "--allow-unencrypted", "--config", h.cfgPath)
+	mustContain(t, "stdout", env.Out.String(), "encryption  none (unauthenticated archive)")
+}
+
+func TestRestoreTamperedArchiveExits6(t *testing.T) {
+	h := newLocalHost(t, true)
+	calls := fakeRestoreSeams(t, nil)
+	calls.runErr = fmt.Errorf("%w: chunk 3", backup.ErrArchiveTampered)
+	err := runRestore(newTestEnv(t, nil), "/tmp/a.tar.gz", "--yes", "--config", h.cfgPath)
+	wantCode(t, err, ExitValidation)
+	if !errors.Is(err, backup.ErrArchiveTampered) || calls.applied != 0 {
+		t.Errorf("err = %v, applied = %d; the staged database must not be installed", err, calls.applied)
+	}
+}
+
+func TestRestoreWrongPassphraseExits6(t *testing.T) {
+	h := newLocalHost(t, true)
+	calls := fakeRestoreSeams(t, nil)
+	calls.needPassphrase = "right"
+	pf := filepath.Join(t.TempDir(), "pass")
+	if err := os.WriteFile(pf, []byte("wrong\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := runRestore(newTestEnv(t, nil), "/tmp/a.tar.gz", "--yes", "--passphrase-file", pf, "--config", h.cfgPath)
+	wantCode(t, err, ExitValidation)
+	if !errors.Is(err, backup.ErrWrongPassphrase) {
+		t.Errorf("err = %v", err)
 	}
 }

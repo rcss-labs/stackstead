@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/rcss-labs/stackstead/internal/engine"
+	"github.com/rcss-labs/stackstead/internal/images"
 	"github.com/rcss-labs/stackstead/internal/stacks"
 	"github.com/rcss-labs/stackstead/internal/store"
 )
@@ -225,18 +226,58 @@ func CollectNetworks(ctx context.Context, eng Engine) ([]byte, int, error) {
 	return data, len(specs), nil
 }
 
+// credentialsStripped is what an archive's database snapshot lacks: every
+// secret another system accepts, so a leaked archive (or a clone restored from
+// one) cannot write to the original's bucket, call its peers or push to its
+// registries. They are entered again after a restore.
+const noteCredentialsStripped = "S3 secret key, GitHub token, peer and registry credentials are never archived; enter them again after a restore"
+
 // CollectDB writes a consistent snapshot of the database into a fresh
 // directory under tmpDir and returns the snapshot path. cleanup removes it.
+// The snapshot has the credentials of noteCredentialsStripped removed: they
+// are deleted from a private copy, which is then vacuumed into the final file
+// so freed pages carry nothing.
 func CollectDB(ctx context.Context, db *sql.DB, tmpDir string) (string, func(), error) {
 	dir, err := os.MkdirTemp(tmpDir, "stackstead-db-")
 	if err != nil {
 		return "", nil, fmt.Errorf("snapshot dir: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
+	raw := filepath.Join(dir, "raw.db")
 	dest := filepath.Join(dir, "stackstead.db")
-	if err := store.Backup(ctx, db, dest); err != nil {
+	if err := store.Backup(ctx, db, raw); err != nil {
 		cleanup()
 		return "", nil, fmt.Errorf("snapshot database: %w", err)
 	}
+	if err := stripCredentials(ctx, raw, dest); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("snapshot database: %w", err)
+	}
+	for _, f := range []string{raw, raw + "-wal", raw + "-shm"} {
+		_ = os.Remove(f)
+	}
 	return dest, cleanup, nil
+}
+
+// stripCredentials deletes the credentials from the database at raw and
+// writes the result to dest.
+func stripCredentials(ctx context.Context, raw, dest string) error {
+	db, err := store.OpenExisting(raw, store.OpenOptions{})
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	for _, q := range []struct {
+		sql  string
+		args []any
+	}{
+		{`DELETE FROM settings WHERE key IN (?, ?)`, []any{settingS3SecretKey, images.SettingGitHubToken}},
+		{`UPDATE peers SET out_credential = ''`, nil},
+		{`UPDATE registries SET secrets = '{}'`, nil},
+	} {
+		if _, err := db.ExecContext(ctx, q.sql, q.args...); err != nil {
+			return fmt.Errorf("strip credentials: %w", err)
+		}
+	}
+	return store.Backup(ctx, db, dest)
 }

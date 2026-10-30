@@ -39,11 +39,23 @@ type BackupConfig struct {
 	Schedule BackupSchedule `json:"schedule"`
 	Local    BackupLocal    `json:"local"`
 	S3       BackupS3       `json:"s3"`
+	// Encryption controls archive encryption; see BackupEncryption.
+	Encryption BackupEncryption `json:"encryption"`
 	// NextRun is when the schedule fires next; absent when it is off. Ignored on PUT.
 	NextRun *time.Time `json:"nextRun,omitempty"`
 	// PausedAfterRestore is set when a host restore turned the schedule off;
 	// saving the schedule enabled clears it. Ignored on PUT.
 	PausedAfterRestore bool `json:"pausedAfterRestore"`
+}
+
+// BackupEncryption is the archive encryption setting. Passphrase is accepted
+// on PUT only and is never returned; PassphraseSet and KeyID say whether one is
+// stored and which one (the key id is also written into every archive sidecar).
+type BackupEncryption struct {
+	Enabled       bool   `json:"enabled"`
+	Passphrase    string `json:"passphrase,omitempty"`
+	PassphraseSet bool   `json:"passphraseSet"`
+	KeyID         string `json:"keyId"`
 }
 
 type BackupMount struct {
@@ -101,6 +113,8 @@ type BackupArchive struct {
 	HostSlug  string    `json:"hostSlug"`
 	CreatedAt time.Time `json:"createdAt"`
 	Size      int64     `json:"size"`
+	// Encrypted is true for an encrypted archive (".tar.gz.enc").
+	Encrypted bool `json:"encrypted"`
 }
 
 // BackupRunStarted is the 202 body of POST /api/backups/run.
@@ -127,6 +141,25 @@ type BackupRestoreRequest struct {
 	Images  bool   `json:"images"`
 	// VolumeKeys limits the volumes restored; empty means all of them.
 	VolumeKeys []string `json:"volumeKeys"`
+	// Passphrase opens an encrypted archive; empty uses the stored one.
+	// AllowUnencrypted confirms restoring an archive that is not authenticated.
+	Passphrase       string `json:"passphrase,omitempty"`
+	AllowUnencrypted bool   `json:"allowUnencrypted"`
+	// Start starts the stack once it is restored. Omitted means false: the
+	// stack is left stopped.
+	Start bool `json:"start"`
+}
+
+// BackupComposeRisk is a host-reaching setting in an archived compose file:
+// a privileged service, an added capability, a device, a host bind mount, a
+// host namespace or a disabled security profile. Kind is privileged, cap_add,
+// device, host_bind, host_namespace, security_opt or unparseable.
+type BackupComposeRisk struct {
+	Stack   string `json:"stack"`
+	File    string `json:"file"`
+	Service string `json:"service"`
+	Kind    string `json:"kind"`
+	Detail  string `json:"detail"`
 }
 
 type BackupFileDiff struct {
@@ -167,6 +200,13 @@ type BackupRestorePlan struct {
 	MissingNetworks []BackupRestoreNetwork `json:"missingNetworks"`
 	CrossHost       bool                   `json:"crossHost"`
 	Warnings        []string               `json:"warnings"`
+	// Encrypted is false for an archive with no authentication at all.
+	Encrypted bool   `json:"encrypted"`
+	KeyID     string `json:"keyId"`
+	// Foreign is true when the archive was written by another instance; the
+	// restore then defaults to leaving the stack stopped.
+	Foreign bool                `json:"foreign"`
+	Risks   []BackupComposeRisk `json:"risks"`
 }
 
 // BackupRestoreStarted is the 202 body of POST /api/backups/restore.
@@ -227,6 +267,8 @@ type HostRestoreUploaded struct {
 type HostRestoreInspectRequest struct {
 	Source     HostRestoreSource `json:"source"`
 	SetupToken string            `json:"setupToken"`
+	// Passphrase opens an encrypted archive; empty uses the key file, if any.
+	Passphrase string `json:"passphrase,omitempty"`
 }
 
 // HostRestoreStartRequest starts the restore. ConfirmedDigest is the
@@ -236,6 +278,9 @@ type HostRestoreStartRequest struct {
 	StartStacks     bool              `json:"startStacks"`
 	ConfirmedDigest string            `json:"confirmedDigest"`
 	SetupToken      string            `json:"setupToken"`
+	Passphrase      string            `json:"passphrase,omitempty"`
+	// AllowUnencrypted confirms restoring an archive that is not authenticated.
+	AllowUnencrypted bool `json:"allowUnencrypted"`
 }
 
 // HostRestoreStarted is the 202 body of POST /api/setup/restore/start.
@@ -259,6 +304,12 @@ type HostRestoreSummary struct {
 	Manifest        BackupManifest        `json:"manifest"`
 	Conflicts       []HostRestoreConflict `json:"conflicts"`
 	ConflictsDigest string                `json:"conflictsDigest"`
+	Encrypted       bool                  `json:"encrypted"`
+	KeyID           string                `json:"keyId"`
+	// Foreign is true when the archive was not written by this instance,
+	// which includes every restore onto a fresh host.
+	Foreign bool                `json:"foreign"`
+	Risks   []BackupComposeRisk `json:"risks"`
 }
 
 // BackupManifest is an archive's manifest, as GET
@@ -274,4 +325,8 @@ type BackupManifest struct {
 	Stacks            []BackupManifestStack `json:"stacks"`
 	Networks          int                   `json:"networks"`
 	Items             []BackupItem          `json:"items"`
+	// Encrypted and KeyID come from the sidecar and are display-only: the
+	// salts and MAC stay on the server.
+	Encrypted bool   `json:"encrypted"`
+	KeyID     string `json:"keyId"`
 }

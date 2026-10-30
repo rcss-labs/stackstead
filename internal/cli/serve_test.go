@@ -570,3 +570,66 @@ func TestStartRestoredStacksCountsAShutdownAfterTheLastStackAsDone(t *testing.T)
 		t.Error("every stack was attempted, but the work was reported cut short")
 	}
 }
+
+// A backup carries the sessions and connection tokens of the moment it was
+// taken, so a host restore must sign everyone out before the server serves:
+// otherwise a session revoked after the backup would work again.
+func TestServeRevokesSessionsAndTokensAfterHostRestore(t *testing.T) {
+	te, data := serveTestEnv(t)
+	stageHostRestore(t, data, filepath.Join(filepath.Dir(data), "stacks"))
+	staged := filepath.Join(data, "restore", "stackstead.db")
+	ctx := context.Background()
+	sdb, err := store.Open(staged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authSvc, err := auth.NewService(sdb, time.Now, auth.WithFastHashingForTests())
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldToken, err := authSvc.Login(ctx, "olduser", "correct horse battery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Unix()
+	for _, q := range []string{
+		fmt.Sprintf(`INSERT INTO connection_tokens(hash, created_at, expires_at) VALUES('tok', %d, %d)`, now, now+600),
+		fmt.Sprintf(`INSERT INTO peers(instance_id, name, slug, url, in_hash, created_at, state) VALUES('pending-1', 'p', 'p', 'http://p', 'h1', %d, 'pending')`, now),
+		fmt.Sprintf(`INSERT INTO peers(instance_id, name, slug, url, out_credential, in_hash, created_at, state) VALUES('peer-1', 'q', 'q', 'http://q', 'cred', 'h2', %d, 'active')`, now),
+	} {
+		if _, err := sdb.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := sdb.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	serveUntil(t, te, "stackstead listening", "start restored stack")
+
+	db, err := store.Open(filepath.Join(data, "stackstead.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for table, want := range map[string]int{"sessions": 0, "connection_tokens": 0, "peers": 1} {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != want {
+			t.Errorf("%s has %d rows after the restore, want %d", table, n, want)
+		}
+	}
+	var cred string
+	if err := db.QueryRow(`SELECT out_credential FROM peers WHERE state = 'active'`).Scan(&cred); err != nil || cred != "cred" {
+		t.Errorf("the active peer did not survive: %q, %v", cred, err)
+	}
+	svc, err := auth.NewService(db, time.Now, auth.WithFastHashingForTests())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Authenticate(ctx, oldToken); err == nil {
+		t.Error("a session from the backup still authenticates")
+	}
+}

@@ -729,7 +729,14 @@ func TestE2EBackupRestore(t *testing.T) {
 	// Docker Desktop on macOS may not see a bind directory re-created at a path
 	// that was just deleted, which fails the helper for the relative bind. Linux must restore it.
 	relRestored := true
-	code, out, errOut := r.run("", "restore", archive, "--yes", "--config", r.cfg)
+	// The archive is unencrypted, so the restore is refused until the operator
+	// acknowledges that nothing authenticates it.
+	if code, out, errOut := r.run("", "restore", archive, "--yes", "--config", r.cfg); code != 6 || !strings.Contains(out+errOut, "--allow-unencrypted") {
+		t.Fatalf("unacknowledged unencrypted restore: exit %d, want 6 naming --allow-unencrypted\nstdout: %s\nstderr: %s", code, out, redact(errOut))
+	}
+	// A wiped host has no instance id, so the archive counts as foreign and its
+	// stacks stay stopped unless the operator asks for --start.
+	code, out, errOut := r.run("", "restore", archive, "--yes", "--allow-unencrypted", "--start", "--config", r.cfg)
 	switch {
 	case code == 0:
 	case code == 9 && runtime.GOOS == "darwin" && strings.Contains(out, "bind source path does not exist"):

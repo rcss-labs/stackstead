@@ -2,6 +2,7 @@ package backup
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -60,14 +61,16 @@ func (r *Runner) ArchiveManifest(ctx context.Context, dest, name string) (Manife
 	if err != nil {
 		return Manifest{}, err
 	}
-	m, _, err := readArchiveManifest(ctx, d, name)
+	// Display only: a sidecar is returned as it is, without checking its MAC.
+	// Restores authenticate before they trust anything (see trustSidecar).
+	m, _, err := readArchiveManifest(ctx, d, name, OpenOptions{KeyDir: r.d.DataDir, AllowUnencrypted: true})
 	return m, err
 }
 
 // PlanRestore previews a single-stack restore. It reads the archive's base/
 // section only and changes nothing.
 func (r *Runner) PlanRestore(ctx context.Context, req StackRestoreRequest) (StackRestorePlan, error) {
-	sr, err := r.openStackRestore(ctx, req, func(string) {})
+	sr, err := r.openStackRestore(ctx, req, func(string) {}, true)
 	if err != nil {
 		return StackRestorePlan{}, err
 	}
@@ -75,6 +78,7 @@ func (r *Runner) PlanRestore(ctx context.Context, req StackRestoreRequest) (Stac
 	if err := sr.planWithDiff(); err != nil {
 		return StackRestorePlan{}, err
 	}
+	sr.plan.Encrypted, sr.plan.KeyID = sr.info.Encrypted, sr.info.KeyID
 	return sr.plan, nil
 }
 
@@ -109,9 +113,11 @@ func (r *Runner) RestoreStack(ctx context.Context, req StackRestoreRequest, user
 }
 
 // preflight plans the restore against the archive's database and networks
-// without changing anything.
+// without changing anything. It already refuses an unencrypted archive that
+// was not acknowledged and an encrypted one that cannot be opened, so those
+// answer the request instead of failing an operation.
 func (r *Runner) preflight(ctx context.Context, req StackRestoreRequest) error {
-	sr, err := r.openStackRestore(ctx, req, func(string) {})
+	sr, err := r.openStackRestore(ctx, req, func(string) {}, req.AllowUnencrypted)
 	if err != nil {
 		return err
 	}
@@ -120,7 +126,13 @@ func (r *Runner) preflight(ctx context.Context, req StackRestoreRequest) error {
 }
 
 func (r *Runner) restore(ctx context.Context, req StackRestoreRequest, target, user, opID string, out func(string)) error {
-	sr, err := r.openStackRestore(ctx, req, out)
+	// The whole archive is authenticated and walked before the stack is
+	// stopped or its files are copied away.
+	var sr *stackRestore
+	err := r.verifyStackArchive(ctx, req, out)
+	if err == nil {
+		sr, err = r.openStackRestore(ctx, req, out, req.AllowUnencrypted)
+	}
 	if err == nil {
 		defer sr.close()
 		err = sr.execute()
@@ -219,7 +231,9 @@ func ValidArchiveName(name string) bool {
 
 // readArchiveManifest returns the sidecar manifest, or reads the archive to
 // its end for manifest.json when there is no sidecar. fromSidecar tells which.
-func readArchiveManifest(ctx context.Context, d Destination, name string) (m Manifest, fromSidecar bool, err error) {
+// A sidecar is returned unverified: callers that act on it must run
+// trustSidecar against the opened archive.
+func readArchiveManifest(ctx context.Context, d Destination, name string, opts OpenOptions) (m Manifest, fromSidecar bool, err error) {
 	if m, err := d.ReadSidecar(ctx, name); err == nil {
 		return m, true, nil
 	}
@@ -228,7 +242,7 @@ func readArchiveManifest(ctx context.Context, d Destination, name string) (m Man
 		return Manifest{}, false, err
 	}
 	defer rc.Close()
-	ar, err := NewReader(rc)
+	ar, _, err := OpenArchive(rc, opts)
 	if err != nil {
 		return Manifest{}, false, damaged(err)
 	}
@@ -242,9 +256,82 @@ func readArchiveManifest(ctx context.Context, d Destination, name string) (m Man
 		}
 		if hdr.Name == ManifestEntryName {
 			m, err := decodeArchiveManifest(body)
-			return m, false, err
+			if err != nil {
+				return Manifest{}, false, err
+			}
+			if err := ar.Finish(); err != nil {
+				return Manifest{}, false, err
+			}
+			return m, false, nil
 		}
 	}
+}
+
+// verifyStackArchive reads the whole archive of a single-stack restore: every
+// chunk of an encrypted archive is authenticated, every entry walked and the
+// in-archive manifest compared with the sidecar. It runs before the restore
+// touches anything.
+func (r *Runner) verifyStackArchive(ctx context.Context, req StackRestoreRequest, out func(string)) error {
+	d, err := r.destination(ctx, req.Archive.Dest, req.Archive.Name)
+	if err != nil {
+		return err
+	}
+	opts := r.openOptions(req, req.AllowUnencrypted)
+	driving, haveSidecar := Manifest{}, false
+	if m, err := d.ReadSidecar(ctx, req.Archive.Name); err == nil {
+		driving, haveSidecar = m, true
+	}
+	rc, err := d.Open(ctx, req.Archive.Name)
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	ar, info, err := OpenArchive(rc, opts)
+	if err != nil {
+		return damaged(err)
+	}
+	if haveSidecar {
+		if err := trustSidecar(driving, info); err != nil {
+			return err
+		}
+	}
+	out("verifying the archive")
+	sawManifest := false
+	for {
+		hdr, body, err := ar.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return damaged(err)
+		}
+		if hdr.Name == ManifestEntryName {
+			inArchive, err := decodeArchiveManifest(body)
+			if err != nil {
+				return err
+			}
+			if err := verifyArchiveManifest(inArchive, driving, haveSidecar, r.d.Version); err != nil {
+				return err
+			}
+			sawManifest = true
+			continue
+		}
+		if _, err := io.Copy(io.Discard, body); err != nil {
+			return damaged(err)
+		}
+	}
+	if err := ar.Finish(); err != nil {
+		return err
+	}
+	if !sawManifest {
+		return damaged(errors.New("manifest.json is missing"))
+	}
+	return nil
+}
+
+// openOptions says how a single-stack restore opens its archive.
+func (r *Runner) openOptions(req StackRestoreRequest, allowUnencrypted bool) OpenOptions {
+	return OpenOptions{Passphrase: req.Passphrase, KeyDir: r.d.DataDir, AllowUnencrypted: allowUnencrypted}
 }
 
 // stackRestore is one single-stack restore, from opening the archive to
@@ -260,6 +347,8 @@ type stackRestore struct {
 	ms          ManifestStack
 	rc          io.Closer
 	ar          *Reader
+	info        ArchiveInfo
+	risks       []ComposeRisk // from planWithDiff
 	stageDir    string
 	archived    stacks.Entry // the stack's row in the archived database, if any
 	archivedRel string       // the compose file's name in the archived stack directory
@@ -291,7 +380,7 @@ type stackRestore struct {
 
 // openStackRestore checks the archive's manifest, opens its stream and
 // stages its database, which is always the first entry.
-func (r *Runner) openStackRestore(ctx context.Context, req StackRestoreRequest, out func(string)) (*stackRestore, error) {
+func (r *Runner) openStackRestore(ctx context.Context, req StackRestoreRequest, out func(string), allowUnencrypted bool) (*stackRestore, error) {
 	if !req.Files && !req.Volumes && !req.Images {
 		return nil, ErrNothingToRestore
 	}
@@ -299,33 +388,44 @@ func (r *Runner) openStackRestore(ctx context.Context, req StackRestoreRequest, 
 	if err != nil {
 		return nil, err
 	}
-	m, fromSidecar, err := readArchiveManifest(ctx, d, req.Archive.Name)
+	opts := r.openOptions(req, allowUnencrypted)
+	m, fromSidecar, err := readArchiveManifest(ctx, d, req.Archive.Name, opts)
 	if err != nil {
 		return nil, err
-	}
-	if err := checkManifest(m, r.d.Version); err != nil {
-		return nil, err
-	}
-	ms, ok := findManifestStack(m, req.Stack)
-	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrStackNotInArchive, req.Stack)
-	}
-	sr := &stackRestore{
-		r: r, ctx: ctx, req: req, out: out, manifest: m, fromSidecar: fromSidecar, ms: ms,
-		volumesDone: map[string]bool{}, imagesDone: map[string]bool{},
-		stackPrefix:  stacksPrefix + req.Stack + "/",
-		volumePrefix: volumesPrefix + req.Stack + "/",
-		imagePrefix:  imagesPrefix + req.Stack + "/",
 	}
 	rc, err := d.Open(ctx, req.Archive.Name)
 	if err != nil {
 		return nil, err
 	}
-	sr.rc = rc
-	if sr.ar, err = NewReader(rc); err != nil {
+	sr := &stackRestore{
+		r: r, ctx: ctx, req: req, out: out, rc: rc,
+		volumesDone: map[string]bool{}, imagesDone: map[string]bool{},
+		stackPrefix:  stacksPrefix + req.Stack + "/",
+		volumePrefix: volumesPrefix + req.Stack + "/",
+		imagePrefix:  imagesPrefix + req.Stack + "/",
+	}
+	if sr.ar, sr.info, err = OpenArchive(rc, opts); err != nil {
 		sr.close()
 		return nil, damaged(err)
 	}
+	// A sidecar only drives the restore once it is authenticated against the
+	// archive's own key.
+	if fromSidecar {
+		if err := trustSidecar(m, sr.info); err != nil {
+			sr.close()
+			return nil, err
+		}
+	}
+	if err := checkManifest(m, r.d.Version); err != nil {
+		sr.close()
+		return nil, err
+	}
+	ms, ok := findManifestStack(m, req.Stack)
+	if !ok {
+		sr.close()
+		return nil, fmt.Errorf("%w: %q", ErrStackNotInArchive, req.Stack)
+	}
+	sr.manifest, sr.fromSidecar, sr.ms = m, fromSidecar, ms
 	if err := sr.stageDatabase(); err != nil {
 		sr.close()
 		return nil, err
@@ -434,7 +534,7 @@ func (sr *stackRestore) planEnv() (PlanEnv, error) {
 	}
 	return PlanEnv{
 		Registry: sr.r.d.Registry, AllowedRoots: sr.r.d.AllowedRoots, StacksDir: sr.r.d.StacksDir,
-		SelfSlug: peers.Slugify(ident.Name), Networks: sr.r.d.Engine.Networks, ReadCurrent: os.ReadFile,
+		SelfSlug: peers.Slugify(ident.Name), SelfInstanceID: ident.InstanceID, Networks: sr.r.d.Engine.Networks, ReadCurrent: os.ReadFile,
 		ArchivedNetworks: sr.networks,
 	}, nil
 }
@@ -447,6 +547,7 @@ func (sr *stackRestore) makePlan(env PlanEnv) error {
 	if !plan.Overwrites && !sr.req.Files {
 		return ErrFilesRequired
 	}
+	plan.Risks = sr.risks
 	sr.plan = plan
 	return nil
 }
@@ -471,6 +572,7 @@ func (sr *stackRestore) planWithDiff() error {
 		return err
 	}
 	var compose []byte
+	var risks []ComposeRisk
 	found := false
 	for {
 		hdr, body, ok, err := sr.next()
@@ -480,13 +582,24 @@ func (sr *stackRestore) planWithDiff() error {
 		if !ok || !strings.HasPrefix(hdr.Name, basePrefix) {
 			break
 		}
-		if hdr.Name == sr.stackPrefix+sr.archivedRel && hdr.Typeflag == tar.TypeReg {
-			if compose, err = io.ReadAll(io.LimitReader(body, maxArchivedCompose)); err != nil {
+		if !strings.HasPrefix(hdr.Name, sr.stackPrefix) || hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		// One read feeds both the diff and the risk scan.
+		var captured bytes.Buffer
+		found2, err := scanStackFile(hdr, io.TeeReader(io.LimitReader(body, maxArchivedCompose+1), &captured))
+		if err != nil {
+			return damaged(err)
+		}
+		risks = append(risks, found2...)
+		if hdr.Name == sr.stackPrefix+sr.archivedRel {
+			if compose, err = io.ReadAll(io.LimitReader(io.MultiReader(&captured, body), maxArchivedCompose)); err != nil {
 				return damaged(err)
 			}
 			found = true
 		}
 	}
+	sr.risks = sortRisks(risks)
 	env, err := sr.planEnv()
 	if err != nil {
 		return err
@@ -507,7 +620,7 @@ func (sr *stackRestore) item(it ItemResult) {
 	}
 }
 
-// execute performs the restore. A stack stopped here, or a new stack that
+// execute performs the restore. With req.Start, a stack stopped here, or a new stack that
 // was running at backup time, is started on every path once it exists.
 func (sr *stackRestore) execute() error {
 	if err := sr.planAtStackFiles(); err != nil {
@@ -565,12 +678,19 @@ func (sr *stackRestore) stopIfRunning() error {
 }
 
 // startAgain starts the stack when it was stopped here, or when it is new and
-// was running at backup time. It runs even when the restore is cancelled.
+// was running at backup time, but only when the request asks for it: without
+// Start it records that the stack was left stopped. It runs even when the
+// restore is cancelled.
 func (sr *stackRestore) startAgain() {
 	if !sr.stopped && (!sr.registered || !sr.ms.WasRunning) {
 		return
 	}
 	name := sr.plan.TargetName
+	if !sr.req.Start {
+		// The restored files are not trusted until the operator has seen them.
+		sr.item(ItemResult{Kind: "stack", Stack: name, Name: "start", Status: itemSkipped, Note: "left stopped as requested"})
+		return
+	}
 	sr.out("starting " + name)
 	startCtx, cancel := context.WithTimeout(context.WithoutCancel(sr.ctx), restartTimeout)
 	defer cancel()
@@ -846,17 +966,23 @@ func (sr *stackRestore) volume(hdr *tar.Header, body io.Reader) error {
 		sr.item(ItemResult{Kind: conflictVolume, Stack: sr.plan.TargetName, Name: pv.Name, Status: itemSkipped, Note: noteBackupFailed})
 		return drain(stream)
 	}
-	source := pv.Name
+	if err := checkVolumeKey(sr.ms.Volumes[j]); err != nil {
+		sr.item(ItemResult{Kind: conflictVolume, Stack: sr.plan.TargetName, Name: pv.Name, Status: itemFailed, Note: err.Error()})
+		return drain(stream)
+	}
+	var bind *bindTarget
+	var protected []string
 	if pv.Kind == volumeKindBind {
 		if archivedAsFile(hdr, sr.volumePrefix+key+"/") {
 			sr.item(ItemResult{Kind: conflictVolume, Stack: sr.plan.TargetName, Name: pv.Name, Status: itemSkipped, Note: noteArchivedFileBind})
 			return drain(stream)
 		}
 		// Without the stack list the bind cannot be vetted, so it is not mounted.
+		var target bindTarget
+		var skip string
 		protected, err := sr.protectedDirs()
-		var resolved, skip string
 		if err == nil {
-			resolved, skip, err = sr.rs.prepareBind(pv.Name, protected)
+			target, skip, err = sr.rs.prepareBind(pv.Name, protected)
 		}
 		if skip != "" || err != nil {
 			it := ItemResult{Kind: conflictVolume, Stack: sr.plan.TargetName, Name: pv.Name, Status: itemSkipped, Note: skip}
@@ -866,12 +992,19 @@ func (sr *stackRestore) volume(hdr *tar.Header, body io.Reader) error {
 			sr.item(it)
 			return drain(stream)
 		}
-		source = resolved
+		bind = &target
 	}
 	sr.out("restoring " + pv.Kind + " " + pv.Name)
 	err := sr.ensureHelper()
-	if err == nil {
-		mount := stacks.Mount{Kind: pv.Kind, Source: source, Target: pv.Target}
+	switch {
+	case err != nil:
+	case bind != nil:
+		// Vet again: the helper image check above may have pulled.
+		if err = sr.rs.revetBind(pv.Name, protected, *bind); err == nil {
+			err = RestoreBind(sr.ctx, sr.r.d.Engine, sr.plan.TargetName, *bind, stream)
+		}
+	default:
+		mount := stacks.Mount{Kind: pv.Kind, Source: pv.Name, Target: pv.Target}
 		err = RestoreVolume(sr.ctx, sr.r.d.Engine, sr.plan.TargetName, mount, composeVolumeLabels(sr.plan.Project, pv.Name), stream)
 	}
 	if derr := drain(stream); derr != nil {
@@ -927,7 +1060,7 @@ func (sr *stackRestore) image(hdr *tar.Header, body io.Reader) error {
 		return drain(stream)
 	}
 	sr.out("loading image " + ref)
-	err := sr.r.d.Engine.LoadImage(sr.ctx, stream)
+	err := loadImageChecked(sr.ctx, sr.r.d.Engine, ref, stream)
 	if derr := drain(stream); derr != nil {
 		return derr
 	}

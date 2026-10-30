@@ -5,10 +5,25 @@ import type { HostRestoreSource, HostRestoreStarted, HostRestoreSummary } from '
 const post = <T>(path: string, body: unknown) => request<T>('POST', path, body).then((r) => r.data);
 
 export const setupRestore = {
-  inspect: (source: HostRestoreSource, setupToken?: string) =>
-    post<HostRestoreSummary>('/api/setup/restore/inspect', { source, setupToken: setupToken ?? '' }),
-  start: (source: HostRestoreSource, startStacks: boolean, confirmedDigest: string, setupToken?: string) =>
-    post<HostRestoreStarted>('/api/setup/restore/start', { source, startStacks, confirmedDigest, setupToken: setupToken ?? '' }),
+  inspect: (source: HostRestoreSource, setupToken?: string, passphrase?: string) =>
+    post<HostRestoreSummary>('/api/setup/restore/inspect', {
+      source,
+      setupToken: setupToken ?? '',
+      ...(passphrase ? { passphrase } : {}),
+    }),
+  start: (
+    source: HostRestoreSource,
+    options: { startStacks: boolean; confirmedDigest: string; allowUnencrypted: boolean; passphrase?: string },
+    setupToken?: string,
+  ) =>
+    post<HostRestoreStarted>('/api/setup/restore/start', {
+      source,
+      startStacks: options.startStacks,
+      confirmedDigest: options.confirmedDigest,
+      allowUnencrypted: options.allowUnencrypted,
+      setupToken: setupToken ?? '',
+      ...(options.passphrase ? { passphrase: options.passphrase } : {}),
+    }),
   upload: uploadRestoreArchive,
 };
 

@@ -119,7 +119,7 @@ func (d *s3Dest) List(ctx context.Context) ([]ArchiveRef, error) {
 		if !ok {
 			continue
 		}
-		refs = append(refs, ArchiveRef{Dest: destS3, Name: name, HostSlug: slug, CreatedAt: created, Size: o.Size})
+		refs = append(refs, ArchiveRef{Dest: destS3, Name: name, HostSlug: slug, CreatedAt: created, Size: o.Size, Encrypted: IsEncryptedName(name)})
 	}
 	return refs, nil
 }

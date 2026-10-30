@@ -20,11 +20,25 @@ const FREQUENCIES = [
   { value: 'weekly', label: 'Weekly' },
 ];
 
-/** The S3 secret is write-only: it is sent only when typed, and an untouched field keeps the stored one. */
+const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+/** 26 random base32 characters (about 130 bits) in groups of 5 and 6, drawn client-side. */
+function generatePassphrase(): string {
+  const bytes = new Uint8Array(26);
+  crypto.getRandomValues(bytes);
+  // 256 is a multiple of 32, so masking leaves every character equally likely.
+  const chars = Array.from(bytes, (b) => BASE32[b & 31]).join('');
+  return [chars.slice(0, 5), chars.slice(5, 10), chars.slice(10, 15), chars.slice(15, 20), chars.slice(20)].join('-');
+}
+
+/** The S3 secret and the archive passphrase are write-only: it is sent only when typed, and an untouched field keeps the stored one. */
 export function BackupScheduleCard({ api, onRunStarted }: { api: BackupsApi; onRunStarted?: () => void }) {
   const uid = useId();
   const [config, setConfig] = useState<BackupConfig>();
   const [secret, setSecret] = useState('');
+  const [passphrase, setPassphrase] = useState('');
+  // A generated passphrase is shown so it can be copied; a typed one stays masked.
+  const [revealed, setRevealed] = useState(false);
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -50,12 +64,17 @@ export function BackupScheduleCard({ api, onRunStarted }: { api: BackupsApi; onR
     );
   }
 
-  const { schedule, local, s3 } = config;
+  const { schedule, local, s3, encryption } = config;
   const patch = (next: Partial<BackupConfig>) => setConfig({ ...config, ...next });
   const patchS3 = (next: Partial<BackupConfig['s3']>) => patch({ s3: { ...s3, ...next } });
   const withSecret = (): BackupConfig['s3'] => {
     const { secretKey: _drop, ...rest } = s3;
     return secret === '' ? rest : { ...rest, secretKey: secret };
+  };
+
+  const withPassphrase = (): BackupConfig['encryption'] => {
+    const { passphrase: _drop, ...rest } = encryption;
+    return passphrase === '' ? rest : { ...rest, passphrase };
   };
 
   async function save(event: FormEvent) {
@@ -64,8 +83,10 @@ export function BackupScheduleCard({ api, onRunStarted }: { api: BackupsApi; onR
     setSaving(true);
     setError(undefined);
     try {
-      setConfig(await api.saveConfig({ ...config!, s3: withSecret() }));
+      setConfig(await api.saveConfig({ ...config!, s3: withSecret(), encryption: withPassphrase() }));
       setSecret('');
+      setPassphrase('');
+      setRevealed(false);
       toasts.push({ kind: 'success', message: 'Backup settings saved.' });
     } catch (e) {
       setError(messageOf(e));
@@ -91,6 +112,16 @@ export function BackupScheduleCard({ api, onRunStarted }: { api: BackupsApi; onR
       await api.clearS3Secret();
       patchS3({ secretKeySet: false });
       setSecret('');
+    } catch (e) {
+      setError(messageOf(e));
+    }
+  }
+
+  async function forgetPassphrase() {
+    try {
+      await api.clearEncryptionKey();
+      patch({ encryption: { enabled: false, passphraseSet: false, keyId: '' } });
+      setPassphrase('');
     } catch (e) {
       setError(messageOf(e));
     }
@@ -219,6 +250,51 @@ export function BackupScheduleCard({ api, onRunStarted }: { api: BackupsApi; onR
             {s3.secretKeySet && (
               <Button variant="ghost" size="sm" onClick={() => void clearSecret()}>
                 Clear secret
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <div className={styles.group}>
+          <h3 className={styles.groupTitle}>Encryption</h3>
+          <label className={styles.check}>
+            <input
+              type="checkbox"
+              checked={encryption.enabled}
+              onChange={(e) => patch({ encryption: { ...encryption, enabled: e.target.checked } })}
+            />
+            Encrypt archives
+          </label>
+          {!encryption.enabled && (
+            <Banner
+              kind="warning"
+              title="Archives are written in clear; anyone who can read one can sign in as the admin."
+            />
+          )}
+          <div className={styles.grid}>
+            <Field
+              label="Passphrase"
+              id={`${uid}-passphrase`}
+              mono
+              hint="At least 12 characters. Saving with this empty keeps the stored passphrase."
+            >
+              {({ readOnly: _, ...c }) => (
+                <input {...c} type={revealed ? 'text' : 'password'} value={passphrase} autoComplete="new-password" spellCheck={false} onChange={(e) => { setPassphrase(e.target.value); setRevealed(false); }} />
+              )}
+            </Field>
+          </div>
+          <div className={styles.row}>
+            {encryption.passphraseSet ? (
+              <Pill tone="success">{`Passphrase set · key ${encryption.keyId}`}</Pill>
+            ) : (
+              <Pill tone="muted">No passphrase</Pill>
+            )}
+            <Button variant="ghost" size="sm" onClick={() => { setPassphrase(generatePassphrase()); setRevealed(true); }}>
+              Generate
+            </Button>
+            {encryption.passphraseSet && (
+              <Button variant="ghost" size="sm" onClick={() => void forgetPassphrase()}>
+                Forget passphrase
               </Button>
             )}
           </div>
