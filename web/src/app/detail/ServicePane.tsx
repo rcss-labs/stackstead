@@ -22,9 +22,9 @@ export interface ServicePaneProps {
   onCloseEditor?: () => void;
   /** The service editor; while present it replaces the tabs and their panel. */
   editor?: ReactNode;
-  /** Content for the Metrics and Config tabs (a later plan fills it). */
   /** Starts the stack; the Terminal tab offers it when the container is not running. */
   onStart?: () => void;
+  /** Content for the Metrics and Config tabs (a later plan fills it). */
   children?: (tab: ServiceTab) => ReactNode;
 }
 
