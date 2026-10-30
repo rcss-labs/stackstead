@@ -2,6 +2,8 @@ package backup
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"time"
 )
@@ -35,4 +37,21 @@ type ArchiveRef struct {
 	Size      int64
 	// Encrypted is read from the name; the content decides when it is opened.
 	Encrypted bool
+}
+
+// decodeSidecar parses a sidecar manifest, refusing one larger than
+// maxSmallJSON. Callers fall back to the manifest inside the archive on error.
+func decodeSidecar(r io.Reader, archive string) (Manifest, error) {
+	raw, err := io.ReadAll(io.LimitReader(r, maxSmallJSON+1))
+	if err != nil {
+		return Manifest{}, err
+	}
+	if len(raw) > maxSmallJSON {
+		return Manifest{}, fmt.Errorf("sidecar of %s is too large (over %d bytes)", archive, maxSmallJSON)
+	}
+	var m Manifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return Manifest{}, fmt.Errorf("parse manifest of %s: %w", archive, err)
+	}
+	return m, nil
 }

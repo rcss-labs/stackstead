@@ -1062,6 +1062,110 @@ func TestHostRestoreRefusesBindCoveringRootsStacksOrData(t *testing.T) {
 	}
 }
 
+// liveStack registers a stack in the host's current database under DataDir and
+// gives its directory a file that a wipe would destroy.
+func (s *hostSetup) liveStack(t *testing.T, e stacks.Entry) string {
+	t.Helper()
+	db, err := store.Open(filepath.Join(s.env.DataDir, liveDBName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := stacks.NewRegistry(db, time.Now).Add(context.Background(), e); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(filepath.Dir(e.ComposePath), "keep.txt")
+	if err := os.MkdirAll(filepath.Dir(keep), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keep, []byte("live data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return keep
+}
+
+// A registered stack that the archive does not hold is as protected as one it
+// does: a bind that is or contains its directory must not be emptied (SEC-15).
+func TestHostRestoreRefusesBindCoveringLiveStackNotInArchive(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		bind func(s *hostSetup) string
+	}{
+		{"the stack dir itself", func(s *hostSetup) string { return filepath.Join(s.rootA, "other") }},
+		{"an ancestor of the stack dir", func(s *hostSetup) string { return filepath.Join(s.rootB, "legacy") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newHostSetup(t)
+			keepOther := s.liveStack(t, stacks.Entry{Name: "other", ComposePath: filepath.Join(s.rootA, "other", "compose.yaml"), Origin: stacks.OriginManaged, Project: "other"})
+			keepLegacy := s.liveStack(t, stacks.Entry{Name: "legacy", ComposePath: filepath.Join(s.rootB, "legacy", "app", "compose.yaml"), Origin: stacks.OriginExternal, Project: "legacy"})
+			bind := tc.bind(s)
+			m := stacks.Mount{Kind: "bind", Source: bind}
+			s.fixture.volumes["web"] = append(s.fixture.volumes["web"], ManifestVolume{Key: VolumeKey(m), Kind: "bind", Name: bind, Target: "/x"})
+			s.fixture.volData["web/"+VolumeKey(m)] = map[string]string{"data/": "", "data/f": "x"}
+			path := s.fixture.build(t, t.TempDir(), true)
+
+			report, err := s.restore(t, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, spec := range s.eng.specs {
+				for _, mt := range spec.Mounts {
+					if mt.Source == bind {
+						t.Errorf("the bind %s was emptied and refilled", bind)
+					}
+				}
+			}
+			if !slices.ContainsFunc(report.Items, func(it ItemResult) bool {
+				return it.Kind == "volume" && it.Name == bind && it.Status == "skipped" && strings.Contains(it.Note, "stack directory")
+			}) {
+				t.Errorf("no skipped item with a reason for %s: %+v", bind, report.Items)
+			}
+			for _, keep := range []string{keepOther, keepLegacy} {
+				if _, err := os.Stat(keep); err != nil {
+					t.Errorf("live stack file gone: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// An archived stack whose directory is, holds or sits inside the data dir is
+// not written, even where the data dir lies inside an allowed root.
+func TestHostRestoreSkipsStackDirOverlappingDataDir(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		dir  func(dataDir string) string
+	}{
+		{"inside the data dir", func(dataDir string) string { return filepath.Join(dataDir, "web") }},
+		{"the data dir itself", func(dataDir string) string { return dataDir }},
+		{"holding the data dir", func(dataDir string) string { return filepath.Dir(dataDir) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newHostSetup(t)
+			s.env.DataDir = filepath.Join(s.rootA, "state", "data")
+			if err := os.MkdirAll(s.env.DataDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			dir := tc.dir(s.env.DataDir)
+			s.fixture.stacks[1].ComposePath = filepath.Join(dir, "compose.yaml")
+			path := s.fixture.build(t, t.TempDir(), true)
+
+			report, err := s.restore(t, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "compose.yaml")); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("the stack was written into %s", dir)
+			}
+			if !slices.ContainsFunc(report.Items, func(it ItemResult) bool {
+				return it.Stack == "web" && it.Status == "skipped" && strings.Contains(it.Note, "data directory")
+			}) {
+				t.Errorf("web was not skipped with a data-directory reason: %+v", report.Items)
+			}
+		})
+	}
+}
+
 func TestHostRestoreSaysItWaitsForRestartOnlyWhenDeferred(t *testing.T) {
 	for _, deferred := range []bool{true, false} {
 		s := newHostSetup(t)

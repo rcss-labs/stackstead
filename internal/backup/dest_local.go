@@ -2,7 +2,6 @@ package backup
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -150,15 +149,12 @@ func (d *localDest) Open(_ context.Context, archive string) (io.ReadCloser, erro
 }
 
 func (d *localDest) ReadSidecar(_ context.Context, archive string) (Manifest, error) {
-	raw, err := os.ReadFile(d.path(SidecarName(archive)))
+	f, err := os.Open(d.path(SidecarName(archive)))
 	if err != nil {
 		return Manifest{}, err
 	}
-	var m Manifest
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return Manifest{}, fmt.Errorf("parse manifest of %s: %w", archive, err)
-	}
-	return m, nil
+	defer f.Close()
+	return decodeSidecar(f, archive)
 }
 
 // PruneLocal deletes all but the newest cfg.KeepLast archives of slug, with
