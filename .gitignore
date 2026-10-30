@@ -25,18 +25,39 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
+# Secrets and credentials; example templates stay tracked
+# (.env.example / .env.*.example are re-included below)
 .env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local databases and their WAL/journal side files
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite-*
+
+# Root-level local config (deploy/config.example.yaml stays tracked)
+/config.yaml
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
 
 # Build output
 bin/
 .dev/
 node_modules/
 dist/
+# web/dist is tracked only as a placeholder; its own .gitignore hides build output
+!web/dist/
+web/dist/*
+!web/dist/.gitignore
 
 # Local tool state (brainstorming companion, SDD ledgers)
 .superpowers/
