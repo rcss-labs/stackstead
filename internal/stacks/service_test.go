@@ -2405,7 +2405,9 @@ func TestUntrustedWritersRules(t *testing.T) {
 	if w := stacks.UntrustedWriters(file, owner); len(w) != 0 {
 		t.Errorf("group-writable by a trusted group: %q, want none", w)
 	}
-	if w := stacks.UntrustedWriters(file, stacks.WriteTrust{UIDs: []uint32{me}}); len(w) != 2 {
+	// Root stays trusted: the root-owned ancestors would be flagged otherwise
+	// whenever the tests do not run as root.
+	if w := stacks.UntrustedWriters(file, stacks.WriteTrust{UIDs: []uint32{me, 0}}); len(w) != 2 {
 		t.Errorf("group-writable by another group: %q, want file and folder", w)
 	}
 	// A sticky world-writable folder directly holding the file lets others plant
