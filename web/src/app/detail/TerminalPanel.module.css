@@ -1,0 +1,7 @@
+.panel { display: flex; flex-direction: column; gap: var(--space-3); padding: 14px 18px 18px; min-width: 0; }
+
+.picker { min-width: 0; }
+
+@media (max-width: 759px) {
+  .panel { padding-inline: 14px; }
+}

@@ -32,6 +32,12 @@ describe('resolveDetailLocation', () => {
     expect(resolveDetailLocation(q('tab=config'), two).serviceTab).toBe('config');
   });
 
+  it('?tab=terminal picks the terminal tab and round-trips in the href', () => {
+    const loc = resolveDetailLocation(q('service=db&tab=terminal'), two);
+    expect(loc.serviceTab).toBe('terminal');
+    expect(itemHref('web', loc.item, loc.serviceTab)).toBe('/stacks/web?service=db&tab=terminal');
+  });
+
   it('detailLocation round-trips tab=dockerfile', () => {
     const loc = resolveDetailLocation(q('service=db&tab=dockerfile'), built);
     expect(loc.item).toEqual({ kind: 'service', name: 'db' });
