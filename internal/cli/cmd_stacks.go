@@ -240,6 +240,9 @@ func stacksImportCommand() *Command {
 				if res.ChecksPartial {
 					fmt.Fprintln(env.Stderr, "note: port checks were partial (Docker unavailable)")
 				}
+				for _, w := range res.Data.Warnings {
+					fmt.Fprintf(env.Stderr, "warning: %s\n", oneLine(w))
+				}
 				p := newPrinter(env, g)
 				if p.JSON {
 					return p.JSONValue(res.Data)

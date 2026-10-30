@@ -412,7 +412,9 @@ func (s *Service) confineBuild(stackDir string, b composefile.Build) (composefil
 
 // Import registers an existing compose file without ever writing to it. The
 // stack name is the project name compose derives, so it behaves exactly like
-// running docker compose in that directory.
+// running docker compose in that directory. The summary carries a warning for
+// each path that users outside root, the service user and the docker group can
+// modify (see importWarnings).
 func (s *Service) Import(ctx context.Context, path string) (Summary, error) {
 	invalid := func(msg string) error {
 		return &ValidationError{Fields: []FieldError{{Field: "path", Message: msg}}}
@@ -472,7 +474,11 @@ func (s *Service) Import(ctx context.Context, path string) (Summary, error) {
 		return Summary{}, s.mapProjectTaken(ctx, err, project, "")
 	}
 	containers, engErr := s.engine.Containers(ctx)
-	return s.describe(entry, containers, engErr).Summary, nil
+	sum := s.describe(entry, containers, engErr).Summary
+	// Registering stays allowed: running admin-chosen compose is an intended
+	// power, but the admin should know who else can change it.
+	sum.Warnings = importWarnings(resolved)
+	return sum, nil
 }
 
 // createDockerfile is a Dockerfile to write for the service at Services[index].

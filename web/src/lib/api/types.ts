@@ -31,6 +31,8 @@ export interface StackSummary {
   ports: string[];
   /** Services whose library image has a newer tag. */
   libraryUpdates: number;
+  /** Import only: compose file paths that users other than root, the service user and the docker group can modify. */
+  warnings?: string[];
 }
 
 export type Managed = 'stack' | 'compose' | 'none';

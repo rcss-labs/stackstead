@@ -138,6 +138,25 @@ describe('Import stack screen', () => {
     expect(get(toasts).some((t) => t.kind === 'warning')).toBe(true);
   });
 
+  it('a response with writable-by-others warnings raises a warning toast naming them', async () => {
+    const warnings = ['/srv/blog is writable by everyone (mode 0777)'];
+    const user = await mount({ 'POST /api/stacks/import': { status: 201, body: { ...SUMMARY, warnings } } });
+    await user.type(screen.getByLabelText('Compose file path'), '/srv/blog/compose.yaml');
+    await submit(user);
+    await waitFor(() => expect(location()).toBe('/stacks/blog'));
+    const toast = get(toasts).find((t) => t.kind === 'warning');
+    expect(toast?.message).toContain('/srv/blog is writable by everyone (mode 0777)');
+    expect(toast?.message).toContain('Stack blog imported');
+  });
+
+  it('a clean import raises no warning toast', async () => {
+    const user = await mount();
+    await user.type(screen.getByLabelText('Compose file path'), '/srv/blog/compose.yaml');
+    await submit(user);
+    await waitFor(() => expect(location()).toBe('/stacks/blog'));
+    expect(get(toasts).some((t) => t.kind === 'warning')).toBe(false);
+  });
+
   it('503 shows the unavailable banner and keeps the path clean', async () => {
     const user = await mount({ 'POST /api/stacks/import': { status: 503, body: { error: 'docker daemon is down' } } });
     await user.type(screen.getByLabelText('Compose file path'), '/srv/x.yaml');

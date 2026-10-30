@@ -511,6 +511,22 @@ func TestImportNotesPartialChecks(t *testing.T) {
 	}
 }
 
+func TestImportPrintsWritableWarnings(t *testing.T) {
+	te := t8Setup(t, map[string]http.HandlerFunc{"POST /api/stacks/import": func(w http.ResponseWriter, r *http.Request) {
+		t8JSON(w, 201, apitypes.StackSummary{Name: "legacy", Path: "/tmp/legacy/compose.yaml", Project: "legacy", Origin: "external", Status: "stopped",
+			Warnings: []string{"/tmp/legacy is writable by everyone (mode 0777)"}})
+	}})
+	if err := t8Run(te, "stacks", "import", "/tmp/legacy/compose.yaml"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(te.Err.String(), "warning: /tmp/legacy is writable by everyone (mode 0777)") {
+		t.Errorf("stderr = %q", te.Err.String())
+	}
+	if strings.Contains(te.Out.String(), "warning") {
+		t.Errorf("stdout = %q, warnings belong on stderr", te.Out.String())
+	}
+}
+
 func TestComposeGetPrintsYAML(t *testing.T) {
 	te := t8Setup(t, map[string]http.HandlerFunc{"GET /api/stacks/web/compose": func(w http.ResponseWriter, r *http.Request) {
 		t8JSON(w, 200, apitypes.RawCompose{Content: "services:\n  app:\n    image: nginx\n", Hash: "h1"})

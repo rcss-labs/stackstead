@@ -96,6 +96,9 @@ type Summary struct {
 	// LibraryRefs lists the library images the stack's services use, sorted
 	// and unique; filled by describe.
 	LibraryRefs []string
+	// Warnings are non-fatal findings for the operator; set by Import when
+	// other local users can modify the compose file.
+	Warnings []string
 }
 
 type ContainerInfo struct{ ID, Name, Service, State, Status, Health string }
