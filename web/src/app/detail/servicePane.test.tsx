@@ -1,12 +1,24 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { MemoryRouter } from 'react-router';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ServiceDetail } from '$lib/api/types';
 import { changes, startLive } from '$lib/stores/live';
 import { get } from '$lib/store';
 import { appService, installHarness, mountDetail, removeHarness, stackDetail, type Harness } from './detailTestKit';
+import type { ServiceTab } from '$lib/stacks/detailLocation';
 import { ServicePane } from './ServicePane';
+
+// xterm needs a real canvas; the mock just reports the props the pane passes.
+vi.mock('../containers/TerminalTab', () => ({
+  default: (props: { containerId: string; containerName: string; running: boolean; onStart: () => void }) => (
+    <div data-testid="terminal" data-id={props.containerId} data-running={String(props.running)}>
+      {props.containerName}
+      <button onClick={props.onStart}>start-from-terminal</button>
+    </div>
+  ),
+}));
 
 const user = () => userEvent.setup();
 const flatLine = 'M0,17L60,17';
@@ -95,6 +107,73 @@ describe('service pane', () => {
     const item = screen.getByRole('link', { name: 'web-app-1' }).closest('li')!;
     const lines = Array.from(item.querySelectorAll(':scope > div')).map((line) => line.textContent);
     expect(lines).toEqual(['web-app-1', 'Up 2 minutes']);
+  });
+
+  describe('Terminal tab', () => {
+    const replicas = () =>
+      appService({
+        containers: [
+          { id: 'a', name: 'web-app-1', service: 'app', state: 'exited', status: 'Exited (0)', health: 'none' },
+          { id: 'b', name: 'web-app-2', service: 'app', state: 'running', status: 'Up', health: 'none' },
+          { id: 'c', name: 'web-app-3', service: 'app', state: 'running', status: 'Up', health: 'none' },
+        ],
+      });
+
+    it('is listed next to Config and selecting it calls onTab', async () => {
+      const picked: string[] = [];
+      renderPane(appService(), { onTab: (tab) => picked.push(tab) });
+      await user().click(within(screen.getByRole('tablist', { name: 'Service sections' })).getByRole('tab', { name: 'Terminal' }));
+      expect(picked).toEqual(['terminal']);
+    });
+
+    it('opens the terminal of the only container', async () => {
+      renderPane(appService(), { tab: 'terminal' });
+      const terminal = await screen.findByTestId('terminal');
+      expect(terminal.getAttribute('data-id')).toBe('abc');
+      expect(terminal.getAttribute('data-running')).toBe('true');
+      expect(screen.queryByRole('combobox')).toBeNull();
+    });
+
+    it('with replicas defaults to the first running container and switching remounts with the other one', async () => {
+      renderPane(replicas(), { tab: 'terminal' });
+      expect((await screen.findByTestId('terminal')).getAttribute('data-id')).toBe('b');
+      const select = screen.getByRole('combobox', { name: 'Container' }) as HTMLSelectElement;
+      expect(Array.from(select.options).map((o) => o.text)).toEqual(['web-app-1', 'web-app-2', 'web-app-3']);
+      expect(select.value).toBe('b');
+      await user().selectOptions(select, 'c');
+      expect(screen.getByTestId('terminal').getAttribute('data-id')).toBe('c');
+      await user().selectOptions(select, 'a');
+      expect(screen.getByTestId('terminal').getAttribute('data-running')).toBe('false');
+    });
+
+    it('says so when the service has no containers', () => {
+      renderPane(appService({ containers: [] }), { tab: 'terminal' });
+      expect(screen.getByText('No container for this service. Start the stack to open a terminal.')).toBeTruthy();
+      expect(screen.queryByTestId('terminal')).toBeNull();
+    });
+
+    it('onStart from the terminal calls the pane onStart', async () => {
+      let started = 0;
+      renderPane(appService(), { tab: 'terminal', onStart: () => started++ });
+      await user().click(await screen.findByRole('button', { name: 'start-from-terminal' }));
+      expect(started).toBe(1);
+    });
+
+    it('the Overview Terminal link switches to the tab for that container instead of navigating', async () => {
+      const picked: string[] = [];
+      function Harness() {
+        const [tab, setTab] = useState<ServiceTab>('overview');
+        return (
+          <MemoryRouter>
+            <ServicePane service={replicas()} tab={tab} onTab={(t) => { picked.push(t); setTab(t); }} onLogs={() => {}} latestCpu={undefined} cpuHour={undefined} />
+          </MemoryRouter>
+        );
+      }
+      render(<Harness />);
+      await user().click(screen.getByRole('link', { name: 'Open terminal for web-app-3' }));
+      expect(picked).toEqual(['terminal']);
+      expect((await screen.findByTestId('terminal')).getAttribute('data-id')).toBe('c');
+    });
   });
 
   it('says so when the service has no containers', () => {

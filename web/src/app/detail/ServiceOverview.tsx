@@ -13,6 +13,8 @@ export interface ServiceOverviewProps {
   service: ServiceDetail;
   latestCpu: number | undefined;
   cpuHour: (number | null)[] | undefined;
+  /** Opens the in-page Terminal tab for a container; without it the link goes to the container page. */
+  onTerminal?: (containerId: string) => void;
 }
 
 /** "8123:80" as ":8123 → 80"; a bare container port is shown as is. */
@@ -34,7 +36,7 @@ function Chips({ values, tone }: { values: string[]; tone?: 'info' }) {
   );
 }
 
-export function ServiceOverview({ service, latestCpu, cpuHour }: ServiceOverviewProps) {
+export function ServiceOverview({ service, latestCpu, cpuHour, onTerminal }: ServiceOverviewProps) {
   const { href } = useServer();
   const { config, library } = service;
   const image = config.image ?? (config.build ? `build: ${config.build.context}` : '');
@@ -90,7 +92,15 @@ export function ServiceOverview({ service, latestCpu, cpuHour }: ServiceOverview
                     </div>
                     <div className={styles.containerStatus}>{container.status}</div>
                     {container.state === 'running' && (
-                      <Link className={styles.terminalLink} to={href(`/containers/${encodeURIComponent(container.name)}?tab=terminal`)} aria-label={`Open terminal for ${container.name}`}>
+                      <Link className={styles.terminalLink} to={href(`/containers/${encodeURIComponent(container.name)}?tab=terminal`)} aria-label={`Open terminal for ${container.name}`}
+                        onClick={
+                          onTerminal &&
+                          ((event) => {
+                            event.preventDefault();
+                            onTerminal(container.id);
+                          })
+                        }
+                      >
                         Terminal
                       </Link>
                     )}

@@ -6,7 +6,7 @@ export type DetailItem =
   | { kind: 'operations' }
   | { kind: 'none' };
 
-export type ServiceTab = 'overview' | 'metrics' | 'config' | 'dockerfile';
+export type ServiceTab = 'overview' | 'metrics' | 'config' | 'dockerfile' | 'terminal';
 
 export interface DetailLocation {
   item: DetailItem;
@@ -50,7 +50,7 @@ export function resolveDetailLocation(
     item,
     // The Dockerfile tab exists only for services that build an image.
     serviceTab:
-      tab === 'metrics' || tab === 'config'
+      tab === 'metrics' || tab === 'config' || tab === 'terminal'
         ? tab
         : tab === 'dockerfile' && managedDockerfile && item.kind === 'service' && hasBuild(detail.services.find((s) => s.name === item.name))
           ? tab

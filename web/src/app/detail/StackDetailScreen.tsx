@@ -372,6 +372,7 @@ export function StackDetailScreen({ name }: { name: string }) {
                   />
                 )
               }
+              onStart={() => guarded(() => void ctl.act('up'))}
               latestCpu={latest.get(selectedService.name)?.cpu}
               cpuHour={cpuHour.get(selectedService.name)}
             >
