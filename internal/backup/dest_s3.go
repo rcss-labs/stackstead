@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -135,11 +134,7 @@ func (d *s3Dest) ReadSidecar(ctx context.Context, archive string) (Manifest, err
 		return Manifest{}, err
 	}
 	defer rc.Close()
-	var m Manifest
-	if err := json.NewDecoder(rc).Decode(&m); err != nil {
-		return Manifest{}, fmt.Errorf("parse manifest of %s: %w", archive, err)
-	}
-	return m, nil
+	return decodeSidecar(rc, archive)
 }
 
 // TestS3 checks the bucket settings by writing and deleting a throwaway object.

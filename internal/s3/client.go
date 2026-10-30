@@ -38,7 +38,18 @@ type Client struct {
 	cfg Config
 	hc  *http.Client
 	now func() time.Time
+	// maxObjects caps how many objects List collects.
+	maxObjects int
 }
+
+// MaxListObjects is how many objects List collects before giving up.
+const MaxListObjects = 100000
+
+// maxListPageBytes bounds the XML of one listing page.
+const maxListPageBytes = 16 << 20
+
+// ErrListTooLarge is returned by List when the prefix holds more than the cap.
+var ErrListTooLarge = fmt.Errorf("s3: listing exceeds %d objects", MaxListObjects)
 
 // New returns a client. hc and now may be nil.
 func New(c Config, hc *http.Client, now func() time.Time) *Client {
@@ -48,7 +59,7 @@ func New(c Config, hc *http.Client, now func() time.Time) *Client {
 	if now == nil {
 		now = time.Now
 	}
-	return &Client{cfg: c, hc: hc, now: now}
+	return &Client{cfg: c, hc: hc, now: now, maxObjects: MaxListObjects}
 }
 
 // Put stores body under key in a single request.
@@ -79,7 +90,8 @@ func (c *Client) Get(ctx context.Context, key string) (io.ReadCloser, int64, err
 }
 
 // List returns every object whose key starts with prefix, following
-// continuation tokens.
+// continuation tokens. It fails with ErrListTooLarge rather than returning a
+// partial listing once more than MaxListObjects objects match.
 func (c *Client) List(ctx context.Context, prefix string) ([]Object, error) {
 	var out []Object
 	token := ""
@@ -101,10 +113,13 @@ func (c *Client) List(ctx context.Context, prefix string) ([]Object, error) {
 				LastModified string `xml:"LastModified"`
 			} `xml:"Contents"`
 		}
-		err = xml.NewDecoder(resp.Body).Decode(&page)
+		err = xml.NewDecoder(io.LimitReader(resp.Body, maxListPageBytes)).Decode(&page)
 		resp.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("s3: decode listing: %w", err)
+		}
+		if len(out)+len(page.Contents) > c.maxObjects {
+			return nil, ErrListTooLarge
 		}
 		for _, o := range page.Contents {
 			mod, _ := time.Parse(time.RFC3339, o.LastModified)
