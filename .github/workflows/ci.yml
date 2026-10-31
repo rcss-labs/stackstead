@@ -34,9 +34,37 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # make check + govulncheck: UI type-check, build and tests, vet, gofmt, Go unit tests (race).
-  verify:
-    name: verify
+  # The UI half of make check: type-check, build and tests. Runs beside `go` (which rebuilds the
+  # UI it embeds but skips the UI tests) so the two longest suites overlap.
+  web:
+    name: web
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Web dependencies
+        run: npm ci
+        working-directory: web
+
+      - name: Web type-check, build and tests
+        run: |
+          npm run check
+          npm run build
+          npm run test
+        working-directory: web
+
+  # The Go half of make check + govulncheck: vet, gofmt and Go unit tests (race).
+  go:
+    name: go
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -59,12 +87,9 @@ jobs:
         run: npm ci
         working-directory: web
 
-      # The Go tests embed web/dist, so the UI is built before them.
-      - name: Web type-check, build and tests
-        run: |
-          npm run check
-          npm run build
-          npm run test
+      # The Go tests embed web/dist, so the UI is built (not tested; `web` does that) before them.
+      - name: Build the UI
+        run: npm run build
         working-directory: web
 
       - name: go vet
@@ -156,10 +181,11 @@ jobs:
           path: e2e-test.log
           retention-days: 14
 
-  # make installer-test: install.sh, deploy/ and packaging host tests (sh and dash), the Docker
-  # container suites (Debian, Ubuntu, Rocky, Alpine) and the lintian/rpmlint package lint.
-  installer-linux:
-    name: installer-linux
+  # make installer-test, host half: go vet, the host tests of test/installer, deploy/ and tools/
+  # (install.sh, packaging, shellcheck; everything that is not an *InContainer test), then the
+  # same host tests again under dash. The container half runs in installer-linux-containers.
+  installer-linux-host:
+    name: installer-linux-host
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -174,14 +200,65 @@ jobs:
       - name: Install shells for the script tests
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends dash shellcheck
 
-      - name: Installer tests
-        run: make installer-test 2>&1 | tee installer-test.log
+      - name: Installer host tests
+        run: |
+          go vet -tags installer ./...
+          go test -tags installer -count=1 -parallel 4 -timeout 1800s -v -skip InContainer ./test/installer/ ./deploy/... ./tools/... 2>&1 | tee installer-test.log
+
+      - name: Installer host tests under dash
+        run: STACKSTEAD_TEST_SHELL=dash go test -tags installer -count=1 -timeout 1800s -v -skip InContainer ./test/installer/ 2>&1 | tee installer-dash-test.log
+
+      - name: Upload installer test logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installer-linux-host-log
+          path: installer-*test.log
+          retention-days: 14
+
+  # make installer-test, container half: the *InContainer tests (Debian, Ubuntu, Rocky, Alpine
+  # images, .deb/.rpm installs, package lint) split into shards by test name. Together with
+  # installer-linux-host every test runs exactly once: the host job skips InContainer, shard 1 and
+  # 2 select by regex, shard 3 is everything else (-skip of the other two). The regexes must stay
+  # in step with the test names: verify with `go test -tags installer -list '.*' ./test/installer/`.
+  installer-linux-containers:
+    name: installer-linux-containers (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: upgrade
+            run: '^Test(Upgrade.*|SameVersionIsNoop)InContainer$'
+          - shard: packages
+            run: '^Test(Deb|Rpm|Package|Reinstall|AdminStacksDir|InstallScriptRefusesOverRealPackage|SystemdSmoke).*InContainer$'
+          - shard: script
+            run: '^Test.*InContainer$'
+            skip: '^Test((Upgrade.*|SameVersionIsNoop)|(Deb|Rpm|Package|Reinstall|AdminStacksDir|InstallScriptRefusesOverRealPackage|SystemdSmoke).*)InContainer$'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Installer container tests
+        env:
+          RUN_REGEX: ${{ matrix.run }}
+          SKIP_REGEX: ${{ matrix.skip }}
+        run: |
+          args=(-run "$RUN_REGEX")
+          if [ -n "$SKIP_REGEX" ]; then args+=(-skip "$SKIP_REGEX"); fi
+          go test -tags installer -count=1 -parallel 4 -timeout 1800s -v "${args[@]}" ./test/installer/ 2>&1 | tee installer-test.log
 
       - name: Upload installer test log
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: installer-linux-log
+          name: installer-linux-containers-${{ matrix.shard }}-log
           path: installer-test.log
           retention-days: 14
 
@@ -244,7 +321,7 @@ jobs:
   all-checks:
     name: all-checks
     if: always()
-    needs: [verify, integration, e2e, installer-linux, systemd-smoke, installer-macos]
+    needs: [web, go, integration, e2e, installer-linux-host, installer-linux-containers, systemd-smoke, installer-macos]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
