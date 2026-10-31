@@ -1467,9 +1467,20 @@ func TestResumeStopsWithRequestContext(t *testing.T) {
 			break
 		}
 	}
+	// The first log may come from the other container before container A's
+	// stream has been opened, so wait for that stream too.
+	var aCtx context.Context
+	for deadline := time.Now().Add(5 * time.Second); aCtx == nil; {
+		if aCtx = fake.logCtx(cursorAFull); aCtx == nil {
+			if time.Now().After(deadline) {
+				t.Fatal("container A's log stream was never opened")
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
 	cancel()
 	select {
-	case <-fake.logCtx(cursorAFull).Done():
+	case <-aCtx.Done():
 	case <-time.After(5 * time.Second):
 		t.Fatal("resumed docker stream outlived the request")
 	}
