@@ -28,13 +28,13 @@ not built, and logs a warning.
 
 ## Fonts and theme
 
-The UI uses IBM Plex Sans (Regular, Medium, SemiBold) and Geist Mono (Regular,
+The UI uses Geist (Regular, Medium, SemiBold) and Geist Mono (Regular,
 Medium), self-hosted as Latin-subset woff2 files in `web/src/assets/fonts/`.
 Nothing is loaded from a third-party origin. Both families are under the SIL
 Open Font License 1.1; the licence texts sit next to the fonts and are served
-at `/licenses/IBMPlexSans-OFL.txt` and `/licenses/GeistMono-OFL.txt` (from
+at `/licenses/Geist-OFL.txt` and `/licenses/GeistMono-OFL.txt` (from
 `web/public/licenses/`). The files come from the Fontsource npm packages: fetch
-them with `npm pack` (for example `npm pack @fontsource/ibm-plex-sans`) and copy
+them with `npm pack` (for example `npm pack @fontsource/geist`) and copy
 the `latin` woff2 files, so no npm dependency is added. `make ui` fails when the
 built `dist/assets/*.woff2` files exceed `FONT_BUDGET` (200 kB, in
 `web/scripts/check-bundle.mjs`).
