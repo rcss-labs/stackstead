@@ -270,7 +270,7 @@ describe('App routing and session', () => {
     render(<App />);
     expect(await screen.findByRole('heading', { name: /not found/i })).toBeTruthy();
     await waitFor(() => expect(document.title).toBe('Page not found · Stackstead'));
-    await user().click(within(screen.getByRole('main')).getByRole('link', { name: /stacks/i }));
+    await user().click(within(screen.getByRole('main')).getByRole('link', { name: 'Go to Overview' }));
     expect(loc().path).toBe('/');
   });
 
@@ -363,7 +363,7 @@ describe('App routing and session', () => {
   });
 
   it('on /settings the two logout controls have distinct accessible names', async () => {
-    at('/settings');
+    at('/settings/account');
     render(<App />);
     await screen.findByRole('heading', { name: 'Settings' });
     const account = within(screen.getByRole('region', { name: 'Account' }));

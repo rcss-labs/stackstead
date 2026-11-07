@@ -2,7 +2,7 @@ import { useLocation, useNavigate } from 'react-router';
 import { splitServerPath } from '$lib/router';
 import { connectedPeers, peers, selfName } from '$lib/servers/peers';
 import { useStore } from '../hooks/useStore';
-import { CONNECT_SERVER_HREF } from './nav';
+import { CONNECT_SERVER_HREF } from './navItems';
 import styles from './MobileTopBar.module.css';
 
 export interface ServerSwitcherProps {

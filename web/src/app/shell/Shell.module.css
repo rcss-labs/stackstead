@@ -66,3 +66,12 @@
   background: var(--bg);
   border-top: 1px solid var(--border);
 }
+
+/* Same inset as the app banners, so the scope notice lines up with them. */
+.scope {
+  padding: 16px 24px 0;
+}
+
+.mobile .scope {
+  padding: 12px 14px 0;
+}

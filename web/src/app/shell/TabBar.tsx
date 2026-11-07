@@ -2,7 +2,7 @@ import { Link } from 'react-router';
 import { splitServerPath } from '$lib/router';
 import { ICONS } from '$lib/shell/icons';
 import { Led } from '../components/Led';
-import { activeTab, tabBarNav } from './nav';
+import { activeTab, tabBarNav } from './navItems';
 import styles from './TabBar.module.css';
 
 export interface TabBarProps {

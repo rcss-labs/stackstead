@@ -4,7 +4,7 @@ import { ICONS } from '$lib/shell/icons';
 import { splitServerPath } from '$lib/router';
 import type { PeerStatus, PeerView } from '$lib/api/types';
 import { Led, type LedProps } from '../components/Led';
-import { CONNECT_SERVER_HREF } from './nav';
+import { CONNECT_SERVER_HREF } from './navItems';
 import styles from './ServerMenu.module.css';
 
 export interface ServerMenuProps {

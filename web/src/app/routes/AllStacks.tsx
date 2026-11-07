@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError, createApi } from '$lib/api/client';
 import type { Action, DockerEvent, FleetServer, FleetStack, Operation, StackSummary } from '$lib/api/types';
 import { lifecycleDisabledReason } from '$lib/stacks/lifecycle';
-import { fleetHeadline } from '$lib/dashboard/overview';
+import { fleetHeadline } from '$lib/dashboard/fleetHeadline';
 import { createFleet, serverPath } from '$lib/servers/fleet';
 import { combineHosts, type HostInput } from '$lib/servers/fleetHost';
 import { createFleetStats } from '$lib/servers/fleetStats';

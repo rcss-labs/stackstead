@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from '$lib/api/client';
-import { ICONS } from '$lib/shell/icons';
+import { FILE_PATH } from '$lib/shell/paths';
 import type { FSEntry } from '$lib/api/types';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
@@ -156,7 +156,7 @@ export function FileBrowser({ open, mode, title, onPick, onClose, filter }: File
               <li key={i}>
                 <button type="button" className={styles.entry} disabled={!e.isDir && mode === 'dir'} onClick={() => choose(e)}>
                   <svg className={styles.entryIcon} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d={e.isDir ? FOLDER_PATH : ICONS.file} />
+                    <path d={e.isDir ? FOLDER_PATH : FILE_PATH} />
                   </svg>
                   {e.name}
                 </button>

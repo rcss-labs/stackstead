@@ -3,7 +3,7 @@ import { ICONS } from '$lib/shell/icons';
 import { connectedPeers, peers } from '$lib/servers/peers';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useStore } from '../hooks/useStore';
-import { CONNECT_SERVER_HREF, SETTINGS, serverNav, type NavEntry } from '../shell/nav';
+import { CONNECT_SERVER_HREF, SETTINGS, serverNav, type NavEntry } from '../shell/navItems';
 import styles from './More.module.css';
 
 interface Row {

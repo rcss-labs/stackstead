@@ -9,6 +9,7 @@ import { startHost } from '$lib/stores/host';
 import { changes, live, startLive, stopLive } from '$lib/stores/live';
 import { startOperationTracker } from '$lib/stores/operationTracker';
 import { runningOps as runningOpsStore, startRunningOps } from '$lib/stores/runningOps';
+import { palette } from '$lib/stores/palette';
 import { operationsRefresh, startStacks, stacks } from '$lib/stores/stacks';
 import { toasts } from '$lib/stores/toasts';
 import { Banner } from './components/Banner';
@@ -136,8 +137,9 @@ function SignedInFrame({ runningOps, guard }: SignedInFrameProps) {
   const liveState = useStore(live);
   const { items } = useStore(stacks);
   const mainRef = useRef<HTMLElement>(null);
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  useGlobalShortcut(() => setPaletteOpen(true));
+  const paletteOpen = useStore(palette);
+  const openPalette = () => palette.set(true);
+  useGlobalShortcut(openPalette);
   useFocusOnNavigate(mainRef);
 
   const banners: ReactNode[] = [];
@@ -178,7 +180,7 @@ function SignedInFrame({ runningOps, guard }: SignedInFrameProps) {
           onLogout={guard.requestLogout}
           runningOps={runningOps}
           attention={needsAttention(items)}
-          onOpenPalette={() => setPaletteOpen(true)}
+          onOpenPalette={openPalette}
           onNavigate={guard.go}
           banners={banners.length > 0 ? <div className={styles.banners}>{banners}</div> : undefined}
         >
@@ -204,7 +206,7 @@ function SignedInFrame({ runningOps, guard }: SignedInFrameProps) {
         onConfirm={guard.leave}
         onCancel={guard.cancel}
       />
-      <PaletteHost open={paletteOpen} runningOps={runningOps} onClose={() => setPaletteOpen(false)} onNavigate={guard.go} />
+      <PaletteHost open={paletteOpen} runningOps={runningOps} onClose={() => palette.set(false)} onNavigate={guard.go} />
     </>
   );
 }

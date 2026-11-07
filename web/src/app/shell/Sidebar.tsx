@@ -9,7 +9,7 @@ import { PanelLabel } from '../components/PanelLabel';
 import { HostBlock } from './HostBlock';
 import { NavItem } from './NavItem';
 import { ServerMenu } from './ServerMenu';
-import { SETTINGS, serverNav, type NavEntry } from './nav';
+import { SETTINGS, serverNav, type NavEntry } from './navItems';
 import styles from './Sidebar.module.css';
 
 export interface SidebarProps {
