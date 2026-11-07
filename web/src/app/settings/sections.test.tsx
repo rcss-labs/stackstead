@@ -16,6 +16,7 @@ const baseRoutes: Routes = {
   'GET /api/peers/self': {
     body: { instanceId: 'i', name: 'Here', slug: 'here', advertisedUrl: '', suggestedUrl: '', version: '0.2.0', token: DECOY_SECRET },
   },
+  'GET /api/peers': { body: [] },
   'GET /api/settings/metrics-token': { body: { configured: false } },
   'GET /api/settings/github': { body: { configured: true, login: 'octocat' } },
   'GET /api/settings/registries': {
@@ -91,6 +92,53 @@ describe('Settings sections', () => {
     await user.click(within(await screen.findByRole('navigation', { name: 'Settings sections' })).getByRole('link', { name: 'Account' }));
     expect(await screen.findByRole('heading', { level: 2, name: 'Account' })).toBeTruthy();
     expect(pathname()).toBe('/settings/account');
+  });
+});
+
+describe('Settings keeps sections mounted', () => {
+  const goToSection = (name: string) =>
+    userEvent.click(within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('link', { name }));
+
+  it('a one-time token survives switching sections and coming back', async () => {
+    fake.restore();
+    fake = installFakeFetch({
+      ...baseRoutes,
+      'POST /api/peers/tokens': { body: { token: 'cs_SECRET_TOKEN', expiresAt: '2026-10-21T10:00:00Z' } },
+    });
+    mountAt('/settings/servers');
+    await userEvent.click(await screen.findByRole('button', { name: 'Create connection token' }));
+    expect(await screen.findByDisplayValue('cs_SECRET_TOKEN')).toBeTruthy();
+    await goToSection('Registries');
+    await screen.findByRole('heading', { level: 2, name: 'Registries' });
+    await goToSection('Connected servers');
+    expect(await screen.findByDisplayValue('cs_SECRET_TOKEN')).toBeTruthy();
+  });
+
+  it('an add-server draft survives switching sections', async () => {
+    mountAt('/settings/servers');
+    await userEvent.type(await screen.findByLabelText('Server address'), 'https://mini-02.lan:8443');
+    await goToSection('Account');
+    await screen.findByRole('heading', { level: 2, name: 'Account' });
+    await goToSection('Connected servers');
+    expect((screen.getByLabelText('Server address') as HTMLInputElement).value).toBe('https://mini-02.lan:8443');
+  });
+
+  it('only the open section is visible and exposed', async () => {
+    mountAt('/settings/servers');
+    await screen.findByRole('heading', { level: 2, name: 'Connected servers' });
+    await goToSection('Account');
+    await screen.findByRole('heading', { level: 2, name: 'Account' });
+    // The servers card is still mounted but hidden: not in the accessibility tree or tab order.
+    expect(screen.queryByRole('heading', { level: 2, name: 'Connected servers' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'Server address' })).toBeNull();
+    const hidden = screen.getByLabelText('Server address', { selector: 'input' });
+    expect(hidden.closest('[hidden]')).not.toBeNull();
+  });
+
+  it('does not load a section that was never opened', async () => {
+    mountAt('/settings/account');
+    await screen.findByRole('heading', { level: 2, name: 'Account' });
+    expect(fake.calls.some((c) => c.path === '/api/settings/github')).toBe(false);
   });
 });
 

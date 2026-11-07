@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Navigate, NavLink, useLocation, useParams } from 'react-router';
 import { logout, session } from '$lib/api/session';
 import { density, setDensity, setTheme, theme, type ThemeChoice } from '$lib/stores/appearance';
@@ -48,6 +49,10 @@ const DENSITY_OPTIONS = [
 export function SettingsScreen() {
   const { section } = useParams();
   const { search, hash } = useLocation();
+  // Cards hold one-time tokens and unsaved drafts, so a section stays mounted (hidden) once opened.
+  // Sections never opened are not mounted, so they load nothing.
+  const [opened, setOpened] = useState<readonly string[]>([]);
+  if (isSectionId(section) && !opened.includes(section)) setOpened([...opened, section]);
 
   // Links from the single-page layout looked like /settings#settings-registries.
   const legacy = hash.startsWith('#settings-') ? hash.slice('#settings-'.length) : undefined;
@@ -69,7 +74,11 @@ export function SettingsScreen() {
         </nav>
       </div>
       <div className={styles.cards}>
-        <SectionBody section={section} />
+        {SECTIONS.filter((item) => opened.includes(item.id) || item.id === section).map((item) => (
+          <div key={item.id} className={styles.group} hidden={item.id !== section}>
+            <SectionBody section={item.id} />
+          </div>
+        ))}
       </div>
     </section>
   );

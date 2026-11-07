@@ -115,6 +115,19 @@ describe('back up now', () => {
 });
 
 describe('backups tabs', () => {
+  it('backup schedule edits survive switching tabs', async () => {
+    mount({ 'GET /api/backups/runs': { body: [] }, 'GET /api/backups/stacks': { body: [stack()] } }, '/backups?tab=schedule');
+    const path = (await screen.findByLabelText('Path')) as HTMLInputElement;
+    await userEvent.clear(path);
+    await userEvent.type(path, '/mnt/draft');
+    await userEvent.type(screen.getByLabelText('Secret access key'), 'half-typed');
+    await userEvent.click(screen.getByRole('tab', { name: 'Archives' }));
+    expect(screen.queryByRole('textbox', { name: 'Path' })).toBeNull();
+    await userEvent.click(screen.getByRole('tab', { name: 'Schedule' }));
+    expect((screen.getByLabelText('Path') as HTMLInputElement).value).toBe('/mnt/draft');
+    expect((screen.getByLabelText('Secret access key') as HTMLInputElement).value).toBe('half-typed');
+  });
+
   it('offers Archives, Stacks and Schedule and opens the requested one', async () => {
     mount({ 'GET /api/backups/runs': { body: [] }, 'GET /api/backups/stacks': { body: [stack()] } }, '/backups?tab=stacks');
     const tabs = await screen.findAllByRole('tab');
@@ -205,6 +218,26 @@ describe('stack coverage', () => {
     );
     expect(await screen.findByText(/1 of 2 volumes covered/)).toBeTruthy();
     expect(screen.getByText(/1 item failed in the last run/)).toBeTruthy();
+  });
+});
+
+describe('shared volumes', () => {
+  it('counts a volume mounted by two services once', async () => {
+    const shared = stack({
+      mounts: [
+        { kind: 'volume', name: 'web-data', target: '/data', bytes: 10 },
+        { kind: 'volume', name: 'web-data', target: '/backup-copy', bytes: 10 },
+      ],
+    });
+    const items = [
+      { kind: 'stack-files' as const, stack: 'web', status: 'ok' as const },
+      { kind: 'volume' as const, stack: 'web', name: 'web-data', status: 'ok' as const },
+    ];
+    mount(
+      { 'GET /api/backups/runs': { body: [run({ items })] }, 'GET /api/backups/stacks': { body: [shared] } },
+      '/backups?tab=stacks',
+    );
+    expect(await screen.findByText(/1 of 1 volume covered/)).toBeTruthy();
   });
 });
 

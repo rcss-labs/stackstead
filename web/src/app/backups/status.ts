@@ -84,8 +84,10 @@ export function stackCoverage(row: BackupStack, state: RunsState): StackCoverage
   // a file in the stack folder (saved with the stack files, no item) or a file outside it (skipped),
   // and the list cannot tell them apart, so a bind is only confirmed or flagged by its own item.
   const volumeItem = (name: string) => mine.find((i) => i.kind === 'volume' && i.name === name);
-  const volumes = row.mounts.filter((m) => m.kind === 'volume');
-  const binds = row.mounts.filter((m) => m.kind !== 'volume');
+  // Two services mounting the same volume or path is one item in the run, so count it once.
+  const mounts = row.mounts.filter((m, i) => row.mounts.findIndex((o) => o.kind === m.kind && o.name === m.name) === i);
+  const volumes = mounts.filter((m) => m.kind === 'volume');
+  const binds = mounts.filter((m) => m.kind !== 'volume');
   const covered = volumes.filter((m) => volumeItem(m.name)?.status === 'ok').length;
   const bindsCopied = binds.filter((m) => volumeItem(m.name)?.status === 'ok').length;
   const bindsSkipped = binds.filter((m) => volumeItem(m.name)?.status === 'skipped').length;

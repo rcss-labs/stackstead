@@ -205,6 +205,9 @@ export function BackupsScreen() {
   const [config, setConfig] = useState<BackupConfig>();
   const [starting, setStarting] = useState(false);
   const [ownSlug, setOwnSlug] = useState("");
+  // The schedule card holds unsaved edits and secrets, so once opened it stays mounted (hidden) across tabs.
+  const [scheduleOpened, setScheduleOpened] = useState(tab === "schedule");
+  if (tab === "schedule" && !scheduleOpened) setScheduleOpened(true);
 
   useEffect(() => {
     document.title = "Backups · Stackstead";
@@ -281,15 +284,21 @@ export function BackupsScreen() {
         selected={tab}
         onSelect={(id) => setQuery({ tab: id })}
       >
-        {(selected) =>
-          selected === "archives" ? (
-            <ArchivesTab api={api} ownSlug={ownSlug} runs={runs} />
-          ) : selected === "stacks" ? (
-            <BackupStacksTable api={api} runs={runs} />
-          ) : (
-            <BackupScheduleCard api={api} onSaved={loadConfig} />
-          )
-        }
+        {(selected) => (
+          <>
+            {selected === "archives" && (
+              <ArchivesTab api={api} ownSlug={ownSlug} runs={runs} />
+            )}
+            {selected === "stacks" && (
+              <BackupStacksTable api={api} runs={runs} />
+            )}
+            {scheduleOpened && (
+              <div hidden={selected !== "schedule"}>
+                <BackupScheduleCard api={api} onSaved={loadConfig} />
+              </div>
+            )}
+          </>
+        )}
       </Tabs>
     </section>
   );
