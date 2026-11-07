@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { StackSummary } from '$lib/api/types';
@@ -192,16 +192,19 @@ describe('StackActions', () => {
     expect(screen.queryByRole('group', { name: 'More actions' })).toBeNull();
   });
 
-  it('closes when focus leaves the menu', async () => {
+  it('stays open when blur reports no target, so a mouse press in Safari still lands', async () => {
     const { user } = setup();
     await openMore(user);
-    await user.tab();
-    await user.tab();
-    await user.tab();
-    await user.tab();
-    await user.tab();
-    await user.tab();
-    await user.tab();
+    fireEvent.blur(screen.getByRole('button', { name: 'More actions' }), { relatedTarget: null });
+    expect(screen.getByRole('group', { name: 'More actions' })).toBeTruthy();
+  });
+
+  it('closes when focus moves to an element outside the menu', async () => {
+    const { user } = setup();
+    await openMore(user);
+    const outside = document.body.appendChild(document.createElement('button'));
+    fireEvent.blur(screen.getByRole('button', { name: 'More actions' }), { relatedTarget: outside });
+    outside.remove();
     expect(screen.queryByRole('group', { name: 'More actions' })).toBeNull();
   });
 });

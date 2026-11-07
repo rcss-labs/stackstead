@@ -73,6 +73,12 @@ without a platform to maintain.
 - **A dashboard at a glance.** Host tiles for CPU, memory, disk and network,
   a sparkline per stack, alerts for what needs attention and a live feed of
   Docker events.
+- **What needs you, first.** Each screen opens with a plain answer and a ranked
+  list of problems with the likely fix, and says so when it cannot confirm health.
+- **Activity.** Docker events, operations, actions and backup runs in one timeline,
+  stating how far back each source reaches.
+- **Ports directory.** Every published port on the host, and the next free one.
+- **Disk forecast.** About how many days until the disk is full at the current rate.
 - **Every container, not only stacks.** A host-wide Containers screen with
   problems first, live CPU and memory, logs one click away, and start, stop
   and restart for containers that are not in a stack.

@@ -80,7 +80,8 @@ export function StackActions({ stack, lifecycleDisabledReason, busy = false, onA
   }
 
   function onBlur(event: FocusEvent) {
-    if (menuOpen && !root.current?.contains(event.relatedTarget as Node | null)) setMenuOpen(false);
+    const next = event.relatedTarget as Node | null;
+    if (menuOpen && next && !root.current?.contains(next)) setMenuOpen(false);
   }
 
   const item = (key: string, text: string, d: string, run: () => void, opts: { reason?: string; danger?: boolean } = {}) => (
