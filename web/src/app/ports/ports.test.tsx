@@ -1,12 +1,12 @@
-import { cleanup, render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router';
-import { afterEach, expect, it } from 'vitest';
-import type { StackSummary } from '$lib/api/types';
-import { writable } from '$lib/store';
-import { installFakeFetch, type FakeFetch } from '../../vitest-setup';
-import { localScope, ServerContext } from '../servers/ServerContext';
-import { PortsScreen } from './PortsScreen';
+import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
+import { afterEach, expect, it } from "vitest";
+import type { StackSummary } from "$lib/api/types";
+import { writable } from "$lib/store";
+import { installFakeFetch, type FakeFetch } from "../../vitest-setup";
+import { localScope, ServerContext } from "../servers/ServerContext";
+import { PortsScreen } from "./PortsScreen";
 
 let fake: FakeFetch | undefined;
 afterEach(() => {
@@ -14,12 +14,59 @@ afterEach(() => {
   fake?.restore();
 });
 
-const stack = { name: 'media', path: '', project: 'media', origin: 'managed', status: 'running', serviceCount: 1, running: 1, health: {}, ports: ['8001-8003', '80'], libraryUpdates: 0 } as unknown as StackSummary;
-const redis = { id: 'redis', name: 'redis', image: 'redis:7', imageId: '', state: 'running', status: '', health: 'none', exitCode: null, createdAt: '', project: '', service: '', stack: '', managed: 'none', ports: ['0.0.0.0:6379->6379/tcp'], networks: {}, cpu: null, mem: null, memLimit: null, restarts24h: 0 };
+const stack = {
+  name: "media",
+  path: "",
+  project: "media",
+  origin: "managed",
+  status: "running",
+  serviceCount: 1,
+  running: 1,
+  health: {},
+  ports: ["8001-8003", "80"],
+  libraryUpdates: 0,
+} as unknown as StackSummary;
+const redis = {
+  id: "redis",
+  name: "redis",
+  image: "redis:7",
+  imageId: "",
+  state: "running",
+  status: "",
+  health: "none",
+  exitCode: null,
+  createdAt: "",
+  project: "",
+  service: "",
+  stack: "",
+  managed: "none",
+  ports: ["0.0.0.0:6379->6379/tcp"],
+  networks: {},
+  cpu: null,
+  mem: null,
+  memLimit: null,
+  restarts24h: 0,
+};
 
-function mount(containers: unknown[] | 'fail' = [redis]) {
-  fake = installFakeFetch({ 'GET /api/containers': containers === 'fail' ? { status: 500, body: { error: 'down' } } : { body: containers } });
-  const scope = { ...localScope, stacks: writable({ items: [stack], loading: false }), changes: writable(null), href: (p: string) => `/s/mini${p}` };
+function mount(
+  containers: unknown[] | "fail" = [redis],
+  stacks: { items: StackSummary[]; loading: boolean; error?: string } = {
+    items: [stack],
+    loading: false,
+  },
+) {
+  fake = installFakeFetch({
+    "GET /api/containers":
+      containers === "fail"
+        ? { status: 500, body: { error: "down" } }
+        : { body: containers },
+  });
+  const scope = {
+    ...localScope,
+    stacks: writable(stacks),
+    changes: writable(null),
+    href: (p: string) => `/s/mini${p}`,
+  };
   return render(
     <MemoryRouter>
       <ServerContext.Provider value={scope}>
@@ -29,35 +76,65 @@ function mount(containers: unknown[] | 'fail' = [redis]) {
   );
 }
 
-it('lists ranges and unmanaged containers, linking through href()', async () => {
+it("lists ranges and unmanaged containers, linking through href()", async () => {
   mount();
-  expect(await screen.findByText(':6379')).toBeTruthy();
-  expect(screen.getByText(':8001-8003')).toBeTruthy();
-  const stackLinks = screen.getAllByRole('link', { name: 'media' });
-  expect(stackLinks[0].getAttribute('href')).toBe('/s/mini/stacks/media');
-  const redisLink = screen.getByRole('link', { name: 'redis' });
-  expect(redisLink.getAttribute('href')).toBe('/s/mini/containers/redis');
+  expect(await screen.findByText(":6379")).toBeTruthy();
+  expect(screen.getByText(":8001-8003")).toBeTruthy();
+  const stackLinks = screen.getAllByRole("link", { name: "media" });
+  expect(stackLinks[0].getAttribute("href")).toBe("/s/mini/stacks/media");
+  const redisLink = screen.getByRole("link", { name: "redis" });
+  expect(redisLink.getAttribute("href")).toBe("/s/mini/containers/redis");
   // The unmanaged container has no stack link.
-  const row = redisLink.closest('tr')!;
+  const row = redisLink.closest("tr")!;
   expect(row.querySelector('a[href*="/stacks/"]')).toBeNull();
 });
 
-it('shows the next free port above 8000, skipping ranges', async () => {
+it("shows the next free port above 8000, skipping ranges", async () => {
   mount();
-  expect(await screen.findByText('8004')).toBeTruthy();
+  expect(await screen.findByText("8004")).toBeTruthy();
 });
 
-it('filters by port, stack or service', async () => {
+it("filters by port, stack or service", async () => {
   const user = userEvent.setup();
   mount();
-  await screen.findByText(':6379');
-  await user.type(screen.getByRole('searchbox', { name: 'Filter ports' }), 'redis');
-  expect(screen.queryByText(':8001-8003')).toBeNull();
-  expect(screen.getByText(':6379')).toBeTruthy();
+  await screen.findByText(":6379");
+  await user.type(
+    screen.getByRole("searchbox", { name: "Filter ports" }),
+    "redis",
+  );
+  expect(screen.queryByText(":8001-8003")).toBeNull();
+  expect(screen.getByText(":6379")).toBeTruthy();
 });
 
-it('a failing container list shows a notice and keeps the stack ports', async () => {
-  mount('fail');
-  expect(await screen.findByText(/Could not read running containers/)).toBeTruthy();
-  expect(screen.getByText(':8001-8003')).toBeTruthy();
+it("a failing container list shows a notice and keeps the stack ports", async () => {
+  mount("fail");
+  expect(
+    await screen.findByText(/Could not read running containers/),
+  ).toBeTruthy();
+  expect(screen.getByText(":8001-8003")).toBeTruthy();
+});
+
+it("words the free port as not used by Docker", async () => {
+  mount();
+  expect(await screen.findByText(/not used by Docker/)).toBeTruthy();
+});
+
+it("does not offer a free port when the container list failed", async () => {
+  mount("fail");
+  await screen.findByText(/Could not read running containers/);
+  expect(screen.queryByText("8004")).toBeNull();
+  expect(screen.getByText(/unknown/i)).toBeTruthy();
+});
+
+it("does not offer a free port or an empty state while stacks are still loading", async () => {
+  mount([], { items: [], loading: true });
+  await screen.findByText(/unknown/i);
+  expect(screen.queryByText("8001")).toBeNull();
+  expect(screen.queryByText("No published ports")).toBeNull();
+});
+
+it("does not say no ports are published when stacks failed", async () => {
+  mount([], { items: [], loading: false, error: "stacks down" });
+  await screen.findByText(/Could not read stacks/);
+  expect(screen.queryByText("No published ports")).toBeNull();
 });

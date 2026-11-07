@@ -7,6 +7,7 @@ import {
   fromEvents,
   fromOperations,
   mergeActivity,
+  mergeEvents,
   readLastVisit,
   reachNote,
   sinceLastVisit,
@@ -81,14 +82,21 @@ describe('last visit storage', () => {
     const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('denied');
     });
-    expect(readLastVisit()).toBeNull();
-    expect(() => writeLastVisit(5)).not.toThrow();
+    expect(readLastVisit('a')).toBeNull();
+    expect(() => writeLastVisit(5, 'a')).not.toThrow();
     get.mockRestore();
     set.mockRestore();
   });
   it('round-trips', () => {
-    writeLastVisit(1234);
-    expect(readLastVisit()).toBe(1234);
+    writeLastVisit(1234, 'a');
+    expect(readLastVisit('a')).toBe(1234);
+    localStorage.clear();
+  });
+  it('is kept per server', () => {
+    writeLastVisit(1234, 'a');
+    expect(readLastVisit('b')).toBeNull();
+    writeLastVisit(99, 'b');
+    expect(readLastVisit('a')).toBe(1234);
     localStorage.clear();
   });
 });
@@ -102,5 +110,63 @@ describe('reachNote', () => {
     expect(reachNote('operation', [], now)).toContain('none right now');
     expect(reachNote('action', [], now)).toContain('newest 100');
     expect(reachNote('backup', [], now)).toContain('newest 50');
+  });
+});
+
+describe('action result tone', () => {
+  const act = (result: string, over: Partial<ActionEntry> = {}): ActionEntry => ({ id: 1, ts: '2026-11-07T10:00:00Z', username: 'a', kind: 'storage.prune', scope: 'host', target: '', detail: '', bytes: null, result, operationId: '', ...over });
+  it.each([
+    ['ok', 'success'],
+    ['success', 'success'],
+    ['succeeded', 'success'],
+    ['deleted', 'success'],
+    ['fixed', 'success'],
+    ['exit 0', 'success'],
+    ['failed', 'danger'],
+    ['error', 'danger'],
+    ['exit 1', 'danger'],
+    ['exit 127', 'danger'],
+    ['partial', 'warning'],
+    ['skipped', 'warning'],
+    ['started', 'muted'],
+    ['idle', 'muted'],
+    ['', 'muted'],
+  ])('%s reads as %s', (result, tone) => {
+    expect(fromActions([act(result)])[0].tone).toBe(tone);
+  });
+});
+
+describe('event tone', () => {
+  const ev = (action: string, over: Partial<DockerEvent> = {}): DockerEvent => ({ action, container: 'web-1', project: 'web', service: 'web', image: 'x', time: '2026-11-07T10:00:00Z', ...over });
+  it('die is danger only with a non-zero exit code', () => {
+    expect(fromEvents([ev('die', { exitCode: 0 })])[0].tone).not.toBe('danger');
+    expect(fromEvents([ev('die', { exitCode: 137 })])[0].tone).toBe('danger');
+  });
+  it('kill, which a routine stop also emits, is not danger', () => {
+    expect(fromEvents([ev('kill')])[0].tone).not.toBe('danger');
+  });
+});
+
+describe('image links', () => {
+  it('image operations link to the image, not a stack', () => {
+    const [i] = fromOperations([op({ stack: 'image/acme/web-app', action: 'pull' })]);
+    expect(i.path).toBe('/images/web-app');
+    expect(i.title).toBe('pull image web-app');
+  });
+  it('image audit actions link to the image by slug', () => {
+    const a: ActionEntry = { id: 1, ts: '2026-11-07T10:00:00Z', username: 'a', kind: 'image.update', scope: 'web-app', target: 'x', detail: '', bytes: null, result: 'succeeded', operationId: '' };
+    expect(fromActions([a])[0].path).toBe('/images/web-app');
+  });
+});
+
+describe('mergeEvents', () => {
+  const e = (time: string, action = 'start'): DockerEvent => ({ action, container: 'c', project: '', service: '', image: 'i', time });
+  it('joins fetched and live events once each, newest first', () => {
+    const live = [e('2026-11-07T10:02:00Z'), e('2026-11-07T10:01:00Z')];
+    const recent = [e('2026-11-07T10:01:00Z'), e('2026-11-07T10:00:00Z')];
+    expect(mergeEvents(live, recent).map((x) => x.time)).toEqual(['2026-11-07T10:02:00Z', '2026-11-07T10:01:00Z', '2026-11-07T10:00:00Z']);
+  });
+  it('keeps distinct actions at the same instant', () => {
+    expect(mergeEvents([e('2026-11-07T10:00:00Z', 'die')], [e('2026-11-07T10:00:00Z', 'stop')])).toHaveLength(2);
   });
 });
