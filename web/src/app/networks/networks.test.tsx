@@ -302,3 +302,20 @@ it('the route table titles both network paths as Networks', () => {
   expect(findRoute('/networks')?.title).toBe('Networks');
   expect(findRoute('/networks/shop')?.title).toBe('Networks');
 });
+
+it('Networks and Ports tabs navigate', async () => {
+  const { user } = mount({ body: fleet });
+  await screen.findByText('5 networks · 2 in use');
+  expect(screen.getByRole('tab', { name: /Networks/ }).getAttribute('aria-selected')).toBe('true');
+  await user.click(screen.getByRole('tab', { name: 'Ports' }));
+  await waitFor(() => expect(location()).toBe('/ports'));
+});
+
+it('built-in Remove explains why it is disabled', async () => {
+  const { user } = mount({ body: fleet }, '/networks/host');
+  await screen.findByRole('heading', { level: 2, name: 'host' });
+  const remove = screen.getByRole('button', { name: 'Remove', description: "System networks can't be removed" });
+  expect(remove.getAttribute('aria-disabled')).toBe('true');
+  await user.click(remove);
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+});
