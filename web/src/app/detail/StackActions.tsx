@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type FocusEvent, type ReactNode } from 'react';
 import type { Action, StackSummary } from '$lib/api/types';
 import { FILE_PATH } from '$lib/shell/paths';
 import { ICONS } from '$lib/shell/icons';
@@ -51,8 +51,19 @@ export function StackActions({ stack, lifecycleDisabledReason, busy = false, onA
     const away = (event: PointerEvent) => {
       if (!root.current?.contains(event.target as Node)) setMenuOpen(false);
     };
+    // Escape is handled on the document: after a mouse open, Safari and Firefox leave focus on the body.
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      setMenuOpen(false);
+      moreButton.current?.focus();
+    };
     document.addEventListener('pointerdown', away);
-    return () => document.removeEventListener('pointerdown', away);
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('pointerdown', away);
+      document.removeEventListener('keydown', escape);
+    };
   }, [menuOpen]);
 
   function openConfirm() {
@@ -68,11 +79,8 @@ export function StackActions({ stack, lifecycleDisabledReason, busy = false, onA
     if (refocus) moreButton.current?.focus();
   }
 
-  function onKeyDown(event: KeyboardEvent) {
-    if (menuOpen && event.key === 'Escape') {
-      event.stopPropagation();
-      closeMenu(true);
-    }
+  function onBlur(event: FocusEvent) {
+    if (menuOpen && !root.current?.contains(event.relatedTarget as Node | null)) setMenuOpen(false);
   }
 
   const item = (key: string, text: string, d: string, run: () => void, opts: { reason?: string; danger?: boolean } = {}) => (
@@ -85,7 +93,7 @@ export function StackActions({ stack, lifecycleDisabledReason, busy = false, onA
       title={opts.reason}
       onClick={() => {
         if (opts.reason) return;
-        closeMenu();
+        closeMenu(true); // the opener must exist again before a dialog opens, or Dialog finds nothing to refocus
         run();
       }}
     >
@@ -104,7 +112,7 @@ export function StackActions({ stack, lifecycleDisabledReason, busy = false, onA
 
   return (
     <>
-      <div ref={root} className={styles.cluster} role="group" aria-label={`Actions for ${stack.name}`} onKeyDown={onKeyDown}>
+      <div ref={root} className={styles.cluster} role="group" aria-label={`Actions for ${stack.name}`} onBlur={onBlur}>
         {PRIMARY.map((action) => {
           const primary = action === 'up' && stack.status !== 'running';
           return (

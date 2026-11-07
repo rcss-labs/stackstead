@@ -444,9 +444,16 @@ export function StackDetailScreen({ name }: { name: string }) {
                 )
               }
               onLogs={() => {
-                setLogService(selectedService.name);
-                setLogsOpen(true);
-                if (mobile) location.go(serverHref(detailHref(name, { service: selectedService.name, tab: 'logs' })));
+                const open = () => {
+                  setLogService(selectedService.name);
+                  setLogsOpen(true);
+                };
+                // Only the phone navigates (to the Logs tab) and so can drop a draft; the wide dock opens beside it.
+                if (!mobile) return open();
+                guarded(() => {
+                  open();
+                  location.go(serverHref(detailHref(name, { service: selectedService.name, tab: 'logs' })));
+                });
               }}
               onEdit={parseError ? undefined : () => guarded(() => setEditingService(selectedService.name))}
               onCloseEditor={() => guarded(() => setEditingService(undefined))}
