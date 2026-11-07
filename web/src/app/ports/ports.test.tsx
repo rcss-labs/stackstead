@@ -114,9 +114,9 @@ it("a failing container list shows a notice and keeps the stack ports", async ()
   expect(screen.getByText(":8001-8003")).toBeTruthy();
 });
 
-it("words the free port as not used by Docker", async () => {
+it("words the free port as not used by a container or stack", async () => {
   mount();
-  expect(await screen.findByText(/not used by Docker/)).toBeTruthy();
+  expect(await screen.findByText(/not used by a container or stack/)).toBeTruthy();
 });
 
 it("does not offer a free port when the container list failed", async () => {

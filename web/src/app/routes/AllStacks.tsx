@@ -219,7 +219,7 @@ export default function AllStacks() {
 
   return (
     <section className={overview.page}>
-      {!data && <h1 className="visually-hidden">All servers</h1>}
+      {!(data && (combined.length > 0 || failing.length === 0)) && <h1 className="visually-hidden">All servers</h1>}
       {error && (
         <div>
           <Banner kind="danger" title="Could not load stacks">

@@ -75,7 +75,7 @@ export function PortsScreen() {
           onChange={(e) => setQuery(e.target.value)}
         />
         <span className={styles.next}>
-          Next port above {SEARCH_FROM} not used by Docker:{" "}
+          Next port above {SEARCH_FROM} not used by a container or stack:{" "}
           <b className={styles.mono}>
             {free === undefined ? "unknown" : free || "none"}
           </b>

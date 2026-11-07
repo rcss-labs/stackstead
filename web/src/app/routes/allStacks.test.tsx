@@ -139,6 +139,12 @@ describe('All stacks', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'All servers' })).toBeTruthy();
   });
 
+  it('keeps exactly one h1 when the only server with stacks is unreachable', async () => {
+    mount(fleet({ servers: [local, down], stacks: [fleetStack('c2', 'stale')] }));
+    expect(await screen.findByText("Can't reach nas")).toBeTruthy();
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+  });
+
   it('unreachable server shows a banner and omits its stacks', async () => {
     mount(fleet({ servers: [local, mini, down], stacks: [fleetStack('a0', 'web'), fleetStack('c2', 'stale')] }));
     expect(await screen.findByText("Can't reach nas")).toBeTruthy();
