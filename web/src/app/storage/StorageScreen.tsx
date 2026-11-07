@@ -177,9 +177,9 @@ export function StorageScreen() {
   // A failed list has no candidates, so "(0 · …)" would be a false count.
   const danglingLabel = imagesFailed ? 'Clean up dangling images' : `Clean up dangling images (${candidates.length} · ${imageReclaimRange(candidates)})`;
   const unknown = data?.overview?.declarationsUnknown ?? [];
-  // The headline leads with what can be reclaimed; without a positive reading it stays the plain title.
+  // The headline leads with what can be reclaimed; the plain title is kept while no kind has a reclaimable reading.
   const summary = data?.overview ? usageSummary(data.overview) : undefined;
-  const headline = summary?.reclaimableKnown && summary.reclaimable > 0 ? `${formatBytes(summary.reclaimable)} can be reclaimed` : 'Storage';
+  const headline = !summary?.reclaimableKnown ? 'Storage' : summary.reclaimable > 0 ? `${formatBytes(summary.reclaimable)} can be reclaimed` : 'Nothing to reclaim';
   // One region for the whole screen: it stays mounted across kind changes so the new selection is announced as a text change.
   const status: Record<StorageKind, string> = {
     layers: sortedStatus(data?.overview?.topContainers.length ?? 0, 'container layer'),

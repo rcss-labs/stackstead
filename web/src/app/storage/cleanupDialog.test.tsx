@@ -215,10 +215,25 @@ describe('CleanupDialog', () => {
     expect(screen.queryByText('Checking current state…')).toBeNull();
   });
 
+  it('cleanup shows data-holding volumes in their own section', async () => {
+    open();
+    const holds = await screen.findByRole('region', { name: 'Holds data (1)' });
+    expect(within(holds).getByText('free')).toBeTruthy();
+    expect(screen.queryByRole('region', { name: /Items to delete/ })).toBeNull();
+  });
+
+  it('cleanup total equals the server plan', async () => {
+    // Items sum to 1.0 KiB but the server reports 2.0 KiB; the total must show the server figure.
+    plan.reclaim = { min: 2048, max: 2048, exact: true };
+    open();
+    const total = await screen.findByRole('group', { name: 'Total' });
+    expect(within(total).getByText('Frees 2.0 KiB')).toBeTruthy();
+  });
+
   it('keeps long plans reachable in named scroll regions with counts, ahead of the confirm controls', async () => {
     plan.items = Array.from({ length: 99 }, (_, i) => ({ kind: 'volume', id: `v${i}`, ref: `volume-${i}`, bytes: 1024 }));
     open();
-    const items = await screen.findByRole('region', { name: 'Items to delete (99)' });
+    const items = await screen.findByRole('region', { name: 'Holds data (99)' });
     expect(items.getAttribute('tabindex')).toBe('0');
     expect(within(items).getAllByRole('listitem')).toHaveLength(99);
     expect(within(items).getByText('volume-98')).toBeTruthy();

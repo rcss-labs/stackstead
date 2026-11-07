@@ -204,7 +204,7 @@ export function CleanupDialog({ request, onClose, onFinished }: CleanupDialogPro
                 ) : (
                   <>
                     <h3 id={`${uid}-items`}>
-                      {plan.mode === 'all-unused' ? 'Expected items' : 'Items to delete'} ({plan.items.length})
+                      {volumePlan ? 'Holds data' : plan.mode === 'all-unused' ? 'Expected items' : 'Items to delete'} ({plan.items.length})
                     </h3>
                     <div className={styles.scroll} data-shared={sharedBudget ? 'true' : undefined} role="region" aria-labelledby={`${uid}-items`} tabIndex={0}>
                       <ul>
@@ -216,7 +216,11 @@ export function CleanupDialog({ request, onClose, onFinished }: CleanupDialogPro
                         ))}
                       </ul>
                     </div>
-                    <p>{reclaimText(plan.reclaim)}</p>
+                    {/* The server's figure, not the sum of the items above: the plan is what gets executed. */}
+                    <div className={styles.total} role="group" aria-label="Total">
+                      <span>Total</span>
+                      <b>{reclaimText(plan.reclaim)}</b>
+                    </div>
                   </>
                 )}
                 {plan.protected.length > 0 && (
