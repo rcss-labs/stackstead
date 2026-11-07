@@ -8,7 +8,7 @@ import { useServer } from '../servers/ServerContext';
 export default function NotFound() {
   const { href } = useServer();
   return (
-    <EmptyState title="Page not found" description="That page does not exist. The link may be out of date, or it may point to another server.">
+    <EmptyState as="h1" title="Page not found" description="That page does not exist. The link may be out of date, or it may point to another server.">
       <Link to={href('/')}>Go to Overview</Link>
       <Button variant="secondary" onClick={() => palette.set(true)}>Search</Button>
     </EmptyState>

@@ -93,7 +93,7 @@ export function headline(
   const loose = flagged.filter((a) => !a.stack).length;
   if (loose > 0) return { title: issueWord(loose, 'issue'), sub };
 
-  const unconfirmed = !alerts ? 'Alerts have not loaded.' : live.docker !== 'ok' ? 'Docker has not answered yet.' : live.connection !== 'open' ? 'Live updates are disconnected.' : '';
+  const unconfirmed = !alerts ? 'Alerts have not loaded.' : items.some((s) => s.status === 'unknown') ? 'A stack status is unknown.' : live.docker !== 'ok' ? 'Docker has not answered yet.' : live.connection !== 'open' ? 'Live updates are disconnected.' : '';
   if (unconfirmed) return { title: 'Health is not confirmed', sub: unconfirmed };
   return { title: runningCount(items) === items.length ? 'All stacks are running' : 'Nothing needs attention', sub };
 }

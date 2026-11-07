@@ -209,6 +209,7 @@ export default function AllStacks() {
   if (loading && !data) {
     return (
       <section className={overview.page}>
+        <h1 className="visually-hidden">All servers</h1>
         <div className={overview.loading}>
           <Spinner />
         </div>
@@ -218,6 +219,7 @@ export default function AllStacks() {
 
   return (
     <section className={overview.page}>
+      {!data && <h1 className="visually-hidden">All servers</h1>}
       {error && (
         <div>
           <Banner kind="danger" title="Could not load stacks">

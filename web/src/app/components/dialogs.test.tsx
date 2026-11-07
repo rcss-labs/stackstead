@@ -202,6 +202,13 @@ describe('Dialog as a mobile bottom sheet', () => {
 });
 
 describe('ConfirmDialog', () => {
+  it('stops iOS capitalising or correcting the typed confirmation', () => {
+    render(<ConfirmDialog open title="Remove" message="m" confirmLabel="Remove" typedConfirm="web-app" onConfirm={() => {}} onCancel={() => {}} />);
+    const input = screen.getByRole('textbox', { name: /web-app/ });
+    expect(input.getAttribute('autocapitalize')).toBe('none');
+    expect(input.getAttribute('autocorrect')).toBe('off');
+  });
+
   it('keeps confirm disabled with a reason until typedConfirm is typed exactly, and resets on reopen', async () => {
     const user = userEvent.setup();
     const onConfirm = vi.fn();

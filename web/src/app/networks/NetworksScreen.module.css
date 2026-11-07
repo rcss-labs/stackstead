@@ -66,5 +66,5 @@
   .frame, .frame > [role='tabpanel'] { display: block; }
   .body { display: block; }
   .body > * { overflow: visible; }
-  .listPane { max-height: 50dvh; overflow: auto; border-bottom: 1px solid var(--border); }
+  .listPane { overflow: auto; border-bottom: 1px solid var(--border); }
 }

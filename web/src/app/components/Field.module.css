@@ -39,7 +39,7 @@
   .field input,
   .field select { height: 46px; font-size: 16px; }
   .field textarea { font-size: 16px; }
-  .field[data-mono='true'] :is(input, select, textarea) { font-size: 15px; }
+  .field[data-mono='true'] :is(input, select, textarea) { font-size: 16px; }
   .field :is(input, select, textarea)[type='checkbox'],
   .field :is(input, select, textarea)[type='radio'] { height: auto; }
 }

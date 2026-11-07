@@ -47,7 +47,7 @@ it('mobile list and detail are separate screens: the list alone, without the emp
 
 it('mobile detail screen has no list beside it', async () => {
   mount('/networks/shop_default');
-  await screen.findByRole('heading', { level: 2, name: 'shop_default' });
+  await screen.findByRole('heading', { level: 1, name: 'shop_default' });
   expect(screen.queryByRole('listbox', { name: 'Networks' })).toBeNull();
   expect(screen.queryByRole('tablist')).toBeNull();
 });
