@@ -48,6 +48,13 @@ describe('/settings', () => {
 });
 
 describe('/more', () => {
+  it('has a page heading so route focus lands without a delay', async () => {
+    stubViewport(true);
+    renderRoutes('/more', ['/more']);
+    expect(await screen.findByText('Images')).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: 'More' })).toBeTruthy();
+  });
+
   it('redirects to / on desktop width', async () => {
     stubViewport(false);
     renderRoutes('/more', ['/more']);

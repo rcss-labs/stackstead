@@ -40,6 +40,7 @@ export default function More() {
 
   return (
     <div className={styles.page}>
+      <h1 className="visually-hidden">More</h1>
       {sections.map(({ title, rows }) => (
         <section key={title} className={styles.section} aria-label={title}>
           <h2 className={styles.heading}>{title}</h2>
