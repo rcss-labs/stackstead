@@ -244,11 +244,11 @@ describe('Overview side column', () => {
     expect(screen.queryByText('No samples yet.')).toBeNull();
   });
 
-  it('side column shows even when there are no stacks', async () => {
+  it('with no stacks the first-run welcome replaces the side column, which returns once a stack exists', async () => {
     install([]);
     mount();
-    expect(await screen.findByText('No samples yet.')).toBeTruthy();
-    const feed = screen.getByRole('heading', { level: 2, name: /Activity/ }).closest('section') as HTMLElement;
-    expect(within(feed).getByText('Waiting for events…')).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: /first stack in view/i })).toBeTruthy();
+    expect(screen.queryByText('No samples yet.')).toBeNull();
+    expect(screen.queryByText('Waiting for events…')).toBeNull();
   });
 });

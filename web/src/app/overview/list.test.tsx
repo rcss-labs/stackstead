@@ -73,6 +73,7 @@ function install(items: StackSummary[], opts: { ops?: Operation[]; extra?: Param
     'GET /api/stacks': () => stacksRes,
     'GET /api/operations?state=running': () => ({ body: opsNow }),
     'GET /api/host': { body: hostSnapshot() },
+    'GET /api/host/disk-forecast': { body: { daysLeft: null, sampledDays: 0 } },
     'GET /api/alerts': { body: opts.alerts ?? [] },
     'GET /api/metrics/summary': { body: opts.summary ?? { window: '15m', step: 15, from: '', to: '', stacks: {}, top: { cpu: [], mem: [] } } },
     'GET /api/storage': { body: { images: noStorage, containers: noStorage, volumes: noStorage, buildCache: noStorage, topContainers: [], declarationsUnknown: [] } },

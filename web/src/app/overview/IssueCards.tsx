@@ -17,9 +17,13 @@ export function IssueCards({ cards, stackStatus, reasonFor, acting, onAct }: Iss
   if (!cards || cards.length === 0) return null;
   return (
     <section aria-labelledby="overview-issues" className={styles.section}>
-      <h2 id="overview-issues" className="visually-hidden">
-        Issues
-      </h2>
+      <div className={styles.head}>
+        <h2 id="overview-issues" className={styles.title}>
+          Needs attention
+        </h2>
+        <span className={styles.count}>{cards.length}</span>
+        <span className={styles.order}>Most urgent first</span>
+      </div>
       <div className={styles.grid}>
         {cards.map((card) => {
           const action = card.primary?.kind === 'act' ? card.primary : undefined;

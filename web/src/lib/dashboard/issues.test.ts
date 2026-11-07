@@ -233,3 +233,35 @@ describe('failingServices', () => {
     expect(failingServices(undefined, 'web')).toEqual([]);
   });
 });
+
+describe('issue ranking and the memory-limit fix', () => {
+  it('ranks danger before warning before info, keeping server order within a tier', () => {
+    const cards = issueCards({
+      alerts: [
+        alert({ kind: 'port_clash', severity: 'warning', service: undefined, stack: 'a' }),
+        alert({ kind: 'exited', severity: 'danger', stack: 'b' }),
+        alert({ kind: 'override', severity: 'info', service: undefined, stack: 'c' }),
+        alert({ kind: 'unhealthy', severity: 'danger', stack: 'd' }),
+      ],
+      storage: storage(2 * GIB, 0, 0, 0),
+    })!;
+    expect(cards.map((c) => c.tone)).toEqual(['danger', 'danger', 'warning', 'info', 'info']);
+    expect(cards.map((c) => c.where?.label)).toEqual(['b', 'd', 'a', 'c', 'storage']);
+  });
+
+  it('offers Raise memory limit only for exit 137 with a limit, linking to the service editor', () => {
+    const oom = alert({ kind: 'restart_loop', exitCode: 137, memLimit: 512 * 1024 ** 2, stack: 'paperless', service: 'tika' });
+    const [card] = issueCards({ alerts: [oom], storage: undefined })!;
+    expect(card.primary).toEqual({ label: 'Raise memory limit', kind: 'navigate', href: '/stacks/paperless?service=tika&edit=1' });
+    expect(card.secondary?.label).toBe('Open logs');
+    expect(card.message).toMatch(/exit 137/i);
+    expect(card.message).toMatch(/512\.0 MiB/);
+
+    for (const over of [{ exitCode: 1 }, { exitCode: 0 }, { exitCode: undefined }, { memLimit: undefined }, { memLimit: 0 }, { service: undefined }, { kind: 'unhealthy' }]) {
+      const [other] = issueCards({ alerts: [{ ...oom, ...over }], storage: undefined })!;
+      expect(other.primary?.label, JSON.stringify(over)).not.toBe('Raise memory limit');
+    }
+    const [exited] = issueCards({ alerts: [{ ...oom, kind: 'exited' }], storage: undefined })!;
+    expect(exited.primary?.label).toBe('Raise memory limit');
+  });
+});

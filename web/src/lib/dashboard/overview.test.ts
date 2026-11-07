@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { HostSnapshot, StackSummary } from '../api/types';
+import type { Alert, HostSnapshot, StackSummary } from '../api/types';
 import {
   filterByQuery,
+  fleetHeadline,
   groupStacks,
+  headline,
   panelLabel,
   rowPrimaryAction,
   statusFragments,
@@ -148,5 +150,59 @@ describe('filterByQuery', () => {
     expect(filterByQuery(items, 'db').map((s) => s.name)).toEqual(['beta']);
     expect(filterByQuery(items, '/OPT').map((s) => s.name)).toEqual(['beta']);
     expect(filterByQuery(items, '')).toHaveLength(2);
+  });
+});
+
+describe('headline', () => {
+  const up = { docker: 'ok', connection: 'open' } as const;
+  const alert = (over: Partial<Alert> = {}): Alert => ({ kind: 'exited', severity: 'danger', stack: 'a', service: 's', message: 'm', since: '2026-11-07T10:00:00Z', ...over });
+
+  it('names the count of stacks needing attention', () => {
+    expect(headline([bad('a'), stack('b')], [], up).title).toBe('1 stack needs attention');
+    expect(headline([bad('a'), bad('b'), stack('c')], [], up).title).toBe('2 stacks need attention');
+  });
+
+  it('counts a stack that only an alert flags, and alerts with no stack as issues', () => {
+    expect(headline([stack('a'), stack('b')], [alert({ stack: 'b' }), alert({ stack: 'b', service: 'x' })], up).title).toBe('1 stack needs attention');
+    expect(headline([stack('a')], [alert({ stack: undefined, container: 'c', kind: 'unhealthy', severity: 'warning' })], up).title).toBe('1 issue needs attention');
+    expect(headline([stack('a')], [alert({ severity: 'info', kind: 'something' })], up).title).toBe('All stacks are running');
+  });
+
+  it('never says healthy while alerts are unloaded, Docker is unknown or live updates are down', () => {
+    const calm = [stack('a'), stack('b')];
+    for (const h of [headline(calm, undefined, up), headline(calm, [], { docker: 'unknown', connection: 'open' }), headline(calm, [], { docker: 'ok', connection: 'reconnecting' })]) {
+      expect(h.title).toBe('Health is not confirmed');
+      expect(h.title + h.sub).not.toMatch(/healthy|all stacks are running|nothing needs/i);
+    }
+    expect(headline(calm, [], up).title).toBe('All stacks are running');
+  });
+
+  it('still reports stacks that need attention while alerts are unloaded', () => {
+    expect(headline([bad('a')], undefined, up).title).toBe('1 stack needs attention');
+  });
+
+  it('Docker unavailable wins over every other state', () => {
+    const h = headline([stack('a')], [], { docker: 'unavailable', connection: 'open' });
+    expect(h.title).toBe('Docker is not responding');
+    expect(h.sub).toMatch(/still running/);
+  });
+
+  it('unknown stack status is reported as unavailable, not healthy', () => {
+    expect(headline([stack('a', { status: 'unknown' })], [], up).title).toBe('Stack status is unavailable');
+  });
+
+  it('the sub-line counts stacks and containers', () => {
+    const host = { containers: { total: 26, running: 21, exited: 5, bad: 0 } } as HostSnapshot;
+    expect(headline([bad('a'), stack('b')], [], up, host).sub).toBe('1 of 2 stacks fully running · 21 of 26 containers running');
+  });
+});
+
+describe('fleetHeadline', () => {
+  it('counts reachable servers and says what is hidden', () => {
+    const ok = { status: 'reachable' };
+    expect(fleetHeadline([ok, ok], [stack('a')])).toEqual({ title: 'All 2 servers are reachable', sub: '1 stack' });
+    const h = fleetHeadline([ok, ok, { status: 'unreachable' }], [bad('a'), stack('b')]);
+    expect(h.title).toBe('2 of 3 servers are reachable');
+    expect(h.sub).toBe('2 stacks · 1 needs attention · stacks on servers that are not answering are hidden');
   });
 });

@@ -3,15 +3,11 @@
   flex-direction: column;
   gap: 10px;
   min-width: 0;
-  padding: 14px;
-  transition: border-color 0.15s;
+  padding: 12px 14px;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--hi);
 }
 
-.card:hover { border-color: var(--border-strong); }
+.card:hover { background: var(--hover); }
 
 .head {
   display: flex;
@@ -88,6 +84,6 @@
 .action[data-variant='primary']:hover { background: var(--accent); color: var(--accent-ink); }
 
 @media (max-width: 759px) {
-  .action { min-height: 40px; }
-  .where { display: inline-flex; align-items: center; min-height: 40px; }
+  .action { min-height: 44px; }
+  .where { display: inline-flex; align-items: center; min-height: 44px; }
 }
