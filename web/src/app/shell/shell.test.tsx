@@ -614,7 +614,7 @@ describe('server navigation', () => {
   const switcher = () => screen.getByRole('button', { name: /Switch server/ });
   const openMenu = async (user: ReturnType<typeof userEvent.setup>) => {
     await user.click(switcher());
-    return screen.getByRole('menu');
+    return screen.getByRole('group', { name: 'Servers' });
   };
 
   it('the switcher names this server and offers only itself and Connect a server without peers', async () => {
@@ -624,8 +624,8 @@ describe('server navigation', () => {
     expect(switcher().getAttribute('aria-expanded')).toBe('false');
     const menu = await openMenu(user);
     expect(switcher().getAttribute('aria-expanded')).toBe('true');
-    expect(within(menu).getAllByRole('menuitem').map((i) => i.textContent)).toEqual([expect.stringContaining('this server'), expect.stringContaining('Connect a server')]);
-    expect(within(menu).queryByRole('menuitem', { name: /All servers/ })).toBeNull();
+    expect(within(menu).getAllByRole('button').map((i) => i.textContent)).toEqual([expect.stringContaining('this server'), expect.stringContaining('Connect a server')]);
+    expect(within(menu).queryByRole('button', { name: /All servers/ })).toBeNull();
   });
 
   it('the switcher lists this server, connected servers, All servers and Connect a server', async () => {
@@ -634,7 +634,7 @@ describe('server navigation', () => {
     renderIn(<Sidebar {...props} current="/" />);
     await screen.findByRole('button', { name: /Switch server.*ratsrv01/ });
     const menu = await openMenu(user);
-    const items = within(menu).getAllByRole('menuitem');
+    const items = within(menu).getAllByRole('button');
     expect(items.map((i) => i.textContent)).toEqual([
       expect.stringContaining('ratsrv01'),
       expect.stringContaining('mini-02'),
@@ -642,12 +642,12 @@ describe('server navigation', () => {
       expect.stringContaining('All servers'),
       expect.stringContaining('Connect a server'),
     ]);
-    expect(within(menu).getByRole('menuitem', { name: /ratsrv01/ }).getAttribute('aria-current')).toBe('true');
-    expect(within(menu).getByRole('menuitem', { name: /mini-02/ }).textContent).toContain('4');
-    const edge = within(menu).getByRole('menuitem', { name: /edge/ });
+    expect(within(menu).getByRole('button', { name: /ratsrv01/ }).getAttribute('aria-current')).toBe('true');
+    expect(within(menu).getByRole('button', { name: /mini-02/ }).textContent).toContain('4');
+    const edge = within(menu).getByRole('button', { name: /edge/ });
     expect(edge.textContent).toContain('unreachable');
     expect(edge.querySelector('[data-tone="danger"]')).toBeTruthy();
-    expect(within(menu).getByRole('menuitem', { name: /All servers/ }).textContent).toContain('7');
+    expect(within(menu).getByRole('button', { name: /All servers/ }).textContent).toContain('7');
   });
 
   it('the switcher follows the unsaved-changes guard and closes after a choice', async () => {
@@ -658,9 +658,9 @@ describe('server navigation', () => {
     await screen.findByRole('button', { name: /Switch server.*ratsrv01/ });
     for (const [name, href] of [[/mini-02/, '/s/mini-02'], [/All servers/, '/all'], [/Connect a server/, '/settings/servers'], [/ratsrv01/, '/']] as const) {
       const menu = await openMenu(user);
-      await user.click(within(menu).getByRole('menuitem', { name }));
+      await user.click(within(menu).getByRole('button', { name }));
       expect(onNavigate).toHaveBeenLastCalledWith(href);
-      expect(screen.queryByRole('menu')).toBeNull();
+      expect(screen.queryByRole('group', { name: 'Servers' })).toBeNull();
     }
     expect(onNavigate).toHaveBeenCalledTimes(4);
     expect(screen.getByTestId('where').textContent).toBe('/');
@@ -671,11 +671,11 @@ describe('server navigation', () => {
     await withPeers([peer()]);
     renderIn(<Sidebar {...props} current="/" />);
     await screen.findByRole('button', { name: /Switch server.*ratsrv01/ });
-    await user.click(within(await openMenu(user)).getByRole('menuitem', { name: /mini-02/ }));
+    await user.click(within(await openMenu(user)).getByRole('button', { name: /mini-02/ }));
     expect(screen.getByTestId('where').textContent).toBe('/s/mini-02');
     await openMenu(user);
     await user.keyboard('{Escape}');
-    expect(screen.queryByRole('menu')).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Servers' })).toBeNull();
   });
 
   it('viewing a peer shows it in the switcher and points every page at it, with Settings staying local', async () => {
@@ -732,10 +732,10 @@ describe('server navigation', () => {
     renderIn(<Sidebar {...props} current="/" />);
     await screen.findByRole('button', { name: /Switch server.*ratsrv01/ });
     const menu = await openMenu(user);
-    const mini = within(menu).getByRole('menuitem', { name: /mini-02/ });
+    const mini = within(menu).getByRole('button', { name: /mini-02/ });
     expect(mini.textContent).toContain('unreachable');
     expect(within(mini).getByRole('img', { name: /unreachable/i })).toBeTruthy();
-    expect(within(menu).getByRole('menuitem', { name: /All servers/ }).textContent).toContain('3');
+    expect(within(menu).getByRole('button', { name: /All servers/ }).textContent).toContain('3');
   });
 
   it('several peers keep added order, after this server', async () => {
@@ -743,7 +743,7 @@ describe('server navigation', () => {
     await withPeers([peer({ id: 'b1', name: 'zeta', slug: 'zeta' }), peer({ id: 'b2', name: 'alpha', slug: 'alpha' })]);
     renderIn(<Sidebar {...props} current="/" />);
     await screen.findByRole('button', { name: /Switch server.*ratsrv01/ });
-    const names = within(await openMenu(user)).getAllByRole('menuitem').map((i) => i.textContent ?? '');
+    const names = within(await openMenu(user)).getAllByRole('button').map((i) => i.textContent ?? '');
     const order = ['ratsrv01', 'zeta', 'alpha'].map((n) => names.findIndex((t) => t.includes(n)));
     expect(order).toEqual([...order].sort((a, b) => a - b));
     expect(order.every((i) => i >= 0)).toBe(true);
@@ -754,8 +754,8 @@ describe('server navigation', () => {
     await withPeers([peer({ status: 'pending' })]);
     renderIn(<Sidebar {...props} current="/" />);
     const menu = await openMenu(user);
-    expect(within(menu).queryByRole('menuitem', { name: /mini-02/ })).toBeNull();
-    expect(within(menu).queryByRole('menuitem', { name: /All servers/ })).toBeNull();
+    expect(within(menu).queryByRole('button', { name: /mini-02/ })).toBeNull();
+    expect(within(menu).queryByRole('button', { name: /All servers/ })).toBeNull();
     cleanup();
     renderIn(<MobileTopBar title="Overview" mono={false} attention={false} />);
     expect(screen.queryByRole('combobox', { name: 'Server' })).toBeNull();
@@ -795,6 +795,55 @@ describe('server navigation', () => {
     await user.selectOptions(await screen.findByRole('combobox', { name: 'Server' }), 'mini-02');
     expect(onNavigate).toHaveBeenCalledWith('/s/mini-02');
     expect(screen.getByTestId('where').textContent).toBe('/');
+  });
+
+  it('the switcher is a plain disclosure: no menu roles, and an outside click closes it', async () => {
+    const user = userEvent.setup();
+    renderIn(<Sidebar {...props} current="/" />);
+    expect(switcher().getAttribute('aria-haspopup')).toBeNull();
+    const panel = await openMenu(user);
+    expect(panel.getAttribute('role')).toBe('group');
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(screen.queryAllByRole('menuitem')).toHaveLength(0);
+    await user.click(document.body);
+    expect(screen.queryByRole('group', { name: 'Servers' })).toBeNull();
+  });
+
+  it('More keeps the viewed server: tab bar, top bar and the banner stay on it', async () => {
+    const user = userEvent.setup();
+    await withPeers([peer()]);
+    vi.stubGlobal('matchMedia', () => ({ matches: true, media: '', addEventListener() {}, removeEventListener() {} }));
+    renderIn(
+      <Shell {...{ onLogout: () => {}, runningOps: [], attention: false, onOpenPalette: () => {} }} username="ana">
+        <span>page</span>
+      </Shell>,
+      '/more?server=mini-02',
+    );
+    expect(await screen.findByText('Viewing mini-02')).toBeTruthy();
+    expect((await screen.findByRole('link', { name: 'Containers' })).getAttribute('href')).toBe('/s/mini-02/containers');
+    expect(screen.getByRole('link', { name: 'Home' }).getAttribute('href')).toBe('/s/mini-02');
+    expect(screen.getByRole('link', { name: 'New stack' }).getAttribute('href')).toBe('/s/mini-02/stacks/new');
+    expect(screen.getByRole('link', { name: 'More' }).getAttribute('href')).toBe('/more?server=mini-02');
+    expect((screen.getByRole('combobox', { name: 'Server' }) as HTMLSelectElement).value).toBe('mini-02');
+    await user.click(screen.getByRole('link', { name: 'More' }));
+    expect(screen.getByText('Viewing mini-02')).toBeTruthy();
+  });
+
+  it('a local More page is unaffected', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, media: '', addEventListener() {}, removeEventListener() {} }));
+    renderIn(
+      <Shell {...{ onLogout: () => {}, runningOps: [], attention: false, onOpenPalette: () => {} }} username="ana">
+        <span>page</span>
+      </Shell>,
+      '/more',
+    );
+    expect((await screen.findByRole('link', { name: 'Containers' })).getAttribute('href')).toBe('/containers');
+    expect(screen.queryByText(/Viewing/)).toBeNull();
+  });
+
+  it('the local attention light stays off in the mobile top bar while a connected server is open', () => {
+    renderIn(<MobileTopBar title="Containers" mono={false} attention />, '/s/mini-02/containers');
+    expect(screen.queryByRole('img', { name: 'Needs attention' })).toBeNull();
   });
 
   it('the mobile tab bar links into the viewed server and carries it to More', () => {

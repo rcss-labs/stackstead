@@ -21,7 +21,7 @@ export default function More() {
   const hasPeers = connectedPeers(useStore(peers).items).length > 0;
   // The tab bar passes the server being viewed, so Images, Storage and the rest stay that server's.
   const slug = params.get('server');
-  if (!mobile) return <Navigate replace to="/" />;
+  if (!mobile) return <Navigate replace to={slug === null || slug === '' ? '/' : `/s/${encodeURIComponent(slug)}`} />;
 
   const entries = serverNav(slug);
   const section = (group: NavEntry['group']) => entries.filter((e) => e.group === group).map(row);

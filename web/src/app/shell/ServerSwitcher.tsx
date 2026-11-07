@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from 'react-router';
-import { splitServerPath } from '$lib/router';
+import { viewedSlug } from '$lib/router';
 import { connectedPeers, peers, selfName } from '$lib/servers/peers';
 import { useStore } from '../hooks/useStore';
 import { CONNECT_SERVER_HREF } from './navItems';
@@ -16,10 +16,10 @@ const CONNECT = '__connect';
 export function ServerSwitcher({ onNavigate }: ServerSwitcherProps) {
   const ownName = useStore(selfName);
   const items = connectedPeers(useStore(peers).items);
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const navigate = useNavigate();
   if (items.length === 0) return null;
-  const { slug } = splitServerPath(pathname);
+  const slug = viewedSlug(pathname, search);
   return (
     <select
       className={styles.switcher}
