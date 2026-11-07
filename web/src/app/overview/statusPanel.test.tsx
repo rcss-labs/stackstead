@@ -53,19 +53,35 @@ const inRouter = (ui: React.ReactElement) =>
 afterEach(cleanup);
 
 describe('StatusPanel', () => {
-  it('degraded label pulses and names the attention stack', () => {
-    const items = [stack('alpha', { status: 'partial', running: 1, health: { healthy: 0, unhealthy: 1, starting: 0, none: 0, failed: 0 } }), stack('beta')];
-    const { container } = inRouter(<StatusPanel items={items} host={undefined} history={[]} showActions />);
-    expect(screen.getByText('degraded · 1 stack')).toBeTruthy();
-    expect(container.querySelector('[data-pulse="true"]')).not.toBeNull();
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('alpha needs attention');
+  it('shows the headline it is given with its sub-line and the last event', () => {
+    const items = [stack('alpha'), stack('beta')];
+    inRouter(<StatusPanel items={items} headline={{ title: '1 stack needs attention', sub: '1 of 2 stacks fully running' }} host={undefined} history={[]} lastEventIso={new Date().toISOString()} showActions />);
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('1 stack needs attention');
+    expect(screen.getByText(/1 of 2 stacks fully running/)).toBeTruthy();
+    expect(screen.getByText(/last event/)).toBeTruthy();
   });
 
-  it('hides the sub-line when there are no stacks and the actions when told to', () => {
-    inRouter(<StatusPanel items={[]} host={undefined} history={[]} showActions={false} />);
+  it('hides the sub-line when it is empty and the actions when told to', () => {
+    inRouter(<StatusPanel items={[]} headline={{ title: 'No stacks yet', sub: '' }} host={undefined} history={[]} showActions={false} />);
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('No stacks yet');
-    expect(screen.queryByText(/fully running/)).toBeNull();
     expect(screen.queryByRole('link', { name: 'New stack' })).toBeNull();
+  });
+
+  it('shows a disk forecast line only when given days', () => {
+    const { rerender } = inRouter(<StatusPanel items={[]} headline={{ title: 't', sub: '' }} host={hostSnapshot()} history={[]} showActions={false} forecastDays={41} />);
+    expect(screen.getByText('About 41 days until the disk is full at the current rate.')).toBeTruthy();
+    rerender(
+      <MemoryRouter>
+        <StatusPanel items={[]} headline={{ title: 't', sub: '' }} host={hostSnapshot()} history={[]} showActions={false} forecastDays={0.3} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('Less than a day until the disk is full at the current rate.')).toBeTruthy();
+    rerender(
+      <MemoryRouter>
+        <StatusPanel items={[]} headline={{ title: 't', sub: '' }} host={hostSnapshot()} history={[]} showActions={false} forecastDays={null} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText(/until the disk is full/)).toBeNull();
   });
 });
 

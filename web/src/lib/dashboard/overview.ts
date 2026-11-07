@@ -1,5 +1,7 @@
 // Pure derivations behind the React overview: status panel, towers, groups. Plain values in, plain values out.
-import type { HostSnapshot, StackSummary } from '../api/types';
+import type { Alert, HostSnapshot, StackSummary } from '../api/types';
+import type { LiveState } from '../stores/live';
+import { EXCLUDED_ALERT_KINDS } from './issues';
 import { attentionCount, attentionStacks, filterStacks, stackNeedsAttention } from '../stacks/summary';
 
 export type PanelTone = 'danger' | 'success' | 'muted';
@@ -91,3 +93,52 @@ export function rowPrimaryAction(s: StackSummary): { action: 'up' | 'restart'; l
 }
 
 export const filterByQuery = (items: StackSummary[], query: string): StackSummary[] => filterStacks(items, 'all', query);
+
+/** The all-servers verdict. It speaks only about reachability and the rows it kept, never about a server that is not answering. */
+export function fleetHeadline(servers: { status: string }[], stacks: StackSummary[]): { title: string; sub: string } {
+  const reachable = servers.filter((s) => s.status === 'reachable').length;
+  const title =
+    reachable === servers.length
+      ? servers.length === 1
+        ? 'This server is reachable'
+        : `All ${servers.length} servers are reachable`
+      : `${reachable} of ${servers.length} servers are reachable`;
+  const parts = [plural(stacks.length, 'stack')];
+  const attention = attentionCount(stacks);
+  if (attention > 0) parts.push(`${attention} need${attention === 1 ? 's' : ''} attention`);
+  if (reachable < servers.length) parts.push('stacks on servers that are not answering are hidden');
+  return { title, sub: parts.join(' · ') };
+}
+
+const issueWord =(n: number, noun: 'stack' | 'issue') => `${n} ${noun}${n === 1 ? ' needs' : 's need'} attention`;
+
+/**
+ * The page's one-line verdict. It says "running" only when stacks, alerts, Docker and the live
+ * connection all support it; anything missing yields "Health is not confirmed" instead.
+ */
+export function headline(
+  items: StackSummary[],
+  alerts: Alert[] | undefined,
+  live: Pick<LiveState, 'docker' | 'connection'>,
+  host?: Pick<HostSnapshot, 'containers'>,
+): { title: string; sub: string } {
+  if (live.docker === 'unavailable') {
+    return { title: 'Docker is not responding', sub: 'Stackstead is still running. Your containers may be fine; it just cannot see them.' };
+  }
+  if (items.length === 0) return { title: 'No stacks yet', sub: '' };
+  if (allUnknown(items)) return { title: 'Stack status is unavailable', sub: '' };
+
+  const counts = [`${runningCount(items)} of ${plural(items.length, 'stack')} fully running`];
+  if (host?.containers) counts.push(`${host.containers.running} of ${host.containers.total} containers running`);
+  const sub = counts.join(' · ');
+
+  const flagged = (alerts ?? []).filter((a) => !EXCLUDED_ALERT_KINDS.has(a.kind) && a.severity !== 'info');
+  const stacks = new Set([...attentionStacks(items).map((s) => s.name), ...flagged.flatMap((a) => (a.stack ? [a.stack] : []))]);
+  if (stacks.size > 0) return { title: issueWord(stacks.size, 'stack'), sub };
+  const loose = flagged.filter((a) => !a.stack).length;
+  if (loose > 0) return { title: issueWord(loose, 'issue'), sub };
+
+  const unconfirmed = !alerts ? 'Alerts have not loaded.' : live.docker !== 'ok' ? 'Docker has not answered yet.' : live.connection !== 'open' ? 'Live updates are disconnected.' : '';
+  if (unconfirmed) return { title: 'Health is not confirmed', sub: unconfirmed };
+  return { title: runningCount(items) === items.length ? 'All stacks are running' : 'Nothing needs attention', sub };
+}

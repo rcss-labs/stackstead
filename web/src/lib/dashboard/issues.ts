@@ -1,6 +1,7 @@
 // Pure derivation of the overview's issue cards from alerts and storage reclaimable. No React, no clock.
 import type { Alert, StorageOverview } from '../api/types';
 import { formatBytes } from '../format';
+import { detailHref } from '../stacks/detailLocation';
 
 export type IssueAction =
   { label: string; kind: 'navigate'; href: string } | { label: string; kind: 'act'; stack: string; action: 'up' | 'restart' };
@@ -23,6 +24,8 @@ export const EXCLUDED_ALERT_KINDS: ReadonlySet<string> = new Set(['docker_discon
 
 /** The storage card appears only when at least 1 GiB can be reclaimed. */
 export const RECLAIMABLE_CARD_MIN = 1024 ** 3;
+
+const TONE_RANK: Record<IssueCard['tone'], number> = { danger: 0, warning: 1, info: 2 };
 
 const CONTAINER_KINDS: ReadonlySet<string> = new Set(['exited', 'unhealthy', 'restart_loop']);
 
@@ -76,6 +79,18 @@ function stackPrimary(alert: Alert, stack: string): IssueAction | undefined {
   }
 }
 
+/** Exit 137 is SIGKILL; with a memory limit set, raising the limit is the likeliest fix. Both facts must be present. */
+function suggestsMemoryLimit(alert: Alert): boolean {
+  return (
+    (alert.kind === 'exited' || alert.kind === 'restart_loop') &&
+    alert.exitCode === 137 &&
+    alert.memLimit !== undefined &&
+    alert.memLimit > 0 &&
+    !!alert.stack &&
+    !!alert.service
+  );
+}
+
 function alertCard(alert: Alert, index: number): IssueCard {
   const card: IssueCard = {
     id: [alert.kind, alert.stack ?? '', alert.container ?? '', alert.since, index].join('|'),
@@ -93,6 +108,14 @@ function alertCard(alert: Alert, index: number): IssueCard {
       mono: true,
     };
     card.primary = stackPrimary(alert, alert.stack);
+    if (suggestsMemoryLimit(alert)) {
+      card.message = `${alert.message} Exit 137, memory limit ${formatBytes(alert.memLimit!)}.`;
+      card.primary = {
+        label: 'Raise memory limit',
+        kind: 'navigate',
+        href: `${detailHref(alert.stack, { service: alert.service })}&edit=1`,
+      };
+    }
     if (alert.service) {
       card.secondary = {
         label: 'Open logs',
@@ -138,7 +161,8 @@ export function issueCards(input: { alerts: Alert[] | undefined; storage: Storag
     .filter(({ alert }) => !EXCLUDED_ALERT_KINDS.has(alert.kind))
     .map(({ alert, index }) => alertCard(alert, index));
   if (input.storage && reclaimableTotal(input.storage) >= RECLAIMABLE_CARD_MIN) cards.push(storageCard(input.storage));
-  return cards;
+  // Array.prototype.sort is stable, so server order holds within a tier.
+  return cards.sort((a, b) => TONE_RANK[a.tone] - TONE_RANK[b.tone]);
 }
 
 /** Distinct services with a container problem in this stack, in alert order. */
