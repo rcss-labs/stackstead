@@ -20,6 +20,9 @@
   overflow: hidden;
 }
 
+/* The edit steps sit directly in the card, which has no padding of its own. */
+.card > ol { padding: 8px 12px 0; }
+
 .toolbar {
   display: flex;
   flex-wrap: wrap;

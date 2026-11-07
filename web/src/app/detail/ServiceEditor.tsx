@@ -291,7 +291,7 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
       )}
 
       {phase === 'conflict' && (
-        <div ref={conflictBox} tabIndex={-1}>
+        <div ref={conflictBox} tabIndex={-1} className={styles.conflict}>
           <Banner kind="danger" title="Save refused">
             <span className={styles.msg}>{conflictMessage}</span> Nothing has been overwritten: the file on disk and your edit are both intact.
             {dockerfileConflict && <span className={styles.msg}> The Dockerfile changed on disk; your text will replace it.</span>}

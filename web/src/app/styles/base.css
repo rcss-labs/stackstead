@@ -20,6 +20,11 @@ body {
 
 /* 14.5px body on phones; 16px form controls stop iOS Safari zooming on focus. */
 @media (max-width: 759px) {
+  /* Focus moves must not land behind the sticky top bar, or behind the tab bar and the toast above it (84px up, about 60px tall). */
+  html {
+    scroll-padding-block: calc(var(--mobile-bar-h) + 8px) 148px;
+  }
+
   body {
     font-size: 14.5px;
   }

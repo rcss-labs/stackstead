@@ -105,5 +105,6 @@
 
 @media (max-width: 759px) {
   .action { min-height: 44px; }
-  .where { display: inline-flex; align-items: center; min-height: 44px; }
+  /* Block, not flex: an ellipsis does not reach text that is a flex item. Line height centres it in the touch target. */
+  .where { display: block; min-height: 44px; line-height: 44px; }
 }

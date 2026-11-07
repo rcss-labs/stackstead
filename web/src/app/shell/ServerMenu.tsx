@@ -67,6 +67,12 @@ export function ServerMenu({ current, localName, localTagged, localStackCount, p
     }
   };
 
+  // Only a known next target closes it: Safari reports null when a mouse press on an item blurs the opener, and closing then would lose the click.
+  const onBlur = (event: React.FocusEvent) => {
+    const next = event.relatedTarget as Node | null;
+    if (open && next && !root.current?.contains(next)) setOpen(false);
+  };
+
   const item = (key: string, href: string, selected: boolean, body: React.ReactNode) => (
     <button key={key} type="button" className={styles.item} aria-current={selected ? 'true' : undefined} onClick={() => choose(href)}>
       {body}
@@ -74,7 +80,7 @@ export function ServerMenu({ current, localName, localTagged, localStackCount, p
   );
 
   return (
-    <div ref={root} className={styles.root} onKeyDown={onKeyDown}>
+    <div ref={root} className={styles.root} onKeyDown={onKeyDown} onBlur={onBlur}>
       <button
         ref={button}
         type="button"
