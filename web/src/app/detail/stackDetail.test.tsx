@@ -168,7 +168,7 @@ const twoServices = (): Detail => {
   });
 };
 /** Opens the header's More menu and picks an item (Down and Remove live there). */
-const moreItem = () => screen.getByRole('menuitem', { name: 'Remove stack' });
+const moreItem = () => screen.getByRole('button', { name: 'Remove stack' });
 const openMore = () => user().click(screen.getByRole('button', { name: 'More actions' }));
 const clickRemoveStack = async () => {
   await openMore();

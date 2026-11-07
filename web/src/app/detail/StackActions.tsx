@@ -79,7 +79,6 @@ export function StackActions({ stack, lifecycleDisabledReason, busy = false, onA
     <button
       key={key}
       type="button"
-      role="menuitem"
       className={styles.item}
       data-danger={opts.danger || undefined}
       aria-disabled={opts.reason ? 'true' : undefined}
@@ -125,14 +124,13 @@ export function StackActions({ stack, lifecycleDisabledReason, busy = false, onA
             type="button"
             className={styles.moreButton}
             aria-label="More actions"
-            aria-haspopup="menu"
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen(!menuOpen)}
           >
             {icon(ICONS.more)}
           </button>
           {menuOpen && (
-            <div role="menu" aria-label="More actions" className={styles.menu}>
+            <div role="group" aria-label="More actions" className={styles.menu}>
               {items}
             </div>
           )}

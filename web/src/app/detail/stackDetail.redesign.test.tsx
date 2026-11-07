@@ -121,7 +121,7 @@ describe('header actions', () => {
     mount('/stacks/web');
     await screen.findByRole('heading', { level: 1, name: 'web' });
     await user().click(screen.getByRole('button', { name: 'More actions' }));
-    await user().click(screen.getByRole('menuitem', { name: 'Remove stack' }));
+    await user().click(screen.getByRole('button', { name: 'Remove stack' }));
     const dialog = await screen.findByRole('alertdialog');
     await user().click(within(dialog).getByRole('checkbox', { name: /also remove volumes/i }));
     expect(within(dialog).getByRole('button', { name: 'Remove' }).getAttribute('aria-disabled')).toBe('true');
@@ -131,7 +131,7 @@ describe('header actions', () => {
     mount('/stacks/web');
     await screen.findByRole('heading', { level: 1, name: 'web' });
     await user().click(screen.getByRole('button', { name: 'More actions' }));
-    await user().click(screen.getByRole('menuitem', { name: 'View compose file' }));
+    await user().click(screen.getByRole('button', { name: 'View compose file' }));
     await waitFor(() => expect(here()).toBe('/stacks/web?tab=compose'));
   });
 });

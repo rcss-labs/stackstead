@@ -21,7 +21,7 @@ afterEach(cleanup);
 
 const openMore = async (user: ReturnType<typeof userEvent.setup>) => {
   await user.click(screen.getByRole('button', { name: 'More actions' }));
-  return screen.getByRole('menu');
+  return screen.getByRole('group', { name: 'More actions' });
 };
 
 const setup = (props: Partial<Parameters<typeof StackActions>[0]> = {}) => {
@@ -47,27 +47,49 @@ describe('StackActions', () => {
     expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Build' })).toBeNull();
     const menu = await openMore(user);
-    const items = within(menu).getAllByRole('menuitem').map((i) => i.textContent);
+    const items = within(menu).getAllByRole('button').map((i) => i.textContent);
     expect(items).toEqual(['Build images', 'View compose file', 'Copy path', 'Down', 'Remove stack']);
-    await user.click(within(menu).getByRole('menuitem', { name: 'Down' }));
+    await user.click(within(menu).getByRole('button', { name: 'Down' }));
     expect(onAct).toHaveBeenCalledWith('down');
-    expect(screen.queryByRole('menu')).toBeNull();
+    expect(screen.queryByRole('group', { name: 'More actions' })).toBeNull();
   });
 
   it('Build images and View compose file act from the menu', async () => {
     const onViewCompose = vi.fn();
     const { onAct, user } = setup({ onViewCompose });
-    await user.click(within(await openMore(user)).getByRole('menuitem', { name: 'Build images' }));
+    await user.click(within(await openMore(user)).getByRole('button', { name: 'Build images' }));
     expect(onAct).toHaveBeenCalledWith('build');
-    await user.click(within(await openMore(user)).getByRole('menuitem', { name: 'View compose file' }));
+    await user.click(within(await openMore(user)).getByRole('button', { name: 'View compose file' }));
     expect(onViewCompose).toHaveBeenCalledTimes(1);
+  });
+
+  it('More actions is a plain disclosure: expanded state, no menu roles, ordinary buttons in Tab order', async () => {
+    const { user } = setup();
+    const toggle = screen.getByRole('button', { name: 'More actions' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.getAttribute('aria-haspopup')).toBeNull();
+    await openMore(user);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(screen.queryAllByRole('menuitem')).toHaveLength(0);
+    await user.tab();
+    expect(document.activeElement?.textContent).toBe('Build images');
+    await user.tab();
+    expect(document.activeElement?.textContent).toBe('Copy path');
+  });
+
+  it('a press outside closes the disclosure', async () => {
+    const { user } = setup();
+    await openMore(user);
+    await user.click(document.body);
+    expect(screen.queryByRole('group', { name: 'More actions' })).toBeNull();
   });
 
   it('Escape closes the menu and returns focus to its button', async () => {
     const { user } = setup();
     await openMore(user);
     await user.keyboard('{Escape}');
-    expect(screen.queryByRole('menu')).toBeNull();
+    expect(screen.queryByRole('group', { name: 'More actions' })).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'More actions' }));
   });
 
@@ -80,10 +102,10 @@ describe('StackActions', () => {
     }
     const menu = await openMore(user);
     for (const name of ['Build images', 'Down']) {
-      expect(within(menu).getByRole('menuitem', { name }).getAttribute('aria-disabled')).toBe('true');
-      expect(within(menu).getByRole('menuitem', { name }).getAttribute('title')).toBe('docker compose is not installed');
+      expect(within(menu).getByRole('button', { name }).getAttribute('aria-disabled')).toBe('true');
+      expect(within(menu).getByRole('button', { name }).getAttribute('title')).toBe('docker compose is not installed');
     }
-    await user.click(within(menu).getByRole('menuitem', { name: 'Down' }));
+    await user.click(within(menu).getByRole('button', { name: 'Down' }));
     await user.click(screen.getByRole('button', { name: 'Up' }));
     expect(onAct).not.toHaveBeenCalled();
   });
@@ -91,16 +113,16 @@ describe('StackActions', () => {
   it('disables with "an operation is already running" when busy', async () => {
     const { user } = setup({ busy: true });
     expect(screen.getByRole('button', { name: 'Pull' }).getAttribute('title')).toBe('an operation is already running');
-    expect(within(await openMore(user)).getByRole('menuitem', { name: 'Remove stack' }).getAttribute('aria-disabled')).toBe('true');
+    expect(within(await openMore(user)).getByRole('button', { name: 'Remove stack' }).getAttribute('aria-disabled')).toBe('true');
   });
 
   it('Remove is not disabled by a lifecycle reason alone', async () => {
     const { user } = setup({ lifecycleDisabledReason: 'docker compose is not installed' });
-    expect(within(await openMore(user)).getByRole('menuitem', { name: 'Remove stack' }).getAttribute('aria-disabled')).toBeNull();
+    expect(within(await openMore(user)).getByRole('button', { name: 'Remove stack' }).getAttribute('aria-disabled')).toBeNull();
   });
 
   const openRemove = async (user: ReturnType<typeof userEvent.setup>) => {
-    await user.click(within(await openMore(user)).getByRole('menuitem', { name: 'Remove stack' }));
+    await user.click(within(await openMore(user)).getByRole('button', { name: 'Remove stack' }));
     return screen.getByRole('alertdialog');
   };
 
