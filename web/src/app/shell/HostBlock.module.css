@@ -1,4 +1,7 @@
 .block {
+  /* Holds its height while the first reading loads, so the sidebar does not jump. */
+  min-height: 94px;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 3px;

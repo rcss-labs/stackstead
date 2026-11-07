@@ -73,7 +73,7 @@ export function ImageSettingsTab({ image, onChanged }: { image: LibraryImageDeta
     <div className={styles.page}>
       <div className={styles.card}>
         <form
-          className={styles.pad}
+          className={`${styles.pad} ${styles.fields}`}
           onSubmit={(e) => {
             e.preventDefault();
             if (!invalidReason) void save();

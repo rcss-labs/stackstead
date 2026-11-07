@@ -66,8 +66,8 @@
 @media (max-width: 759px) {
   .page { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .side { position: static; }
-  /* One section is shown at a time, so the links stay: a scrolling row of 44px targets. */
-  .sections { flex-direction: row; gap: 4px; overflow-x: auto; }
+  /* One section is shown at a time, so the links stay: wrapped 44px targets, keeping the current one in view. */
+  .sections { flex-direction: row; flex-wrap: wrap; gap: 4px; }
   .sections a { display: inline-flex; align-items: center; min-height: 44px; white-space: nowrap; }
   .title { font-size: 20px; margin-bottom: 0; }
   .status { grid-template-columns: repeat(2, minmax(0, 1fr)); }

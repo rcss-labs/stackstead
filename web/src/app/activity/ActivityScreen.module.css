@@ -37,3 +37,6 @@
 @media (max-width: 759px) {
   .row { min-height: 44px; }
 }
+
+/* The kind tag keeps its word; the text beside it takes the squeeze. */
+.row > [class*='tag'] { flex: none; }

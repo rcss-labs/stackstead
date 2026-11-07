@@ -83,6 +83,26 @@
 
 .action[data-variant='primary']:hover { background: var(--accent); color: var(--accent-ink); }
 
+/* Desktop reads as one ranked row per issue, with the fix on the right; a phone stacks it. */
+@media (min-width: 760px) {
+  .card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 2px 16px;
+    padding: 10px 14px;
+  }
+  .head, .title, .message { grid-column: 1; }
+  .title { font-size: 13.5px; }
+  .message { margin: 0; }
+  .actions {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+    align-self: center;
+    flex-wrap: nowrap;
+    margin: 0;
+  }
+}
+
 @media (max-width: 759px) {
   .action { min-height: 44px; }
   .where { display: inline-flex; align-items: center; min-height: 44px; }

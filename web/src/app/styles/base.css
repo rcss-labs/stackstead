@@ -67,6 +67,11 @@ textarea {
   color: inherit;
 }
 
+/* No specificity, so any component's own styling wins; an unstyled field must not fall back to the browser's grey in dark. */
+:where(input:not([type='checkbox'], [type='radio']), select, textarea) {
+  background-color: var(--surface);
+}
+
 img,
 svg {
   max-width: 100%;
@@ -78,9 +83,20 @@ kbd {
   font-family: var(--mono);
 }
 
+/* Geist Mono joins -- into a dash and -> into an arrow over its digits; commands and port maps must read as typed. */
+body {
+  font-variant-ligatures: none;
+}
+
 a {
   color: inherit;
   text-decoration: none;
+}
+
+/* Route changes move focus to the heading for screen readers; it is not a control, so it needs no ring. */
+h1[tabindex='-1']:focus-visible,
+h2[tabindex='-1']:focus-visible {
+  outline: none;
 }
 
 :focus-visible {
