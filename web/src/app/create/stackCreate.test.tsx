@@ -438,7 +438,7 @@ describe('New stack screen', () => {
 
   it('the first card renders the disclosure closed and the restart policy in view', async () => {
     await mount();
-    expect((screen.getByText('Environment, networks, limits, healthcheck').closest('details') as HTMLDetailsElement).open).toBe(false);
+    expect((screen.getByText('Environment, networks and healthcheck').closest('details') as HTMLDetailsElement).open).toBe(false);
     expect(screen.getByLabelText('Restart policy')).toBeTruthy();
   });
 
@@ -446,7 +446,7 @@ describe('New stack screen', () => {
     const net = { id: 'f', name: 'frontend', driver: 'bridge', scope: 'local', subnets: [], gateways: [], ipRange: '', parent: '', ipvlanMode: '', internal: false, builtin: false, project: '', stack: '', containers: [] };
     const user = await mount({ 'GET /api/networks': { body: [net] } });
     await fillImage(user);
-    await user.click(screen.getByText('Environment, networks, limits, healthcheck'));
+    await user.click(screen.getByText('Environment, networks and healthcheck'));
     await user.click(screen.getByRole('button', { name: 'Add network' }));
     await screen.findByRole('option', { name: 'frontend' });
     await user.selectOptions(screen.getByLabelText('Network'), 'frontend');
