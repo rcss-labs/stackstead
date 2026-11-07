@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import type { Alert, HostSnapshot, StackSummary } from '../api/types';
 import {
   filterByQuery,
-  fleetHeadline,
   groupStacks,
   headline,
   rowPrimaryAction,
@@ -142,15 +141,5 @@ describe('headline', () => {
   it('the sub-line counts stacks and containers', () => {
     const host = { containers: { total: 26, running: 21, exited: 5, bad: 0 } } as HostSnapshot;
     expect(headline([bad('a'), stack('b')], [], up, host).sub).toBe('1 of 2 stacks fully running · 21 of 26 containers running');
-  });
-});
-
-describe('fleetHeadline', () => {
-  it('counts reachable servers and says what is hidden', () => {
-    const ok = { status: 'reachable' };
-    expect(fleetHeadline([ok, ok], [stack('a')])).toEqual({ title: 'All 2 servers are reachable', sub: '1 stack' });
-    const h = fleetHeadline([ok, ok, { status: 'unreachable' }], [bad('a'), stack('b')]);
-    expect(h.title).toBe('2 of 3 servers are reachable');
-    expect(h.sub).toBe('2 stacks · 1 needs attention · stacks on servers that are not answering are hidden');
   });
 });

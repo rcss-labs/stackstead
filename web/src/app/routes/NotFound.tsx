@@ -10,7 +10,7 @@ export default function NotFound() {
   return (
     <EmptyState title="Page not found" description="That page does not exist. The link may be out of date, or it may point to another server.">
       <Link to={href('/')}>Go to Overview</Link>
-      <Button onClick={() => palette.set(true)}>Search</Button>
+      <Button variant="secondary" onClick={() => palette.set(true)}>Search</Button>
     </EmptyState>
   );
 }

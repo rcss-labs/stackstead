@@ -2,7 +2,7 @@
 import type { Alert, HostSnapshot, StackSummary } from '../api/types';
 import type { LiveState } from '../stores/live';
 import { EXCLUDED_ALERT_KINDS } from './issues';
-import { attentionCount, attentionStacks, filterStacks, stackNeedsAttention } from '../stacks/summary';
+import { attentionStacks, filterStacks, stackNeedsAttention } from '../stacks/summary';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const allUnknown = (items: StackSummary[]) => items.length > 0 && items.every((s) => s.status === 'unknown');
@@ -64,22 +64,6 @@ export function rowPrimaryAction(s: StackSummary): { action: 'up' | 'restart'; l
 }
 
 export const filterByQuery = (items: StackSummary[], query: string): StackSummary[] => filterStacks(items, 'all', query);
-
-/** The all-servers verdict. It speaks only about reachability and the rows it kept, never about a server that is not answering. */
-export function fleetHeadline(servers: { status: string }[], stacks: StackSummary[]): { title: string; sub: string } {
-  const reachable = servers.filter((s) => s.status === 'reachable').length;
-  const title =
-    reachable === servers.length
-      ? servers.length === 1
-        ? 'This server is reachable'
-        : `All ${servers.length} servers are reachable`
-      : `${reachable} of ${servers.length} servers are reachable`;
-  const parts = [plural(stacks.length, 'stack')];
-  const attention = attentionCount(stacks);
-  if (attention > 0) parts.push(`${attention} need${attention === 1 ? 's' : ''} attention`);
-  if (reachable < servers.length) parts.push('stacks on servers that are not answering are hidden');
-  return { title, sub: parts.join(' · ') };
-}
 
 const issueWord =(n: number, noun: 'stack' | 'issue') => `${n} ${noun}${n === 1 ? ' needs' : 's need'} attention`;
 

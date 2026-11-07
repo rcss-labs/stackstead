@@ -1,7 +1,7 @@
 import { Link } from 'react-router';
 import { ICONS } from '$lib/shell/icons';
 import { Led } from '../components/Led';
-import type { NavEntry } from './nav';
+import type { NavEntry } from './navItems';
 import styles from './NavItem.module.css';
 
 export interface NavItemProps {

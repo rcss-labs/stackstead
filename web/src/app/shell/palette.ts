@@ -3,7 +3,7 @@ import type { LiveState } from '$lib/stores/live';
 import { lifecycleDisabledReason } from '$lib/stacks/lifecycle';
 import { needsAttention } from '$lib/stacks/summary';
 import type { LedProps } from '../components/Led';
-import { NAV } from './nav';
+import { NAV } from './navItems';
 
 export type PaletteGroup = 'Go to' | 'Stacks' | 'Actions';
 
