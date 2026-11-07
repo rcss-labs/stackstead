@@ -1,4 +1,5 @@
-import { cleanup, screen } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { installFakeFetch, type FakeFetch } from '../../vitest-setup';
 import { member, mountAt, routes, row } from './networksTestKit';
@@ -32,9 +33,10 @@ afterEach(() => {
   fake?.restore();
 });
 
-function mount(path: string) {
-  fake = installFakeFetch(routes({ body: fleet }));
+function mount(path: string, extra: Parameters<typeof routes>[1] = {}) {
+  fake = installFakeFetch(routes({ body: fleet }, extra));
   mountAt(path);
+  return userEvent.setup();
 }
 
 it('mobile list and detail are separate screens: the list alone, without the empty detail', async () => {
@@ -48,4 +50,12 @@ it('mobile detail screen has no list beside it', async () => {
   await screen.findByRole('heading', { level: 2, name: 'shop_default' });
   expect(screen.queryByRole('listbox', { name: 'Networks' })).toBeNull();
   expect(screen.queryByRole('tablist')).toBeNull();
+});
+
+it('removing a network on a phone returns to the list with focus on the heading', async () => {
+  const user = mount('/networks/spare', { 'DELETE /api/networks/spare': { status: 204 } });
+  await user.click(await screen.findByRole('button', { name: 'Remove' }));
+  await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Remove' }));
+  await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/networks'));
+  await waitFor(() => expect(document.activeElement?.id).toBe('networks-heading'));
 });

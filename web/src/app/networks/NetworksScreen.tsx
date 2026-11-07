@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import type { Network, NetworkContainer } from '$lib/api/types';
 import { containerKey, networkSummary, sortNetworks, summaryParts, type NetworkFilter } from '$lib/networks/networks';
@@ -55,6 +55,13 @@ export function NetworksScreen({ selected }: NetworksScreenProps) {
   const showList = !mobile || selected === undefined;
   const showDetail = !mobile || selected !== undefined;
   const showHeader = showList;
+  // Set by a removal that navigates away from the detail; consumed once the heading is on screen.
+  const focusHeading = useRef(false);
+  useEffect(() => {
+    if (!focusHeading.current || !showHeader) return;
+    focusHeading.current = false;
+    document.getElementById('networks-heading')?.focus();
+  }, [showHeader, selected]);
 
   const tabs = [
     { id: 'networks', label: 'Networks', badge: rows ? networks.length : undefined },
@@ -83,8 +90,9 @@ export function NetworksScreen({ selected }: NetworksScreenProps) {
       if (action.kind === 'remove') {
         await api.deleteNetwork(action.network.id);
         toasts.push({ kind: 'success', message: `Network \`${action.network.name}\` removed` });
+        // The heading is not rendered on a phone's detail screen, so focus waits for the list to show.
+        focusHeading.current = true;
         void navigate(href('/networks'));
-        document.getElementById('networks-heading')?.focus();
       } else if (action.kind === 'detach') {
         await api.disconnectNetwork(action.network.id, action.container.name);
         toasts.push({ kind: 'success', message: `Detached \`${action.container.name}\` from \`${action.network.name}\`` });
