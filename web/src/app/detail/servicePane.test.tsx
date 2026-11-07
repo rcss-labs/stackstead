@@ -7,8 +7,7 @@ import type { ServiceDetail } from '$lib/api/types';
 import { changes, startLive } from '$lib/stores/live';
 import { get } from '$lib/store';
 import { appService, installHarness, mountDetail, removeHarness, stackDetail, type Harness } from './detailTestKit';
-import type { ServiceTab } from '$lib/stacks/detailLocation';
-import { ServicePane } from './ServicePane';
+import { ServicePane, type PaneTab } from './ServicePane';
 
 // xterm needs a real canvas; the mock just reports the props the pane passes.
 vi.mock('../containers/TerminalTab', () => ({
@@ -109,6 +108,83 @@ describe('service pane', () => {
     expect(lines).toEqual(['web-app-1', 'Up 2 minutes']);
   });
 
+  describe('failing service', () => {
+    const exited = (code: number, over: Partial<ServiceDetail> = {}) =>
+      appService({
+        containers: [{ id: 'abc', name: 'web-app-1', service: 'app', state: 'exited', status: `Exited (${code}) 3 minutes ago`, health: 'none' }],
+        ...over,
+      });
+    const cause = () => screen.getByRole('alert');
+    const before = (a: Element, b: Element) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+    it('failing service states its cause above the tabs', () => {
+      renderPane(exited(1));
+      expect(within(cause()).getByText('Exited with code 1')).toBeTruthy();
+      expect(cause().textContent).toMatch(/check the logs/i);
+      expect(before(cause(), screen.getByRole('tablist', { name: 'Service sections' }))).toBe(true);
+    });
+
+    it('exit 137 with a memory limit names the limit and offers Raise limit', async () => {
+      const onEdit = vi.fn();
+      renderPane(exited(137, { config: { image: 'nginx:1', limits: { memory: '512m' } } }), { onEdit });
+      expect(cause().textContent).toMatch(/exceeding its memory limit \(512m\)/);
+      await user().click(within(cause()).getByRole('button', { name: 'Raise limit' }));
+      expect(onEdit).toHaveBeenCalledTimes(1);
+    });
+
+    it('exit 137 without a limit makes no memory claim and offers no Raise limit', () => {
+      renderPane(exited(137), { onEdit: () => {} });
+      expect(within(cause()).getByText('Exited with code 137')).toBeTruthy();
+      expect(cause().textContent).not.toMatch(/memory/i);
+      expect(within(cause()).queryByRole('button', { name: 'Raise limit' })).toBeNull();
+    });
+
+    it('a restarting container and a failing healthcheck each state their cause', () => {
+      renderPane(appService({ containers: [{ id: 'a', name: 'web-app-1', service: 'app', state: 'restarting', status: 'Restarting (1) 4 seconds ago', health: 'none' }] }));
+      expect(within(cause()).getByText('Restarting repeatedly')).toBeTruthy();
+      cleanup();
+      renderPane(appService({ containers: [{ id: 'a', name: 'web-app-1', service: 'app', state: 'running', status: 'Up 2 minutes (unhealthy)', health: 'unhealthy' }] }));
+      expect(within(cause()).getByText('Healthcheck is failing')).toBeTruthy();
+    });
+
+    it('healthy, stopped-cleanly and no-container services show no cause', () => {
+      renderPane(appService());
+      expect(screen.queryByRole('alert')).toBeNull();
+      cleanup();
+      renderPane(exited(0));
+      expect(screen.queryByRole('alert')).toBeNull();
+      cleanup();
+      renderPane(appService({ containers: [] }));
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+
+    it('the cause is hidden while the editor is open', () => {
+      renderPane(exited(1), { editor: <p>editor</p> });
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+  });
+
+  describe('Logs tab (phones)', () => {
+    it('is listed after Overview only when the screen supplies the console', () => {
+      renderPane(appService());
+      expect(screen.queryByRole('tab', { name: 'Logs' })).toBeNull();
+      cleanup();
+      renderPane(appService(), { logs: <p>console here</p> });
+      const names = within(screen.getByRole('tablist', { name: 'Service sections' })).getAllByRole('tab').map((t) => t.textContent);
+      expect(names).toEqual(['Overview', 'Logs', 'Metrics', 'Config', 'Terminal']);
+    });
+
+    it('shows the console in the Logs tab and reports the selection', async () => {
+      const picked: string[] = [];
+      const view = renderPane(appService(), { logs: <p>console here</p>, onTab: (tab) => picked.push(tab) });
+      await user().click(screen.getByRole('tab', { name: 'Logs' }));
+      expect(picked).toEqual(['logs']);
+      view.unmount();
+      renderPane(appService(), { logs: <p>console here</p>, tab: 'logs' });
+      expect(screen.getByText('console here')).toBeTruthy();
+    });
+  });
+
   describe('Terminal tab', () => {
     const replicas = () =>
       appService({
@@ -162,7 +238,7 @@ describe('service pane', () => {
     it('the Overview Terminal link switches to the tab for that container instead of navigating', async () => {
       const picked: string[] = [];
       function Harness() {
-        const [tab, setTab] = useState<ServiceTab>('overview');
+        const [tab, setTab] = useState<PaneTab>('overview');
         return (
           <MemoryRouter>
             <ServicePane service={replicas()} tab={tab} onTab={(t) => { picked.push(t); setTab(t); }} onLogs={() => {}} latestCpu={undefined} cpuHour={undefined} />

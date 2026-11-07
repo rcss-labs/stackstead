@@ -11,6 +11,7 @@ export interface DetailHeaderProps {
   lifecycleReason: string | undefined;
   onAct: (action: Action) => void;
   onRemove: (withVolumes: boolean) => void;
+  onViewCompose?: () => void;
 }
 
 const LED: Record<StackStatus, { tone: LedProps['tone']; pulse: boolean }> = {
@@ -21,7 +22,7 @@ const LED: Record<StackStatus, { tone: LedProps['tone']; pulse: boolean }> = {
   unknown: { tone: 'muted', pulse: false },
 };
 
-export function DetailHeader({ detail, busy, lifecycleReason, onAct, onRemove }: DetailHeaderProps) {
+export function DetailHeader({ detail, busy, lifecycleReason, onAct, onRemove, onViewCompose }: DetailHeaderProps) {
   const led = LED[detail.status] ?? LED.unknown;
   return (
     <header className={styles.header}>
@@ -38,7 +39,7 @@ export function DetailHeader({ detail, busy, lifecycleReason, onAct, onRemove }:
         <CopyButton text={detail.path} variant="icon" label="Copy path" />
       </p>
       <div className={styles.actions}>
-        <StackActions stack={detail} lifecycleDisabledReason={lifecycleReason} busy={busy} onAct={onAct} onRemove={onRemove} />
+        <StackActions stack={detail} lifecycleDisabledReason={lifecycleReason} busy={busy} onAct={onAct} onRemove={onRemove} onViewCompose={onViewCompose} />
       </div>
     </header>
   );

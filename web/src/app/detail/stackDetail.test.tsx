@@ -167,6 +167,13 @@ const twoServices = (): Detail => {
     ],
   });
 };
+/** Opens the header's More menu and picks an item (Down and Remove live there). */
+const moreItem = () => screen.getByRole('menuitem', { name: 'Remove stack' });
+const openMore = () => user().click(screen.getByRole('button', { name: 'More actions' }));
+const clickRemoveStack = async () => {
+  await openMore();
+  await user().click(moreItem());
+};
 const consoleToggle = () => screen.getByRole('button', { name: 'Logs' });
 const chip = (name: string) => within(screen.getByRole('group', { name: 'Service filter' })).getByRole('button', { name });
 const pushChange = (project: string, seq: number) =>
@@ -283,7 +290,8 @@ describe('stack detail screen', () => {
     await screen.findByRole('heading', { level: 1, name: 'web' });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Up' }).getAttribute('aria-disabled')).toBe('true'));
     expect(screen.getByRole('button', { name: 'Up' }).getAttribute('title')).toBe('an operation is already running');
-    expect(screen.getByRole('button', { name: 'Remove' }).getAttribute('aria-disabled')).toBe('true');
+    await openMore();
+    expect(moreItem().getAttribute('aria-disabled')).toBe('true');
   });
 
   it('lifecycle buttons are soft-disabled with a reason when compose is unavailable', async () => {
@@ -293,7 +301,8 @@ describe('stack detail screen', () => {
     await screen.findByRole('heading', { level: 1, name: 'web' });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Up' }).getAttribute('aria-disabled')).toBe('true'));
     expect(screen.getByRole('button', { name: 'Up' }).getAttribute('title')).toBe('docker compose plugin not found');
-    expect(screen.getByRole('button', { name: 'Remove' }).getAttribute('aria-disabled')).toBeNull();
+    await openMore();
+    expect(moreItem().getAttribute('aria-disabled')).toBeNull();
   });
 
   it('lifecycle buttons name the parse error as the reason', async () => {
@@ -317,9 +326,10 @@ describe('stack detail screen', () => {
   it('removing a stack posts the removal and opens its operation', async () => {
     mount('/stacks/web');
     await screen.findByRole('heading', { level: 1, name: 'web' });
-    await user().click(screen.getByRole('button', { name: 'Remove' }));
+    await clickRemoveStack();
     const dialog = await screen.findByRole('alertdialog');
     await user().click(within(dialog).getByRole('checkbox', { name: /also remove volumes/i }));
+    await user().type(within(dialog).getByRole('textbox', { name: 'Type web to confirm' }), 'web');
     await user().click(within(dialog).getByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(here()).toBe('/stacks/web?tab=operations&op=rm1'));
     expect(calls('DELETE', '/api/stacks/web?volumes=true')).toBe(1);
@@ -328,7 +338,7 @@ describe('stack detail screen', () => {
   it('a 404 after a remove operation was started counts as a successful removal', async () => {
     mount('/stacks/web');
     await screen.findByRole('heading', { level: 1, name: 'web' });
-    await user().click(screen.getByRole('button', { name: 'Remove' }));
+    await clickRemoveStack();
     await user().click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(here()).toBe('/stacks/web?tab=operations&op=rm1'));
     stackRes = { status: 404, body: { error: 'stack not found' } };
@@ -341,7 +351,7 @@ describe('stack detail screen', () => {
     rmState = 'running'; // the operation's metadata stays running, so only the done event finishes it
     mount('/stacks/web');
     await screen.findByRole('heading', { level: 1, name: 'web' });
-    await user().click(screen.getByRole('button', { name: 'Remove' }));
+    await clickRemoveStack();
     await user().click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(stream.requests.some((r) => r.path === '/api/operations/rm1/stream')).toBe(true));
     await act(async () =>
@@ -360,7 +370,7 @@ describe('stack detail screen', () => {
       startTrackingAsApp();
       mount('/stacks/web');
       await screen.findByRole('heading', { level: 1, name: 'web' });
-      await user().click(screen.getByRole('button', { name: 'Remove' }));
+      await clickRemoveStack();
       await user().click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Remove' }));
       await waitFor(() => expect(stream.requests.some((r) => r.path === '/api/operations/rm1/stream')).toBe(true));
       rmState = state;
@@ -460,6 +470,7 @@ describe('stack detail screen', () => {
   describe('log console', () => {
     beforeEach(() => {
       stackRes = { body: twoServices() };
+      stubMobile(false); // the media store keeps its last value when matchMedia disappears
     });
     const stubMobile = (matches: boolean) =>
       vi.stubGlobal('matchMedia', (query: string) => ({
@@ -552,23 +563,6 @@ describe('stack detail screen', () => {
       await waitFor(() => expect(logRequests('db')).toHaveLength(1));
       expect(webLogs.signal?.aborted).toBe(true);
       expect(logRequests('web')).toHaveLength(1);
-    });
-
-    it('mobile starts collapsed at 280px', async () => {
-      stubMobile(true);
-      mount('/stacks/web');
-      await screen.findByRole('heading', { level: 1, name: 'web' });
-      expect(consoleToggle().getAttribute('aria-expanded')).toBe('false');
-      await user().click(consoleToggle());
-      expect(screen.getByTestId('log-console-body').style.height).toBe('280px');
-      expect(screen.queryByRole('separator', { name: 'Resize logs' })).toBeNull();
-    });
-
-    it('?tab=logs expands the collapsed mobile console', async () => {
-      stubMobile(true);
-      mount('/stacks/web?tab=logs');
-      await screen.findByRole('heading', { level: 1, name: 'web' });
-      await waitFor(() => expect(consoleToggle().getAttribute('aria-expanded')).toBe('true'));
     });
 
     it('going back to a ?tab=logs URL re-opens the console on its service', async () => {
