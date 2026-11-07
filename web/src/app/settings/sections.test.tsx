@@ -161,3 +161,50 @@ describe('Settings appearance', () => {
     }
   });
 });
+
+const CONFIG = {
+  schedule: { enabled: true, frequency: 'weekly', weekday: 1, time: '03:00' },
+  local: { enabled: true, path: '/var/backups/stackstead', keepLast: 7 },
+  s3: { enabled: true, bucket: 'atlas-backups', prefix: 'stackstead', region: 'eu-central-1', endpoint: '', pathStyle: false, accessKeyId: 'AKIAEXAMPLE', secretKeySet: true },
+  encryption: { enabled: true, passphraseSet: true, keyId: 'k1' },
+  pausedAfterRestore: false,
+};
+
+describe('Settings registries', () => {
+  it('registries list first and the form opens on Add', async () => {
+    const user = userEvent.setup();
+    mountAt('/settings/registries');
+    expect(await screen.findByRole('button', { name: 'Edit Docker Hub' })).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByLabelText('Name')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Add registry' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Name')).toBeTruthy();
+  });
+});
+
+describe('Settings backups', () => {
+  it('backups section summarises and links instead of embedding the schedule form', async () => {
+    fake.restore();
+    fake = installFakeFetch({ ...baseRoutes, 'GET /api/backups/config': { body: CONFIG } });
+    mountAt('/settings/backups');
+    expect(await screen.findByText('Weekly on Monday at 03:00')).toBeTruthy();
+    expect(screen.getByText(/\/var\/backups\/stackstead/)).toBeTruthy();
+    expect(screen.getByText(/s3:\/\/atlas-backups\/stackstead/)).toBeTruthy();
+    expect(screen.getByText('On')).toBeTruthy();
+    expect(screen.getByRole('link', { name: /backup schedule/i }).getAttribute('href')).toBe('/backups?tab=schedule');
+    // No editing controls and no secrets here.
+    expect(screen.queryByRole('button', { name: /save/i })).toBeNull();
+    expect(screen.queryByLabelText(/passphrase|secret/i)).toBeNull();
+    expect(document.body.textContent).not.toContain('AKIAEXAMPLE');
+  });
+
+  it('shows the link and a notice, with no invented values, when the config cannot load', async () => {
+    fake.restore();
+    fake = installFakeFetch({ ...baseRoutes, 'GET /api/backups/config': { status: 500, body: { error: 'boom' } } });
+    mountAt('/settings/backups');
+    expect(await screen.findByText(/Could not load the backup settings/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: /backup schedule/i }).getAttribute('href')).toBe('/backups?tab=schedule');
+    expect(screen.queryByText('Schedule')).toBeNull();
+  });
+});

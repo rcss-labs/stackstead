@@ -1,13 +1,12 @@
-import { Link, Navigate, NavLink, useLocation, useParams } from 'react-router';
+import { Navigate, NavLink, useLocation, useParams } from 'react-router';
 import { logout, session } from '$lib/api/session';
 import { density, setDensity, setTheme, theme, type ThemeChoice } from '$lib/stores/appearance';
-import { createBackupsApi } from '$lib/api/backups';
 import { toasts } from '$lib/stores/toasts';
 import { Button } from '../components/Button';
 import { PanelLabel } from '../components/PanelLabel';
 import { Segmented } from '../components/Segmented';
 import { useStore } from '../hooks/useStore';
-import { BackupScheduleCard } from '../backups/BackupScheduleCard';
+import { BackupSummaryCard } from './BackupSummaryCard';
 import { ConnectedServersCard } from './ConnectedServersCard';
 import { GitHubCard } from './GitHubCard';
 import { ImageDefaultsCard } from './ImageDefaultsCard';
@@ -19,8 +18,6 @@ import styles from './SettingsScreen.module.css';
 import { DiagnosticsCard } from './DiagnosticsCard';
 import { SystemStatusCard } from './SystemStatusCard';
 import { UpdateCard } from './UpdateCard';
-
-const backupsApi = createBackupsApi('');
 
 export const SECTIONS = [
   { id: 'system', label: 'System' },
@@ -109,14 +106,7 @@ function SectionBody({ section }: { section: SectionId }) {
     case 'images':
       return <ImageDefaultsCard />;
     case 'backups':
-      return (
-        <>
-          <BackupScheduleCard api={backupsApi} />
-          <p>
-            <Link to="/backups">Open backups</Link>
-          </p>
-        </>
-      );
+      return <BackupSummaryCard />;
     case 'appearance':
       return (
         <SettingsCard id="appearance-h" title="Appearance">
