@@ -34,6 +34,13 @@ describe('Images list', () => {
     expect(within(row).getByRole('link', { name: 'Web' }).getAttribute('href')).toBe('/images/web');
   });
 
+  it('explains that the library is separate from images on disk and links to Storage', async () => {
+    backend = installImagesBackend({ [`GET ${LIST}`]: { body: { servers: [localOwner], images: [] } } });
+    mountImages('/images');
+    expect(await screen.findByText(/Images you build and version here/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Storage' }).getAttribute('href')).toBe('/storage');
+  });
+
   it('links a peer-owned image to the owner route', async () => {
     backend = installImagesBackend({
       [`GET ${LIST}`]: { body: { servers: [localOwner, peerOwner], images: [image({ slug: 'base', name: 'Base', owner: peerOwner })] } },

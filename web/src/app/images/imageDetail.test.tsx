@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { filesOf, image, imageDetail, installImagesBackend, localOwner, mountImages, peerOwner, version, type ImagesHarness } from './imagesTestKit';
@@ -29,7 +29,21 @@ describe('Image detail', () => {
     mountImages('/images/web?tab=settings');
     const tab = await screen.findByRole('tab', { name: 'Settings' });
     expect(tab.getAttribute('aria-selected')).toBe('true');
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Source', 'Revisions', 'Versions', 'Settings']);
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Versions', 'Source', 'Revisions', 'Settings']);
+  });
+
+  it('opens on Versions by default and keeps old ?tab= links resolving', async () => {
+    backend = installImagesBackend(baseRoutes());
+    mountImages('/images/web');
+    expect((await screen.findByRole('tab', { name: 'Versions' })).getAttribute('aria-selected')).toBe('true');
+    for (const tab of ['source', 'revisions', 'settings'] as const) {
+      const label = tab[0].toUpperCase() + tab.slice(1);
+      cleanup();
+      backend.restore();
+      backend = installImagesBackend(baseRoutes());
+      mountImages(`/images/web?tab=${tab}`);
+      expect((await screen.findByRole('tab', { name: label })).getAttribute('aria-selected')).toBe('true');
+    }
   });
 
   it('writes the tab to the URL when one is chosen', async () => {

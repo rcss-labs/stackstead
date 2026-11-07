@@ -58,6 +58,9 @@ export function ImagesScreen() {
         </Button>
       </header>
 
+      <p className={styles.meta}>
+        Images you build and version here. For everything on disk, see <Link to={href('/storage')}>Storage</Link>.
+      </p>
       {error && (
         <Banner kind="danger" title="Could not load images">
           {error}{' '}

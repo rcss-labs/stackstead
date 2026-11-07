@@ -58,7 +58,7 @@ describe('GitHub images', () => {
     backend = installImagesBackend(ghRoutes());
     mountImages('/images/gh?tab=source');
     expect(await screen.findByText(/FROM node:22/)).toBeTruthy();
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Source', 'Versions', 'Settings']);
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Versions', 'Source', 'Settings']);
     expect(screen.getByText(/abcdef1/)).toBeTruthy();
     expect(screen.queryByRole('textbox', { name: 'Dockerfile' })).toBeNull();
     expect(screen.queryByText('Upload files')).toBeNull();
@@ -67,10 +67,10 @@ describe('GitHub images', () => {
     expect(screen.getByText('acme/app')).toBeTruthy();
   });
 
-  it('falls back to the Source tab when ?tab=revisions is requested', async () => {
+  it('falls back to the Versions tab when ?tab=revisions is requested', async () => {
     backend = installImagesBackend(ghRoutes());
     mountImages('/images/gh?tab=revisions');
-    expect((await screen.findByRole('tab', { name: 'Source' })).getAttribute('aria-selected')).toBe('true');
+    expect((await screen.findByRole('tab', { name: 'Versions' })).getAttribute('aria-selected')).toBe('true');
   });
 
   it('notes that GitHub images are pushed manually and never shows auto-push as on', async () => {
