@@ -20,9 +20,9 @@ import { useImageDetail } from './useImageDetail';
 import { VersionsTab } from './VersionsTab';
 
 const ALL_TABS = [
+  { id: 'versions', label: 'Versions' },
   { id: 'source', label: 'Source' },
   { id: 'revisions', label: 'Revisions' },
-  { id: 'versions', label: 'Versions' },
   { id: 'settings', label: 'Settings' },
 ];
 
@@ -102,7 +102,7 @@ function ImageDetail({ slug }: { slug: string }) {
   }
 
   const tabs = tabsFor(detail.source);
-  const tab = tabs.some((t) => t.id === requested) ? (requested as string) : 'source';
+  const tab = tabs.some((t) => t.id === requested) ? (requested as string) : 'versions';
   const latest = detail.latestVersion;
   return (
     <section className={styles.page} aria-labelledby="image-heading">

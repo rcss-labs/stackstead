@@ -224,6 +224,20 @@ describe('Restore from backup', () => {
     expect(screen.getByText("This host will take over the backed-up host's identity; don't run both at once.")).toBeTruthy();
   });
 
+  it("restore shows only the chosen destination's fields", async () => {
+    const user = await mountRestore();
+    expect(screen.getByLabelText('Bucket and key, or s3:// URL')).toBeTruthy();
+    expect(screen.queryByLabelText('Archive path')).toBeNull();
+    expect(screen.queryByLabelText('Archive file')).toBeNull();
+    await user.click(screen.getByRole('tab', { name: 'Path' }));
+    expect(screen.getByLabelText('Archive path')).toBeTruthy();
+    expect(screen.queryByLabelText('Bucket and key, or s3:// URL')).toBeNull();
+    expect(screen.queryByLabelText('Region')).toBeNull();
+    await user.click(screen.getByRole('tab', { name: 'Upload' }));
+    expect(screen.getByLabelText('Archive file')).toBeTruthy();
+    expect(screen.queryByLabelText('Archive path')).toBeNull();
+  });
+
   it('is not held to the narrow login card in restore mode', async () => {
     const user = await mountRestore();
     const card = screen.getByRole('button', { name: 'Create admin' }).closest('form') as HTMLElement;

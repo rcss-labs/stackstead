@@ -1,26 +1,31 @@
 .banner {
   display: flex;
-  gap: var(--space-3);
+  gap: 9px;
   align-items: flex-start;
   padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--tone);
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: var(--tone-soft);
   font-size: 12.5px;
 }
 
-.banner[data-kind='info'] { --tone: var(--info); --tone-soft: var(--info-soft); }
+.banner[data-kind='info'] { --tone: var(--accent); --tone-soft: var(--accent-soft); }
 .banner[data-kind='warning'] { --tone: var(--warning); --tone-soft: var(--warning-soft); }
 .banner[data-kind='danger'] { --tone: var(--danger); --tone-soft: var(--danger-soft); }
 
 .banner strong {
-  font-size: 13px;
   font-weight: 600;
   color: var(--text);
 }
 
-.icon { color: var(--tone); }
+/* The app resets links to plain text; inside a sentence one has to look like a link. */
+.body a {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.icon { flex: none; margin-top: 1px; color: var(--tone); }
 
 .body {
   flex: 1;
@@ -38,4 +43,8 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
   padding: var(--space-1) var(--space-2);
+}
+
+@media (max-width: 759px) {
+  .close { min-height: 44px; min-width: 44px; padding: 0 var(--space-3); }
 }

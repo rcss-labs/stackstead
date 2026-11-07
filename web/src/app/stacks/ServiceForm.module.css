@@ -31,9 +31,9 @@
   .form input[type='text'],
   .form select,
   .form button,
-  .seg { min-height: 40px; }
+  .seg { min-height: 44px; }
   .form input[type='checkbox'] { width: 20px; height: 20px; }
-  .check { min-height: 40px; }
+  .check { min-height: 44px; }
   .grid3 { grid-template-columns: 1fr; }
 }
 
@@ -57,8 +57,10 @@
 }
 
 @media (max-width: 759px) {
-  .advanced > summary { min-height: 40px; display: flex; align-items: center; }
+  .advanced > summary { min-height: 44px; display: flex; align-items: center; }
 }
 .editor { display: flex; flex-direction: column; gap: var(--space-2); }
 .fieldError { margin: 0; color: var(--danger); font-size: 0.875rem; }
 .library { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.suggestion { font-weight: 600; }
+.suggestion::before { content: '·'; margin: 0 6px; font-weight: 400; }

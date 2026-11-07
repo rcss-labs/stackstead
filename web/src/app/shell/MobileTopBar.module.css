@@ -6,7 +6,7 @@
   align-items: center;
   gap: 10px;
   padding: 0 14px;
-  background: var(--chassis);
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
@@ -40,8 +40,8 @@
 }
 
 .action {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   flex: none;
   display: grid;
   place-items: center;
@@ -69,7 +69,8 @@
 .switcher {
   flex: none;
   max-width: 38vw;
-  height: 30px;
+  text-overflow: ellipsis;
+  height: 44px;
   padding: 0 6px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);

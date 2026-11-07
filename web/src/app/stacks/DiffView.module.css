@@ -26,6 +26,12 @@
   overflow: auto;
 }
 
+/* The merge view's own bar is a white gradient, whatever the theme. */
+.diff :global(.cm-editor .cm-collapsedLines) {
+  background: var(--raised);
+  color: var(--muted);
+}
+
 .diff :global(.cm-deletedChunk) {
   background: var(--danger-soft);
 }

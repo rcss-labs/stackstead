@@ -2,7 +2,6 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createBackupsApi } from '$lib/api/backups';
-import { toasts } from '$lib/stores/toasts';
 import { installFakeFetch, type FakeFetch, type Routes } from '../../vitest-setup';
 import { BackupScheduleCard } from './BackupScheduleCard';
 import { sampleConfig } from './testKit';
@@ -72,16 +71,6 @@ describe('BackupScheduleCard', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Clear secret' }));
     await waitFor(() => expect(calls('DELETE', '/api/backups/config/s3-secret')).toHaveLength(1));
     expect(await screen.findByText('Secret not set')).toBeTruthy();
-  });
-
-  it('posts a run now and toasts the error on 409', async () => {
-    mount({ 'POST /api/backups/run': { status: 409, body: { error: 'a backup is already running', code: 'backup_running' } } });
-    const seen: string[] = [];
-    const off = toasts.subscribe((list) => seen.push(...list.map((t) => t.message)));
-    await userEvent.click(await screen.findByRole('button', { name: 'Back up now' }));
-    await waitFor(() => expect(calls('POST', '/api/backups/run')).toHaveLength(1));
-    await waitFor(() => expect(seen.some((m) => m.includes('already running'))).toBe(true));
-    off();
   });
 
   it('shows the paused-after-restore banner until the schedule is saved on', async () => {

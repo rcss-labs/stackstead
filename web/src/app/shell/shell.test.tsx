@@ -7,16 +7,19 @@ import type { HostSnapshot, Operation, PeerView, ServerSelf, Status } from '$lib
 import { startPeers } from '$lib/servers/peers';
 import { installFakeFetch, installFakeStream } from '../../vitest-setup';
 import RemoteServer from '../servers/RemoteServer';
+import { localScope, ServerContext } from '../servers/ServerContext';
+import { readable } from '$lib/store';
 import { setTheme } from '$lib/stores/appearance';
 import { startHost } from '$lib/stores/host';
 import { startLive, stopLive } from '$lib/stores/live';
 import { HostBlock } from './HostBlock';
 import { MobileTopBar } from './MobileTopBar';
+import { ServerMenu } from './ServerMenu';
 import { Shell } from './Shell';
 import { Sidebar } from './Sidebar';
 import { TabBar } from './TabBar';
 import { TopBar } from './TopBar';
-import { pageTitle } from './nav';
+import { pageBack, pageTitle } from './nav';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -48,16 +51,15 @@ describe('Sidebar', () => {
   it('links to the main pages and marks the current one', () => {
     renderIn(<Sidebar {...sidebarProps} username="ana" current="/settings" />);
     expect(screen.getByRole('navigation', { name: 'Main' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Stackstead' }).getAttribute('href')).toBe('/');
-    expect(screen.getByRole('link', { name: 'Stacks' }).getAttribute('href')).toBe('/');
+    expect(screen.getByRole('link', { name: 'Overview' }).getAttribute('href')).toBe('/');
     expect(screen.getByRole('link', { name: 'New stack' }).getAttribute('href')).toBe('/stacks/new');
     expect(screen.getByRole('link', { name: 'Import' }).getAttribute('href')).toBe('/stacks/import');
     expect(current('Settings')).toBe('page');
     expect(screen.getByRole('link', { name: 'Settings' }).getAttribute('title')).toBe('Settings');
-    expect(current('Stacks')).toBeNull();
+    expect(current('Overview')).toBeNull();
   });
 
-  it('keeps Stacks current on a stack detail path but not on create or import', () => {
+  it('keeps Overview current on a stack detail path but not on create or import', () => {
     const { rerender } = renderIn(<Sidebar {...sidebarProps} current="/stacks/web" />);
     const again = (path: string) =>
       rerender(
@@ -65,15 +67,15 @@ describe('Sidebar', () => {
           <Sidebar {...sidebarProps} current={path} />
         </MemoryRouter>,
       );
-    expect(current('Stacks')).toBe('page');
+    expect(current('Overview')).toBe('page');
     again('/stacks/new');
-    expect(current('Stacks')).toBeNull();
+    expect(current('Overview')).toBeNull();
     expect(current('New stack')).toBe('page');
     again('/stacks/import');
-    expect(current('Stacks')).toBeNull();
+    expect(current('Overview')).toBeNull();
   });
 
-  it('has a Containers item after Stacks, current on the list and on a container page only', () => {
+  it('has a Containers item after Overview, current on the list and on a container page only', () => {
     const { rerender } = renderIn(<Sidebar {...sidebarProps} current="/containers" />);
     const again = (path: string) =>
       rerender(
@@ -84,22 +86,22 @@ describe('Sidebar', () => {
     const names = within(screen.getByRole('navigation', { name: 'Main' }))
       .getAllByRole('link')
       .map((a) => a.getAttribute('aria-label'));
-    expect(names.indexOf('Containers')).toBe(names.indexOf('Stacks') + 1);
+    expect(names.indexOf('Containers')).toBe(names.indexOf('Overview') + 1);
     const item = screen.getByRole('link', { name: 'Containers' });
     expect(item.getAttribute('href')).toBe('/containers');
     expect(item.getAttribute('title')).toBe('Containers');
     expect(current('Containers')).toBe('page');
-    expect(current('Stacks')).toBeNull();
+    expect(current('Overview')).toBeNull();
     again('/containers/redis');
     expect(current('Containers')).toBe('page');
     again('/');
     expect(current('Containers')).toBeNull();
   });
 
-  it('places Networks after Containers and marks it current on the list and a selected network', () => {
+  it('places Networks after Images and marks it current on the list and a selected network', () => {
     const { rerender } = renderIn(<Sidebar {...sidebarProps} current="/networks" />);
     const names = screen.getAllByRole('link').map((a) => a.getAttribute('aria-label'));
-    expect(names.indexOf('Networks')).toBe(names.indexOf('Containers') + 1);
+    expect(names.indexOf('Networks')).toBe(names.indexOf('Images') + 1);
     const item = screen.getByRole('link', { name: 'Networks' });
     expect(item.getAttribute('href')).toBe('/networks');
     expect(item.getAttribute('title')).toBe('Networks');
@@ -121,13 +123,25 @@ describe('Sidebar', () => {
     }
   });
 
-  it('lists Images after Storage and marks it current below its route', () => {
+  it('lists Images first under Resources and marks it current below its route', () => {
     renderIn(<Sidebar {...sidebarProps} current="/images/web" />);
     const labels = screen.getAllByRole('link').map((a) => a.getAttribute('aria-label'));
-    expect(labels.indexOf('Images')).toBe(labels.indexOf('Storage') + 1);
+    expect(labels.indexOf('Images')).toBe(labels.indexOf('Activity') + 1);
     expect(screen.getByRole('link', { name: 'Images' }).getAttribute('href')).toBe('/images');
     expect(current('Images')).toBe('page');
     expect(current('Storage')).toBeNull();
+  });
+
+  it('groups the pages: Overview, Containers, Activity; Resources; Add', () => {
+    renderIn(<Sidebar {...sidebarProps} current="/" />);
+    const names = within(screen.getByRole('navigation', { name: 'Main' }))
+      .getAllByRole('link')
+      .map((a) => a.getAttribute('aria-label'));
+    expect(names).toEqual(['Overview', 'Containers', 'Activity', 'Images', 'Networks', 'Storage', 'Backups', 'New stack', 'Import', 'Settings']);
+    expect(screen.getByRole('link', { name: 'Activity' }).getAttribute('href')).toBe('/activity');
+    expect(screen.getByRole('link', { name: 'Backups' }).getAttribute('href')).toBe('/backups');
+    expect(screen.getByText('Resources')).toBeTruthy();
+    expect(screen.getByText('Add')).toBeTruthy();
   });
 
   it('marks Storage current below its route after Networks', () => {
@@ -147,6 +161,38 @@ describe('Sidebar', () => {
     expect(screen.getByTestId('where').textContent).toBe('/settings');
     expect(reloaded).toBe(false);
     window.removeEventListener('beforeunload', onBefore);
+  });
+
+  it('shows the Docker and compose versions of the server being viewed', () => {
+    const viewedLive = readable({ connection: 'open', events: 'connected', metricsDegraded: false, docker: 'ok', compose: '2.20.0', dockerVersion: '26.1.4' } as const);
+    renderIn(
+      <ServerContext.Provider value={{ ...localScope, local: false, live: viewedLive }}>
+        <Sidebar {...sidebarProps} username="ana" current="/s/edge-01" />
+      </ServerContext.Provider>,
+    );
+    expect(screen.getByText('Docker 26.1.4 · compose 2.20.0')).toBeTruthy();
+  });
+
+  it('the server menu stays open while Tab moves through its items and closes when focus leaves it', async () => {
+    const peer = { id: 'p1', name: 'edge-01', slug: 'edge-01', url: '', version: '', status: 'reachable', stackCount: 1, lastSeenAt: null, lastError: '', compatible: true, plaintext: false } as PeerView;
+    renderIn(
+      <>
+        <ServerMenu current="/" localName="homelab" localTagged localStackCount={1} peers={[peer]} />
+        <button type="button">after the menu</button>
+      </>,
+    );
+    const user = userEvent.setup();
+    const opener = screen.getByRole('button', { name: /Switch server/ });
+    await user.click(opener);
+    const items = within(screen.getByRole('group', { name: 'Servers' })).getAllByRole('button');
+    for (const item of items) {
+      await user.tab();
+      expect(document.activeElement).toBe(item);
+      expect(opener.getAttribute('aria-expanded')).toBe('true');
+    }
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'after the menu' }));
+    expect(opener.getAttribute('aria-expanded')).toBe('false');
   });
 
   it('theme toggle label flips and calls setTheme', async () => {
@@ -174,9 +220,9 @@ describe('Sidebar', () => {
     expect(onLogout).toHaveBeenCalledTimes(1);
   });
 
-  it('shows the attention LED on Stacks only when attention is true', () => {
+  it('shows the attention LED on Overview only when attention is true', () => {
     const { rerender } = renderIn(<Sidebar {...sidebarProps} attention={false} current="/" />);
-    const led = () => screen.getByRole('link', { name: /^Stacks(,|$)/ }).querySelector('[data-tone="danger"]');
+    const led = () => screen.getByRole('link', { name: /^Overview(,|$)/ }).querySelector('[data-tone="danger"]');
     expect(led()).toBeNull();
     rerender(
       <MemoryRouter>
@@ -187,9 +233,9 @@ describe('Sidebar', () => {
     expect(screen.getByRole('link', { name: 'Containers' }).querySelector('[data-tone="danger"]')).toBeNull();
   });
 
-  it('announces the attention LED as part of the Stacks link name', () => {
+  it('announces the attention LED as part of the Overview link name', () => {
     renderIn(<Sidebar {...sidebarProps} attention current="/" />);
-    expect(screen.getByRole('link', { name: /Stacks.*needs attention/i })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Overview.*needs attention/i })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Containers' })).toBeTruthy();
   });
 
@@ -379,11 +425,15 @@ describe('TopBar', () => {
 
 describe('pageTitle', () => {
   it.each([
-    ['/', 'Stacks', false],
+    ['/', 'Overview', false],
     ['/containers', 'Containers', false],
     ['/networks', 'Networks', false],
     ['/storage', 'Storage', false],
     ['/settings', 'Settings', false],
+    ['/settings/backups', 'Backups', false],
+    ['/activity', 'Activity', false],
+    ['/ports', 'Ports', false],
+    ['/more', 'More', false],
     ['/stacks/new', 'New stack', false],
     ['/stacks/import', 'Import', false],
     ['/stacks/web', 'web', true],
@@ -403,8 +453,16 @@ describe('Mobile', () => {
       removeEventListener() {},
     }));
   const shellProps = { onLogout: () => {}, runningOps: [], attention: false, onOpenPalette: () => {} };
+  const tabProps = { attention: false, onOpenPalette: () => {} };
+  // Tabs are links, except Search which is a button.
+  const tabLabels = () =>
+    within(screen.getByRole('navigation', { name: 'Main' }))
+      .getAllByRole('link')
+      .concat(within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('button'))
+      .sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
+      .map((el) => el.getAttribute('aria-label') ?? '');
 
-  it('under 760px the sidebar is replaced by the mobile top bar and tab bar with one Main landmark', () => {
+  it('under 760px the sidebar is replaced by the mobile top bar and tab bar with one Main landmark', async () => {
     stubViewport(true);
     renderIn(
       <Shell {...shellProps} username="ana">
@@ -413,13 +471,46 @@ describe('Mobile', () => {
         </main>
       </Shell>,
     );
+    // The phone chrome is a lazily loaded chunk.
+    await screen.findByRole('navigation', { name: 'Main' });
     expect(screen.getAllByRole('navigation', { name: 'Main' })).toHaveLength(1);
     expect(screen.queryByRole('button', { name: /^Log out/ })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Search or run a command' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'New stack' }).getAttribute('href')).toBe('/stacks/new');
     expect(screen.getAllByRole('main')).toHaveLength(1);
-    const tabs = within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('link');
-    expect(tabs.map((a) => a.getAttribute('aria-label'))).toEqual(['Stacks', 'Containers', 'Storage', 'Networks', 'Images', 'Settings']);
+    expect(tabLabels()).toEqual(['Home', 'Containers', 'Search', 'Activity', 'More']);
+  });
+
+  it('tab bar has exactly Home, Containers, Search, Activity, More', () => {
+    renderIn(<TabBar {...tabProps} current="/" />);
+    expect(tabLabels()).toEqual(['Home', 'Containers', 'Search', 'Activity', 'More']);
+    expect(screen.getByRole('link', { name: 'Home' }).getAttribute('href')).toBe('/');
+    expect(screen.getByRole('link', { name: 'Containers' }).getAttribute('href')).toBe('/containers');
+    expect(screen.getByRole('link', { name: 'Activity' }).getAttribute('href')).toBe('/activity');
+    expect(screen.getByRole('link', { name: 'More' }).getAttribute('href')).toBe('/more');
+  });
+
+  it('the Search tab opens the palette instead of navigating', async () => {
+    const onOpenPalette = vi.fn();
+    renderIn(<TabBar {...tabProps} onOpenPalette={onOpenPalette} current="/containers" />);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Search' }));
+    expect(onOpenPalette).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('where').textContent).toBe('/');
+  });
+
+  it('pages outside the other four tabs are under More', () => {
+    const { rerender } = renderIn(<TabBar {...tabProps} current="/images/web" />);
+    const at = (path: string) =>
+      rerender(
+        <MemoryRouter>
+          <TabBar {...tabProps} current={path} />
+        </MemoryRouter>,
+      );
+    expect(current('More')).toBe('page');
+    for (const [path, tab] of [['/stacks/web', 'Home'], ['/stacks/new', 'Home'], ['/activity', 'Activity'], ['/containers/redis', 'Containers'], ['/settings/system', 'More'], ['/ports', 'More']] as const) {
+      at(path);
+      expect(current(tab)).toBe('page');
+      expect(tabLabels().filter((l) => l !== 'Search' && l !== tab).every((l) => current(l) === null)).toBe(true);
+    }
   });
 
   it('crossing 760px keeps the page mounted with its state', async () => {
@@ -449,7 +540,7 @@ describe('Mobile', () => {
     const onMobile = screen.getByRole('textbox', { name: 'Draft' }) as HTMLInputElement;
     expect(onMobile).toBe(before);
     expect(onMobile.value).toBe('hello');
-    expect(within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('link')).toHaveLength(6);
+    expect(tabLabels()).toHaveLength(5);
     expect(screen.queryByRole('button', { name: /^Log out/ })).toBeNull();
     expect(screen.getAllByRole('main')).toHaveLength(1);
 
@@ -473,35 +564,59 @@ describe('Mobile', () => {
     expect(screen.queryByRole('link', { name: 'Settings' })?.closest('nav')).toBe(screen.getByRole('navigation', { name: 'Main' }));
   });
 
-  it('tab bar marks the current page and shows the alert LED on Stacks', () => {
-    renderIn(<TabBar current="/containers/redis" attention />);
+  it('tab bar marks the current page and shows the alert LED on Home', () => {
+    renderIn(<TabBar {...tabProps} current="/containers/redis" attention />);
     expect(current('Containers')).toBe('page');
-    expect(current(/^Stacks(,|$)/)).toBeNull();
-    expect(screen.getByRole('link', { name: /^Stacks(,|$)/ }).querySelector('[data-tone="danger"]')).toBeTruthy();
+    expect(current(/^Home(,|$)/)).toBeNull();
+    expect(screen.getByRole('link', { name: /^Home(,|$)/ }).querySelector('[data-tone="danger"]')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Containers' }).querySelector('[data-tone="danger"]')).toBeNull();
   });
 
   it('tab bar and mobile top bar announce the attention LED', () => {
     renderIn(
       <>
-        <TabBar current="/" attention />
-        <MobileTopBar title="Stacks" mono={false} attention onOpenPalette={() => {}} />
+        <TabBar {...tabProps} current="/" attention />
+        <MobileTopBar title="Overview" mono={false} attention />
       </>,
     );
-    expect(screen.getByRole('link', { name: /Stacks.*needs attention/i })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Home.*needs attention/i })).toBeTruthy();
     expect(screen.getAllByRole('img', { name: 'Needs attention' })).toHaveLength(1);
   });
 
   it('mobile title is mono for an entity route', () => {
-    const { rerender } = renderIn(<MobileTopBar title="redis" mono attention={false} onOpenPalette={() => {}} />);
+    const { rerender } = renderIn(<MobileTopBar title="redis" mono attention={false} />);
     expect(screen.queryByRole('heading')).toBeNull();
     expect(screen.getByText('redis').hasAttribute('data-mono')).toBe(true);
     rerender(
       <MemoryRouter>
-        <MobileTopBar title="Networks" mono={false} attention onOpenPalette={() => {}} />
+        <MobileTopBar title="Networks" mono={false} attention />
       </MemoryRouter>,
     );
     expect(screen.getByText('Networks').hasAttribute('data-mono')).toBe(false);
+  });
+
+  it('a detail page gets a back link to its parent in place of the server switcher; top-level pages do not', () => {
+    const { rerender } = renderIn(<MobileTopBar title="redis" mono attention={false} back="/containers" />);
+    expect(screen.getByRole('link', { name: 'Back' }).getAttribute('href')).toBe('/containers');
+    rerender(
+      <MemoryRouter>
+        <MobileTopBar title="Containers" mono={false} attention={false} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole('link', { name: 'Back' })).toBeNull();
+  });
+
+  it('pageBack follows the breadcrumb parent, inside a connected server, and goes to More from a settings section', () => {
+    expect(pageBack('/')).toBeUndefined();
+    expect(pageBack('/containers')).toBeUndefined();
+    expect(pageBack('/containers/redis')).toBe('/containers');
+    expect(pageBack('/stacks/web')).toBe('/');
+    expect(pageBack('/stacks/new')).toBe('/');
+    expect(pageBack('/s/mini-02')).toBeUndefined();
+    expect(pageBack('/s/mini-02/containers')).toBeUndefined();
+    expect(pageBack('/s/mini-02/containers/redis')).toBe('/s/mini-02/containers');
+    expect(pageBack('/s/mini-02/stacks/web')).toBe('/s/mini-02');
+    expect(pageBack('/settings/system')).toBe('/more');
   });
 });
 
@@ -531,136 +646,248 @@ describe('server navigation', () => {
     await sleep(0);
   };
   const props = { ...sidebarProps, stackCount: 3 };
-  const heading = (name: string | RegExp) => screen.getByRole('button', { name });
+  const switcher = () => screen.getByRole('button', { name: /Switch server/ });
+  const openMenu = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(switcher());
+    return screen.getByRole('group', { name: 'Servers' });
+  };
 
-  it('sidebar without peers is unchanged', () => {
+  it('the switcher names this server and offers only itself and Connect a server without peers', async () => {
+    const user = userEvent.setup();
     renderIn(<Sidebar {...props} current="/" />);
     expect(screen.queryByRole('link', { name: 'All stacks' })).toBeNull();
-    expect(screen.queryByText('this server')).toBeNull();
-    expect(screen.queryByText('ratsrv01')).toBeNull();
-    expect(screen.queryByRole('button', { name: /expand|this server/i })).toBeNull();
+    expect(switcher().getAttribute('aria-expanded')).toBe('false');
+    const menu = await openMenu(user);
+    expect(switcher().getAttribute('aria-expanded')).toBe('true');
+    expect(within(menu).getAllByRole('button').map((i) => i.textContent)).toEqual([expect.stringContaining('this server'), expect.stringContaining('Connect a server')]);
+    expect(within(menu).queryByRole('button', { name: /All servers/ })).toBeNull();
   });
 
-  it('sidebar with one peer sums the counts and expands this server', async () => {
-    await withPeers([peer()]);
+  it('the switcher lists this server, connected servers, All servers and Connect a server', async () => {
+    const user = userEvent.setup();
+    await withPeers([peer(), peer({ id: 'b2', name: 'edge', slug: 'edge', status: 'unreachable', stackCount: 0 })]);
     renderIn(<Sidebar {...props} current="/" />);
-    const all = await screen.findByRole('link', { name: 'All stacks' });
-    expect(all.getAttribute('href')).toBe('/all');
-    expect(all.textContent).toContain('7');
-    expect(heading(/ratsrv01/).getAttribute('aria-expanded')).toBe('true');
-    for (const label of ['Stacks', 'Containers', 'Networks', 'Storage', 'New stack', 'Import']) {
-      expect(screen.getByRole('link', { name: label })).toBeTruthy();
+    await screen.findByRole('button', { name: /Switch server.*ratsrv01/ });
+    const menu = await openMenu(user);
+    const items = within(menu).getAllByRole('button');
+    expect(items.map((i) => i.textContent)).toEqual([
+      expect.stringContaining('ratsrv01'),
+      expect.stringContaining('mini-02'),
+      expect.stringContaining('edge'),
+      expect.stringContaining('All servers'),
+      expect.stringContaining('Connect a server'),
+    ]);
+    expect(within(menu).getByRole('button', { name: /ratsrv01/ }).getAttribute('aria-current')).toBe('true');
+    expect(within(menu).getByRole('button', { name: /mini-02/ }).textContent).toContain('4');
+    const edge = within(menu).getByRole('button', { name: /edge/ });
+    expect(edge.textContent).toContain('unreachable');
+    expect(edge.querySelector('[data-tone="danger"]')).toBeTruthy();
+    expect(within(menu).getByRole('button', { name: /All servers/ }).textContent).toContain('7');
+  });
+
+  it('the switcher follows the unsaved-changes guard and closes after a choice', async () => {
+    const user = userEvent.setup();
+    const onNavigate = vi.fn();
+    await withPeers([peer()]);
+    renderIn(<Sidebar {...props} onNavigate={onNavigate} current="/" />);
+    await screen.findByRole('button', { name: /Switch server.*ratsrv01/ });
+    for (const [name, href] of [[/mini-02/, '/s/mini-02'], [/All servers/, '/all'], [/Connect a server/, '/settings/servers'], [/ratsrv01/, '/']] as const) {
+      const menu = await openMenu(user);
+      await user.click(within(menu).getByRole('button', { name }));
+      expect(onNavigate).toHaveBeenLastCalledWith(href);
+      expect(screen.queryByRole('group', { name: 'Servers' })).toBeNull();
     }
-    const mini = heading(/mini-02/);
-    expect(mini.getAttribute('aria-expanded')).toBe('false');
-    expect(mini.textContent).toContain('4');
-    expect(screen.getAllByRole('link', { name: 'Containers' })).toHaveLength(1);
-    expect(screen.getByRole('link', { name: 'Settings' })).toBeTruthy();
+    expect(onNavigate).toHaveBeenCalledTimes(4);
+    expect(screen.getByTestId('where').textContent).toBe('/');
   });
 
-  it('names this server by its real name with a muted tag, and falls back until the name loads or if it fails', async () => {
-    await withPeers([peer()]);
-    renderIn(<Sidebar {...props} current="/" />);
-    const named = await screen.findByRole('button', { name: /ratsrv01/ });
-    expect(within(named).getByText('this server')).toBeTruthy();
-    cleanup();
-    stopPeers?.();
-    await withPeers([peer()], async () => {
-      throw new Error('down');
-    });
-    renderIn(<Sidebar {...props} current="/" />);
-    await screen.findByRole('link', { name: 'All stacks' });
-    expect(heading(/this server/).getAttribute('aria-expanded')).toBe('true');
-    expect(screen.queryByText('ratsrv01')).toBeNull();
-  });
-
-  it('viewing a peer expands it and collapses this server', async () => {
-    await withPeers([peer()]);
-    renderIn(<Sidebar {...props} current="/s/mini-02/containers" />);
-    await screen.findByRole('link', { name: 'All stacks' });
-    expect(heading(/mini-02/).getAttribute('aria-expanded')).toBe('true');
-    expect(heading(/ratsrv01/).getAttribute('aria-expanded')).toBe('false');
-    expect(screen.getByRole('link', { name: 'Containers' }).getAttribute('href')).toBe('/s/mini-02/containers');
-    expect(screen.getByRole('link', { name: 'Stacks' }).getAttribute('href')).toBe('/s/mini-02');
-    expect(current('Containers')).toBe('page');
-    expect(current('Stacks')).toBeNull();
-    expect(screen.getByRole('link', { name: 'Settings' }).getAttribute('href')).toBe('/settings');
-  });
-
-  it('clicking a collapsed server opens its Stacks', async () => {
+  it('the switcher navigates through the router when the app supplies no guard, and Escape closes it', async () => {
     const user = userEvent.setup();
     await withPeers([peer()]);
     renderIn(<Sidebar {...props} current="/" />);
-    await screen.findByRole('link', { name: 'All stacks' });
-    await user.click(heading(/mini-02/));
+    await screen.findByRole('button', { name: /Switch server.*ratsrv01/ });
+    await user.click(within(await openMenu(user)).getByRole('button', { name: /mini-02/ }));
     expect(screen.getByTestId('where').textContent).toBe('/s/mini-02');
+    await openMenu(user);
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('group', { name: 'Servers' })).toBeNull();
   });
 
-  it('an unreachable peer shows "unreachable" and a danger dot', async () => {
+  it('viewing a peer shows it in the switcher and points every page at it, with Settings staying local', async () => {
+    await withPeers([peer()]);
+    renderIn(<Sidebar {...props} current="/s/mini-02/containers" />);
+    await screen.findByRole('button', { name: /Switch server.*mini-02/ });
+    expect(screen.getByRole('link', { name: 'Containers' }).getAttribute('href')).toBe('/s/mini-02/containers');
+    expect(screen.getByRole('link', { name: 'Overview' }).getAttribute('href')).toBe('/s/mini-02');
+    expect(screen.getByRole('link', { name: 'Activity' }).getAttribute('href')).toBe('/s/mini-02/activity');
+    expect(screen.getByRole('link', { name: 'Backups' }).getAttribute('href')).toBe('/s/mini-02/backups');
+    expect(current('Containers')).toBe('page');
+    expect(current('Overview')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Settings' }).getAttribute('href')).toBe('/settings');
+  });
+
+  describe('scope banner', () => {
+    const shellProps = { onLogout: () => {}, runningOps: [], attention: false, onOpenPalette: () => {} };
+    const shell = () => (
+      <Shell {...shellProps} username="ana">
+        <main>
+          <h1>Page</h1>
+        </main>
+      </Shell>
+    );
+
+    it('a connected server screen says which server it is and that actions run there, with a link back', async () => {
+      await withPeers([peer({ name: 'NAS', slug: 'nas' })]);
+      renderIn(shell(), '/s/nas/containers');
+      const banner = await screen.findByRole('status');
+      expect(within(banner).getByText('Viewing NAS')).toBeTruthy();
+      expect(within(banner).getByText('Actions run on that server.')).toBeTruthy();
+      expect(within(banner).getByRole('link', { name: 'Back to this server' }).getAttribute('href')).toBe('/');
+    });
+
+    it('is absent on this server, so local screens do not shift', async () => {
+      await withPeers([peer({ name: 'NAS', slug: 'nas' })]);
+      renderIn(shell(), '/containers');
+      await screen.findByRole('heading', { name: 'Page' });
+      expect(screen.queryByText(/^Viewing /)).toBeNull();
+      expect(screen.queryByRole('link', { name: 'Back to this server' })).toBeNull();
+    });
+
+    it('is absent on Settings, which stays local', async () => {
+      await withPeers([peer({ name: 'NAS', slug: 'nas' })]);
+      renderIn(shell(), '/settings/system');
+      await screen.findByRole('heading', { name: 'Page' });
+      expect(screen.queryByText(/^Viewing /)).toBeNull();
+    });
+  });
+
+  it('an unreachable peer is marked in the switcher, and the total counts reachable servers only', async () => {
+    const user = userEvent.setup();
     await withPeers([peer({ status: 'unreachable', stackCount: 0 })]);
     renderIn(<Sidebar {...props} current="/" />);
-    await screen.findByRole('link', { name: 'All stacks' });
-    const mini = heading(/mini-02/);
+    await screen.findByRole('button', { name: /Switch server.*ratsrv01/ });
+    const menu = await openMenu(user);
+    const mini = within(menu).getByRole('button', { name: /mini-02/ });
     expect(mini.textContent).toContain('unreachable');
-    expect(mini.querySelector('[data-tone="danger"]')).toBeTruthy();
     expect(within(mini).getByRole('img', { name: /unreachable/i })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'All stacks' }).textContent).toContain('3');
+    expect(within(menu).getByRole('button', { name: /All servers/ }).textContent).toContain('3');
   });
 
   it('several peers keep added order, after this server', async () => {
+    const user = userEvent.setup();
     await withPeers([peer({ id: 'b1', name: 'zeta', slug: 'zeta' }), peer({ id: 'b2', name: 'alpha', slug: 'alpha' })]);
     renderIn(<Sidebar {...props} current="/" />);
-    await screen.findByRole('link', { name: 'All stacks' });
-    const names = screen.getAllByRole('button', { expanded: undefined }).map((b) => b.textContent ?? '');
+    await screen.findByRole('button', { name: /Switch server.*ratsrv01/ });
+    const names = within(await openMenu(user)).getAllByRole('button').map((i) => i.textContent ?? '');
     const order = ['ratsrv01', 'zeta', 'alpha'].map((n) => names.findIndex((t) => t.includes(n)));
     expect(order).toEqual([...order].sort((a, b) => a - b));
     expect(order.every((i) => i >= 0)).toBe(true);
   });
 
-  it('a pairing still pending does not turn the sidebar or switcher into the multi-server view', async () => {
+  it('a pairing still pending does not turn the switcher or mobile select into the multi-server view', async () => {
+    const user = userEvent.setup();
     await withPeers([peer({ status: 'pending' })]);
     renderIn(<Sidebar {...props} current="/" />);
-    await screen.findByRole('link', { name: 'Stacks' });
-    expect(screen.queryByRole('link', { name: 'All stacks' })).toBeNull();
-    expect(screen.queryByText('this server')).toBeNull();
+    const menu = await openMenu(user);
+    expect(within(menu).queryByRole('button', { name: /mini-02/ })).toBeNull();
+    expect(within(menu).queryByRole('button', { name: /All servers/ })).toBeNull();
     cleanup();
-    renderIn(<MobileTopBar title="Stacks" mono={false} attention={false} onOpenPalette={() => {}} />);
+    renderIn(<MobileTopBar title="Overview" mono={false} attention={false} />);
     expect(screen.queryByRole('combobox', { name: 'Server' })).toBeNull();
   });
 
   it('mobile New stack creates on the viewed server, or locally when none is viewed', () => {
-    renderIn(<MobileTopBar title="Stacks" mono={false} attention={false} onOpenPalette={() => {}} />, '/s/mini-02/stacks');
+    renderIn(<MobileTopBar title="Overview" mono={false} attention={false} />, '/s/mini-02/stacks');
     expect(screen.getByRole('link', { name: 'New stack' }).getAttribute('href')).toBe('/s/mini-02/stacks/new');
     cleanup();
-    renderIn(<MobileTopBar title="Stacks" mono={false} attention={false} onOpenPalette={() => {}} />, '/stacks');
+    renderIn(<MobileTopBar title="Overview" mono={false} attention={false} />, '/stacks');
     expect(screen.getByRole('link', { name: 'New stack' }).getAttribute('href')).toBe('/stacks/new');
   });
 
-  it('the mobile switcher appears only with peers and navigates to /s/{slug}', async () => {
+  it('the mobile switcher appears only with peers, navigates to /s/{slug}, and reaches All servers and Connect a server', async () => {
     const user = userEvent.setup();
-    renderIn(<MobileTopBar title="Stacks" mono={false} attention={false} onOpenPalette={() => {}} />);
+    renderIn(<MobileTopBar title="Overview" mono={false} attention={false} />);
     expect(screen.queryByRole('combobox', { name: 'Server' })).toBeNull();
     cleanup();
     await withPeers([peer()]);
-    renderIn(<MobileTopBar title="Stacks" mono={false} attention={false} onOpenPalette={() => {}} />);
+    renderIn(<MobileTopBar title="Overview" mono={false} attention={false} />);
     const select = await screen.findByRole('combobox', { name: 'Server' });
     await user.selectOptions(select, 'mini-02');
     expect(screen.getByTestId('where').textContent).toBe('/s/mini-02');
     await user.selectOptions(select, 'ratsrv01 (this server)');
     expect(screen.getByTestId('where').textContent).toBe('/');
+    await user.selectOptions(select, 'All servers');
+    expect(screen.getByTestId('where').textContent).toBe('/all');
+    await user.selectOptions(select, 'Connect a server');
+    expect(screen.getByTestId('where').textContent).toBe('/settings/servers');
   });
 
-  it('the mobile tab bar links into the viewed server', () => {
-    renderIn(<TabBar current="/s/mini-02/storage" attention={false} />);
-    expect(screen.getByRole('link', { name: 'Storage' }).getAttribute('href')).toBe('/s/mini-02/storage');
-    expect(current('Storage')).toBe('page');
-    expect(screen.getByRole('link', { name: 'Settings' }).getAttribute('href')).toBe('/settings');
+  it('the mobile switcher goes through the unsaved-changes guard', async () => {
+    const user = userEvent.setup();
+    const onNavigate = vi.fn();
+    await withPeers([peer()]);
+    renderIn(<MobileTopBar title="Overview" mono={false} attention={false} onNavigate={onNavigate} />);
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Server' }), 'mini-02');
+    expect(onNavigate).toHaveBeenCalledWith('/s/mini-02');
+    expect(screen.getByTestId('where').textContent).toBe('/');
   });
 
-  it('the mobile tab bar reaches Images', () => {
-    renderIn(<TabBar current="/s/mini-02/images/web" attention={false} />);
-    expect(screen.getByRole('link', { name: 'Images' }).getAttribute('href')).toBe('/s/mini-02/images');
-    expect(current('Images')).toBe('page');
+  it('the switcher is a plain disclosure: no menu roles, and an outside click closes it', async () => {
+    const user = userEvent.setup();
+    renderIn(<Sidebar {...props} current="/" />);
+    expect(switcher().getAttribute('aria-haspopup')).toBeNull();
+    const panel = await openMenu(user);
+    expect(panel.getAttribute('role')).toBe('group');
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(screen.queryAllByRole('menuitem')).toHaveLength(0);
+    await user.click(document.body);
+    expect(screen.queryByRole('group', { name: 'Servers' })).toBeNull();
+  });
+
+  it('More keeps the viewed server: tab bar, top bar and the banner stay on it', async () => {
+    const user = userEvent.setup();
+    await withPeers([peer()]);
+    vi.stubGlobal('matchMedia', () => ({ matches: true, media: '', addEventListener() {}, removeEventListener() {} }));
+    renderIn(
+      <Shell {...{ onLogout: () => {}, runningOps: [], attention: false, onOpenPalette: () => {} }} username="ana">
+        <span>page</span>
+      </Shell>,
+      '/more?server=mini-02',
+    );
+    expect(await screen.findByText('Viewing mini-02')).toBeTruthy();
+    expect((await screen.findByRole('link', { name: 'Containers' })).getAttribute('href')).toBe('/s/mini-02/containers');
+    expect(screen.getByRole('link', { name: 'Home' }).getAttribute('href')).toBe('/s/mini-02');
+    expect(screen.getByRole('link', { name: 'New stack' }).getAttribute('href')).toBe('/s/mini-02/stacks/new');
+    expect(screen.getByRole('link', { name: 'More' }).getAttribute('href')).toBe('/more?server=mini-02');
+    expect((screen.getByRole('combobox', { name: 'Server' }) as HTMLSelectElement).value).toBe('mini-02');
+    await user.click(screen.getByRole('link', { name: 'More' }));
+    expect(screen.getByText('Viewing mini-02')).toBeTruthy();
+  });
+
+  it('a local More page is unaffected', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, media: '', addEventListener() {}, removeEventListener() {} }));
+    renderIn(
+      <Shell {...{ onLogout: () => {}, runningOps: [], attention: false, onOpenPalette: () => {} }} username="ana">
+        <span>page</span>
+      </Shell>,
+      '/more',
+    );
+    expect((await screen.findByRole('link', { name: 'Containers' })).getAttribute('href')).toBe('/containers');
+    expect(screen.queryByText(/Viewing/)).toBeNull();
+  });
+
+  it('the local attention light stays off in the mobile top bar while a connected server is open', () => {
+    renderIn(<MobileTopBar title="Containers" mono={false} attention />, '/s/mini-02/containers');
+    expect(screen.queryByRole('img', { name: 'Needs attention' })).toBeNull();
+  });
+
+  it('the mobile tab bar links into the viewed server and carries it to More', () => {
+    renderIn(<TabBar {...{ attention: false, onOpenPalette: () => {} }} current="/s/mini-02/containers" />);
+    expect(screen.getByRole('link', { name: 'Home' }).getAttribute('href')).toBe('/s/mini-02');
+    expect(screen.getByRole('link', { name: 'Containers' }).getAttribute('href')).toBe('/s/mini-02/containers');
+    expect(screen.getByRole('link', { name: 'Activity' }).getAttribute('href')).toBe('/s/mini-02/activity');
+    expect(screen.getByRole('link', { name: 'More' }).getAttribute('href')).toBe('/more?server=mini-02');
+    expect(current('Containers')).toBe('page');
   });
 
   it('the top bar and host block describe the viewed peer, with no second stream for it', async () => {

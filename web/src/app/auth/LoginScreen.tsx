@@ -7,6 +7,7 @@ import { safeNext } from '$lib/router';
 import { Button } from '../components/Button';
 import { Field } from '../components/Field';
 import { AuthCard, AuthError } from './AuthCard';
+import styles from './Auth.module.css';
 
 // The password input is uncontrolled: its value lives only in the DOM input, is read through a ref at
 // submit, and is never kept in state, a value attribute, a message, storage or the URL.
@@ -55,6 +56,9 @@ export function LoginScreen() {
       <Button variant="primary" type="submit" loading={pending}>
         Sign in
       </Button>
+      <p className={styles.recovery}>
+        Forgot the password? Run <code>sudo -u stackstead stackstead admin set-password --config /etc/stackstead/config.yaml</code> on the host.
+      </p>
     </AuthCard>
   );
 }

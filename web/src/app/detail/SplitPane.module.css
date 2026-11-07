@@ -1,17 +1,21 @@
 .pane {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--hi);
-  overflow: hidden;
+  grid-template-columns: 208px minmax(0, 1fr);
+  flex: 1;
 }
 
 .main {
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+.content {
+  display: contents;
+}
+
+.content[hidden] {
+  display: none;
 }
 
 .console {

@@ -2,32 +2,37 @@
   display: inline-flex;
   padding: 2px;
   gap: 2px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--raised);
+  border-radius: var(--radius-md);
+  background: var(--muted-soft);
 }
 
 .option {
-  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
   padding: 0 10px;
   border: 0;
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--muted);
-  font-size: 12px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
   cursor: pointer;
 }
 
-.group[data-size='sm'] .option { height: 22px; padding: 0 8px; font-size: 11px; }
+.group[data-size='sm'] .option { height: 24px; padding: 0 8px; font-size: 12px; }
 
 .option:hover { color: var(--text); }
 .option[aria-pressed='true'] {
   background: var(--surface);
   color: var(--text);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow), 0 0 0 1px var(--border);
 }
 
 @media (max-width: 759px) {
   .option,
-  .group[data-size='sm'] .option { height: 40px; }
+  .group[data-size='sm'] .option { height: 44px; padding: 0 14px; font-size: 14px; }
 }

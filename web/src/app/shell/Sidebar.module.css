@@ -8,30 +8,26 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 14px 10px 10px;
+  padding: 10px 8px;
   background: var(--chassis);
-  border-right: 1px solid var(--border);
-  overflow-y: auto;
+  /* The server menu opens over the page, so only the list below it scrolls. */
+  overflow: visible;
+  z-index: 20;
 }
 
-.logo {
+.scroll {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 6px 14px;
-  color: var(--text);
-  text-decoration: none;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  margin: 0 -4px;
+  padding: 0 4px;
 }
 
-.logo img {
-  object-fit: contain;
-  display: block;
-}
-
-.wordmark {
-  font-weight: 600;
-  font-size: 14.5px;
-  letter-spacing: -0.01em;
+.vitals {
+  margin-top: 12px;
 }
 
 .search {
@@ -76,12 +72,12 @@
   gap: 2px;
 }
 
-.createLabel {
+.groupLabel {
   padding: 12px 10px 4px;
 }
 
 .bottom {
-  margin-top: auto;
+  flex: none;
   display: flex;
   flex-direction: column;
   gap: 2px;

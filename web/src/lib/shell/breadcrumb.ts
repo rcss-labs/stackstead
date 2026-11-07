@@ -6,7 +6,7 @@ export interface Crumb {
   mono?: boolean;
 }
 
-const stacks: Crumb = { label: 'Stacks', href: '/' };
+const overview: Crumb = { label: 'Overview', href: '/' };
 
 const containers: Crumb = { label: 'Containers', href: '/containers' };
 
@@ -40,11 +40,19 @@ function localBreadcrumb(path: string): Crumb[] {
   if (path === '/images') return [{ label: 'Images' }];
   const image = /^\/images\/([^/]+)$/.exec(path);
   if (image) return [{ label: 'Images', href: '/images' }, { label: decode(image[1]), mono: true }];
-  if (path === '/') return [{ label: 'Stacks' }];
+  if (path === '/') return [{ label: 'Overview' }];
   if (path === '/all') return [{ label: 'All stacks' }];
   if (path === '/settings') return [{ label: 'Settings' }];
-  if (path === '/stacks/new') return [stacks, { label: 'New stack' }];
-  if (path === '/stacks/import') return [stacks, { label: 'Import' }];
+  const section = /^\/settings\/([^/]+)$/.exec(path);
+  if (section) {
+    const name = decode(section[1]);
+    return [{ label: 'Settings', href: '/settings' }, { label: name.charAt(0).toUpperCase() + name.slice(1) }];
+  }
+  if (path === '/activity') return [{ label: 'Activity' }];
+  if (path === '/ports') return [{ label: 'Ports' }];
+  if (path === '/more') return [{ label: 'More' }];
+  if (path === '/stacks/new') return [overview, { label: 'New stack' }];
+  if (path === '/stacks/import') return [overview, { label: 'Import' }];
   if (path === '/networks') return [{ label: 'Networks' }];
   const network = /^\/networks\/([^/]+)$/.exec(path);
   if (network) return [{ label: 'Networks', href: '/networks' }, { label: decode(network[1]), mono: true }];
@@ -53,7 +61,7 @@ function localBreadcrumb(path: string): Crumb[] {
   if (container) return [containers, { label: decode(container[1]), mono: true }];
   const detail = /^\/stacks\/([^/]+)$/.exec(path);
   if (detail) {
-    return [stacks, { label: decode(detail[1]), mono: true }];
+    return [overview, { label: decode(detail[1]), mono: true }];
   }
-  return [stacks, { label: 'Not found' }];
+  return [overview, { label: 'Not found' }];
 }

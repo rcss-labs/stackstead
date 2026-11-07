@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useIsMobile } from '../hooks/useIsMobile';
 import styles from './Dialog.module.css';
 
 // Open dialogs, oldest first. Escape closes only the last one.
@@ -40,6 +41,8 @@ export interface DialogProps {
 
 export function Dialog({ open, title, onClose, children, labelledBy, describedBy, role = 'dialog', width = 'md', placement = 'center', closeOnBackdrop = false }: DialogProps) {
   const uid = useId();
+  // On phones a centred dialog becomes a bottom sheet with its own close control (the palette stays at the top).
+  const sheet = useIsMobile() && placement !== 'top';
   const titleId = labelledBy ?? `${uid}-title`;
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -63,7 +66,9 @@ export function Dialog({ open, title, onClose, children, labelledBy, describedBy
     const appRoot = document.getElementById('app');
     const wasInert = appRoot?.inert ?? false;
     if (appRoot) appRoot.inert = true;
-    (focusables()[0] ?? panel).focus();
+    // The sheet's Close control is not the starting point: land on the first real control instead.
+    const items = focusables();
+    (items.find((el) => !el.hasAttribute('data-dialog-close')) ?? items[0] ?? panel).focus();
     panel.scrollTop = 0;
     return () => {
       if (appRoot) appRoot.inert = wasInert;
@@ -126,6 +131,7 @@ export function Dialog({ open, title, onClose, children, labelledBy, describedBy
         ref={panelRef}
         className={styles.dialog}
         data-width={width}
+        data-sheet={sheet ? 'true' : undefined}
         role={role}
         aria-modal="true"
         aria-labelledby={titleId}
@@ -133,7 +139,19 @@ export function Dialog({ open, title, onClose, children, labelledBy, describedBy
         tabIndex={-1}
         onKeyDown={handleKeyDown}
       >
-        {!labelledBy && <h2 id={titleId}>{title}</h2>}
+        {sheet && <span className={styles.grab} aria-hidden="true" />}
+        {sheet ? (
+          <div className={styles.head}>
+            {!labelledBy && <h2 id={titleId}>{title}</h2>}
+            <button type="button" className={styles.close} data-dialog-close="" aria-label="Close" onClick={onClose}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+                <path d="M6 6l12 12M18 6 6 18" />
+              </svg>
+            </button>
+          </div>
+        ) : (
+          !labelledBy && <h2 id={titleId}>{title}</h2>
+        )}
         {children}
       </div>
     </div>,

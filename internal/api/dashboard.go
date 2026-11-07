@@ -29,6 +29,11 @@ type AlertsAPI interface {
 	Alerts(ctx context.Context) ([]alerts.Alert, error)
 }
 
+// DiskForecastAPI is satisfied by metrics.DiskForecaster.
+type DiskForecastAPI interface {
+	DiskForecast(ctx context.Context) (metrics.DiskForecast, error)
+}
+
 // SummaryAPI is the metrics store's all-projects query plus the sampler's
 // latest per-container readings.
 type SummaryAPI interface {
@@ -80,6 +85,9 @@ func (s *server) registerDashboardRoutes(mux *http.ServeMux) {
 	if s.opts.Host != nil {
 		mux.Handle("GET /api/host", s.requireSession(s.handleHost))
 	}
+	if s.opts.DiskForecast != nil {
+		mux.Handle("GET /api/host/disk-forecast", s.requireSession(s.handleDiskForecast))
+	}
 	if s.opts.Alerts != nil {
 		mux.Handle("GET /api/alerts", s.requireSession(s.handleAlerts))
 	}
@@ -90,6 +98,17 @@ func (s *server) registerDashboardRoutes(mux *http.ServeMux) {
 
 func (s *server) handleHost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, hostDTO(s.opts.Host.Snapshot(r.Context())))
+}
+
+// handleDiskForecast never fails on a read problem: no forecast is a valid
+// answer, and the dashboard must not break over an optional hint.
+func (s *server) handleDiskForecast(w http.ResponseWriter, r *http.Request) {
+	f, err := s.opts.DiskForecast.DiskForecast(r.Context())
+	if err != nil {
+		s.opts.Logger.Warn("disk forecast unavailable", "err", err)
+		f = metrics.DiskForecast{}
+	}
+	writeJSON(w, http.StatusOK, apitypes.DiskForecast{DaysLeft: f.DaysLeft, SampledDays: f.SampledDays})
 }
 
 func (s *server) handleHostInterfaces(w http.ResponseWriter, r *http.Request) {
@@ -151,7 +170,8 @@ func (s *server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	out := make([]apitypes.Alert, 0, len(list)) // [] rather than null when empty
 	for _, a := range list {
 		out = append(out, apitypes.Alert{Kind: a.Kind, Severity: a.Severity, Stack: a.Stack,
-			Service: a.Service, Container: a.Container, Message: a.Message, Since: a.Since.UTC()})
+			Service: a.Service, Container: a.Container, Message: a.Message, Since: a.Since.UTC(),
+			ExitCode: a.ExitCode, MemLimit: a.MemLimit})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

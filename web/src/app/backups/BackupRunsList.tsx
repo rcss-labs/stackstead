@@ -1,5 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from 'react';
-import type { BackupsApi } from '$lib/api/backups';
+import { Fragment, useState } from 'react';
 import type { BackupRun } from '$lib/api/backupTypes';
 import { formatBytes, formatDuration } from '$lib/format';
 import { Banner } from '../components/Banner';
@@ -7,9 +6,8 @@ import { EmptyState } from '../components/EmptyState';
 import { RelativeTime } from '../components/RelativeTime';
 import { Spinner } from '../components/Spinner';
 import { StatusBadge } from '../components/StatusBadge';
+import type { RunsState } from './status';
 import styles from './backups.module.css';
-
-const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 // The shared badge knows "succeeded"; backup runs say "success".
 const badgeStatus = (status: BackupRun['status']) => (status === 'success' ? 'succeeded' : status);
@@ -20,21 +18,8 @@ function duration(run: BackupRun): string {
 }
 
 /** Recent runs, newest first, each expandable to its per-item results. */
-export function BackupRunsList({ api, refreshKey = 0 }: { api: BackupsApi; refreshKey?: number }) {
-  const [runs, setRuns] = useState<BackupRun[]>();
-  const [error, setError] = useState<string>();
+export function BackupRunsList({ state }: { state: RunsState }) {
   const [open, setOpen] = useState<Set<number>>(new Set());
-
-  const load = useCallback(() => {
-    api.runs().then(
-      (list) => {
-        setRuns(list);
-        setError(undefined);
-      },
-      (e: unknown) => setError(messageOf(e)),
-    );
-  }, [api]);
-  useEffect(load, [load, refreshKey]);
 
   function toggleOpen(id: number) {
     setOpen((current) => {
@@ -44,13 +29,14 @@ export function BackupRunsList({ api, refreshKey = 0 }: { api: BackupsApi; refre
     });
   }
 
-  if (error)
+  if (state.kind === 'error')
     return (
       <Banner kind="danger" title="Runs">
-        {error}
+        {state.message}
       </Banner>
     );
-  if (!runs) return <Spinner />;
+  if (state.kind === 'loading') return <Spinner />;
+  const runs = state.runs;
   if (runs.length === 0) return <EmptyState title="No backups yet" description="Runs appear here once a backup has started." />;
 
   return (

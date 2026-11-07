@@ -129,21 +129,12 @@ describe('Container peek', () => {
     expect(within(managed).queryByRole('button')).toBeNull();
   });
 
-  it('the peek header shows the Docker status on desktop and not on mobile', async () => {
+  it('the peek header shows the Docker status on desktop', async () => {
     const api = row('api', { health: 'unhealthy', status: 'Up 2 minutes (unhealthy)' });
     const { user } = mount({ body: [api] }, [api]);
     await screen.findByRole('link', { name: 'api' });
     await user.click(rowOf('api'));
     expect(within(await screen.findByRole('region', { name: 'Logs of api' })).getByText('Up 2 minutes (unhealthy)')).toBeTruthy();
-    cleanup();
-    stream.restore();
-    fetchFake.restore();
-    await letStoresRelease();
-    stubWidth(true);
-    const view = mount({ body: [api] }, [api]);
-    await screen.findByRole('link', { name: 'api' });
-    await view.user.click(rowOf('api'));
-    expect(within(await screen.findByRole('region', { name: 'Logs of api' })).queryByText('Up 2 minutes (unhealthy)')).toBeNull();
   });
 
   it('ERROR and WARN lines carry their tones and new lines are bounded to eight', async () => {

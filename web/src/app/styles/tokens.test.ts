@@ -96,6 +96,34 @@ describe('design tokens', () => {
       });
   });
 
+  describe.each([
+    ['light', light],
+    ['dark', dark],
+  ] as const)('accent and success (%s)', (_name, t) => {
+    it('accent differs from success in both themes', () => {
+      expect(t['--accent']).not.toBe(t['--success']);
+      expect(t['--accent-soft']).not.toBe(t['--success-soft']);
+    });
+  });
+
+  describe.each([
+    ['light', light],
+    ['dark', dark],
+  ] as const)('console tokens read on the dark console (%s)', (_name, t) => {
+    const c = (k: string) => parseColor(t[k]).rgb;
+    for (const fg of ['--term-fg', '--term-dim', '--term-accent', '--term-ok', '--term-warn', '--term-err', '--term-s1', '--term-s2', '--term-s3', '--term-s4']) {
+      for (const bg of ['--term', '--term-hover', '--term-hi'])
+        it(`${fg} on ${bg} >= 4.5`, () => expect(ratio(c(fg), c(bg))).toBeGreaterThanOrEqual(4.5));
+    }
+    it('the console stays dark whichever theme is on', () => expect(L(c('--term'))).toBeLessThan(0.02));
+  });
+
+  it('chart series 1-4 match the validated palette', () => {
+    const series = (t: Record<string, string>) => [1, 2, 3, 4].map((n) => t[`--series-${n}`].toLowerCase());
+    expect(series(light)).toEqual(['#2f62e0', '#c9721a', '#008fa6', '#8a4fd0']);
+    expect(series(dark)).toEqual(['#6590f5', '#d27e28', '#17a0af', '#9f73df']);
+  });
+
   it('no literal colours outside tokens.css', () => {
     const literal = /#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(/i;
     const hits = walk(appDir)

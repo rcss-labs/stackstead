@@ -9,5 +9,10 @@
 
 .status {
   color: var(--muted);
+  font-family: var(--mono);
   font-size: 12px;
+}
+
+@media (max-width: 759px) {
+  .pager { justify-content: space-between; }
 }

@@ -36,6 +36,16 @@ const (
 type Alert struct {
 	Kind, Severity, Stack, Service, Container, Message string
 	Since                                              time.Time
+	// ExitCode and MemLimit (bytes) come from inspecting the container and are
+	// set only on exited and restart_loop alerts, when the inspect succeeded.
+	// MemLimit is 0 when the container has no memory limit.
+	ExitCode *int
+	MemLimit int64
+}
+
+// ContainerInspector reads one container's inspect data; satisfied by *engine.Client.
+type ContainerInspector interface {
+	InspectContainer(ctx context.Context, id string) (engine.ContainerInspect, error)
 }
 
 // StackDetails lists every registered stack; satisfied by *stacks.Service.

@@ -134,11 +134,44 @@ describe('All stacks', () => {
     expect(screen.getByRole('link', { name: 'web' })).toBeTruthy();
   });
 
+  it('has an h1 while loading, so route focus does not wait', () => {
+    mount(fleet());
+    expect(screen.getByRole('heading', { level: 1, name: 'All servers' })).toBeTruthy();
+  });
+
+  it('keeps exactly one h1 when the only server with stacks is unreachable', async () => {
+    mount(fleet({ servers: [local, down], stacks: [fleetStack('c2', 'stale')] }));
+    expect(await screen.findByText("Can't reach nas")).toBeTruthy();
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+  });
+
   it('unreachable server shows a banner and omits its stacks', async () => {
     mount(fleet({ servers: [local, mini, down], stacks: [fleetStack('a0', 'web'), fleetStack('c2', 'stale')] }));
     expect(await screen.findByText("Can't reach nas")).toBeTruthy();
     expect(screen.getByRole('link', { name: 'web' })).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'stale' })).toBeNull();
+  });
+
+  it("fleet shows a tile per server and hides an unreachable server's rows", async () => {
+    mount(fleet({ servers: [local, mini, down], stacks: [fleetStack('a0', 'web'), fleetStack('b1', 'pihole'), fleetStack('c2', 'stale')] }));
+    expect((await screen.findByRole('heading', { level: 1, name: /reachable/ })).textContent).toBe('2 of 3 servers are reachable');
+    const tiles = within(screen.getByRole('list', { name: 'Servers' })).getAllByRole('listitem');
+    expect(tiles).toHaveLength(3);
+    const tile = (name: string) => tiles.find((t) => within(t).queryByText(name))!;
+    expect(within(tile('here')).getByText('Online')).toBeTruthy();
+    expect(within(tile('here')).getByRole('link').getAttribute('href')).toBe('/');
+    expect(within(tile('here')).getByText('1 stack')).toBeTruthy();
+    expect(within(tile('mini-02')).getByRole('link').getAttribute('href')).toBe('/s/mini-02');
+    expect(within(tile('nas')).getByText('Unreachable')).toBeTruthy();
+    expect(within(tile('nas')).getByRole('link').getAttribute('href')).toBe('/settings/servers');
+    expect(within(tile('nas')).queryByText(/stack/)).toBeNull();
+    expect(screen.getByText(/stacks are hidden, not shown as stale/)).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'stale' })).toBeNull();
+  });
+
+  it('the fleet headline says every server is reachable only when each one is', async () => {
+    mount(fleet());
+    expect((await screen.findByRole('heading', { level: 1, name: /reachable/ })).textContent).toBe('All 2 servers are reachable');
   });
 
   it('incompatible server shows the version banner', async () => {

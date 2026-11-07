@@ -25,8 +25,8 @@ describe('index.html', () => {
 
   it('preloads exactly the three self-hosted fonts', () => {
     expect(fontPreloads(html)).toEqual([
-      '/src/assets/fonts/IBMPlexSans-Regular-latin.woff2',
-      '/src/assets/fonts/IBMPlexSans-Medium-latin.woff2',
+      '/src/assets/fonts/Geist-Regular-latin.woff2',
+      '/src/assets/fonts/Geist-Medium-latin.woff2',
       '/src/assets/fonts/GeistMono-Regular-latin.woff2',
     ]);
   });

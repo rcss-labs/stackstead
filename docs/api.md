@@ -16,7 +16,8 @@ from connected servers also carry a `"code"`; see [Connected servers](#connected
 | `POST /api/stacks` | create with `{name, services: [{service, config, extra?, dockerfile?}], extra?}` or legacy `{name, service, config}`; see [Managed Dockerfiles](#managed-dockerfiles) |
 | `POST /api/stacks/import` | register an existing compose file without modifying it |
 | `GET /api/stacks/{name}` | detail with services and containers |
-| `GET`/`PUT /api/stacks/{name}/compose` | raw YAML, saved with the hash from the read (409 if stale) |
+| `GET`/`PUT /api/stacks/{name}/compose` | raw YAML, saved with the hash from the read (409 if stale). `GET` also returns `hasBackup`: whether a `compose.yaml.bak` can be restored |
+| `POST /api/stacks/{name}/compose/restore-backup` | `{hash}`: copies `compose.yaml.bak` over the compose file and keeps the file it replaced as `compose.yaml.broken`; returns `{hash}` of the restored file. 404 with no backup, 409 when `hash` is stale. See [Restoring a compose backup](#restoring-a-compose-backup) |
 | `POST /api/stacks/{name}/services` | add a service with `{service, config, hash, dockerfile?: {content, hash}}`; returns stack detail (200) |
 | `POST /api/stacks/{name}/services/preview` | preview an addition with `{service, config, hash}`; returns `{content, hash}` without writing |
 | `DELETE /api/stacks/{name}/services/{service}?hash=` | remove a service from the file; returns stack detail (200) |
@@ -43,6 +44,7 @@ from connected servers also carry a `"code"`; see [Connected servers](#connected
 | `GET /api/networks`, `POST /api/networks` | list Docker networks; create a bridge, macvlan or ipvlan network (201); see [Networks](#networks) |
 | `POST /api/networks/{id}/connect`, `POST /api/networks/{id}/disconnect`, `POST /api/networks/prune` | attach or detach a container (204); remove unused networks (200); see [Networks](#networks) |
 | `DELETE /api/networks/{id}` | remove an unused, unmanaged network (204), by ID or name |
+| `GET /api/host/disk-forecast` | days until the stacks disk is full: `{daysLeft, sampledDays}`; see [Dashboard data](#dashboard-data) |
 | `GET /api/host/interfaces` | IPv4 host interfaces for LAN network setup; see [Networks](#networks) |
 | `GET /api/events` | container changes and Docker container events as they happen (SSE) |
 | `POST /api/password` | change the signed-in user's password (`{current, new}`; 204) |
@@ -209,6 +211,15 @@ may be `{}`. Any other action name is a 400 on `action`.
 
 ## Connected servers
 
+### Optional features
+
+`GET /api/peer/hello` lists `features`, the optional capabilities a server
+supports: `yaml-create`, `managed-dockerfile`, `disk-forecast` (the
+`/api/host/disk-forecast` route) and `compose-restore` (the
+`.../compose/restore-backup` route and `hasBackup`). A server on an older
+version lacks the routes, so the UI checks the feature before offering them
+and never sends the request otherwise.
+
 Servers are connected in Settings → Connected servers. The trust model is in
 [security.md](security.md#connected-servers) and the proxy setup is in
 [install.md](install.md#connected-servers-behind-a-login-proxy).
@@ -231,7 +242,7 @@ and no session cookie:
 | Method and path | Purpose |
 | --- | --- |
 | `POST /api/peer/pair` | pairs with a connection token; the token is used up only on success |
-| `GET /api/peer/hello` | instance ID, name, version, advertised URL and stack count |
+| `GET /api/peer/hello` | instance ID, name, version, advertised URL, stack count and `features` (see [Optional features](#optional-features)) |
 | `POST /api/peer/update` | the other server's new name or advertised address |
 | `POST /api/peer/unpair` | the other server removed the connection |
 
@@ -859,7 +870,11 @@ host can be less than 24 hours.
 
 **`GET /api/alerts`** is a JSON array, `[]` when nothing is wrong. Each alert
 has `kind`, `severity` (`danger`, `warning` or `info`), `message`, `since`
-(RFC3339) and, where they apply, `stack`, `service` and `container`. The list
+(RFC3339) and, where they apply, `stack`, `service` and `container`.
+`exited` and `restart_loop` alerts also carry `exitCode` (the container's last
+exit code, which can be `0`) and `memLimit` (bytes, omitted without a memory
+limit) when Docker could be inspected; if the inspect fails the alert is still
+listed without them. The list
 is sorted by severity, then by `since`, newest first. `since` is the start
 of the alert's current continuous occurrence, as seen by this Stackstead
 process: it resets if the alert clears and later returns, and it survives
@@ -880,6 +895,17 @@ address.
 | `parse_error` | warning | the first line of the compose parse error |
 | `docker_disconnected` | danger | `Docker is unreachable; status may be stale` |
 | `metrics_degraded` | warning | `Metrics are not being stored (database write failures)` |
+
+**`GET /api/host/disk-forecast`** is always `200` with `{daysLeft, sampledDays}`.
+`daysLeft` is the days until the disk holding the stacks folder is full, from
+a straight-line fit of its used space; `sampledDays` is how many days of
+samples the fit used. `daysLeft` is `null` with under 6 hours of samples, when
+usage is flat or falling, when the fit points more than ten years out, or when
+the samples cannot be read. It is `0` on a disk that is already full. One
+sample is stored at most every 15 minutes (table `host_disk_samples`) and is
+pruned with `metrics_retention`, so the history, and the forecast, never
+reach back further than that. A failed disk read skips that sample and is
+logged. Connected servers advertise the `disk-forecast` feature.
 
 **`GET /api/metrics/summary`** takes `window` as `5m`, `15m` (the default) or
 `1h`; anything else is a `400` `{error}`, and a store failure is a `500`. The
@@ -1069,6 +1095,21 @@ container, these are the interfaces of Stackstead's network namespace, so
 host networking is needed to see host interfaces. The route works without
 Docker. Interface enumeration uses the OS interface API and reads only
 `/proc/net/route` for routing information; it does not change host networking.
+
+### Restoring a compose backup
+
+Every compose save keeps the previous version as `compose.yaml.bak`.
+`POST /api/stacks/{name}/compose/restore-backup` with `{hash}` (the hash from
+`GET .../compose`) puts that backup back, so a stack whose file no longer
+parses can be recovered. It needs a session, runs under the same per-stack lock
+as other compose writes, and checks `hash` against the file on disk: `409` when
+it is stale, `404` when there is no backup. The file it replaces is kept as
+`compose.yaml.broken` (overwritten by the next restore), the backup stays
+in place, and the file keeps its permissions. The current file is not parsed,
+and the restored file is not validated against compose: it was valid when it
+was saved. Only a regular `.bak` next to the compose file is used; a link is
+treated as no backup, and the compose path must lie inside the allowed
+directories. Connected servers advertise the `compose-restore` feature.
 
 ### What is stored
 

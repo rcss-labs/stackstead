@@ -1,6 +1,6 @@
 .console {
+  composes: term from '../styles/term.module.css';
   position: relative;
-  background: var(--chassis);
   border-top: 1px solid var(--border);
 }
 
@@ -183,4 +183,16 @@
     flex: 1 0 100%;
     height: 40px;
   }
+}
+
+/* Filling its container: the dock expanded over the service pane, or the Logs tab on a phone. */
+.console[data-fill] { border-top: 0; }
+.console[data-fill] .body { height: max(360px, 62dvh); }
+.toggle[data-static] { cursor: default; padding-inline: 8px; }
+.toggle[data-static]:hover { background: transparent; }
+
+@media (max-width: 759px) {
+  .toggle,
+  .clear { min-height: 44px; min-width: 44px; }
+  .pill { height: 44px; }
 }

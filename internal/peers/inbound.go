@@ -29,6 +29,8 @@ const Protocol = 1
 const (
 	FeatureYAMLCreate        = "yaml-create"
 	FeatureManagedDockerfile = "managed-dockerfile"
+	FeatureDiskForecast      = "disk-forecast"   // GET /api/host/disk-forecast
+	FeatureComposeRestore    = "compose-restore" // POST /api/stacks/{name}/compose/restore-backup
 )
 
 // PeerHeader carries a connection token (pairing) or a peer credential.
@@ -136,7 +138,7 @@ func (s *Service) Hello(ctx context.Context) (apitypes.PeerHello, error) {
 		return apitypes.PeerHello{}, err
 	}
 	return apitypes.PeerHello{Protocol: Protocol, InstanceID: id.InstanceID, Name: id.Name, Version: s.cfg.Version, URL: id.AdvertisedURL,
-		Features: []string{FeatureYAMLCreate, FeatureManagedDockerfile}}, nil
+		Features: []string{FeatureYAMLCreate, FeatureManagedDockerfile, FeatureDiskForecast, FeatureComposeRestore}}, nil
 }
 
 // Authenticate resolves the peer a credential belongs to. Pending peers (a

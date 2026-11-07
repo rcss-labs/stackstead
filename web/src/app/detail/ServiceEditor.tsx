@@ -12,8 +12,11 @@ import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { useStore } from '../hooks/useStore';
 import { DiffView } from '../stacks/DiffView';
+import { EditSteps } from '../stacks/EditSteps';
 import { FileBrowser } from '../stacks/FileBrowser';
 import { NetworkPicker } from '../stacks/NetworkPicker';
+import { ReviewSummary } from '../stacks/ReviewSummary';
+import { usePeakMemoryHint } from '../stacks/usePeakMemory';
 import { BROWSE_TITLES, ServiceForm, type BrowsePurpose, type ServiceFormHandle } from '../stacks/ServiceForm';
 import { OperationPanel } from './OperationPanel';
 import styles from './ServiceEditor.module.css';
@@ -53,6 +56,7 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
   const managedDockerfile = features.includes(FEATURE_MANAGED_DOCKERFILE);
   const stackName = stack.name;
   const serviceName = service.name;
+  const memoryHint = usePeakMemoryHint(stackName, serviceName);
   /** The library reference saved so far; only a different one needs a fetch. */
   const loadedRef = useRef(service.config.image ?? '');
   const reloadRef = useRef(onReload);
@@ -164,7 +168,7 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
     requestFocus('preview');
   }
 
-  async function save() {
+  async function save(): Promise<boolean> {
     const ok = await edit.save();
     if (ok) {
       toasts.push({ kind: 'success', message: `Saved ${serviceName}. Apply to run the change.` });
@@ -175,6 +179,11 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
       loadedRef.current = ref ?? '';
     }
     requestFocus('save');
+    return ok;
+  }
+
+  async function saveAndApply() {
+    if (await save()) await apply();
   }
 
   /**
@@ -263,6 +272,7 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
 
   return (
     <div className={styles.editor} ref={root}>
+      <EditSteps current={phase === 'saved' || operationId ? 3 : reviewing ? 2 : 1} />
       <div className="visually-hidden" role="status" aria-live="polite">
         {announcement}
       </div>
@@ -281,9 +291,9 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
       )}
 
       {phase === 'conflict' && (
-        <div ref={conflictBox} tabIndex={-1}>
+        <div ref={conflictBox} tabIndex={-1} className={styles.conflict}>
           <Banner kind="danger" title="Save refused">
-            <span className={styles.msg}>{conflictMessage}</span>
+            <span className={styles.msg}>{conflictMessage}</span> Nothing has been overwritten: the file on disk and your edit are both intact.
             {dockerfileConflict && <span className={styles.msg}> The Dockerfile changed on disk; your text will replace it.</span>}
           </Banner>
           <div className={styles.row}>
@@ -309,6 +319,7 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
                 ` Your changes to ${discardedGroups.join(', ')} were discarded because that part of the file can now only be edited as raw YAML.`}
             </Banner>
           )}
+          {previewText && <ReviewSummary original={previewText.original} modified={previewText.modified} path={stack.path} />}
           <p className={styles.hint}>The compose file as it is now, against the file this edit would write.</p>
           {previewText && <DiffView original={previewText.original} modified={previewText.modified} ariaLabel="Changes to compose.yaml" />}
         </section>
@@ -322,6 +333,8 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
           onChange={change}
           errors={errors}
           idPrefix="svc"
+          advanced={{ summary: 'Environment, networks and healthcheck' }}
+          memoryHint={memoryHint}
           name={serviceName}
           sourceNote={notEditableNote}
           onSourceChange={(source) => {
@@ -344,8 +357,16 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
             <Button variant="secondary" disabled={phase === 'saving'} onClick={backToEditing}>
               Back to editing
             </Button>
-            <Button variant="primary" loading={phase === 'saving'} onClick={() => void save()}>
+            <Button variant="secondary" loading={phase === 'saving'} onClick={() => void save()}>
               Save
+            </Button>
+            <Button
+              variant="primary"
+              loading={phase === 'saving'}
+              disabledReason={lifecycleDisabledReason ?? (operationRunning ? 'An operation is already running' : undefined)}
+              onClick={() => void saveAndApply()}
+            >
+              Save and apply
             </Button>
           </>
         ) : (

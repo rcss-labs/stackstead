@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError, createApi } from '$lib/api/client';
 import type { Action, DockerEvent, FleetServer, FleetStack, Operation, StackSummary } from '$lib/api/types';
 import { lifecycleDisabledReason } from '$lib/stacks/lifecycle';
+import { fleetHeadline } from '$lib/dashboard/fleetHeadline';
 import { createFleet, serverPath } from '$lib/servers/fleet';
 import { combineHosts, type HostInput } from '$lib/servers/fleetHost';
 import { createFleetStats } from '$lib/servers/fleetStats';
@@ -17,6 +18,7 @@ import { Spinner } from '../components/Spinner';
 import { useStore } from '../hooks/useStore';
 import SideColumn from '../overview/SideColumn';
 import { StacksList } from '../overview/StacksList';
+import { ServerTiles } from '../overview/ServerTiles';
 import { StatusPanel } from '../overview/StatusPanel';
 import { useServer } from '../servers/ServerContext';
 import styles from './AllStacks.module.css';
@@ -207,6 +209,7 @@ export default function AllStacks() {
   if (loading && !data) {
     return (
       <section className={overview.page}>
+        <h1 className="visually-hidden">All servers</h1>
         <div className={overview.loading}>
           <Spinner />
         </div>
@@ -216,6 +219,7 @@ export default function AllStacks() {
 
   return (
     <section className={overview.page}>
+      {!(data && (combined.length > 0 || failing.length === 0)) && <h1 className="visually-hidden">All servers</h1>}
       {error && (
         <div>
           <Banner kind="danger" title="Could not load stacks">
@@ -235,7 +239,23 @@ export default function AllStacks() {
       ))}
       {data && (combined.length > 0 || failing.length === 0) && (
         <>
-          <StatusPanel items={combined} host={combinedHost} history={[]} lastEventIso={events[0]?.time} showActions={false} hrefOf={stackHref} keyOf={rowKey} />
+          <StatusPanel
+            items={combined}
+            headline={fleetHeadline(servers, combined)}
+            host={combinedHost}
+            history={[]}
+            lastEventIso={events[0]?.time}
+            showActions={false}
+            hrefOf={stackHref}
+            keyOf={rowKey}
+          />
+          <ServerTiles
+            servers={servers}
+            stackCount={countOf}
+            hostOf={(id) => (id === localIdRef.current ? localHost : stats[id]?.host)}
+            openHref={(server) => (server.local ? '/' : serverPath(server.slug, ''))}
+            fixHref={scope.href('/settings/servers')}
+          />
           {hostNotes.length > 0 && <p className={styles.hostNote}>{hostNotes.join(' · ')}</p>}
           {combined.length === 0 ? (
             <EmptyState title="No stacks yet" description="None of the connected servers has a stack." />
@@ -292,7 +312,7 @@ function ServerBanner({ server, selfVersion }: { server: FleetServer; selfVersio
   }
   return (
     <Banner kind="danger" title={`Can't reach ${server.name}`}>
-      {server.error || undefined}
+      {`${server.error ? `${server.error}. ` : ''}Its stacks are hidden, not shown as stale.`}
     </Banner>
   );
 }

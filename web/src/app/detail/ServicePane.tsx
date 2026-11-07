@@ -2,18 +2,25 @@ import { useState, type ReactNode } from 'react';
 import type { ServiceDetail } from '$lib/api/types';
 import { hasBuild as serviceHasBuild, type ServiceTab } from '$lib/stacks/detailLocation';
 import { serviceState } from '$lib/stacks/summary';
+import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { Led } from '../components/Led';
 import { Tabs } from '../components/Tabs';
 import { FEATURE_MANAGED_DOCKERFILE, useServerFeature } from '../servers/ServerContext';
 import styles from './ServicePane.module.css';
+import { serviceCause } from './serviceCause';
 import { ServiceOverview } from './ServiceOverview';
 import { TerminalPanel } from './TerminalPanel';
 
+/** The service tabs, plus Logs on phones, where the console lives in a tab instead of a dock. */
+export type PaneTab = ServiceTab | 'logs';
+
 export interface ServicePaneProps {
   service: ServiceDetail;
-  tab: ServiceTab;
-  onTab: (tab: ServiceTab) => void;
+  tab: PaneTab;
+  onTab: (tab: PaneTab) => void;
+  /** The log console for the Logs tab; given on phones only, where it adds the tab. */
+  logs?: ReactNode;
   onLogs: () => void;
   latestCpu: number | undefined;
   cpuHour: (number | null)[] | undefined;
@@ -36,14 +43,18 @@ const TABS: { id: ServiceTab; label: string }[] = [
 
 const TERMINAL_TAB = { id: 'terminal' as const, label: 'Terminal' };
 
+const LOGS_TAB = { id: 'logs' as const, label: 'Logs' };
+
 const DOCKERFILE_TAB = { id: 'dockerfile' as const, label: 'Dockerfile' };
 
-export function ServicePane({ service, tab, onTab, onLogs, latestCpu, cpuHour, onEdit, onCloseEditor, editor, onStart, children }: ServicePaneProps) {
+export function ServicePane({ service, tab, onTab, logs, onLogs, latestCpu, cpuHour, onEdit, onCloseEditor, editor, onStart, children }: ServicePaneProps) {
   const [terminalId, setTerminalId] = useState<string>();
   const state = serviceState(service);
   const hasBuild = serviceHasBuild(service);
   const managedDockerfile = useServerFeature(FEATURE_MANAGED_DOCKERFILE);
-  const tabs = hasBuild && managedDockerfile ? [...TABS, DOCKERFILE_TAB, TERMINAL_TAB] : [...TABS, TERMINAL_TAB];
+  const rest = hasBuild && managedDockerfile ? [...TABS, DOCKERFILE_TAB, TERMINAL_TAB] : [...TABS, TERMINAL_TAB];
+  const tabs = logs ? [rest[0]!, LOGS_TAB, ...rest.slice(1)] : rest;
+  const cause = editor ? null : serviceCause(service);
   return (
     <div className={styles.pane}>
       <header className={styles.header}>
@@ -70,11 +81,25 @@ export function ServicePane({ service, tab, onTab, onLogs, latestCpu, cpuHour, o
           )
         )}
       </header>
+      {cause && (
+        <div className={styles.cause}>
+          <Banner kind="danger" title={cause.title}>
+            {cause.detail}
+            {cause.raiseLimit && onEdit && (
+              <p className={styles.causeAction}>
+                <Button variant="primary" size="sm" onClick={onEdit}>
+                  Raise limit
+                </Button>
+              </p>
+            )}
+          </Banner>
+        </div>
+      )}
       {editor ? (
         editor
       ) : (
         <div className={styles.tabs}>
-          <Tabs tabs={tabs} selected={tab} onSelect={(id) => onTab(id as ServiceTab)} ariaLabel="Service sections" activation="manual">
+          <Tabs tabs={tabs} selected={tab} onSelect={(id) => onTab(id as PaneTab)} ariaLabel="Service sections" activation="manual">
             {(selected) =>
               selected === 'overview' ? (
                 <ServiceOverview
@@ -86,6 +111,8 @@ export function ServicePane({ service, tab, onTab, onLogs, latestCpu, cpuHour, o
                     onTab('terminal');
                   }}
                 />
+              ) : selected === 'logs' ? (
+                logs
               ) : selected === 'terminal' ? (
                 <TerminalPanel containers={service.containers} selectedId={terminalId} onSelect={setTerminalId} onStart={() => onStart?.()} />
               ) : (

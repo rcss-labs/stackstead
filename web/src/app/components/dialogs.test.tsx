@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Dialog } from './Dialog';
 
@@ -167,7 +167,75 @@ describe('Dialog', () => {
   });
 });
 
+describe('Dialog as a mobile bottom sheet', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  // The media store keeps its last value until the previous test's subscription is released, so wait a task first.
+  const stubMobile = async (matches: boolean) => {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    vi.stubGlobal('matchMedia', () => ({ matches, media: '', addEventListener() {}, removeEventListener() {} }));
+  };
+
+  it('offers a Close control and keeps focus off it initially', async () => {
+    await stubMobile(true);
+    const onClose = vi.fn();
+    render(
+      <Dialog open title="Sheet" onClose={onClose}>
+        {body}
+      </Dialog>,
+    );
+    expect(screen.getByRole('dialog').getAttribute('data-sheet')).toBe('true');
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'First' })));
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Close' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('has no Close control on desktop widths', async () => {
+    await stubMobile(false);
+    render(
+      <Dialog open title="Sheet" onClose={() => {}}>
+        {body}
+      </Dialog>,
+    );
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull();
+    expect(screen.getByRole('dialog').hasAttribute('data-sheet')).toBe(false);
+  });
+});
+
 describe('ConfirmDialog', () => {
+  it('stops iOS capitalising or correcting the typed confirmation', () => {
+    render(<ConfirmDialog open title="Remove" message="m" confirmLabel="Remove" typedConfirm="web-app" onConfirm={() => {}} onCancel={() => {}} />);
+    const input = screen.getByRole('textbox', { name: /web-app/ });
+    expect(input.getAttribute('autocapitalize')).toBe('none');
+    expect(input.getAttribute('autocorrect')).toBe('off');
+  });
+
+  it('keeps confirm disabled with a reason until typedConfirm is typed exactly, and resets on reopen', async () => {
+    const user = userEvent.setup();
+    const onConfirm = vi.fn();
+    const props = { title: 'Remove', message: 'm', confirmLabel: 'Remove stack', danger: true, typedConfirm: 'web-app', onConfirm, onCancel: () => {} };
+    const { rerender } = render(<ConfirmDialog open {...props} />);
+    const confirm = screen.getByRole('button', { name: 'Remove stack' });
+    expect(confirm.getAttribute('aria-disabled')).toBe('true');
+    expect(confirm.getAttribute('title')).toContain('web-app');
+    const input = screen.getByRole('textbox', { name: /web-app/ });
+    await user.type(input, 'web-ap');
+    await user.click(confirm);
+    expect(onConfirm).not.toHaveBeenCalled();
+    await user.type(input, 'P');
+    expect(confirm.getAttribute('aria-disabled')).toBe('true');
+    await user.clear(input);
+    await user.type(input, 'web-app');
+    expect(confirm.getAttribute('aria-disabled')).toBeNull();
+    await user.click(confirm);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+
+    rerender(<ConfirmDialog open={false} {...props} />);
+    rerender(<ConfirmDialog open {...props} />);
+    expect((screen.getByRole('textbox', { name: /web-app/ }) as HTMLInputElement).value).toBe('');
+    expect(screen.getByRole('button', { name: 'Remove stack' }).getAttribute('aria-disabled')).toBe('true');
+  });
+
+
   it('shows the message and reports confirm and cancel', async () => {
     const user = userEvent.setup();
     const onConfirm = vi.fn();

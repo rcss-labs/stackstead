@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StrictMode } from 'react';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, Route, Routes as RouterRoutes } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as session from '$lib/api/session';
 import { get } from '$lib/store';
@@ -46,23 +46,21 @@ const installSettingsFetch = (routes: Routes) =>
     ...routes,
   });
 const tokenStatus = (configured: boolean) => ({ [`GET ${STATUS}`]: { body: { configured } } });
-const mountSettings = () => mountAt('/settings');
+const mountSettings = (section = 'system') => mountAt(`/settings/${section}`);
 
 describe('Settings update card', () => {
-  it('renders the update card under System status', async () => {
+  it('renders the update card in the Updates section', async () => {
     fake = installSettingsFetch(tokenStatus(false));
-    mountSettings();
+    mountSettings('updates');
     expect(await screen.findByRole('region', { name: 'Software update' })).toBeTruthy();
     expect(await screen.findByText('up to date')).toBeTruthy();
-    const headings = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent);
-    expect(headings.indexOf('Software update')).toBe(headings.indexOf('System status') + 1);
   });
 });
 
 describe('Settings metrics token', () => {
   it('not configured: explains /metrics 404 and offers Create only', async () => {
     fake = installSettingsFetch(tokenStatus(false));
-    mountSettings();
+    mountSettings('prometheus');
     expect(await screen.findByRole('button', { name: 'Create token' })).toBeTruthy();
     expect(screen.getByText(/404/)).toBeTruthy();
     expect(screen.getByText(/scrapes/).textContent).toContain('Prometheus scrapes /metrics with this bearer token.');
@@ -72,7 +70,7 @@ describe('Settings metrics token', () => {
 
   it('configured: offers Rotate and Disable', async () => {
     fake = installSettingsFetch(tokenStatus(true));
-    mountSettings();
+    mountSettings('prometheus');
     expect(await screen.findByRole('button', { name: 'Rotate token' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Disable' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Create token' })).toBeNull();
@@ -84,7 +82,7 @@ describe('Settings metrics token', () => {
       [`GET ${STATUS}`]: () => (++n === 1 ? { status: 500, body: { error: 'boom' } } : { body: { configured: false } }),
     });
     const user = userEvent.setup();
-    mountSettings();
+    mountSettings('prometheus');
     expect(await screen.findByText(/boom/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Create token' })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Retry' }));
@@ -97,7 +95,7 @@ describe('Settings metrics token', () => {
       [`POST ${STATUS}`]: { status: 200, body: { token: TOKEN } },
     });
     const user = userEvent.setup();
-    mountSettings();
+    mountSettings('prometheus');
     await user.click(await screen.findByRole('button', { name: 'Create token' }));
     const input = (await screen.findByLabelText('Metrics token')) as HTMLInputElement;
     expect(input.value).toBe(TOKEN);
@@ -125,7 +123,7 @@ describe('Settings metrics token', () => {
       [`POST ${STATUS}`]: { status: 200, body: { token: TOKEN } },
     });
     const user = userEvent.setup();
-    const { unmount } = mountSettings();
+    const { unmount } = mountSettings('prometheus');
     await user.click(await screen.findByRole('button', { name: 'Create token' }));
     await screen.findByLabelText('Metrics token');
     unmount();
@@ -138,7 +136,7 @@ describe('Settings metrics token', () => {
       [`POST ${STATUS}`]: { status: 200, body: { token: TOKEN } },
     });
     const user = userEvent.setup();
-    mountSettings();
+    mountSettings('prometheus');
     await user.click(await screen.findByRole('button', { name: 'Rotate token' }));
     const dlg = screen.getByRole('alertdialog');
     expect(dlg.textContent).toMatch(/old token stops working immediately/i);
@@ -157,7 +155,7 @@ describe('Settings metrics token', () => {
       [`DELETE ${STATUS}`]: { status: 204 },
     });
     const user = userEvent.setup();
-    mountSettings();
+    mountSettings('prometheus');
     await user.click(await screen.findByRole('button', { name: 'Disable' }));
     expect(fake.calls.filter((c) => c.method === 'DELETE')).toHaveLength(0);
     await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Disable token' }));
@@ -171,7 +169,7 @@ describe('Settings metrics token', () => {
       [`POST ${STATUS}`]: { status: 500, body: { error: 'disk full' } },
     });
     const user = userEvent.setup();
-    mountSettings();
+    mountSettings('prometheus');
     await user.click(await screen.findByRole('button', { name: 'Create token' }));
     expect(await screen.findByText(/disk full/)).toBeTruthy();
     expect(screen.queryByLabelText('Metrics token')).toBeNull();
@@ -187,7 +185,7 @@ describe('Settings metrics token', () => {
         return { status: 200, body: { token: TOKEN } };
       },
     });
-    mountSettings();
+    mountSettings('prometheus');
     const create = await screen.findByRole('button', { name: 'Create token' });
     // Both clicks land before React re-renders the loading state, so only a ref guard can stop the second.
     act(() => {
@@ -210,7 +208,7 @@ describe('Settings metrics token', () => {
       },
     });
     const user = userEvent.setup();
-    mountSettings();
+    mountSettings('prometheus');
     await user.click(await screen.findByRole('button', { name: 'Disable' }));
     const confirm = within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Disable token' });
     act(() => {
@@ -233,7 +231,7 @@ describe('Settings metrics token', () => {
       },
     });
     const user = userEvent.setup();
-    mountSettings();
+    mountSettings('prometheus');
     await user.click(await screen.findByRole('button', { name: 'Rotate token' }));
     const confirm = within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Rotate' });
     act(() => {
@@ -245,19 +243,22 @@ describe('Settings metrics token', () => {
     expect(fake.calls.filter((c) => c.method === 'POST')).toHaveLength(1);
   });
 
-  it('loads the token status and update status once under StrictMode', async () => {
+  it.each([
+    ['prometheus', STATUS, 'Create token'],
+    ['updates', '/api/settings/update', 'Check now'],
+  ])('loads the %s card once under StrictMode', async (section, path, ready) => {
     fake = installSettingsFetch(tokenStatus(false));
     render(
       <StrictMode>
-        <MemoryRouter>
-          <SettingsScreen />
+        <MemoryRouter initialEntries={[`/settings/${section}`]}>
+          <RouterRoutes>
+            <Route path="/settings/:section" element={<SettingsScreen />} />
+          </RouterRoutes>
         </MemoryRouter>
       </StrictMode>,
     );
-    await screen.findByRole('button', { name: 'Create token' });
-    await screen.findByText('up to date');
-    expect(fake.calls.filter((c) => c.path === STATUS)).toHaveLength(1);
-    expect(fake.calls.filter((c) => c.path === '/api/settings/update')).toHaveLength(1);
+    await screen.findByRole('button', { name: ready });
+    expect(fake.calls.filter((c) => c.path === path)).toHaveLength(1);
   });
 });
 
@@ -288,7 +289,7 @@ describe('Settings status and account', () => {
     fake = installSettingsFetch(tokenStatus(false));
     vi.spyOn(session, 'logout').mockResolvedValue({ ok: false });
     const user = userEvent.setup();
-    mountSettings();
+    mountSettings('account');
     await user.click(await screen.findByRole('button', { name: 'Log out' }));
     expect(session.logout).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(get(toasts).some((t) => /logout may not have completed/i.test(t.message))).toBe(true));
@@ -312,7 +313,7 @@ describe('Settings v2 cards', () => {
         setDensity('compact');
       });
       const user = userEvent.setup();
-      mountSettings();
+      mountSettings('appearance');
       await screen.findByRole('button', { name: 'Dark' });
       const pressed = (name: string) => screen.getByRole('button', { name }).getAttribute('aria-pressed');
       expect(pressed('Dark')).toBe('true');
@@ -360,96 +361,8 @@ describe('Settings v2 cards', () => {
 });
 
 describe('Settings layout', () => {
-  it('the section nav links to every card', async () => {
-    fake = installSettingsFetch(tokenStatus(false));
-    mountSettings();
-    const nav = await screen.findByRole('navigation', { name: 'Settings sections' });
-    const links = within(nav).getAllByRole('link');
-    const ids = ['settings-system', 'settings-updates', 'settings-prometheus', 'settings-servers', 'settings-registries', 'settings-github', 'settings-images', 'settings-backups', 'settings-appearance', 'settings-account'];
-    expect(links.map((a) => a.getAttribute('href'))).toEqual(ids.map((id) => `#${id}`));
-    expect(links.map((a) => a.textContent)).toEqual(['System', 'Updates', 'Prometheus', 'Connected servers', 'Registries', 'GitHub', 'Images', 'Backups', 'Appearance', 'Account']);
-    for (const id of ids) expect(document.getElementById(id)).not.toBeNull();
-    expect(screen.getAllByRole('heading', { level: 1 }).map((h) => h.textContent)).toEqual(['Settings']);
-  });
-
   it('the route table titles /settings as Settings', () => {
     expect(findRoute('/settings')?.title).toBe('Settings');
   });
 });
 
-describe('Settings section nav', () => {
-  const originalScrollIntoView = Element.prototype.scrollIntoView;
-  afterEach(() => {
-    Element.prototype.scrollIntoView = originalScrollIntoView;
-  });
-
-  it.each(['metaKey', 'ctrlKey', 'shiftKey'] as const)('leaves a %s click to the browser so it can open a new tab', async (modifier) => {
-    fake = installSettingsFetch(tokenStatus(false));
-    mountSettings();
-    const link = within(await screen.findByRole('navigation', { name: 'Settings sections' })).getByRole('link', { name: 'Account' });
-    const notPrevented = fireEvent.click(link, { [modifier]: true });
-    expect(notPrevented).toBe(true);
-  });
-
-  it.each([
-    ['System', 'System status', 'settings-system'],
-    ['Updates', 'Software update', 'settings-updates'],
-    ['Prometheus', 'Prometheus token', 'settings-prometheus'],
-    ['Connected servers', 'Connected servers', 'settings-servers'],
-    ['Registries', 'Registries', 'settings-registries'],
-    ['GitHub', 'GitHub', 'settings-github'],
-    ['Appearance', 'Appearance', 'settings-appearance'],
-    ['Account', 'Account', 'settings-account'],
-  ])('%s scrolls to its card, focuses the heading and sets the hash', async (link, heading, sectionId) => {
-    fake = installSettingsFetch(tokenStatus(false));
-    // jsdom has no layout, so scrollIntoView is absent; record the call instead.
-    const scrolled: Array<{ id: string; options: unknown }> = [];
-    Element.prototype.scrollIntoView = function (this: Element, options?: unknown) {
-      scrolled.push({ id: this.id, options });
-    };
-    window.history.replaceState(null, '', '/');
-    const user = userEvent.setup();
-    mountSettings();
-    await user.click(within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('link', { name: link }));
-    // Default fragment navigation would blur the heading in a real browser, so the handler does it all itself.
-    expect(document.activeElement).toBe(screen.getByRole('heading', { level: 2, name: heading }));
-    expect(window.location.hash).toBe(`#${sectionId}`);
-    expect(scrolled).toEqual([{ id: sectionId, options: { behavior: 'auto' } }]);
-  });
-});
-
-describe('Settings deep links', () => {
-  const originalScrollIntoView = Element.prototype.scrollIntoView;
-  let scroll: ReturnType<typeof vi.fn>;
-  beforeEach(() => {
-    // jsdom has no layout and no scrollIntoView; record the calls instead.
-    scroll = vi.fn();
-    Element.prototype.scrollIntoView = scroll as unknown as typeof Element.prototype.scrollIntoView;
-  });
-  afterEach(() => {
-    Element.prototype.scrollIntoView = originalScrollIntoView;
-  });
-
-  it('a #section deep link scrolls to the card and focuses its heading once it is mounted', async () => {
-    fake = installSettingsFetch(tokenStatus(false));
-    mountAt('/settings#settings-account');
-    const heading = await screen.findByRole('heading', { level: 2, name: 'Account' });
-    expect(scroll).toHaveBeenCalledTimes(1);
-    expect(scroll.mock.contexts[0]).toBe(document.getElementById('settings-account'));
-    expect(document.activeElement).toBe(heading);
-  });
-
-  it('without a hash nothing scrolls', async () => {
-    fake = installSettingsFetch(tokenStatus(false));
-    mountSettings();
-    await screen.findByRole('heading', { level: 2, name: 'Account' });
-    expect(scroll).not.toHaveBeenCalled();
-  });
-
-  it('an unknown hash is ignored', async () => {
-    fake = installSettingsFetch(tokenStatus(false));
-    mountAt('/settings#settings-nope');
-    await screen.findByRole('heading', { level: 2, name: 'Account' });
-    expect(scroll).not.toHaveBeenCalled();
-  });
-});

@@ -1,39 +1,12 @@
 // Pure derivations behind the React overview: status panel, towers, groups. Plain values in, plain values out.
-import type { HostSnapshot, StackSummary } from '../api/types';
-import { attentionCount, attentionStacks, filterStacks, stackNeedsAttention } from '../stacks/summary';
-
-export type PanelTone = 'danger' | 'success' | 'muted';
+import type { Alert, HostSnapshot, StackSummary } from '../api/types';
+import type { LiveState } from '../stores/live';
+import { EXCLUDED_ALERT_KINDS } from './issues';
+import { attentionStacks, filterStacks, stackNeedsAttention } from '../stacks/summary';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const allUnknown = (items: StackSummary[]) => items.length > 0 && items.every((s) => s.status === 'unknown');
 const runningCount = (items: StackSummary[]) => items.filter((s) => s.status === 'running' && !stackNeedsAttention(s)).length;
-
-export function panelLabel(items: StackSummary[]): { text: string; tone: PanelTone; pulse: boolean } {
-  if (items.length === 0) return { text: 'no stacks', tone: 'muted', pulse: false };
-  if (allUnknown(items)) return { text: 'status unknown', tone: 'muted', pulse: false };
-  const attention = attentionCount(items);
-  if (attention > 0) return { text: `degraded · ${plural(attention, 'stack')}`, tone: 'danger', pulse: true };
-  const running = runningCount(items);
-  if (running === items.length) return { text: `all running · ${plural(items.length, 'stack')}`, tone: 'success', pulse: false };
-  return { text: `healthy · ${running} of ${items.length} running`, tone: 'success', pulse: false };
-}
-
-export function statusSentence(items: StackSummary[]): string {
-  if (items.length === 0) return 'No stacks yet';
-  if (allUnknown(items)) return 'Stack status is unavailable';
-  const attention = attentionStacks(items);
-  if (attention.length === 1) return `${attention[0].name} needs attention`;
-  if (attention.length === 2) return `${attention[0].name} and ${attention[1].name} need attention`;
-  if (attention.length > 2) return `${attention[0].name} and ${attention.length - 1} more need attention`;
-  return runningCount(items) === items.length ? 'All stacks are running' : 'Nothing needs attention';
-}
-
-/** The sub-line pieces the panel can compute; the component appends "last event <relative>". */
-export function statusFragments(items: StackSummary[], host: HostSnapshot | undefined): string[] {
-  const fragments = [`${runningCount(items)} of ${plural(items.length, 'stack')} fully running`];
-  if (host?.containers) fragments.push(`${host.containers.running} of ${host.containers.total} containers up`);
-  return fragments;
-}
 
 export type TowerBlock = 'up' | 'unhealthy' | 'failed' | 'down' | 'off';
 
@@ -91,3 +64,36 @@ export function rowPrimaryAction(s: StackSummary): { action: 'up' | 'restart'; l
 }
 
 export const filterByQuery = (items: StackSummary[], query: string): StackSummary[] => filterStacks(items, 'all', query);
+
+const issueWord =(n: number, noun: 'stack' | 'issue') => `${n} ${noun}${n === 1 ? ' needs' : 's need'} attention`;
+
+/**
+ * The page's one-line verdict. It says "running" only when stacks, alerts, Docker and the live
+ * connection all support it; anything missing yields "Health is not confirmed" instead.
+ */
+export function headline(
+  items: StackSummary[],
+  alerts: Alert[] | undefined,
+  live: Pick<LiveState, 'docker' | 'connection'>,
+  host?: Pick<HostSnapshot, 'containers'>,
+): { title: string; sub: string } {
+  if (live.docker === 'unavailable') {
+    return { title: 'Docker is not responding', sub: 'Stackstead is still running. Your containers may be fine; it just cannot see them.' };
+  }
+  if (items.length === 0) return { title: 'No stacks yet', sub: '' };
+  if (allUnknown(items)) return { title: 'Stack status is unavailable', sub: '' };
+
+  const counts = [`${runningCount(items)} of ${plural(items.length, 'stack')} fully running`];
+  if (host?.containers) counts.push(`${host.containers.running} of ${host.containers.total} containers running`);
+  const sub = counts.join(' · ');
+
+  const flagged = (alerts ?? []).filter((a) => !EXCLUDED_ALERT_KINDS.has(a.kind) && a.severity !== 'info');
+  const stacks = new Set([...attentionStacks(items).map((s) => s.name), ...flagged.flatMap((a) => (a.stack ? [a.stack] : []))]);
+  if (stacks.size > 0) return { title: issueWord(stacks.size, 'stack'), sub };
+  const loose = flagged.filter((a) => !a.stack).length;
+  if (loose > 0) return { title: issueWord(loose, 'issue'), sub };
+
+  const unconfirmed = !alerts ? 'Alerts have not loaded.' : items.some((s) => s.status === 'unknown') ? 'A stack status is unknown.' : live.docker !== 'ok' ? 'Docker has not answered yet.' : live.connection !== 'open' ? 'Live updates are disconnected.' : '';
+  if (unconfirmed) return { title: 'Health is not confirmed', sub: unconfirmed };
+  return { title: runningCount(items) === items.length ? 'All stacks are running' : 'Nothing needs attention', sub };
+}

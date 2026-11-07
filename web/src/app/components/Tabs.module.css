@@ -3,6 +3,8 @@
   gap: var(--space-1);
   overflow-x: auto;
   overflow-y: hidden;
+  scrollbar-width: none;
+  flex: none;
   border-bottom: 1px solid var(--border);
 }
 
@@ -10,8 +12,8 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 34px;
-  padding: 0 12px;
+  height: 38px;
+  padding: 0 10px;
   margin-bottom: -1px;
   background: none;
   border: 0;
@@ -39,7 +41,9 @@
 
 .panel { padding-block: var(--space-4); }
 
-/* Touch targets are at least 40px tall on narrow screens. */
+.tablist::-webkit-scrollbar { display: none; }
+
+/* Touch targets are at least 44px tall on narrow screens. */
 @media (max-width: 759px) {
-  .tab { height: 40px; }
+  .tab { height: 46px; padding: 0 12px; }
 }

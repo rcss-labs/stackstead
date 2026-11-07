@@ -3,9 +3,9 @@
   bottom: 0;
   z-index: 6;
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   padding: 6px 4px 10px;
-  background: var(--chassis);
+  background: var(--bg);
   border-top: 1px solid var(--border);
 }
 
@@ -17,6 +17,11 @@
   align-items: center;
   justify-content: center;
   gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
   color: var(--muted);
   text-decoration: none;
   transition: color 0.12s;

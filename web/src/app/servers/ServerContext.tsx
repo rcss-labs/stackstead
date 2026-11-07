@@ -17,7 +17,14 @@ import type { TrackedOperation } from '$lib/stores/operationTracker';
 /** Optional capabilities a server advertises in its hello; the names match the Go side. */
 export const FEATURE_YAML_CREATE = 'yaml-create';
 export const FEATURE_MANAGED_DOCKERFILE = 'managed-dockerfile';
-export const ALL_FEATURES: readonly string[] = [FEATURE_YAML_CREATE, FEATURE_MANAGED_DOCKERFILE];
+export const FEATURE_DISK_FORECAST = 'disk-forecast';
+export const FEATURE_COMPOSE_RESTORE = 'compose-restore';
+export const ALL_FEATURES: readonly string[] = [
+  FEATURE_YAML_CREATE,
+  FEATURE_MANAGED_DOCKERFILE,
+  FEATURE_DISK_FORECAST,
+  FEATURE_COMPOSE_RESTORE,
+];
 
 /** Everything a screen needs to show one server: its API, live streams and stores, and how to link inside it. */
 export interface ServerScope {

@@ -282,6 +282,8 @@ export interface FieldErrorBody extends ErrorBody {
 export interface RawCompose {
   content: string;
   hash: string;
+  /** GET only: a compose.yaml.bak exists to restore from. Absent from servers without the `compose-restore` feature, and not sent on save. */
+  hasBackup?: boolean;
 }
 
 /** `hash` of the file after a successful write. */
@@ -531,6 +533,16 @@ export interface Alert {
   container?: string;
   message: string;
   since: string;
+  /** Last exit code, on `exited` and `restart_loop` alerts; absent when Docker could not be inspected or on older servers. */
+  exitCode?: number;
+  /** Memory limit in bytes of that container; absent when it has none. */
+  memLimit?: number;
+}
+
+/** GET /api/host/disk-forecast. `daysLeft` is null with under 6 hours of samples, or when usage is flat or falling. */
+export interface DiskForecast {
+  daysLeft: number | null;
+  sampledDays: number;
 }
 
 export type SummaryWindow = '5m' | '15m' | '1h';

@@ -9,7 +9,7 @@ afterEach(() => backend.restore());
 const LIST = '/api/images';
 
 describe('Images list', () => {
-  it('shows name, source, owner, latest tag, last build status and push target count', async () => {
+  it('shows name, source, owner, latest tag, last build and push target count on each card', async () => {
     backend = installImagesBackend({
       [`GET ${LIST}`]: {
         body: {
@@ -28,10 +28,28 @@ describe('Images list', () => {
       },
     });
     mountImages('/images');
-    const row = (await screen.findByRole('row', { name: /Web/ })) as HTMLElement;
-    const cells = within(row).getAllByRole('cell').map((c) => c.textContent);
-    expect(cells).toEqual(['Web', 'upload', 'Here', '7', 'failed', '2']);
-    expect(within(row).getByRole('link', { name: 'Web' }).getAttribute('href')).toBe('/images/web');
+    const card = (await screen.findByRole('link', { name: 'Web' })).closest('li') as HTMLElement;
+    expect(within(card).getByText('upload')).toBeTruthy();
+    expect(within(card).getByText('Here')).toBeTruthy();
+    expect(within(card).getByText('7')).toBeTruthy();
+    expect(within(card).getByText('Push targets').nextElementSibling?.textContent).toBe('2');
+    expect(screen.getByRole('link', { name: 'Web' }).getAttribute('href')).toBe('/images/web');
+  });
+
+  it('card shows a failed build', async () => {
+    backend = installImagesBackend({
+      [`GET ${LIST}`]: { body: { servers: [localOwner], images: [image({ latestVersion: version({ tag: '6' }), lastBuild: version({ tag: '7', status: 'failed' }) })] } },
+    });
+    mountImages('/images');
+    const card = (await screen.findByRole('link', { name: 'Web' })).closest('li') as HTMLElement;
+    expect(within(card).getByText('failed').getAttribute('data-tone')).toBe('danger');
+  });
+
+  it('explains that the library is separate from images on disk and links to Storage', async () => {
+    backend = installImagesBackend({ [`GET ${LIST}`]: { body: { servers: [localOwner], images: [] } } });
+    mountImages('/images');
+    expect(await screen.findByText(/Images you build and version here/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Storage' }).getAttribute('href')).toBe('/storage');
   });
 
   it('links a peer-owned image to the owner route', async () => {
@@ -43,16 +61,16 @@ describe('Images list', () => {
     expect(link.getAttribute('href')).toBe('/s/mini-02/images/base');
   });
 
-  it('shows an owner chip on peer-owned rows only and no row actions', async () => {
+  it('shows an owner chip on peer-owned cards only and no card actions', async () => {
     backend = installImagesBackend({
       [`GET ${LIST}`]: { body: { servers: [localOwner, peerOwner], images: [image(), image({ slug: 'base', name: 'Base', owner: peerOwner })] } },
     });
     mountImages('/images');
-    const peerRow = (await screen.findByRole('row', { name: /Base/ })) as HTMLElement;
-    expect(within(peerRow).getByText('Mini 02').getAttribute('data-tone')).toBe('info');
-    expect(within(peerRow).queryByRole('button')).toBeNull();
-    const localRow = screen.getByRole('row', { name: /Web/ }) as HTMLElement;
-    expect(within(localRow).getByText('Here').getAttribute('data-tone')).toBeNull();
+    const peerCard = (await screen.findByRole('link', { name: 'Base' })).closest('li') as HTMLElement;
+    expect(within(peerCard).getByText('Mini 02').getAttribute('data-tone')).toBe('info');
+    expect(within(peerCard).queryByRole('button')).toBeNull();
+    const localCard = screen.getByRole('link', { name: 'Web' }).closest('li') as HTMLElement;
+    expect(within(localCard).getByText('Here').getAttribute('data-tone')).toBeNull();
   });
 
   it('warns about an unreachable server and one that runs an older Stackstead', async () => {

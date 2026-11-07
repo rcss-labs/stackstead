@@ -1,15 +1,14 @@
-import { Link } from 'react-router';
 import { ICONS } from '$lib/shell/icons';
+import { splitServerPath } from '$lib/router';
 import { effectiveTheme, setTheme } from '$lib/stores/appearance';
 import { connectedPeers, peers, selfName } from '$lib/servers/peers';
-import { live } from '$lib/stores/live';
 import { useStore } from '../hooks/useStore';
-import { localScope } from '../servers/ServerContext';
+import { localScope, useServer } from '../servers/ServerContext';
 import { PanelLabel } from '../components/PanelLabel';
 import { HostBlock } from './HostBlock';
-import { ServerNav } from './ServerNav';
 import { NavItem } from './NavItem';
-import { NAV, type NavEntry } from './nav';
+import { ServerMenu } from './ServerMenu';
+import { SETTINGS, serverNav, type NavEntry } from './navItems';
 import styles from './Sidebar.module.css';
 
 export interface SidebarProps {
@@ -20,7 +19,7 @@ export interface SidebarProps {
   stackCount: number;
   attention: boolean;
   onOpenPalette: () => void;
-  /** Follows a server heading click; the app passes its unsaved-changes guard. */
+  /** Follows a server switcher choice; the app passes its unsaved-changes guard. */
   onNavigate?: (href: string) => void;
 }
 
@@ -28,11 +27,15 @@ const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform
 
 export function Sidebar({ username, onLogout, current, stackCount, attention, onOpenPalette, onNavigate }: SidebarProps) {
   const dark = useStore(effectiveTheme) === 'dark';
-  const status = useStore(live);
+  const status = useStore(useServer().live);
   const peerList = connectedPeers(useStore(peers).items);
   const ownName = useStore(selfName);
   const initials = (username ?? '').slice(0, 2).toUpperCase();
   const themeLabel = dark ? 'Switch to light theme' : 'Switch to dark theme';
+  // The pages follow the server being viewed; Settings, like the account, belongs to this server.
+  const viewed = splitServerPath(current).slug;
+  const entries = serverNav(viewed);
+  const viewedStackCount = viewed === null ? stackCount : (peerList.find((p) => p.slug === viewed)?.stackCount ?? 0);
 
   // Neutral "Docker" until the first status answer; only a real "unavailable" is called out.
   const dockerText =
@@ -40,25 +43,30 @@ export function Sidebar({ username, onLogout, current, stackCount, attention, on
   const composeText = status.compose === 'unknown' ? null : status.compose === 'unavailable' ? 'compose unavailable' : `compose ${status.compose}`;
   const versions = composeText ? `${dockerText} · ${composeText}` : dockerText;
 
-  const item = (entry: NavEntry) => (
-    <NavItem
-      key={entry.href}
-      entry={entry}
-      current={entry.match(current)}
-      count={entry.href === '/' ? stackCount : undefined}
-      alert={entry.href === '/' && attention}
-    />
-  );
+  const item = (entry: NavEntry) => {
+    const overview = entry.label === 'Overview';
+    return (
+      <NavItem
+        key={entry.href}
+        entry={entry}
+        current={entry.match(current)}
+        count={overview ? viewedStackCount : undefined}
+        alert={overview && viewed === null && attention}
+      />
+    );
+  };
+  const group = (name: NavEntry['group']) => entries.filter((e) => e.group === name).map(item);
 
   return (
     <nav aria-label="Main" className={styles.sidebar}>
-      <Link to="/" className={styles.logo} aria-label="Stackstead">
-        <img src="/containers.png" alt="" width="28" height="28" />
-        <span className={styles.wordmark} aria-hidden="true">
-          Stackstead
-        </span>
-      </Link>
-      <HostBlock />
+      <ServerMenu
+        current={current}
+        localName={ownName ?? localScope.name}
+        localTagged={ownName !== undefined}
+        localStackCount={stackCount}
+        peers={peerList}
+        onNavigate={onNavigate}
+      />
       <button type="button" className={styles.search} aria-label="Search or run a command" onClick={onOpenPalette}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d={ICONS.search} />
@@ -70,19 +78,22 @@ export function Sidebar({ username, onLogout, current, stackCount, attention, on
           {isMac ? '⌘K' : 'Ctrl K'}
         </kbd>
       </button>
-      {peerList.length > 0 ? (
-        <ServerNav current={current} localName={ownName ?? localScope.name} localTagged={ownName !== undefined} localStackCount={stackCount} peers={peerList} attention={attention} onNavigate={onNavigate} />
-      ) : (
-        <>
-          <div className={styles.group}>{NAV.filter((e) => e.group === 'main').map(item)}</div>
-          <div className={styles.createLabel}>
-            <PanelLabel tone="faint">Create</PanelLabel>
-          </div>
-          <div className={styles.group}>{NAV.filter((e) => e.group === 'create').map(item)}</div>
-        </>
-      )}
+      <div className={styles.scroll}>
+        <div className={styles.group}>{group('main')}</div>
+        <div className={styles.groupLabel}>
+          <PanelLabel tone="faint">Resources</PanelLabel>
+        </div>
+        <div className={styles.group}>{group('resources')}</div>
+        <div className={styles.groupLabel}>
+          <PanelLabel tone="faint">Add</PanelLabel>
+        </div>
+        <div className={styles.group}>{group('create')}</div>
+        <div className={styles.vitals}>
+          <HostBlock />
+        </div>
+      </div>
       <div className={styles.bottom}>
-        <div className={styles.group}>{NAV.filter((e) => e.group === 'settings').map(item)}</div>
+        <div className={styles.group}>{item(SETTINGS)}</div>
         <div className={styles.user}>
           <button
             type="button"

@@ -90,14 +90,14 @@ describe('issue cards', () => {
       </MemoryRouter>,
     );
     expect(container.innerHTML).toBe('');
-    expect(screen.queryByRole('heading', { name: 'Issues' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Needs attention' })).toBeNull();
   });
 
   it('a card shows the LED, kind, stack link, age, title, message and both actions', () => {
     renderCards([alert()]);
-    const section = screen.getByRole('region', { name: 'Issues' });
+    const section = screen.getByRole('region', { name: 'Needs attention' });
     const card = within(section).getByRole('article', { name: 'db is unhealthy' });
-    expect(within(section).getByRole('heading', { level: 2, name: 'Issues' })).toBeTruthy();
+    expect(within(section).getByRole('heading', { level: 2, name: 'Needs attention' })).toBeTruthy();
     expect(within(card).getByRole('heading', { level: 3, name: 'db is unhealthy' })).toBeTruthy();
     expect(within(card).getByText('unhealthy', { selector: '[data-tone]' })).toBeTruthy();
     expect(within(card).getByRole('link', { name: 'web' }).getAttribute('href')).toBe('/stacks/web');

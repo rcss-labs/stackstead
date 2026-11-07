@@ -1,11 +1,11 @@
 .row {
   display: grid;
-  grid-template-columns: 8px minmax(160px, 1.6fr) 130px minmax(110px, 1.2fr) 150px 70px 64px 76px 50px 64px;
+  grid-template-columns: 8px minmax(160px, 1.6fr) 130px minmax(110px, 1.2fr) 150px 200px 64px 76px 50px 64px;
   align-items: center;
   gap: 12px;
-  min-width: 986px;
+  min-width: 1116px;
   padding: 9px 14px;
-  border-bottom: 1px solid var(--hi);
+  border-bottom: 1px solid var(--border);
   font-size: 12.5px;
   outline: none;
   cursor: pointer;
@@ -32,8 +32,7 @@
   white-space: nowrap;
 }
 .nameLink:hover { color: var(--accent); }
-.status { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.status[data-tone='danger'] { color: var(--danger); }
+.sub { font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .stackLink { color: var(--text); text-decoration: none; }
 .stackLink:hover { color: var(--accent); }
@@ -55,14 +54,18 @@
 .health[data-health='unhealthy'] { color: var(--danger); }
 .health[data-health='starting'] { color: var(--warning); }
 
-.portList { display: inline-flex; flex-wrap: wrap; gap: 4px; }
-.port { font-family: var(--mono); font-size: 11px; color: var(--info); }
-.more { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+/* One line, so every row is the same height; the title carries the full list. */
+.portList { display: flex; gap: 6px; min-width: 0; }
+.port { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11px; color: var(--info); }
+.more { flex: none; font-family: var(--mono); font-size: 11px; color: var(--faint); }
 
 .num { font-family: var(--mono); font-size: 12px; text-align: right; }
 .num [data-tone='warning'] { color: var(--warning); font-weight: 600; }
 
-.mobileStats { display: flex; flex-direction: column; align-items: flex-end; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.mobileState { display: flex; align-items: center; gap: 8px; font-size: 11.5px; }
+.problem { color: var(--danger); font-weight: 600; }
+
+.mobileStats { display: flex; gap: 8px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
 
 .toggle { display: flex; justify-content: flex-end; align-items: center; gap: 4px; }
 .terminalLink {
@@ -80,10 +83,22 @@
 
 @media (max-width: 759px) {
   .row {
-    grid-template-columns: 8px minmax(0, 1fr) auto auto;
+    /* A long name gets the whole width; status and readings sit on their own line beneath it. */
+    grid-template-columns: 8px auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'led name name toggle'
+      '. state stats toggle';
+    gap: 4px 10px;
     min-width: 0;
-    padding: 10px 14px;
+    min-height: 52px;
+    padding: 8px 14px;
   }
+  .led { grid-area: led; align-self: start; padding-top: 6px; }
+  .name { grid-area: name; }
+  .row > [data-mobile]:not([aria-label]) { grid-area: state; }
+  .row > [data-mobile][aria-label] { grid-area: stats; justify-content: flex-end; }
+  .toggle { grid-area: toggle; }
+  .terminalLink { width: 44px; height: 44px; }
   .row[data-focused='true'],
   .row:focus-visible { box-shadow: none; }
   .row [data-desktop] { display: none; }

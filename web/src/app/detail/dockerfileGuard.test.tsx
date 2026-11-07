@@ -37,6 +37,7 @@ beforeEach(() => {
   h.stream = installFakeStream({ '/api/events': [], '/api/stacks/web/logs': [], '/api/stacks/web/metrics/live': [] });
 });
 afterEach(async () => {
+  vi.unstubAllGlobals();
   cleanup();
   await removeHarness(h);
 });
@@ -51,5 +52,21 @@ describe('Dockerfile tab on the stack page', () => {
     await waitFor(() => expect(get(unsavedChanges)).toBe(true));
     await userEvent.setup().click(screen.getByRole('tab', { name: 'Overview' }));
     expect(await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeTruthy();
+  });
+
+  it('the phone Logs button with an unsaved Dockerfile edit asks first', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query === '(max-width: 759px)',
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    mountDetail(h, '/stacks/web?service=app&tab=dockerfile');
+    const ta = (await screen.findByRole('textbox', { name: 'Dockerfile for app' })) as HTMLTextAreaElement;
+    await waitFor(() => expect(ta.value).toBe('FROM alpine:3.20\n'));
+    fireEvent.change(ta, { target: { value: 'FROM alpine:3.21\n' } });
+    await waitFor(() => expect(get(unsavedChanges)).toBe(true));
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Logs for app' }));
+    expect(await screen.findByRole('alertdialog', { name: 'Discard unsaved changes?' })).toBeTruthy();
+    expect((screen.getByRole('textbox', { name: 'Dockerfile for app' }) as HTMLTextAreaElement).value).toBe('FROM alpine:3.21\n');
   });
 });

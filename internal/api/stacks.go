@@ -25,6 +25,11 @@ type StacksAPI interface {
 	Import(ctx context.Context, path string) (stacks.Summary, error)
 	Get(ctx context.Context, name string) (stacks.Detail, error)
 	Raw(ctx context.Context, name string) (content []byte, hash string, err error)
+	// HasBackup reports whether compose.yaml.bak exists and can be restored.
+	HasBackup(ctx context.Context, name string) bool
+	// RestoreBackup copies the .bak over the compose file, keeps the replaced
+	// file as compose.yaml.broken and returns the new hash.
+	RestoreBackup(ctx context.Context, name, hash string) (string, error)
 	SaveRaw(ctx context.Context, stack string, content []byte, hash string) (stacks.EditResult, error)
 	AddService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string, df *stacks.DockerfileWrite) (stacks.EditResult, error)
 	PreviewAddService(ctx context.Context, stack, service string, cfg composefile.ServiceConfig, hash string) ([]byte, error)
@@ -71,6 +76,7 @@ func (s *server) registerStackRoutes(mux *http.ServeMux) {
 	route("GET /api/stacks/{name}", s.handleGetStack)
 	route("GET /api/stacks/{name}/compose", s.handleGetCompose)
 	route("PUT /api/stacks/{name}/compose", s.handlePutCompose)
+	route("POST /api/stacks/{name}/compose/restore-backup", s.handleRestoreComposeBackup)
 	route("POST /api/stacks/{name}/services", s.handleAddService)
 	route("POST /api/stacks/{name}/services/preview", s.handlePreviewAddService)
 	route("DELETE /api/stacks/{name}/services/{service}", s.handleRemoveService)
@@ -219,7 +225,22 @@ func (s *server) handleGetCompose(w http.ResponseWriter, r *http.Request) {
 		s.writeStackError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, rawComposeBody{Content: string(content), Hash: hash})
+	writeJSON(w, http.StatusOK, rawComposeBody{Content: string(content), Hash: hash, HasBackup: s.opts.Stacks.HasBackup(r.Context(), r.PathValue("name"))})
+}
+
+func (s *server) handleRestoreComposeBackup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Hash string `json:"hash"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	hash, err := s.opts.Stacks.RestoreBackup(r.Context(), r.PathValue("name"), req.Hash)
+	if err != nil {
+		s.writeStackError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, hashResponse{Hash: hash})
 }
 
 func (s *server) handlePutCompose(w http.ResponseWriter, r *http.Request) {

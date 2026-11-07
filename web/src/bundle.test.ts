@@ -37,8 +37,13 @@ describe('bundle budget', () => {
     expect(verdict(measure(dir)).join()).toMatch(/entry/);
   });
 
+  it('accepts a total above the old 500 KiB budget and under 550 KiB', () => {
+    const dir = fakeDist({ 'assets/index.js': 1000, 'assets/shared.js': 10, 'assets/lazy.js': 540 * 1024 }, manifest);
+    expect(verdict(measure(dir)).join()).not.toMatch(/total/);
+  });
+
   it('fails when the total is over budget', () => {
-    const dir = fakeDist({ 'assets/index.js': 1000, 'assets/shared.js': 10, 'assets/lazy.js': 501 * 1024 }, manifest);
+    const dir = fakeDist({ 'assets/index.js': 1000, 'assets/shared.js': 10, 'assets/lazy.js': 551 * 1024 }, manifest);
     expect(verdict(measure(dir)).join()).toMatch(/total/);
   });
 

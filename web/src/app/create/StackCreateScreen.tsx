@@ -22,14 +22,26 @@ export function StackCreateScreen() {
   const portNoteFor = usePortCheck(cards);
 
   return (
-    <section className={styles.page}>
-      <div className={styles.main}>
-        <header className={styles.header}>
+    <section className={`${styles.page} ${form.mode === 'form' ? '' : styles.single}`}>
+      <header className={styles.header}>
+        <div className={styles.headText}>
           <h1>New stack</h1>
           <p className={styles.lead}>
             Writes <code>compose.yaml</code> into a folder named <code>{form.stackName || 'my-stack'}</code> in the stacks directory. Nothing is written until you confirm.
           </p>
-        </header>
+        </div>
+        {yamlCreate && (
+          <div className={styles.modeSwitch} role="radiogroup" aria-label="Editor mode">
+            {(['form', 'yaml'] as const).map((value) => (
+              <label key={value} className={styles.mode}>
+                <input type="radio" name="editor-mode" value={value} checked={form.mode === value} disabled={frozen} onChange={() => form.setMode(value)} />
+                {value === 'form' ? 'Form' : 'YAML'}
+              </label>
+            ))}
+          </div>
+        )}
+      </header>
+      <div className={styles.main}>
         {form.unavailable && (
           <div id="create-unavailable" tabIndex={-1}>
             <Banner kind="danger" title="Docker/compose unavailable: the stack was not created">
@@ -55,18 +67,6 @@ export function StackCreateScreen() {
             <div id="create-error" className={styles.formError} role="alert" tabIndex={-1}>
               {form.formError}
             </div>
-          )}
-          {yamlCreate && (
-          <div className={styles.modeRow}>
-            <div className={styles.modeSwitch} role="radiogroup" aria-label="Editor mode">
-              {(['form', 'yaml'] as const).map((value) => (
-                <label key={value} className={styles.mode}>
-                  <input type="radio" name="editor-mode" value={value} checked={form.mode === value} disabled={frozen} onChange={() => form.setMode(value)} />
-                  {value === 'form' ? 'Form' : 'YAML'}
-                </label>
-              ))}
-            </div>
-          </div>
           )}
           {form.mode === 'yaml' && (
             <YamlMode text={form.yamlText} onChange={form.setYamlText} error={form.yamlError} fieldErrors={form.yamlFieldErrors} disabled={pending} />
@@ -107,8 +107,13 @@ export function StackCreateScreen() {
         </form>
       </div>
 
-      <aside className={styles.side}>
-        {form.mode === 'form' && <ComposePreview text={previewStack(cards, form.stackExtra)} />}
+      {form.mode === 'form' && (
+        <aside className={styles.side}>
+          <ComposePreview text={previewStack(cards, form.stackExtra)} />
+        </aside>
+      )}
+
+      <div className={styles.endRow}>
         <label className={styles.check}>
           <input type="checkbox" checked={form.startNow} onChange={(e) => form.setStartNow(e.target.checked)} />
           <span>
@@ -123,7 +128,7 @@ export function StackCreateScreen() {
             Create stack
           </Button>
         </div>
-      </aside>
+      </div>
 
       <FileBrowser
         open={browser !== null}

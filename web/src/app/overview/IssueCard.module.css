@@ -3,15 +3,11 @@
   flex-direction: column;
   gap: 10px;
   min-width: 0;
-  padding: 14px;
-  transition: border-color 0.15s;
+  padding: 12px 14px;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--hi);
 }
 
-.card:hover { border-color: var(--border-strong); }
+.card:hover { background: var(--hover); }
 
 .head {
   display: flex;
@@ -87,7 +83,28 @@
 
 .action[data-variant='primary']:hover { background: var(--accent); color: var(--accent-ink); }
 
+/* Desktop reads as one ranked row per issue, with the fix on the right; a phone stacks it. */
+@media (min-width: 760px) {
+  .card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 2px 16px;
+    padding: 10px 14px;
+  }
+  .head, .title, .message { grid-column: 1; }
+  .title { font-size: 13.5px; }
+  .message { margin: 0; }
+  .actions {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+    align-self: center;
+    flex-wrap: nowrap;
+    margin: 0;
+  }
+}
+
 @media (max-width: 759px) {
-  .action { min-height: 40px; }
-  .where { display: inline-flex; align-items: center; min-height: 40px; }
+  .action { min-height: 44px; }
+  /* Block, not flex: an ellipsis does not reach text that is a flex item. Line height centres it in the touch target. */
+  .where { display: block; min-height: 44px; line-height: 44px; }
 }

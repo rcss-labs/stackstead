@@ -106,5 +106,6 @@
     gap: 4px;
   }
 
-  .nameLink { display: inline-flex; align-items: center; min-height: 40px; }
+  /* Block, not flex: an ellipsis does not reach text that is a flex item. Line height centres it in the touch target. */
+  .nameLink { display: block; min-height: 40px; line-height: 40px; }
 }

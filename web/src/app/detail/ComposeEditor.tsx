@@ -6,6 +6,8 @@ import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { useStore } from '../hooks/useStore';
 import { DiffView } from '../stacks/DiffView';
+import { EditSteps } from '../stacks/EditSteps';
+import { ReviewSummary } from '../stacks/ReviewSummary';
 import { YamlEditor, type YamlEditorHandle } from '../stacks/YamlEditor';
 import styles from './ComposeEditor.module.css';
 
@@ -73,8 +75,8 @@ export function ComposeEditor({ stackName, parseError, composePath, onSaved, onA
     return () => window.removeEventListener('beforeunload', guard);
   }, [isDirty]);
 
-  async function save() {
-    if (!isDirty || st.phase === 'conflict' || st.phase === 'saving' || st.phase === 'loading') return;
+  async function save(): Promise<boolean> {
+    if (!isDirty || st.phase === 'conflict' || st.phase === 'saving' || st.phase === 'loading') return false;
     const ok = await editor.save();
     const after = get(editor.state);
     if (ok) {
@@ -86,6 +88,11 @@ export function ComposeEditor({ stackName, parseError, composePath, onSaved, onA
       const m = /line (\d+)/.exec(after.error);
       if (m) queueMicrotask(() => yaml.current?.goToLine(Number(m[1])));
     }
+    return ok;
+  }
+
+  async function saveAndApply() {
+    if (await save()) onApply?.();
   }
 
   function onKeyDown(e: KeyboardEvent) {
@@ -122,7 +129,7 @@ export function ComposeEditor({ stackName, parseError, composePath, onSaved, onA
       {st.phase === 'conflict' && (
         <>
           <Banner kind="danger" title="Save refused">
-            <span className={styles.msgText}>{st.conflictMessage}</span>
+            <span className={styles.msgText}>{st.conflictMessage}</span> Nothing has been overwritten: the file on disk and your draft are both intact.
           </Banner>
           <div className={styles.row}>
             <Button variant="primary" onClick={() => void editor.reload({ keepDraft: true })}>
@@ -138,6 +145,7 @@ export function ComposeEditor({ stackName, parseError, composePath, onSaved, onA
 
       {st.phase !== 'loading' && st.phase !== 'loadFailed' && (
         <div className={styles.card}>
+          <EditSteps current={st.phase === 'saved' ? 3 : previewing ? 2 : 1} />
           <div className={styles.toolbar}>
             <span className={styles.file}>{fileName}</span>
             {isDirty && <span className={styles.modified}>· modified</span>}
@@ -157,9 +165,14 @@ export function ComposeEditor({ stackName, parseError, composePath, onSaved, onA
                 Preview changes
               </Button>
             )}
-            <Button variant="primary" size="sm" loading={st.phase === 'saving'} disabledReason={reason} onClick={() => void save()}>
+            <Button variant={previewing && onApply ? 'secondary' : 'primary'} size="sm" loading={st.phase === 'saving'} disabledReason={reason} onClick={() => void save()}>
               Save
             </Button>
+            {previewing && onApply && (
+              <Button variant="primary" size="sm" loading={st.phase === 'saving'} disabledReason={reason} onClick={() => void saveAndApply()}>
+                Save and apply
+              </Button>
+            )}
             {st.phase === 'saved' && (
               <Button variant="secondary" size="sm" onClick={() => onApply?.()}>
                 Apply
@@ -169,6 +182,7 @@ export function ComposeEditor({ stackName, parseError, composePath, onSaved, onA
 
           {previewing && (
             <>
+              <ReviewSummary original={st.content} modified={st.draft} path={composePath} />
               <p className={styles.hint}>Showing the file as it is now against your draft.</p>
               <DiffView original={st.content} modified={st.draft} ariaLabel="Changes to compose.yaml" />
             </>
