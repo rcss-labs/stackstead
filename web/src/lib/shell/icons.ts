@@ -1,7 +1,7 @@
 // Path data from the v2 mock-up (box is drawn in the same style), drawn in a 24x24 box. Stroke icons use stroke-width 1.8 at 18 px;
 // play/stop are filled. Shapes that were <rect>/<circle> in the mock-up are expressed as paths.
 export const ICONS: Record<
-  'disk' | 'image' | 'stacks' | 'network' | 'box' | 'plus' | 'import' | 'settings' | 'sun' | 'moon' | 'play' | 'stop' | 'restart' | 'file' | 'copy' | 'search',
+  'disk' | 'image' | 'stacks' | 'network' | 'box' | 'plus' | 'import' | 'settings' | 'sun' | 'moon' | 'play' | 'stop' | 'restart' | 'file' | 'copy' | 'search' | 'home' | 'activity' | 'more' | 'down' | 'left' | 'grid' | 'server' | 'check',
   string
 > = {
   disk: 'M3 14h18v6H3zM3 14l3-10h12l3 10M16 17h2M6 17h1',
@@ -20,5 +20,13 @@ export const ICONS: Record<
   restart: 'M21 12a9 9 0 1 1-3-6.7M21 3v6h-6',
   file: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6',
   copy: 'M11 9h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2zM5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1',
+  home: 'M3 11l9-7 9 7v9h-6v-6H9v6H3z',
+  activity: 'M22 12h-4l-3 9L9 3l-3 9H2',
+  more: 'M5 12h.01M12 12h.01M19 12h.01',
+  down: 'M6 9l6 6 6-6',
+  left: 'M15 6l-6 6 6 6',
+  grid: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z',
+  server: 'M3 4h18v7H3zM3 13h18v7H3zM7 7.5h.01M7 16.5h.01',
+  check: 'M5 12l5 5 9-10',
   search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-3.5-3.5',
 };

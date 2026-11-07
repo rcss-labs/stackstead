@@ -1,0 +1,60 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.heading {
+  margin: 0;
+  padding: 0 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0 14px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 15px;
+}
+
+.row + .row {
+  border-top: 1px solid var(--border);
+}
+
+.row:hover {
+  background: var(--hover);
+}
+
+.row svg {
+  flex: none;
+  color: var(--muted);
+}
+
+.label {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

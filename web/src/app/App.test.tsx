@@ -138,13 +138,13 @@ describe('App focus on navigation', () => {
   });
 
   it('does not move focus when only the ?tab= query changes', async () => {
-    at('/settings');
+    at('/settings/system');
     render(<App />);
     const h1 = await screen.findByRole('heading', { level: 1, name: 'Settings' });
     // Focus outside main, so only the path-vs-query rule (not "the page placed focus") keeps it there.
     const link = within(mainNav()).getByRole('link', { name: 'Settings' });
     link.focus();
-    await push('/settings?tab=logs');
+    await push('/settings/system?tab=logs');
     await sleep(50);
     expect(document.activeElement).toBe(link);
     expect(document.activeElement).not.toBe(h1);
@@ -229,7 +229,7 @@ describe('App routing and session', () => {
     at('/');
     render(<App />);
     expect(await screen.findByRole('heading', { level: 1 })).toBeTruthy();
-    expect(document.title).toBe('Stacks · Stackstead');
+    expect(document.title).toBe('Overview · Stackstead');
     await waitFor(() => expect(stream.requests).toHaveLength(1));
     await waitFor(() => expect(fake.calls.some((c) => c.path === '/api/status')).toBe(true));
     // The overview must not start a second host poller: App owns it.
@@ -346,7 +346,7 @@ describe('App routing and session', () => {
     await screen.findByRole('heading', { level: 1 });
     const marker = screen.getByRole('main');
     await user().click(within(mainNav()).getByRole('link', { name: 'Settings' }));
-    expect(loc().path).toBe('/settings');
+    expect(loc().path).toBe('/settings/system');
     expect(await screen.findByRole('heading', { name: 'Settings' })).toBeTruthy();
     expect(screen.getByRole('main')).toBe(marker); // same document, same frame
     expect(within(mainNav()).getByRole('link', { name: 'Settings' }).getAttribute('aria-current')).toBe('page');
@@ -403,7 +403,7 @@ describe('App routing and session', () => {
     expect(loc().path).toBe('/');
     await user().click(within(mainNav()).getByRole('link', { name: 'Settings' }));
     await user().click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Discard changes' }));
-    await waitFor(() => expect(loc().path).toBe('/settings'));
+    await waitFor(() => expect(loc().path).toBe('/settings/system'));
     expect(await screen.findByRole('heading', { level: 1, name: 'Settings' })).toBeTruthy();
   });
 });
@@ -489,7 +489,7 @@ describe('App session edge cases', () => {
   it('an authenticated user opening /login is sent to next, and /setup to the list', async () => {
     at('/login?next=%2Fsettings');
     render(<App />);
-    await waitFor(() => expect(loc().path).toBe('/settings'));
+    await waitFor(() => expect(loc().path).toBe('/settings/system'));
     expect(screen.queryByRole('heading', { name: /not found/i })).toBeNull();
     at('/setup');
     await waitFor(() => expect(loc().path).toBe('/'));
@@ -505,22 +505,22 @@ describe('App session edge cases', () => {
   it('a 401 on the events stream sends the user to login once', async () => {
     stream.restore();
     stream = installFakeStream({ '/api/events': { responses: [{ status: 401, body: { error: 'unauthorized' } }] } });
-    at('/settings');
+    at('/settings/system');
     render(<App />);
     expect(await screen.findByLabelText('Username')).toBeTruthy();
     expect(get(session).state).toBe('anonymous');
     expect(loc().path).toBe('/login');
-    expect(loc().next).toBe('/settings');
+    expect(loc().next).toBe('/settings/system');
     expect(stream.requests).toHaveLength(1);
   });
 
   it('a late API 401 after an events-stream 401 keeps next', async () => {
     stream.restore();
     stream = installFakeStream({ '/api/events': { responses: [{ status: 401, body: { error: 'unauthorized' } }] } });
-    at('/settings');
+    at('/settings/system');
     render(<App />);
     expect(await screen.findByLabelText('Username')).toBeTruthy();
-    expect(loc().next).toBe('/settings');
+    expect(loc().next).toBe('/settings/system');
     stacksRes = { status: 401, body: {} };
     const { request } = await import('$lib/api/client');
     await act(async () => {
@@ -528,7 +528,7 @@ describe('App session edge cases', () => {
     });
     await sleep(20);
     expect(loc().path).toBe('/login');
-    expect(loc().next).toBe('/settings');
+    expect(loc().next).toBe('/settings/system');
   });
 
   it('logging in again after a 401 opens exactly one new events stream', async () => {
@@ -672,7 +672,11 @@ it('every route is lazy except the overview', () => {
     '/images',
     '/images/:slug',
     '/backups',
+    '/activity',
+    '/ports',
+    '/more',
     '/settings',
+    '/settings/:section',
     '/login',
     '/setup',
     '/all',
@@ -765,7 +769,7 @@ describe('App command palette actions and the unsaved-changes guard', () => {
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
     await openPalette();
     await u.click(screen.getByRole('option', { name: /Settings/ }));
-    await waitFor(() => expect(loc().path).toBe('/settings'));
+    await waitFor(() => expect(loc().path).toBe('/settings/system'));
     expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 
@@ -782,7 +786,7 @@ describe('App command palette actions and the unsaved-changes guard', () => {
     await u.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Cancel' }));
     act(() => setUnsavedChanges(false));
     await u.click(screen.getByRole('link', { name: 'View' }));
-    await waitFor(() => expect(loc().path).toBe('/settings'));
+    await waitFor(() => expect(loc().path).toBe('/settings/system'));
     expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 });
