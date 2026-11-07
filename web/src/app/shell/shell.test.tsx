@@ -427,7 +427,7 @@ describe('Mobile', () => {
       .sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
       .map((el) => el.getAttribute('aria-label') ?? '');
 
-  it('under 760px the sidebar is replaced by the mobile top bar and tab bar with one Main landmark', () => {
+  it('under 760px the sidebar is replaced by the mobile top bar and tab bar with one Main landmark', async () => {
     stubViewport(true);
     renderIn(
       <Shell {...shellProps} username="ana">
@@ -436,6 +436,8 @@ describe('Mobile', () => {
         </main>
       </Shell>,
     );
+    // The phone chrome is a lazily loaded chunk.
+    await screen.findByRole('navigation', { name: 'Main' });
     expect(screen.getAllByRole('navigation', { name: 'Main' })).toHaveLength(1);
     expect(screen.queryByRole('button', { name: /^Log out/ })).toBeNull();
     expect(screen.getByRole('link', { name: 'New stack' }).getAttribute('href')).toBe('/stacks/new');
