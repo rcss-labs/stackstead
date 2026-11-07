@@ -11,7 +11,7 @@
   border-radius: 12px;
   transition: border-color 0.15s;
 }
-.card:hover { border-color: var(--hi); }
+.card:hover { border-color: var(--border-strong); }
 
 .header {
   grid-column: 1;
