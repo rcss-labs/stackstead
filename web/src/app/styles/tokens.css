@@ -68,6 +68,22 @@
   --space-6: 2rem;
   --space-7: 3rem;
 
+  /* The log and terminal console is dark in both themes, as in the prototype. */
+  --term: #10141e;
+  --term-fg: #d9e0ec;
+  --term-dim: #8c97ab;
+  --term-line: #2f384b;
+  --term-hover: #171d2b;
+  --term-hi: #232c40;
+  --term-accent: #8fb0ff;
+  --term-ok: #7ce0b8;
+  --term-warn: #f2c075;
+  --term-err: #ff9a9a;
+  --term-s1: #6590f5;
+  --term-s2: #e49a4d;
+  --term-s3: #3cbccb;
+  --term-s4: #b794ea;
+
   --sidebar-w: 232px;
   --topbar-h: 48px;
   --mobile-bar-h: 52px;
@@ -120,6 +136,20 @@
     --kind-volumes: #9f73df;
     --kind-layers: #17a0af;
     --kind-cache: #d27e28;
+    --term: #090c13;
+    --term-fg: #d9e0ec;
+    --term-dim: #8c97ab;
+    --term-line: #2f384b;
+    --term-hover: #171d2b;
+    --term-hi: #232c40;
+    --term-accent: #8fb0ff;
+    --term-ok: #7ce0b8;
+    --term-warn: #f2c075;
+    --term-err: #ff9a9a;
+    --term-s1: #6590f5;
+    --term-s2: #e49a4d;
+    --term-s3: #3cbccb;
+    --term-s4: #b794ea;
   }
 }
 
@@ -164,4 +194,18 @@
   --kind-volumes: #9f73df;
   --kind-layers: #17a0af;
   --kind-cache: #d27e28;
+  --term: #090c13;
+  --term-fg: #d9e0ec;
+  --term-dim: #8c97ab;
+  --term-line: #2f384b;
+  --term-hover: #171d2b;
+  --term-hi: #232c40;
+  --term-accent: #8fb0ff;
+  --term-ok: #7ce0b8;
+  --term-warn: #f2c075;
+  --term-err: #ff9a9a;
+  --term-s1: #6590f5;
+  --term-s2: #e49a4d;
+  --term-s3: #3cbccb;
+  --term-s4: #b794ea;
 }

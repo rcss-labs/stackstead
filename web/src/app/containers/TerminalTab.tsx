@@ -54,15 +54,15 @@ function commandFor(prefs: Prefs): string[] | undefined {
   return path ? [path] : undefined;
 }
 
-/** The xterm colours follow the app's light and dark tokens. */
+/** The xterm colours come from the console tokens: a terminal is dark in both themes. */
 function terminalTheme(el: HTMLElement) {
   const css = getComputedStyle(el);
   const token = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
   return {
-    background: token('--bg', '#f3f5f7'),
-    foreground: token('--text', '#161a20'),
-    cursor: token('--accent', '#047857'),
-    selectionBackground: token('--accent-soft', 'rgba(4, 120, 87, 0.25)'),
+    background: token('--term', '#10141e'),
+    foreground: token('--term-fg', '#d9e0ec'),
+    cursor: token('--term-fg', '#d9e0ec'),
+    selectionBackground: token('--term-hi', '#232c40'),
   };
 }
 
