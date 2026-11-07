@@ -126,6 +126,14 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
     }
   }
 
+  // Back keeps every choice and the passphrase; only the shown plan is dropped, since it is rebuilt from them.
+  function back() {
+    planSeq.current++;
+    setPlan(undefined);
+    setAllowUnencrypted(false);
+    setError(undefined);
+  }
+
   async function start() {
     setStarting(true);
     try {
@@ -154,6 +162,7 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
         ? 'Choose at least one volume, or untick Volumes'
         : undefined;
   const replacesVolumes = volumes && (plan?.volumes.some((v) => !v.skip) ?? false);
+  const step = operationId ? 3 : plan ? 2 : 1;
   const unacknowledged = plan !== undefined && !plan.encrypted && !allowUnencrypted;
 
   const confirmMessage = plan
@@ -181,7 +190,19 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
         )}
         {!manifest && !loadError && <Spinner />}
         {manifest && manifest.stacks.length === 0 && <p className={styles.muted}>This archive holds no stacks.</p>}
-        {manifest && manifest.stacks.length > 0 && !operationId && (
+        {manifest && manifest.stacks.length > 0 && (
+          <ol className={styles.steps} aria-label="Restore steps">
+            {['Choose', 'Preview', 'Restore'].map((label, i) => (
+              <li key={label} aria-current={step === i + 1 ? 'step' : undefined}>
+                <span className={styles.stepNumber} aria-hidden="true">
+                  {i + 1}
+                </span>
+                {label}
+              </li>
+            ))}
+          </ol>
+        )}
+        {manifest && manifest.stacks.length > 0 && step === 1 && (
           <>
             <Field label="Stack" id={`${uid}-stack`}>
               {(control) => (
@@ -277,21 +298,29 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
               </Banner>
             )}
 
-            {plan && <RestorePreview plan={plan} replacesVolumes={replacesVolumes} />}
+            <div className={styles.actions}>
+              <Button variant="secondary" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button variant="primary" loading={planning} disabledReason={previewBlocked} onClick={() => void runPreview()}>
+                Preview restore
+              </Button>
+            </div>
+          </>
+        )}
+        {manifest && manifest.stacks.length > 0 && step === 2 && plan && (
+          <>
+            <RestorePreview plan={plan} replacesVolumes={replacesVolumes} />
 
-            {plan && (
-              <>
-                <label className={styles.check}>
-                  <input type="checkbox" checked={startAfter} onChange={(e) => setStartAfter(e.target.checked)} />
-                  Start the stack after restoring
-                </label>
-                {plan.foreign && (
-                  <p className={styles.muted}>This archive comes from another host; the stack is left stopped until you review it.</p>
-                )}
-              </>
+            <label className={styles.check}>
+              <input type="checkbox" checked={startAfter} onChange={(e) => setStartAfter(e.target.checked)} />
+              Start the stack after restoring
+            </label>
+            {plan.foreign && (
+              <p className={styles.muted}>This archive comes from another host; the stack is left stopped until you review it.</p>
             )}
 
-            {plan && !plan.encrypted && (
+            {!plan.encrypted && (
               <>
                 <Banner
                   kind="danger"
@@ -308,18 +337,16 @@ export function RestoreStackDialog({ api, archive, onClose }: { api: BackupsApi;
               <Button variant="secondary" onClick={onClose}>
                 Cancel
               </Button>
-              <Button variant={plan ? 'secondary' : 'primary'} loading={planning} disabledReason={previewBlocked} onClick={() => void runPreview()}>
-                Preview restore
+              <Button variant="secondary" onClick={back}>
+                Back
               </Button>
-              {plan && (
-                <Button
-                  variant="danger"
-                  disabledReason={unacknowledged ? 'Acknowledge that this archive is not encrypted first.' : undefined}
-                  onClick={() => setConfirming(true)}
-                >
-                  Restore stack…
-                </Button>
-              )}
+              <Button
+                variant="danger"
+                disabledReason={unacknowledged ? 'Acknowledge that this archive is not encrypted first.' : undefined}
+                onClick={() => setConfirming(true)}
+              >
+                Restore stack…
+              </Button>
             </div>
           </>
         )}

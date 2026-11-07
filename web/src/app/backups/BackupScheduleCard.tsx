@@ -32,7 +32,7 @@ function generatePassphrase(): string {
 }
 
 /** The S3 secret and the archive passphrase are write-only: it is sent only when typed, and an untouched field keeps the stored one. */
-export function BackupScheduleCard({ api, onRunStarted }: { api: BackupsApi; onRunStarted?: () => void }) {
+export function BackupScheduleCard({ api, onSaved }: { api: BackupsApi; onSaved?: () => void }) {
   const uid = useId();
   const [config, setConfig] = useState<BackupConfig>();
   const [secret, setSecret] = useState('');
@@ -42,7 +42,6 @@ export function BackupScheduleCard({ api, onRunStarted }: { api: BackupsApi; onR
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [running, setRunning] = useState(false);
   const [result, setResult] = useState<string>();
 
   const load = useCallback(() => {
@@ -88,6 +87,7 @@ export function BackupScheduleCard({ api, onRunStarted }: { api: BackupsApi; onR
       setPassphrase('');
       setRevealed(false);
       toasts.push({ kind: 'success', message: 'Backup settings saved.' });
+      onSaved?.();
     } catch (e) {
       setError(messageOf(e));
     } finally {
@@ -124,19 +124,6 @@ export function BackupScheduleCard({ api, onRunStarted }: { api: BackupsApi; onR
       setPassphrase('');
     } catch (e) {
       setError(messageOf(e));
-    }
-  }
-
-  async function runNow() {
-    setRunning(true);
-    try {
-      await api.run();
-      toasts.push({ kind: 'info', message: 'Backup started.' });
-      onRunStarted?.();
-    } catch (e) {
-      toasts.push({ kind: 'danger', message: messageOf(e) });
-    } finally {
-      setRunning(false);
     }
   }
 
@@ -252,7 +239,15 @@ export function BackupScheduleCard({ api, onRunStarted }: { api: BackupsApi; onR
                 Clear secret
               </Button>
             )}
+            <Button variant="secondary" size="sm" loading={testing} onClick={() => void test()}>
+              Test connection
+            </Button>
           </div>
+          {result !== undefined && (
+            <span className={styles.result} role="status">
+              {result}
+            </span>
+          )}
         </div>
 
         <div className={styles.group}>
@@ -301,22 +296,11 @@ export function BackupScheduleCard({ api, onRunStarted }: { api: BackupsApi; onR
         </div>
 
         <div className={styles.actions}>
-          <Button variant="secondary" loading={testing} onClick={() => void test()}>
-            Test connection
-          </Button>
-          <Button variant="secondary" loading={running} onClick={() => void runNow()}>
-            Back up now
-          </Button>
           <Button variant="primary" type="submit" loading={saving}>
             Save
           </Button>
         </div>
       </form>
-      {result !== undefined && (
-        <span className={styles.result} role="status">
-          {result}
-        </span>
-      )}
     </SettingsCard>
   );
 }
