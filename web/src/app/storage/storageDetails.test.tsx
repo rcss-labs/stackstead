@@ -87,6 +87,52 @@ describe('Storage detail screens', () => {
     expect(document.body.textContent).not.toContain('hidden-secret');
   });
 
+  it('volume page warns when no recent backup run includes the volume', async () => {
+    fake = installFakeFetch({
+      'GET /api/storage/volumes/free': { body: volumeDetail() },
+      'GET /api/backups/runs': { body: [] },
+    });
+    mountAt('/storage/volumes/free');
+    await screen.findByRole('heading', { name: 'free', level: 1 });
+    expect(await screen.findByText('No recent backup run includes this volume.')).toBeTruthy();
+  });
+
+  it('volume page does not warn when a recent run backed the volume up', async () => {
+    fake = installFakeFetch({
+      'GET /api/storage/volumes/free': { body: volumeDetail() },
+      'GET /api/backups/runs': { body: [{ id: 1, startedAt: '2026-01-01T00:00:00Z', trigger: 'schedule', status: 'success', size: 1, destinations: ['local'], items: [{ kind: 'volume', stack: 'media', name: 'free', status: 'ok' }] }] },
+    });
+    mountAt('/storage/volumes/free');
+    await screen.findByRole('heading', { name: 'free', level: 1 });
+    await waitFor(() => expect(fake.calls.some((c) => c.path === '/api/backups/runs')).toBe(true));
+    expect(screen.queryByText(/No recent backup run/)).toBeNull();
+  });
+
+  it('volume page hides the coverage warning while coverage is unknown', async () => {
+    fake = installFakeFetch({
+      'GET /api/storage/volumes/free': { body: volumeDetail() },
+      'GET /api/backups/runs': { status: 500, body: { error: 'boom' } },
+    });
+    mountAt('/storage/volumes/free');
+    await screen.findByRole('heading', { name: 'free', level: 1 });
+    await waitFor(() => expect(fake.calls.some((c) => c.path === '/api/backups/runs')).toBe(true));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(screen.queryByText(/No recent backup run/)).toBeNull();
+  });
+
+  it('in-use volume shows the visible reason its Delete is blocked', async () => {
+    fake = installFakeFetch({
+      'GET /api/storage/volumes/free': { body: volumeDetail({ containers: [consumer], protection: null, declaredBy: [] }) },
+      'GET /api/backups/runs': { body: [] },
+    });
+    mountAt('/storage/volumes/free');
+    await screen.findByRole('heading', { name: 'free', level: 1 });
+    expect(screen.getByText('used by 1 container', { selector: 'p' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Delete' }).getAttribute('aria-disabled')).toBe('true');
+  });
+
   it('fetches the image detail exactly once under StrictMode', async () => {
     fake = installFakeFetch({ 'GET /api/storage/images/aaaaaaaaaaaa': { body: imageDetail() } });
     render(

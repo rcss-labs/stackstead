@@ -53,7 +53,9 @@
 
 @media (max-width: 759px) {
   .title { font-size: 20px; }
-  .deleteButton { min-height: 40px; }
+  .deleteButton { min-height: 44px; }
+  .back { display: inline-flex; align-items: center; min-height: 44px; }
+  .list > li { min-height: 44px; display: flex; align-items: center; }
 }
 @media (max-width: 479px) {
   .dl { grid-template-columns: minmax(0, 1fr); gap: 2px 0; }

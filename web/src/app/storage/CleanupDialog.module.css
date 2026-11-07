@@ -19,3 +19,4 @@
   .actions { flex-wrap: wrap; }
   .actions > button, .body input { min-height: 40px; }
 }
+.total { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; font-weight: 600; }
