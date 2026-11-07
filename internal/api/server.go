@@ -67,6 +67,8 @@ type Options struct {
 	Host    HostAPI
 	Alerts  AlertsAPI
 	Summary SummaryAPI
+	// DiskForecast backs /api/host/disk-forecast; the route exists only when set.
+	DiskForecast DiskForecastAPI
 	// History backs /api/stacks/{name}/health; the route exists only when
 	// Stacks and History are both set.
 	History HistoryAPI

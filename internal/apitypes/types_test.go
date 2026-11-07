@@ -124,7 +124,7 @@ func TestJSONTagsMatchContract(t *testing.T) {
 		{"Status", populated[apitypes.Status](), "arch,compose,docker,dockerVersion,events,metricsDegraded,metricsIntervalSeconds,metricsRetentionSeconds,version"},
 		{"ErrorBody", populated[apitypes.ErrorBody](), "code,error,fields"},
 		{"FieldError", populated[apitypes.FieldError](), "field,message"},
-		{"RawCompose", populated[apitypes.RawCompose](), "content,hash"},
+		{"RawCompose", populated[apitypes.RawCompose](), "content,hasBackup,hash"},
 		{"HashResponse", populated[apitypes.HashResponse](), "hash"},
 		{"PreviewResponse", populated[apitypes.PreviewResponse](), "content,hash"},
 		{"DockerfileContent", populated[apitypes.DockerfileContent](), "content,hash"},
@@ -169,7 +169,7 @@ func TestJSONTagsMatchContract(t *testing.T) {
 		{"FleetEvent", populated[apitypes.FleetEvent](), "action,container,exitCode,health,image,project,server,service,time"},
 		{"FleetStacks", populated[apitypes.FleetStacks](), "events,servers,stacks"},
 		{"HostSnapshot", populated[apitypes.HostSnapshot](), "containers,cpu,disk,diskIO,hostname,memory,network,os,restarts24h,sampledAt,source,uptime,volumes"},
-		{"Alert", populated[apitypes.Alert](), "container,kind,message,service,severity,since,stack"},
+		{"Alert", populated[apitypes.Alert](), "container,exitCode,kind,memLimit,message,service,severity,since,stack"},
 		{"MetricsSummary", populated[apitypes.MetricsSummary](), "from,stacks,step,to,top,window"},
 		{"ProjectSummary", populated[apitypes.ProjectSummary](), "cpu,cpuNow,mem,memNow,netRxBytesPerSec,netTxBytesPerSec"},
 		{"ContainerRow", populated[apitypes.ContainerRow](), "cpu,createdAt,exitCode,health,id,image,imageId,managed,mem,memLimit,name,networks,number,ports,project,restarts24h,service,stack,state,status"},
@@ -205,6 +205,7 @@ func TestJSONTagsMatchContract(t *testing.T) {
 		{"BackupRestoreNetwork", populated[apitypes.BackupRestoreNetwork](), "driver,name"},
 		{"BackupRestorePlan", populated[apitypes.BackupRestorePlan](), "composePath,crossHost,encrypted,fileDiffs,foreign,images,keyId,missingNetworks,origin,overwrites,project,risks,stack,targetDir,targetName,volumes,warnings"},
 		{"BackupRestoreStarted", populated[apitypes.BackupRestoreStarted](), "operation"},
+		{"DiskForecast", populated[apitypes.DiskForecast](), "daysLeft,sampledDays"},
 		{"UpdateStatus", populated[apitypes.UpdateStatus](), "checkedAt,command,current,error,installer,latest,notesURL,state"},
 	}
 	for _, tc := range cases {

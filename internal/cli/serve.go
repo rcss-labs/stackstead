@@ -250,7 +250,13 @@ func runServer(ctx context.Context, env *Env, args []string, restart *atomic.Boo
 		func(ctx context.Context) error {
 			_, err := hist.Prune(ctx, time.Now().Add(-cfg.MetricsRetention))
 			return err
+		},
+		func(ctx context.Context) error {
+			_, err := metricsStore.PruneDiskSamples(ctx, time.Now().Add(-cfg.MetricsRetention))
+			return err
 		})
+	diskRecorder := &metrics.DiskRecorder{Store: metricsStore, Now: time.Now, Log: logger,
+		Statfs: func() (uint64, uint64, error) { return host.OSStatfs{}.Statfs(cfg.StacksDir) }}
 	checker, err := newUpdateChecker(cfg, logger)
 	if err != nil {
 		return err
@@ -267,7 +273,7 @@ func runServer(ctx context.Context, env *Env, args []string, restart *atomic.Boo
 	})
 	// A service context separate from the signal context: background work
 	// must outlive the signal until HTTP and operations have drained.
-	bg := startBackground(context.Background(), cache.Run, recorder.Run, sampler.Run, checker.Run, peersSvc.Run)
+	bg := startBackground(context.Background(), cache.Run, recorder.Run, sampler.Run, diskRecorder.Run, checker.Run, peersSvc.Run)
 	defer bg.stop(time.Second) // safety net for early returns; the normal path stops it in order below
 
 	stackRegistry := stacks.NewRegistry(db, time.Now)
@@ -407,6 +413,7 @@ func runServer(ctx context.Context, env *Env, args []string, restart *atomic.Boo
 		Statfs: host.OSStatfs{}, Now: time.Now, Hostname: os.Hostname, GOOS: runtime.GOOS,
 	})
 	alertsEngine := alerts.NewEngine(stackSvc, cache, collector, cache, sampler, time.Now, backupRunner)
+	alertsEngine.SetInspector(dockerEngine)
 
 	if !web.Built() {
 		logger.Warn("web UI not built; serving placeholder page (run make ui)")
@@ -446,6 +453,7 @@ func runServer(ctx context.Context, env *Env, args []string, restart *atomic.Boo
 			Interfaces:       host.InterfaceLister{ProcRoot: "/proc", GOOS: runtime.GOOS},
 			Alerts:           alertsEngine,
 			Summary:          api.SummarySources{Store: metricsStore, Sampler: sampler},
+			DiskForecast:     metrics.DiskForecaster{Store: metricsStore, Retention: cfg.MetricsRetention, Now: time.Now},
 			History:          hist,
 			Restarts:         collector,
 			ContainerEngine:  dockerEngine,

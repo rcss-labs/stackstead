@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/rcss-labs/stackstead/internal/engine"
 )
 
 // cacheTTL bounds how often alerts are recomputed.
@@ -21,7 +23,8 @@ type Engine struct {
 	restarts   RestartCounts
 	conn       Connectivity
 	metrics    MetricsHealth
-	backups    BackupHealth // nil: no backup alerts
+	backups    BackupHealth       // nil: no backup alerts
+	inspector  ContainerInspector // nil: alerts carry no exit code or memory limit
 	now        func() time.Time
 
 	mu       sync.Mutex
@@ -48,6 +51,14 @@ type flight struct {
 
 func NewEngine(st StackDetails, cs ContainerSource, rc RestartCounts, conn Connectivity, mh MetricsHealth, now func() time.Time, bh BackupHealth) *Engine {
 	return &Engine{stacks: st, containers: cs, restarts: rc, conn: conn, metrics: mh, backups: bh, now: now, seen: map[string]seenEntry{}}
+}
+
+// SetInspector enables exit code and memory limit details on exited and
+// restart_loop alerts. Call it before the first Alerts call.
+func (e *Engine) SetInspector(in ContainerInspector) {
+	e.mu.Lock()
+	e.inspector = in
+	e.mu.Unlock()
 }
 
 // Alerts returns the current alerts, most urgent first. Concurrent calls share
@@ -120,7 +131,6 @@ func (e *Engine) compute(ctx context.Context) ([]Alert, error) {
 
 	now := e.now()
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	current := make(map[string]seenEntry, len(items))
 	out := make([]Alert, len(items))
 	for i, it := range items {
@@ -146,8 +156,38 @@ func (e *Engine) compute(ctx context.Context) ([]Alert, error) {
 		}
 	}
 	e.seen = current // otherwise keys absent from this computation are forgotten
+	inspector := e.inspector
 	sortAlerts(out)
+	e.mu.Unlock()
+	e.addInspectDetails(ctx, inspector, out, containers)
 	return out, nil
+}
+
+// addInspectDetails fills ExitCode and MemLimit on exited and restart_loop
+// alerts. A failed inspect leaves the alert as it is: details are optional.
+func (e *Engine) addInspectDetails(ctx context.Context, in ContainerInspector, out []Alert, containers []engine.Container) {
+	if in == nil {
+		return
+	}
+	ids := make(map[string]string, len(containers))
+	for _, c := range containers {
+		ids[c.Name] = c.ID
+	}
+	for i := range out {
+		if out[i].Kind != KindExited && out[i].Kind != KindRestartLoop {
+			continue
+		}
+		id, ok := ids[out[i].Container]
+		if !ok || ctx.Err() != nil {
+			continue
+		}
+		info, err := in.InspectContainer(ctx, id)
+		if err != nil {
+			continue
+		}
+		code := info.ExitCode
+		out[i].ExitCode, out[i].MemLimit = &code, max(info.MemoryLimit, 0)
+	}
 }
 
 // sortKey is only a tie-breaker; Message separates alerts that share it.

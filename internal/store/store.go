@@ -203,6 +203,13 @@ var migrations = []string{
 		items        TEXT    NOT NULL DEFAULT '[]',
 		error        TEXT
 	);`,
+	// Host disk usage of the stacks volume, one row per sample (ts is unix
+	// seconds), for the days-until-full forecast. Pruned with metrics retention.
+	`CREATE TABLE host_disk_samples (
+		ts    INTEGER PRIMARY KEY,
+		used  INTEGER NOT NULL,
+		total INTEGER NOT NULL
+	);`,
 }
 
 // preMigration checks run inside the migration's transaction, before its SQL.

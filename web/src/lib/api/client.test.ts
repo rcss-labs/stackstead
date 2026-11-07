@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installFakeFetch, type FakeFetch } from '../../vitest-setup';
 import { ApiError, api, createApi, onUnauthorized, request } from './client';
+import type { RawCompose } from './types';
 
 let fake: FakeFetch;
 afterEach(() => fake?.restore());
@@ -344,6 +345,40 @@ describe('401 handling', () => {
     const err = await api.changePassword('x', 'y').catch((e) => e);
     expect(err.status).toBe(403);
     expect(handler).not.toHaveBeenCalled();
+  });
+});
+
+describe('disk forecast and compose restore', () => {
+  beforeEach(() => onUnauthorized(() => {}));
+
+  it('reads the disk forecast', async () => {
+    fake = installFakeFetch({ 'GET /api/host/disk-forecast': { body: { daysLeft: null, sampledDays: 0.5 } } });
+    expect(await api.diskForecast()).toEqual({ daysLeft: null, sampledDays: 0.5 });
+    expect(fake.calls.map((c) => c.path)).toEqual(['/api/host/disk-forecast']);
+  });
+
+  it('restores the backup with the hash, escaping the stack name', async () => {
+    fake = installFakeFetch({ 'POST /api/stacks/my%20stack/compose/restore-backup': { body: { hash: 'h9' } } });
+    expect(await api.restoreComposeBackup('my stack', 'h1')).toEqual({ hash: 'h9' });
+    expect(fake.calls[0].body).toEqual({ hash: 'h1' });
+  });
+
+  it('surfaces a stale restore as a 409 ApiError and a missing backup as 404', async () => {
+    fake = installFakeFetch({
+      'POST /api/stacks/web/compose/restore-backup': { status: 409, body: { error: 'compose file changed on disk since it was loaded' } },
+      'POST /api/stacks/api/compose/restore-backup': { status: 404, body: { error: 'no backup of the compose file' } },
+    });
+    const stale = await api.restoreComposeBackup('web', 'old').catch((e) => e);
+    expect(stale).toBeInstanceOf(ApiError);
+    expect(stale.status).toBe(409);
+    const missing = await api.restoreComposeBackup('api', 'h').catch((e) => e);
+    expect(missing.status).toBe(404);
+  });
+
+  it('keeps hasBackup optional so older servers and saves still type-check', async () => {
+    fake = installFakeFetch({ 'GET /api/stacks/web/compose': { body: { content: 'x', hash: 'h' } } });
+    const raw: RawCompose = await api.compose('web');
+    expect(raw.hasBackup).toBeUndefined();
   });
 });
 
