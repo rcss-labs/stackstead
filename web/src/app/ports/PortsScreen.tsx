@@ -1,8 +1,102 @@
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router';
+import { nextFreePort, portRows, type PortRow } from '$lib/ports/ports';
+import { Banner } from '../components/Banner';
 import { EmptyState } from '../components/EmptyState';
+import { StatusBadge } from '../components/StatusBadge';
+import { Tag } from '../components/Tag';
+import { useContainerList } from '../containers/useContainerList';
+import { useStore } from '../hooks/useStore';
+import { useServer } from '../servers/ServerContext';
+import styles from './PortsScreen.module.css';
 
-// Placeholder until the Ports lane lands; that lane replaces this file.
+const label = (r: PortRow) => (r.last > r.port ? `${r.port}-${r.last}` : String(r.port));
+const SEARCH_FROM = 8000;
+
 export function PortsScreen() {
-  return <EmptyState title="Ports" description="The ports directory is not built yet." />;
+  const { stacks, href, local, name } = useServer();
+  const { items, error: stacksError } = useStore(stacks);
+  const { rows: containers, error: containersError } = useContainerList();
+  const [query, setQuery] = useState('');
+
+  const rows = useMemo(() => portRows(items, containers ?? []), [items, containers]);
+  const q = query.trim().toLowerCase();
+  const shown = q ? rows.filter((r) => [label(r), r.stack, r.service, r.container].some((v) => v?.toLowerCase().includes(q))) : rows;
+  const free = nextFreePort(rows, SEARCH_FROM);
+
+  return (
+    <div className={styles.page}>
+      <header>
+        <h1 className={styles.title}>Ports</h1>
+        <p className={styles.sub}>Host ports published on {local ? 'this server' : name}, from stack files and running containers.</p>
+      </header>
+
+      {stacksError && (
+        <Banner kind="warning" title="Could not read stacks">
+          {stacksError}. Only running containers are listed.
+        </Banner>
+      )}
+      {containersError && (
+        <Banner kind="warning" title="Could not read running containers">
+          {containersError}. Only ports declared by stacks are listed.
+        </Banner>
+      )}
+
+      <div className={styles.bar}>
+        <input type="search" className={styles.search} aria-label="Filter ports" placeholder="Port, stack or service" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <span className={styles.next}>
+          Next free port above {SEARCH_FROM}: <b className={styles.mono}>{free || 'none'}</b>
+        </span>
+      </div>
+
+      {shown.length === 0 ? (
+        <EmptyState title={rows.length === 0 ? 'No published ports' : 'No match'} description={rows.length === 0 ? 'Nothing here publishes a host port.' : 'No port, stack or service matches that filter.'} />
+      ) : (
+        <table className={styles.table}>
+          <thead>
+            <tr>
+              <th>Port</th>
+              <th>Service</th>
+              <th>Stack</th>
+              <th>Protocol</th>
+              <th>Bound to</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((r, i) => (
+              <tr key={`${r.port}-${r.container ?? r.stack}-${r.proto ?? ''}-${r.bind ?? ''}-${i}`}>
+                <td className={styles.mono} data-label="Port">
+                  :{label(r)}
+                </td>
+                <td className={styles.mono} data-label="Service">
+                  {r.container ? <Link to={href(`/containers/${encodeURIComponent(r.container)}`)}>{r.container}</Link> : (r.service ?? '—')}
+                </td>
+                <td data-label="Stack">
+                  {r.stack ? (
+                    <Link to={href(`/stacks/${encodeURIComponent(r.stack)}`)}>
+                      <Tag>{r.stack}</Tag>
+                    </Link>
+                  ) : (
+                    <span className={styles.muted}>not in a stack</span>
+                  )}
+                </td>
+                <td className={styles.muted} data-label="Protocol">
+                  {r.proto ?? '—'}
+                </td>
+                <td className={`${styles.mono} ${styles.muted}`} data-label="Bound to">
+                  {r.bind ?? '—'}
+                </td>
+                <td data-label="Status">
+                  <StatusBadge status={r.state} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
 }
 
 export default PortsScreen;
