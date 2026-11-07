@@ -45,4 +45,9 @@
 .add:hover,
 .remove:hover { background: var(--hover); color: var(--text); }
 .remove { flex: none; width: 30px; height: 30px; font-size: 16px; line-height: 1; }
-.add { height: 24px; padding: 0 8px; margin-left: auto; align-self: center; }
+.add { flex: none; height: 24px; padding: 0 8px; margin-left: auto; align-self: center; white-space: nowrap; }
+
+/* 16px text stops iOS zooming into the field, as on every other form control. */
+@media (max-width: 759px) {
+  .cell > input { height: 44px; font-size: 16px; }
+}

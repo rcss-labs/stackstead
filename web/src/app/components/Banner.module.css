@@ -18,6 +18,13 @@
   color: var(--text);
 }
 
+/* The app resets links to plain text; inside a sentence one has to look like a link. */
+.body a {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .icon { flex: none; margin-top: 1px; color: var(--tone); }
 
 .body {
