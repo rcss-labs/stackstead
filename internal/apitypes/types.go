@@ -215,6 +215,9 @@ type ErrorBody struct {
 type RawCompose struct {
 	Content string `json:"content"`
 	Hash    string `json:"hash"`
+	// HasBackup is set on GET when compose.yaml.bak exists and can be restored
+	// with POST /api/stacks/{name}/compose/restore-backup. Ignored on PUT.
+	HasBackup bool `json:"hasBackup"`
 }
 
 // DockerfileContent is a service's Dockerfile text. Hash is the hash the
