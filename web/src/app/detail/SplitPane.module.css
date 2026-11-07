@@ -1,6 +1,6 @@
 .pane {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: 232px minmax(0, 1fr);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -12,6 +12,14 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+.content {
+  display: contents;
+}
+
+.content[hidden] {
+  display: none;
 }
 
 .console {

@@ -5,6 +5,9 @@ import { timelineLanes } from '$lib/stacks/timeline';
 import { lifecycleDisabledReason } from '$lib/stacks/lifecycle';
 import { detailHref, missingComposeFile, type DetailItem } from '$lib/stacks/detailLocation';
 import { removeServiceReason } from '$lib/stacks/detail';
+import { backupName } from '$lib/stacks/composeText';
+import { ApiError } from '$lib/api/client';
+import { toasts } from '$lib/stores/toasts';
 import { setUnsavedChanges } from '$lib/stores/guard';
 import { mediaQuery } from '$lib/stores/media';
 import { Banner } from '../components/Banner';
@@ -33,14 +36,14 @@ import { useLiveMetrics } from './useLiveMetrics';
 import { useNowSeconds } from './useNowSeconds';
 import { useStackDetail } from './useStackDetail';
 
-import { useServer } from '../servers/ServerContext';
+import { FEATURE_COMPOSE_RESTORE, useServer } from '../servers/ServerContext';
 // Lazy: keeps the Dockerfile editor out of the entry chunk.
 const DockerfilePanel = lazy(() => import('./DockerfilePanel').then((m) => ({ default: m.DockerfilePanel })));
 // README: the split pane is two columns from 760px; keep in step with the 759px rules in the pane modules.
 const wideQuery = mediaQuery('(min-width: 760px)');
 
 export function StackDetailScreen({ name }: { name: string }) {
-  const { live, href: serverHref } = useServer();
+  const { live, href: serverHref, api, features } = useServer();
   const { ctl, detail, notFound, loadError, operations, health, compose, composeError, cpuHour, acting, removing } = useStackDetail(name);
   const location = useDetailLocation(name, detail);
   const nowSeconds = useNowSeconds(60_000);
@@ -58,6 +61,8 @@ export function StackDetailScreen({ name }: { name: string }) {
   const [query] = useSearchParams();
   const navigate = useNavigate();
   const [logsOpen, setLogsOpen] = useState(!mobile);
+  // The dock expanded over the service pane; remembered per item, so selecting anything else ends it.
+  const [expandedOn, setExpandedOn] = useState<string | undefined>();
   const [logService, setLogService] = useState<string | undefined>();
   const consoleSlot = useRef<HTMLDivElement>(null);
   // ?tab=logs (from a link or a reload) opens the console on the requested service and moves focus to it.
@@ -116,6 +121,7 @@ export function StackDetailScreen({ name }: { name: string }) {
   // The add panel belongs to the item it was opened on and to a parseable file.
   const itemKey = item.kind === 'service' ? `service:${item.name}` : item.kind;
   const [addOpenedOn, setAddOpenedOn] = useState<string | undefined>();
+  const expanded = !mobile && !parseErrorText && item.kind === 'service' && expandedOn === itemKey;
   useEffect(() => {
     if (addingService && (!!parseErrorText || itemKey !== addOpenedOn)) closeAdd();
   }, [addingService, parseErrorText, itemKey, addOpenedOn]);
@@ -160,6 +166,65 @@ export function StackDetailScreen({ name }: { name: string }) {
     setDockerfileDirty(false);
     closeAdd();
     action?.();
+  }
+
+  // ?edit=1 on a service URL (linked from the overview) opens that service's editor, through the same guard as
+  // the Edit button. The parameter is consumed either way, so a reload or Back does not reopen the editor.
+  const editParam = query.get('edit') === '1';
+  useEffect(() => {
+    if (!editParam || !detail) return;
+    const next = new URLSearchParams(query);
+    next.delete('edit');
+    void navigate({ search: next.toString() }, { replace: true });
+    if (parseErrorText || item.kind !== 'service' || !selectedService) return;
+    const target = selectedService.name;
+    guarded(() => {
+      closeAdd();
+      setEditingService(target);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editParam, detail]);
+
+  // Restore .bak: offered on a parse error when the server can restore and a .bak exists. The compose file is read
+  // once more here for its `hasBackup` and hash, because the raw editor keeps its own copy.
+  const restoreSupported = features.includes(FEATURE_COMPOSE_RESTORE);
+  const [backup, setBackup] = useState<{ hash: string } | undefined>();
+  const [restoreEpoch, setRestoreEpoch] = useState(0);
+  const [restore, setRestore] = useState<{ pending: boolean; error?: string } | undefined>();
+  const checkBackup = rawOnly && restoreSupported;
+  useEffect(() => {
+    if (!checkBackup) {
+      setBackup(undefined);
+      return;
+    }
+    let current = true;
+    api
+      .compose(name)
+      .then((raw) => current && setBackup(raw.hasBackup ? { hash: raw.hash } : undefined))
+      .catch(() => current && setBackup(undefined));
+    return () => {
+      current = false;
+    };
+  }, [checkBackup, name, api, restoreEpoch]);
+  const composeName = backupName(detail?.path).replace(/\.bak$/, '');
+  async function confirmRestore() {
+    if (!backup) return;
+    setRestore({ pending: true });
+    try {
+      await api.restoreComposeBackup(name, backup.hash);
+    } catch (err) {
+      const status = err instanceof ApiError ? err.status : 0;
+      setRestore({
+        pending: false,
+        error: status === 409 ? 'The file changed since it was loaded. Nothing was restored; reload the page and try again.' : String(err),
+      });
+      return;
+    }
+    setRestore(undefined);
+    setComposeDirty(false);
+    setRestoreEpoch((n) => n + 1); // the raw editor reads the restored file afresh
+    toasts.push({ kind: 'success', message: `Restored ${composeName} from its .bak` });
+    await ctl.load();
   }
 
   function openAdd() {
@@ -267,6 +332,12 @@ export function StackDetailScreen({ name }: { name: string }) {
           lifecycleReason={lifecycleReason}
           onAct={(action: Action) => guarded(() => void ctl.act(action))}
           onRemove={(withVolumes) => guarded(() => void ctl.removeStack(withVolumes))}
+          onViewCompose={() =>
+            guarded(() => {
+              closeAdd();
+              location.go(location.hrefFor({ kind: 'compose' }));
+            })
+          }
         />
         {loadError && (
           <Banner kind="warning" title="Showing the last loaded state">
@@ -279,6 +350,13 @@ export function StackDetailScreen({ name }: { name: string }) {
             {missingFile
               ? 'Restore the file on disk to edit this stack.'
               : 'Fix it in the Compose file; the structured editor is unavailable until it parses.'}
+            {backup && (
+              <p className={styles.restore}>
+                <Button variant="secondary" size="sm" onClick={() => guarded(() => setRestore({ pending: false }))}>
+                  Restore .bak
+                </Button>
+              </p>
+            )}
           </Banner>
         )}
         {/* Under a parse error there are no services to chart, so the card would be an empty frame. */}
@@ -297,9 +375,12 @@ export function StackDetailScreen({ name }: { name: string }) {
         <SplitPane
           rail={<ServiceRail {...railProps} />}
           chips={<ServiceChips {...railProps} />}
+          expanded={expanded}
           console={
-            // A parse error leaves no services to read logs from, so no console and no stream.
-            !parseError && (
+            // A parse error leaves no services to read logs from, so no console and no stream. Phones read logs
+            // in the Logs tab instead of a dock.
+            !parseError &&
+            !mobile && (
               <div ref={consoleSlot}>
                 <LogConsole
                   source={{ kind: 'stack', name }}
@@ -308,7 +389,16 @@ export function StackDetailScreen({ name }: { name: string }) {
                   onService={setLogService}
                   open={logsOpen}
                   onOpenChange={setLogsOpen}
-                  mobile={mobile}
+                  mobile={false}
+                  fill={expanded}
+                  onExpandedChange={
+                    item.kind === 'service'
+                      ? (on) => {
+                          setExpandedOn(on ? itemKey : undefined);
+                          if (on) setLogsOpen(true);
+                        }
+                      : undefined
+                  }
                 />
               </div>
             )
@@ -331,11 +421,30 @@ export function StackDetailScreen({ name }: { name: string }) {
           ) : item.kind === 'service' && selectedService ? (
             <ServicePane
               service={selectedService}
-              tab={serviceTab}
-              onTab={(tab) => guarded(() => location.go(location.hrefFor(item, tab)))}
+              tab={mobile && logsRequested ? 'logs' : serviceTab}
+              onTab={(tab) =>
+                guarded(() =>
+                  location.go(tab === 'logs' ? serverHref(detailHref(name, { service: selectedService.name, tab: 'logs' })) : location.hrefFor(item, tab)),
+                )
+              }
+              logs={
+                mobile && (
+                  <LogConsole
+                    source={{ kind: 'stack', name }}
+                    services={detail.services.map((s) => s.name)}
+                    service={logService}
+                    onService={setLogService}
+                    open
+                    onOpenChange={setLogsOpen}
+                    mobile
+                    fill
+                  />
+                )
+              }
               onLogs={() => {
                 setLogService(selectedService.name);
                 setLogsOpen(true);
+                if (mobile) location.go(serverHref(detailHref(name, { service: selectedService.name, tab: 'logs' })));
               }}
               onEdit={parseError ? undefined : () => guarded(() => setEditingService(selectedService.name))}
               onCloseEditor={() => guarded(() => setEditingService(undefined))}
@@ -398,6 +507,7 @@ export function StackDetailScreen({ name }: { name: string }) {
                     compose={compose}
                     error={composeError}
                     onRetry={() => void ctl.loadCompose()}
+                    services={detail.services.map((s) => s.name)}
                     onEditYaml={() =>
                       guarded(() => {
                         location.go(location.hrefFor({ kind: 'compose' }));
@@ -429,7 +539,7 @@ export function StackDetailScreen({ name }: { name: string }) {
               editor={
                 editingCompose && (
                   <ComposeEditor
-                    key={name}
+                    key={`${name}/${restoreEpoch}`}
                     stackName={name}
                     composePath={detail.path}
                     onDirtyChange={setComposeDirty}
@@ -471,6 +581,17 @@ export function StackDetailScreen({ name }: { name: string }) {
         onCancel={ctl.cancelRemoveService}
       >
         {removing?.error && <p role="alert">{removing.error}</p>}
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={restore !== undefined}
+        title={`Restore ${composeName}.bak?`}
+        message={`${composeName}.bak replaces the current file, which is kept as ${composeName}.broken.`}
+        confirmLabel="Restore file"
+        pending={restore?.pending}
+        onConfirm={() => void confirmRestore()}
+        onCancel={() => setRestore(undefined)}
+      >
+        {restore?.error && <p role="alert">{restore.error}</p>}
       </ConfirmDialog>
       <ConfirmDialog
         open={pendingLeave !== undefined}

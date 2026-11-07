@@ -100,12 +100,12 @@ describe('compose editor on the stack page', () => {
     await waitFor(() => expect(document.activeElement).toBe(textbox()));
   });
 
-  it('a parse-error stack fetches the compose file once, from the editor alone', async () => {
+  it('a parse-error stack reads the compose file twice: once by the editor, once to look for a .bak', async () => {
     h.stackRes = { body: stackDetail({ status: 'unavailable', parseError: 'yaml: line 3: bad', services: [] }) };
     mountDetail(h, '/stacks/web');
     await waitFor(() => expect(textbox().value).toBe('services: {}\n'));
     await new Promise((r) => setTimeout(r, 50));
-    expect(h.calls('GET', '/api/stacks/web/compose')).toBe(1);
+    expect(h.calls('GET', '/api/stacks/web/compose')).toBe(2);
   });
 
   it('a parse error opens the raw editor directly and hides Edit YAML', async () => {

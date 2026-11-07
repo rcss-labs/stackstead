@@ -8,15 +8,19 @@ export interface SplitPaneProps {
   children: ReactNode;
   /** Pinned to the bottom of the right column (the log console, later). */
   console?: ReactNode;
+  /** The console fills the column: the pane stays mounted (drafts survive) but is hidden. */
+  expanded?: boolean;
 }
 
-export function SplitPane({ rail, chips, children, console }: SplitPaneProps) {
+export function SplitPane({ rail, chips, children, console, expanded = false }: SplitPaneProps) {
   return (
     <div className={styles.pane}>
       {rail}
       <div className={styles.main}>
         {chips}
-        {children}
+        <div className={styles.content} hidden={expanded}>
+          {children}
+        </div>
         {console && <div className={styles.console}>{console}</div>}
       </div>
     </div>

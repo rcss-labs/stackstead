@@ -56,6 +56,6 @@ a.row:hover { background: var(--hover); }
 }
 
 @media (max-width: 759px) {
-  .row { min-height: 40px; padding-inline: 14px; }
+  .row { min-height: 44px; padding-inline: 14px; }
   .empty { padding-inline: 14px; }
 }

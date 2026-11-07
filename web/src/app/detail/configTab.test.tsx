@@ -46,4 +46,74 @@ describe('ConfigTab', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: 'Edit YAML' }));
     expect(onEditYaml).toHaveBeenCalledTimes(1);
   });
+
+  describe('Used by', () => {
+    const deps: RawCompose = {
+      hash: 'h',
+      content: [
+        'services:',
+        '  app:',
+        '    image: nginx:1',
+        '    depends_on:',
+        '      db:',
+        '        condition: service_healthy',
+        '      cache:',
+        '        condition: service_started',
+        '  worker:',
+        '    image: w:1',
+        '    depends_on: [db]',
+        '  db:',
+        '    image: postgres:16',
+        '  cache:',
+        '    image: redis:7',
+        '    depends_on:',
+        '      - db',
+        '',
+      ].join('\n'),
+    };
+    const names = ['app', 'worker', 'db', 'cache'];
+    const row = (term: string) => screen.getByText(term, { selector: 'dt' }).nextElementSibling!.textContent;
+
+    it('Config shows Needed by from depends_on', () => {
+      setup({ compose: deps, service: appService({ name: 'db' }), services: names });
+      expect(row('Needed by')).toBe('app, worker, cache');
+      expect(row('Depends on')).toBe('Nothing');
+    });
+
+    it('lists what a service depends on in all three compose spellings', () => {
+      setup({ compose: deps, service: appService({ name: 'app' }), services: names });
+      expect(row('Depends on')).toBe('db, cache');
+      expect(row('Needed by')).toBe('Nothing');
+      cleanup();
+      setup({ compose: deps, service: appService({ name: 'worker' }), services: names });
+      expect(row('Depends on')).toBe('db');
+      cleanup();
+      setup({ compose: deps, service: appService({ name: 'cache' }), services: names });
+      expect(row('Depends on')).toBe('db');
+      expect(row('Needed by')).toBe('app');
+    });
+
+    it('names the networks of the service, or the default network', () => {
+      setup({ compose: deps, service: appService({ config: { image: 'x', limits: {}, networks: [{ name: 'front' }, { name: 'back' }] } }), services: names });
+      expect(row('Networks')).toBe('front, back');
+      cleanup();
+      setup({ compose: deps, service: appService({ name: 'db' }), services: names });
+      expect(row('Networks')).toBe('Default');
+    });
+
+    it('shows no Depends on or Needed by row it cannot read reliably, rather than a wrong one', () => {
+      const aliased: RawCompose = { hash: 'h', content: 'services:\n  app:\n    depends_on: *shared\n  db:\n    image: p\n' };
+      setup({ compose: aliased, service: appService({ name: 'db' }), services: ['app', 'db'] });
+      expect(screen.queryByText('Needed by')).toBeNull();
+      expect(screen.getByText('Networks')).toBeTruthy();
+      cleanup();
+      setup({ compose: aliased, service: appService({ name: 'app' }), services: ['app', 'db'] });
+      expect(screen.queryByText('Depends on')).toBeNull();
+    });
+
+    it('is omitted until the file has loaded', () => {
+      setup({ compose: undefined, services: names });
+      expect(screen.queryByText('Needed by')).toBeNull();
+    });
+  });
 });

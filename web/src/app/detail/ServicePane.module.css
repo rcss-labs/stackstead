@@ -31,6 +31,9 @@
 
 .spacer { flex: 1; }
 
+.cause { padding: 12px 18px 0; }
+.causeAction { margin: 8px 0 0; }
+
 .tabs {
   padding: 8px 18px 0;
 }
@@ -45,6 +48,7 @@
 
 @media (max-width: 759px) {
   .header { padding: 14px 14px 0; }
+  .cause { padding-inline: 14px; }
   .tabs { padding-inline: 14px; }
   .tabs [role='tabpanel'] { margin-inline: -14px; }
   .tabs [role='tab'] { height: 40px; } /* touch target */

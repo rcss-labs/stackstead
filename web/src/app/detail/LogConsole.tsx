@@ -28,11 +28,16 @@ export interface LogConsoleProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mobile: boolean;
+  /** Fills its container (the expanded dock, or the Logs tab on phones) instead of docking at a draggable height; always open. */
+  fill?: boolean;
+  /** Shows Expand (or Collapse while `fill` expands the dock) when given. */
+  onExpandedChange?: (expanded: boolean) => void;
   /** Where the height persists; tests inject a stub. */
   storage?: Storage;
 }
 
-export function LogConsole({ source, services, service, onService, open, onOpenChange, mobile, storage }: LogConsoleProps) {
+export function LogConsole({ source, services, service, onService, open: openProp, onOpenChange, mobile, fill = false, onExpandedChange, storage }: LogConsoleProps) {
+  const open = openProp || fill;
   // A service the stack does not have (a stale ?service=) shows every service rather than an empty console.
   const serverService = source.kind === 'stack' && service !== undefined && services.includes(service) ? service : undefined;
   const stream = useLogStream(source, { service: serverService, tail: 200, follow: true });
@@ -133,8 +138,8 @@ export function LogConsole({ source, services, service, onService, open, onOpenC
 
   const bodyHeight = open ? (mobile ? mobileHeight : height) : 0;
   return (
-    <section className={styles.console} aria-label="Logs" data-open={open}>
-      {open && !mobile && (
+    <section className={styles.console} aria-label="Logs" data-open={open} data-fill={fill || undefined}>
+      {open && !mobile && !fill && (
         <div
           className={styles.handle}
           role="separator"
@@ -156,7 +161,9 @@ export function LogConsole({ source, services, service, onService, open, onOpenC
       )}
       <LogConsoleHeader
         open={open}
-        onToggle={() => onOpenChange(!open)}
+        onToggle={fill ? undefined : () => onOpenChange(!open)}
+        expanded={onExpandedChange ? fill : undefined}
+        onExpandedChange={onExpandedChange}
         paused={paused}
         newCount={newCount}
         onTogglePause={togglePause}
@@ -169,7 +176,7 @@ export function LogConsole({ source, services, service, onService, open, onOpenC
         stopped={stream.ended || status.tone === 'muted'}
         latest={stream.lines.at(-1)}
       />
-      <div className={styles.body} data-testid="log-console-body" data-dragging={dragging || undefined} style={{ height: bodyHeight }} inert={!open}>
+      <div className={styles.body} data-testid="log-console-body" data-dragging={dragging || undefined} style={fill ? undefined : { height: bodyHeight }} inert={!open}>
         {source.kind === 'stack' && (
           <LogChips
             services={sortedServices}

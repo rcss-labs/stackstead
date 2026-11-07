@@ -5,7 +5,11 @@ import styles from './LogConsole.module.css';
 
 export interface LogConsoleHeaderProps {
   open: boolean;
-  onToggle: () => void;
+  /** Absent while the console fills its container: it cannot be collapsed there, so the label is static. */
+  onToggle?: () => void;
+  /** Expand/Collapse control; shown when `onExpandedChange` is given. */
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
   paused: boolean;
   newCount: number;
   onTogglePause: () => void;
@@ -23,6 +27,8 @@ export interface LogConsoleHeaderProps {
 export function LogConsoleHeader({
   open,
   onToggle,
+  expanded,
+  onExpandedChange,
   paused,
   newCount,
   onTogglePause,
@@ -38,12 +44,18 @@ export function LogConsoleHeader({
   const pillLabel = stopped ? 'Ended' : !paused ? 'Following' : newCount > 0 ? `Paused · ${newCount} new` : 'Paused';
   return (
     <header className={styles.header} data-testid="log-console-header">
-      <button type="button" className={styles.toggle} aria-expanded={open} onClick={onToggle}>
-        <svg className={styles.chevron} width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M6 15l6-6 6 6" fill="none" stroke="var(--muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-        Logs
-      </button>
+      {onToggle ? (
+        <button type="button" className={styles.toggle} aria-expanded={open} onClick={onToggle}>
+          <svg className={styles.chevron} width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 15l6-6 6 6" fill="none" stroke="var(--muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          Logs
+        </button>
+      ) : (
+        <span className={styles.toggle} data-static>
+          Logs
+        </span>
+      )}
       <button
         type="button"
         className={styles.pill}
@@ -86,6 +98,19 @@ export function LogConsoleHeader({
       <span className={styles.status} role="status" data-tone={status.tone}>
         {status.label}
       </span>
+      {onExpandedChange && open && (
+        <button
+          type="button"
+          className={styles.clear}
+          aria-label={expanded ? 'Collapse logs' : 'Expand logs'}
+          title={expanded ? 'Collapse logs' : 'Expand logs'}
+          onClick={() => onExpandedChange(!expanded)}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+      )}
     </header>
   );
 }

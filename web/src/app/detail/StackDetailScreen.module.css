@@ -24,3 +24,7 @@
 @media (min-width: 760px) {
   .addEntry > button[data-size] { height: 22px; }
 }
+
+.restore {
+  margin: 8px 0 0;
+}
