@@ -47,6 +47,7 @@ type fakeStacks struct {
 	gotDockerfile *stacks.DockerfileWrite
 
 	dockerfileHash string // returned by UpdateService/AddService as the written file's hash
+	hasBackup      bool   // reported by HasBackup
 
 	replay       []string
 	first        int // absolute index of replay[0]

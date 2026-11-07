@@ -16,6 +16,7 @@ import type {
   FSEntry,
   FieldError,
   Alert,
+  DiskForecast,
   HashResponse,
   HostSnapshot,
   ImportRequest,
@@ -218,6 +219,9 @@ export function createApi(base: string) {
     compose: (name: string) => get<RawCompose>(`/api/stacks/${seg(name)}/compose`),
     saveCompose: (name: string, content: string, hash: string) =>
       call<HashResponse>('PUT', `/api/stacks/${seg(name)}/compose`, { content, hash } satisfies RawCompose),
+    /** Needs the `compose-restore` feature. 404: no backup; 409: `hash` is stale. Resolves with the restored file's hash. */
+    restoreComposeBackup: (name: string, hash: string) =>
+      post<HashResponse>(`/api/stacks/${seg(name)}/compose/restore-backup`, { hash }),
     updateService: (name: string, service: string, config: ServiceConfig, hash: string, dockerfile?: DockerfileContent) =>
       call<UpdateServiceResponse>('PUT', `/api/stacks/${seg(name)}/services/${seg(service)}`, {
         config,
@@ -271,6 +275,8 @@ export function createApi(base: string) {
     hostInterfaces: () => get<HostInterface[]>('/api/host/interfaces'),
     status: () => get<Status>('/api/status'),
     host: () => get<HostSnapshot>('/api/host'),
+    /** Needs the `disk-forecast` feature. */
+    diskForecast: () => get<DiskForecast>('/api/host/disk-forecast'),
     alerts: () => get<Alert[]>('/api/alerts'),
     metricsSummary: (window?: SummaryWindow) => get<MetricsSummary>(`/api/metrics/summary${query({ window })}`),
 

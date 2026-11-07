@@ -54,7 +54,7 @@ func (s *server) writeStackError(w http.ResponseWriter, r *http.Request, err err
 		writeError(w, http.StatusConflict, stacks.ErrDockerfileConflict.Error())
 
 	case errors.Is(err, stacks.ErrStackNotFound), errors.Is(err, stacks.ErrOperationNotFound),
-		errors.Is(err, stacks.ErrNoBuild), errors.Is(err, composefile.ErrServiceNotFound):
+		errors.Is(err, stacks.ErrNoBuild), errors.Is(err, composefile.ErrNoBackup), errors.Is(err, composefile.ErrServiceNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, stacks.ErrStackUnavailable):
 		// A state conflict, not a missing resource: the registered stack's file is gone or broken.

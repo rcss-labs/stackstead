@@ -130,8 +130,8 @@ func TestOpenCreatesStacksTableAtLatestVersion(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 9 {
-		t.Errorf("user_version = %d, want 9", version)
+	if version != 10 {
+		t.Errorf("user_version = %d, want 10", version)
 	}
 	if _, err := db.Exec(`INSERT INTO stacks (name, compose_path, origin, project, created_at) VALUES ('a', '/a/compose.yaml', 'managed', 'a', 0)`); err != nil {
 		t.Fatalf("insert stack: %v", err)
@@ -257,8 +257,8 @@ func TestOpenUpgradesVersion3DatabaseKeepingStacks(t *testing.T) {
 
 func TestMigrationAddsPeerTables(t *testing.T) {
 	db := openTemp(t)
-	if got := store.SupportedSchema(); got != 9 {
-		t.Fatalf("SupportedSchema = %d, want 9", got)
+	if got := store.SupportedSchema(); got != 10 {
+		t.Fatalf("SupportedSchema = %d, want 10", got)
 	}
 	for _, table := range []string{"peers", "connection_tokens"} {
 		count(t, db, table)
@@ -266,6 +266,16 @@ func TestMigrationAddsPeerTables(t *testing.T) {
 	_, err := db.Exec(`INSERT INTO peers (instance_id, name, slug, url, created_at, state) VALUES ('i', 'n', 's', 'u', 0, 'removing')`)
 	if err == nil {
 		t.Fatal("insert with state 'removing' succeeded, want CHECK failure")
+	}
+}
+
+func TestMigrationAddsHostDiskSamples(t *testing.T) {
+	db := openTemp(t)
+	if _, err := db.Exec(`INSERT INTO host_disk_samples (ts, used, total) VALUES (1, 2, 3)`); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO host_disk_samples (ts, used, total) VALUES (1, 2, 3)`); err == nil {
+		t.Error("two samples with the same timestamp were accepted")
 	}
 }
 

@@ -30,8 +30,8 @@ func TestActionLogMigrationFromVersion4(t *testing.T) {
 	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 9 || store.SupportedSchema() != 9 {
-		t.Fatalf("schema = %d supported = %d, want 9", version, store.SupportedSchema())
+	if version != 10 || store.SupportedSchema() != 10 {
+		t.Fatalf("schema = %d supported = %d, want 10", version, store.SupportedSchema())
 	}
 	if n := count(t, db, "users"); n != 1 {
 		t.Fatal("migration lost users")

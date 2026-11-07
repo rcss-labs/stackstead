@@ -16,7 +16,7 @@ func TestHelloAdvertisesFeatures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{FeatureYAMLCreate, FeatureManagedDockerfile}
+	want := []string{FeatureYAMLCreate, FeatureManagedDockerfile, FeatureDiskForecast, FeatureComposeRestore}
 	if !slices.Equal(hello.Features, want) {
 		t.Fatalf("hello features = %v, want %v", hello.Features, want)
 	}

@@ -215,6 +215,9 @@ type ErrorBody struct {
 type RawCompose struct {
 	Content string `json:"content"`
 	Hash    string `json:"hash"`
+	// HasBackup is set on GET when compose.yaml.bak exists and can be restored
+	// with POST /api/stacks/{name}/compose/restore-backup. Ignored on PUT.
+	HasBackup bool `json:"hasBackup"`
 }
 
 // DockerfileContent is a service's Dockerfile text. Hash is the hash the
@@ -682,6 +685,17 @@ type Alert struct {
 	Container string    `json:"container,omitempty"`
 	Message   string    `json:"message"`
 	Since     time.Time `json:"since"`
+	// ExitCode and MemLimit (bytes) are set on exited and restart_loop alerts
+	// when Docker could be inspected; MemLimit is omitted without a limit.
+	ExitCode *int  `json:"exitCode,omitempty"`
+	MemLimit int64 `json:"memLimit,omitempty"`
+}
+
+// DiskForecast is the GET /api/host/disk-forecast body. DaysLeft is null
+// without enough history (under 6 hours) or when usage is flat or falling.
+type DiskForecast struct {
+	DaysLeft    *float64 `json:"daysLeft"`
+	SampledDays float64  `json:"sampledDays"`
 }
 
 // MetricsSummary is the GET /api/metrics/summary body. Step is in seconds;
