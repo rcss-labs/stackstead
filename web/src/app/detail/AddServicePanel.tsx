@@ -11,6 +11,7 @@ import { useStore } from '../hooks/useStore';
 import { DiffView } from '../stacks/DiffView';
 import { FileBrowser } from '../stacks/FileBrowser';
 import { NetworkPicker } from '../stacks/NetworkPicker';
+import { ReviewSummary } from '../stacks/ReviewSummary';
 import { BROWSE_TITLES, ServiceForm, type BrowsePurpose, type ServiceFormHandle } from '../stacks/ServiceForm';
 import styles from './AddServicePanel.module.css';
 
@@ -170,7 +171,7 @@ export function AddServicePanel({ stack, onAdded, onCancel, onReload, onDirtyCha
       {phase === 'conflict' && (
         <>
           <Banner kind="danger" title="Save refused">
-            <span className={styles.msg}>{conflictMessage}</span>
+            <span className={styles.msg}>{conflictMessage}</span> Nothing has been overwritten: the file on disk and your service are both intact.
           </Banner>
           <div className={styles.row}>
             <Button variant="primary" loading={reloading} onClick={() => void reload(true)}>
@@ -188,6 +189,7 @@ export function AddServicePanel({ stack, onAdded, onCancel, onReload, onDirtyCha
           <h3 tabIndex={-1} ref={previewHeading} className={styles.heading}>
             Review the service to add
           </h3>
+          {previewText && <ReviewSummary original={previewText.original} modified={previewText.modified} path={stack.path} />}
           {previewText && <DiffView original={previewText.original} modified={previewText.modified} ariaLabel="Changes to compose.yaml" />}
         </>
       )}
@@ -203,6 +205,7 @@ export function AddServicePanel({ stack, onAdded, onCancel, onReload, onDirtyCha
           onNameChange={(value) => add.name.set(value)}
           errors={errors}
           idPrefix="svc-add"
+          advanced={{ summary: 'Environment, networks and healthcheck' }}
           onBrowse={(mode, cb, purpose) => setBrowse({ mode, purpose, cb })}
           networkPicker={(f, rowErrors) => (
             <NetworkPicker idPrefix="svc-add-networks" value={f.networks} onChange={(networks) => change({ ...get(add.form), networks })} errors={rowErrors} />

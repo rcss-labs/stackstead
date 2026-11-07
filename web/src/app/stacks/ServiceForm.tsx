@@ -30,6 +30,8 @@ export const BROWSE_TITLES: Record<BrowsePurpose, string> = {
 export interface PortNote {
   tone: 'danger' | 'warning' | 'success';
   text: string;
+  /** A concrete way out of a clash, such as "8097 is free". */
+  suggestion?: string;
 }
 
 export interface ServiceFormProps {
@@ -43,6 +45,8 @@ export interface ServiceFormProps {
   onBrowse?: (mode: 'dir' | 'file', set: (path: string) => void, purpose: BrowsePurpose) => void;
   /** Folds environment, networks, network mode, healthcheck and resources into a disclosure with this summary. */
   advanced?: { summary: string };
+  /** Shown under the memory limit, for example the highest memory seen recently. */
+  memoryHint?: string;
   /** A live verdict shown beside a port row; never marks the field invalid. */
   portNote?: (spec: string, index: number) => PortNote | undefined;
   networkPicker?: (form: ServiceFormValue, rowErrors: Record<number, string>) => ReactNode;
@@ -130,6 +134,7 @@ export function ServiceForm({
   nameReadonly = false,
   onBrowse,
   advanced,
+  memoryHint,
   portNote,
   networkPicker,
   onRawEditor,
@@ -185,8 +190,16 @@ export function ServiceForm({
     paths.length > 0 ? `${paths.length} ${paths.length === 1 ? 'field has an error' : 'fields have errors'}: ${paths.map((p) => fieldLabel(p, form.source)).join(', ')}` : '';
 
   // The disclosure is forced open while a hidden group holds an error, so the error stays reachable.
-  const advancedHasErrors = paths.some((path) => /^(env|networks)\[|^networkMode$|^limits\.|^healthcheck\./.test(path));
-  const advancedOpen = advancedToggled || advancedHasErrors;
+  const advancedHasErrors = paths.some((path) => /^(env|networks)\[|^networkMode$|^healthcheck\./.test(path));
+  // A group that holds a value, or YAML only the raw editor can change, is never left collapsed either.
+  const advancedHoldsValue =
+    form.env.some((row) => row.name !== '' || row.value !== '') ||
+    form.networks.some((row) => row.name !== '' || row.ipv4Address !== '') ||
+    form.networkMode !== '' ||
+    form.healthcheck.enabled ||
+    (['environment', 'networks', 'network_mode', 'healthcheck'] as const).some((group) => form.readOnly.has(group));
+  const advancedForced = advancedHasErrors || advancedHoldsValue;
+  const advancedOpen = advancedToggled || advancedForced;
   useLayoutEffect(() => {
     advancedOpenRendered.current = advancedOpen;
   }, [advancedOpen]);
@@ -436,7 +449,7 @@ export function ServiceForm({
       <Field label="CPUs" id={id('cpus')} mono error={shown['limits.cpus']} hint="For example 0.5" readonly={ro('limits')}>
         {(aria) => <input type="text" {...aria} value={form.cpus} onChange={(e) => patch({ cpus: e.target.value })} inputMode="decimal" autoComplete="off" />}
       </Field>
-      <Field label="Memory" id={id('memory')} mono error={shown['limits.memory']} hint="For example 512M or 1G" readonly={ro('limits')}>
+      <Field label="Memory" id={id('memory')} mono error={shown['limits.memory']} hint={memoryHint ?? 'For example 512M or 1G'} readonly={ro('limits')}>
         {(aria) => <input type="text" {...aria} value={form.memory} onChange={(e) => patch({ memory: e.target.value })} {...textProps} />}
       </Field>
     </fieldset>
@@ -546,8 +559,6 @@ export function ServiceForm({
         )}
       </fieldset>
 
-      {advanced && restartGroup}
-
       <fieldset className={styles.group} aria-label="Ports" aria-describedby={describedBy('ports')}>
         {readonlyNote('ports')}
         <ListEditor
@@ -582,6 +593,7 @@ export function ServiceForm({
                   <span className={styles.portNote} data-tone={note.tone} id={noteId}>
                     <span className={styles.noteMark} aria-hidden="true" />
                     {note.text}
+                    {note.suggestion && <span className={styles.suggestion}>{note.suggestion}</span>}
                   </span>
                 )}
               </>
@@ -625,10 +637,15 @@ export function ServiceForm({
       </fieldset>
 
       {advanced ? (
+        <>
+        <div className={styles.grid3}>
+          {restartGroup}
+          {limitsFieldset(`${styles.group} ${styles.limits}`)}
+        </div>
         <details
           className={styles.advanced}
           open={advancedOpen}
-          data-forced-open={advancedHasErrors ? '' : undefined}
+          data-forced-open={advancedForced ? '' : undefined}
           onToggle={(e) => {
             // Only a toggle that differs from what was rendered is the user's; React's own open/close is ignored.
             if (e.currentTarget.open !== advancedOpenRendered.current) setAdvancedToggled(e.currentTarget.open);
@@ -639,8 +656,8 @@ export function ServiceForm({
           {networksGroup}
           {modeGroup}
           {healthcheckGroup}
-          {limitsFieldset(styles.group)}
         </details>
+        </>
       ) : (
         <>
           {environmentGroup}

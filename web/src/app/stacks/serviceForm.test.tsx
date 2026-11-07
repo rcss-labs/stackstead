@@ -33,6 +33,7 @@ interface HostProps {
   errors?: FormErrors;
   onBrowse?: (mode: 'dir' | 'file', set: (path: string) => void, purpose: BrowsePurpose) => void;
   advanced?: { summary: string };
+  memoryHint?: string;
   portNote?: ServiceFormProps['portNote'];
   onRawEditor?: () => void;
   withPicker?: boolean;
@@ -251,18 +252,44 @@ describe('ServiceForm', () => {
   describe('advanced disclosure', () => {
     const detailsOf = () => screen.getByText('More').closest('details') as HTMLDetailsElement;
 
-    it('wraps environment, networks, mode, healthcheck and limits in a closed disclosure and moves restart policy up', () => {
+    it('wraps environment, networks, mode and healthcheck in a closed disclosure and keeps resources and restart policy visible after the volumes', () => {
       setup({ advanced: { summary: 'More' } });
       const details = detailsOf();
       expect(details.open).toBe(false);
       within(details).getByText('Environment');
       within(details).getByLabelText('Network mode');
       within(details).getByLabelText('Enable healthcheck');
-      within(details).getByLabelText('CPUs');
-      const restart = screen.getByLabelText('Restart policy');
-      expect(details.contains(restart)).toBe(false);
-      const ports = screen.getByRole('group', { name: 'Ports' });
-      expect(restart.compareDocumentPosition(ports) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      for (const label of ['CPUs', 'Memory', 'Restart policy']) expect(details.contains(screen.getByLabelText(label))).toBe(false);
+      const volumes = screen.getByRole('group', { name: 'Volumes' });
+      expect(volumes.compareDocumentPosition(screen.getByLabelText('CPUs')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('rare fields start collapsed and open when they hold a value or an error', () => {
+      const holding: [string, Partial<Form>][] = [
+        ['an environment variable', { env: [{ name: 'TZ', value: 'UTC' }] }],
+        ['a network', { networks: [{ name: 'proxy', ipv4Address: '' }] }],
+        ['a network mode', { networkMode: 'host' }],
+        ['an enabled healthcheck', { healthcheck: { ...emptyForm().healthcheck, enabled: true } }],
+        ['a group only YAML can edit', { readOnly: new Set<Field>(['environment']) }],
+      ];
+      for (const [, initial] of holding) {
+        cleanup();
+        setup({ advanced: { summary: 'More' }, initial });
+        expect(detailsOf().open).toBe(true);
+      }
+      cleanup();
+      setup({ advanced: { summary: 'More' }, errors: { 'env[0].name': 'bad' } });
+      expect(detailsOf().open).toBe(true);
+      cleanup();
+      // An empty row the user just added holds nothing, so the group stays collapsed.
+      setup({ advanced: { summary: 'More' }, initial: { env: [{ name: '', value: '' }] } });
+      expect(detailsOf().open).toBe(false);
+    });
+
+    it('shows the memory hint under the memory limit', () => {
+      setup({ advanced: { summary: 'More' }, memoryHint: 'Highest sample in the last 24h: 511.0 MiB.' });
+      expect(screen.getByLabelText('Memory').getAttribute('aria-describedby')).toBeTruthy();
+      expect(screen.getByText('Highest sample in the last 24h: 511.0 MiB.')).toBeTruthy();
     });
 
     it('without advanced the groups render as before', () => {
@@ -273,7 +300,7 @@ describe('ServiceForm', () => {
     });
 
     it('opens itself while a hidden group holds an error and closes again after', () => {
-      const { rerender } = setup({ advanced: { summary: 'More' }, errors: { 'limits.cpus': 'bad' } });
+      const { rerender } = setup({ advanced: { summary: 'More' }, errors: { 'networkMode': 'bad' } });
       expect(detailsOf().open).toBe(true);
       expect(detailsOf().hasAttribute('data-forced-open')).toBe(true);
       rerender({ advanced: { summary: 'More' }, errors: {} });
@@ -304,13 +331,13 @@ describe('ServiceForm', () => {
       const user = userEvent.setup();
       const { rerender } = setup({ advanced: { summary: 'More' } });
       await user.click(screen.getByText('More'));
-      rerender({ advanced: { summary: 'More' }, errors: { 'limits.cpus': 'bad' } });
+      rerender({ advanced: { summary: 'More' }, errors: { 'networkMode': 'bad' } });
       rerender({ advanced: { summary: 'More' }, errors: {} });
       await waitFor(() => expect(detailsOf().open).toBe(true));
     });
 
     it('does not stay open after a forced-open error clears when the user never opened it', async () => {
-      const { rerender } = setup({ advanced: { summary: 'More' }, errors: { 'limits.cpus': 'bad' } });
+      const { rerender } = setup({ advanced: { summary: 'More' }, errors: { 'networkMode': 'bad' } });
       await new Promise((r) => setTimeout(r, 20)); // let any toggle event from the forced open fire
       rerender({ advanced: { summary: 'More' }, errors: {} });
       await new Promise((r) => setTimeout(r, 20));
@@ -333,7 +360,7 @@ describe('ServiceForm', () => {
 
     it('lets the user close a forced-open disclosure', async () => {
       const user = userEvent.setup();
-      setup({ advanced: { summary: 'More' }, errors: { 'limits.cpus': 'bad' } });
+      setup({ advanced: { summary: 'More' }, errors: { 'networkMode': 'bad' } });
       await user.click(screen.getByText('More'));
       await waitFor(() => expect(detailsOf().open).toBe(false));
     });

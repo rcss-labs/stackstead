@@ -97,6 +97,13 @@ describe('AddServicePanel', () => {
     await waitFor(() => expect(onAdded).toHaveBeenCalledWith(expect.objectContaining({ hash: 'h2' }), true, 'cache'));
   });
 
+  it('review states the changed line count above the diff', async () => {
+    render(<AddServicePanel stack={stack} onAdded={noop} onCancel={noop} onReload={async () => stack} />);
+    await fill();
+    const summary = await screen.findByText('One line changes in compose.yaml');
+    expect(summary.compareDocumentPosition(screen.getByTestId('diff-view')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('Cancel invokes parent and conflict offers Reload / Discard', async () => {
     routes['POST /api/stacks/web/services'] = { status: 409, body: { error: 'changed on disk' } };
     const onCancel = vi.fn();
@@ -104,6 +111,7 @@ describe('AddServicePanel', () => {
     const u = await fill();
     await u.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByText('Save refused')).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toContain('Nothing has been overwritten');
     expect(screen.getByRole('button', { name: 'Reload' })).toBeTruthy();
     await u.click(screen.getByRole('button', { name: 'Discard my changes' }));
     await waitFor(() => expect(screen.getByLabelText('Service name')).toHaveProperty('value', ''));

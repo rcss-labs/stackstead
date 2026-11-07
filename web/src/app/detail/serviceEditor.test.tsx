@@ -164,6 +164,76 @@ describe('ServiceEditor', () => {
     expect(get(toasts).some((t) => t.message === 'Saved app. Apply to run the change.')).toBe(true);
   });
 
+  it('review states the changed line count above the diff', async () => {
+    mount({ stack: { ...stack(), path: '/s/web/compose.yaml' } });
+    await changeImage('nginx:2');
+    await user().click(screen.getByRole('button', { name: 'Preview changes' }));
+    const summary = await screen.findByText('One line changes in compose.yaml');
+    const diff = await screen.findByTestId('diff-view');
+    expect(summary.compareDocumentPosition(diff) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText('compose.yaml.bak')).toBeTruthy();
+  });
+
+  it('Save and Save and apply are distinct: the second saves and then starts compose up', async () => {
+    const h = mount();
+    await changeImage('nginx:2');
+    await user().click(screen.getByRole('button', { name: 'Preview changes' }));
+    expect(await screen.findByRole('button', { name: 'Save' })).toBeTruthy();
+    await user().click(screen.getByRole('button', { name: 'Save and apply' }));
+    await waitFor(() => expect(h.onSaved).toHaveBeenCalledWith('h2'));
+    await waitFor(() => expect(calls('POST', '/actions/up')).toHaveLength(1));
+    expect(calls('PUT', '/services/app')).toHaveLength(1);
+  });
+
+  it('Save alone never starts compose up', async () => {
+    mount();
+    await changeImage('nginx:2');
+    await user().click(screen.getByRole('button', { name: 'Preview changes' }));
+    await user().click(await screen.findByRole('button', { name: 'Save' }));
+    await screen.findByRole('button', { name: 'Apply' });
+    expect(calls('POST', '/actions/up')).toHaveLength(0);
+  });
+
+  it('Save and apply is disabled with the lifecycle reason', async () => {
+    mount({ lifecycleDisabledReason: 'Docker is unavailable' });
+    await changeImage('nginx:2');
+    await user().click(screen.getByRole('button', { name: 'Preview changes' }));
+    const both = await screen.findByRole('button', { name: 'Save and apply' });
+    expect(both.getAttribute('aria-disabled')).toBe('true');
+    expect(both.getAttribute('title') ?? both.textContent).toContain('Docker is unavailable');
+  });
+
+  it('peak memory hint appears when history exists', async () => {
+    fake.restore();
+    fake = installFakeFetch({
+      'GET /api/stacks/web/metrics': { body: { points: [
+        { time: 't1', service: 'app', cpu: 1, mem: 300 * 1024 * 1024, memLimit: 0 },
+        { time: 't2', service: 'app', cpu: 1, mem: 511 * 1024 * 1024, memLimit: 0 },
+        { time: 't2', service: 'other', cpu: 1, mem: 900 * 1024 * 1024, memLimit: 0 },
+      ] } },
+      'GET /api/networks': { body: [] },
+    });
+    mount();
+    expect(await screen.findByText('Highest sample in the last 24h: 511.0 MiB.')).toBeTruthy();
+  });
+
+  it('no peak memory hint without history', async () => {
+    fake.restore();
+    fake = installFakeFetch({ 'GET /api/stacks/web/metrics': { body: { points: [] } }, 'GET /api/networks': { body: [] } });
+    mount();
+    await waitFor(() => expect(fake.calls.filter((c) => c.path.startsWith('/api/stacks/web/metrics'))).toHaveLength(1));
+    expect(screen.queryByText(/Highest sample/)).toBeNull();
+  });
+
+  it('merge state says nothing was overwritten', async () => {
+    putRes = [{ status: 409, body: { error: 'compose file changed on disk' } }];
+    mount();
+    await changeImage('nginx:2');
+    await user().click(screen.getByRole('button', { name: 'Preview changes' }));
+    await user().click(await screen.findByRole('button', { name: 'Save' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Nothing has been overwritten');
+  });
+
   it('validation errors block the preview request and focus the first invalid field', async () => {
     mount();
     await changeImage('');

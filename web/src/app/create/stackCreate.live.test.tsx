@@ -61,6 +61,15 @@ describe('New stack port check', () => {
     expect(screen.getByLabelText('Port 1').getAttribute('data-check')).toBe('success');
   });
 
+  it('port clash error names the owner and suggests a free port', async () => {
+    const user = await mount({ 'GET /api/containers': { body: [HOME_ASSISTANT, row('zb', { stack: 'zigbee', ports: ['0.0.0.0:8124->8124/tcp'] })] } });
+    await addPort(user);
+    await user.type(screen.getByLabelText('Port 1'), '8123:8123');
+    expect(await screen.findByText('Port 8123 is used by home-assistant')).toBeTruthy();
+    // 8124 is taken too, so the suggestion skips to the next free port.
+    expect(screen.getByText('8125 is free')).toBeTruthy();
+  });
+
   it('a port conflict is advisory: the request is still sent and the input is not invalid', async () => {
     const user = await mount({ 'GET /api/containers': { body: [HOME_ASSISTANT] } });
     await fillImage(user);

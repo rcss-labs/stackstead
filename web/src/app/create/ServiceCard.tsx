@@ -75,7 +75,7 @@ export function ServiceCard({ card, index, open, removable, frozen, pending, err
               onNameChange={onNameChange}
               idPrefix={`svc-${card.id}`}
               onBrowse={onBrowse}
-              advanced={{ summary: 'Environment, networks, limits, healthcheck' }}
+              advanced={{ summary: 'Environment, networks and healthcheck' }}
               portNote={portNote}
               networkPicker={(f, rowErrors) => (
                 <NetworkPicker idPrefix={`svc-${card.id}-networks`} value={f.networks} onChange={(networks) => onFormChange({ ...f, networks })} errors={rowErrors} />

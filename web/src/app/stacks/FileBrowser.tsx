@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from '$lib/api/client';
+import { ICONS } from '$lib/shell/icons';
 import type { FSEntry } from '$lib/api/types';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
@@ -17,6 +18,8 @@ export interface FileBrowserProps {
   filter?: (e: FSEntry) => boolean;
 }
 
+// The shared icon set has no folder shape.
+const FOLDER_PATH = 'M3 6.5h6l2 2.5h10V19H3z';
 const isDockerfile = (e: FSEntry) => /^Dockerfile/.test(e.name) || /\.Dockerfile$/.test(e.name);
 const join = (dir: string, name: string) => (dir.endsWith('/') ? dir + name : `${dir}/${name}`);
 
@@ -152,7 +155,9 @@ export function FileBrowser({ open, mode, title, onPick, onClose, filter }: File
             {sorted.map((e, i) => (
               <li key={i}>
                 <button type="button" className={styles.entry} disabled={!e.isDir && mode === 'dir'} onClick={() => choose(e)}>
-                  <span aria-hidden="true">{e.isDir ? '📁' : '📄'} </span>
+                  <svg className={styles.entryIcon} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d={e.isDir ? FOLDER_PATH : ICONS.file} />
+                  </svg>
                   {e.name}
                 </button>
               </li>

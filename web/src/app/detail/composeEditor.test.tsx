@@ -134,6 +134,32 @@ describe('ComposeEditor', () => {
     await waitFor(() => expect(get(toasts).some((t) => t.message.includes('.bak file next to it'))).toBe(true));
   });
 
+  it('review states the changed line count above the diff', async () => {
+    const { ta } = await loaded({ composePath: '/srv/stacks/web/compose.yaml' });
+    edit(ta, 'a: 2\nb: 3\n');
+    await click('Preview changes');
+    const summary = await screen.findByText('2 lines change in compose.yaml');
+    expect(summary.compareDocumentPosition(screen.getByTestId('diff-view')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('Save and apply saves, then asks the page to apply', async () => {
+    const onApply = vi.fn();
+    const { ta } = await loaded({ onApply });
+    edit(ta, 'a: 2\n');
+    await click('Preview changes');
+    await click('Save and apply');
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    await waitFor(() => expect(onApply).toHaveBeenCalledOnce());
+  });
+
+  it('merge state says nothing was overwritten', async () => {
+    putResponses = [{ status: 409, body: { error: 'changed' } }];
+    const { ta } = await loaded();
+    edit(ta, 'mine\n');
+    await click('Save');
+    expect((await screen.findByRole('alert')).textContent).toContain('Nothing has been overwritten');
+  });
+
   it('soft-disables Preview changes during a conflict', async () => {
     putResponses = [{ status: 409, body: { error: 'changed' } }];
     const { ta } = await loaded();
