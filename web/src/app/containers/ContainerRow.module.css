@@ -32,8 +32,7 @@
   white-space: nowrap;
 }
 .nameLink:hover { color: var(--accent); }
-.status { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.status[data-tone='danger'] { color: var(--danger); }
+.sub { font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .stackLink { color: var(--text); text-decoration: none; }
 .stackLink:hover { color: var(--accent); }
@@ -62,6 +61,9 @@
 .num { font-family: var(--mono); font-size: 12px; text-align: right; }
 .num [data-tone='warning'] { color: var(--warning); font-weight: 600; }
 
+.mobileState { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 11.5px; }
+.problem { color: var(--danger); font-weight: 600; }
+
 .mobileStats { display: flex; flex-direction: column; align-items: flex-end; font-family: var(--mono); font-size: 11px; color: var(--muted); }
 
 .toggle { display: flex; justify-content: flex-end; align-items: center; gap: 4px; }
@@ -80,10 +82,12 @@
 
 @media (max-width: 759px) {
   .row {
-    grid-template-columns: 8px minmax(0, 1fr) auto auto;
+    grid-template-columns: 8px minmax(0, 1fr) auto auto auto;
     min-width: 0;
+    min-height: 52px;
     padding: 10px 14px;
   }
+  .terminalLink { width: 44px; height: 44px; }
   .row[data-focused='true'],
   .row:focus-visible { box-shadow: none; }
   .row [data-desktop] { display: none; }

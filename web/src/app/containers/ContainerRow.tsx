@@ -58,8 +58,8 @@ export function ContainerRow({ row, index, focused, open, peekId, mobile, onFocu
           {row.name}
         </Link>
         {mobile && (
-          <span className={styles.status} data-tone={isProblem(row) ? 'danger' : undefined}>
-            {row.status}
+          <span className={styles.sub}>
+            {row.managed === 'stack' ? row.stack : 'Unmanaged'} · {row.image}
           </span>
         )}
       </div>
@@ -112,6 +112,12 @@ export function ContainerRow({ row, index, focused, open, peekId, mobile, onFocu
         <span data-tone={row.restarts24h >= 3 ? 'warning' : undefined}>{row.restarts24h}</span>
       </div>
       {mobile && (
+        <div role="cell" data-mobile className={styles.mobileState}>
+          <StatusBadge status={row.state} />
+          {isProblem(row) && <span className={styles.problem}>Problem</span>}
+        </div>
+      )}
+      {mobile && (
         <div role="cell" data-mobile aria-label={`CPU ${cpu}, memory ${mem}`} className={styles.mobileStats}>
           <span>{cpu}</span>
           <span>{mem}</span>
@@ -130,19 +136,21 @@ export function ContainerRow({ row, index, focused, open, peekId, mobile, onFocu
             </svg>
           </Link>
         )}
-        <Button
-          variant="ghost"
-          size="xs"
-          icon
-          aria-label={`Peek logs for ${row.name}`}
-          aria-expanded={open}
-          aria-controls={peekId}
-          onClick={onToggle}
-        >
-          <svg className={styles.chevron} data-open={open ? 'true' : undefined} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="m6 9 6 6 6-6" />
-          </svg>
-        </Button>
+        {!mobile && (
+          <Button
+            variant="ghost"
+            size="xs"
+            icon
+            aria-label={`Peek logs for ${row.name}`}
+            aria-expanded={open}
+            aria-controls={peekId}
+            onClick={onToggle}
+          >
+            <svg className={styles.chevron} data-open={open ? 'true' : undefined} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </Button>
+        )}
       </div>
     </div>
   );

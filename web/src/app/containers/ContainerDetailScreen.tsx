@@ -170,6 +170,12 @@ export function ContainerDetailScreen({ name }: { name: string }) {
   const fullId = shown?.id ?? row.id;
   const image = imagePath(row.imageId);
   const stackUrl = href(`/stacks/${encodeURIComponent(row.stack)}`);
+  // Exit 137 is SIGKILL, so a memory cause is only probable; the banner needs a limit and a stack service to act on.
+  const memoryLimit = shown?.memoryLimit ?? null;
+  const serviceEditUrl =
+    shown && shown.exitCode === 137 && memoryLimit && row.managed === 'stack' && shown.service
+      ? href(`/stacks/${encodeURIComponent(row.stack)}?service=${encodeURIComponent(shown.service)}&edit=1`)
+      : undefined;
 
   return (
     <section className={styles.page}>
@@ -269,25 +275,33 @@ export function ContainerDetailScreen({ name }: { name: string }) {
               mobile={mobile}
             />
           ) : (
-            <div className={styles.cols}>
-              <div className={styles.card}>
-                {detailError && (
-                  <Banner kind={shown ? 'warning' : 'danger'} title={shown ? 'Showing the last loaded details' : 'Could not load the details'}>
-                    {detailError}
-                  </Banner>
-                )}
-                {shown ? <DetailFacts detail={shown} /> : !detailError && <Spinner />}
+            <>
+              {serviceEditUrl && memoryLimit && (
+                <Banner kind="warning" title="Probably out of memory">
+                  The container exited with exit code 137 (SIGKILL), which usually means it went over its memory limit of {formatBytes(memoryLimit)}.{' '}
+                  <Link to={serviceEditUrl}>Raise limit</Link>
+                </Banner>
+              )}
+              <div className={styles.cols}>
+                <div className={styles.card}>
+                  {detailError && (
+                    <Banner kind={shown ? 'warning' : 'danger'} title={shown ? 'Showing the last loaded details' : 'Could not load the details'}>
+                      {detailError}
+                    </Banner>
+                  )}
+                  {shown ? <DetailFacts detail={shown} /> : !detailError && <Spinner />}
+                </div>
+                <section className={styles.card} aria-label="Resources · now">
+                  <PanelLabel as="h2">Resources · now</PanelLabel>
+                  <dl className={styles.dl}>
+                    <dt>CPU</dt>
+                    <dd className={styles.mono}>{row.cpu !== null ? formatPercent(row.cpu) : '—'}</dd>
+                    <dt>Memory</dt>
+                    <dd className={styles.mono}>{memoryText(row.mem, shown?.memoryLimit ?? null)}</dd>
+                  </dl>
+                </section>
               </div>
-              <section className={styles.card} aria-label="Resources · now">
-                <PanelLabel as="h2">Resources · now</PanelLabel>
-                <dl className={styles.dl}>
-                  <dt>CPU</dt>
-                  <dd className={styles.mono}>{row.cpu !== null ? formatPercent(row.cpu) : '—'}</dd>
-                  <dt>Memory</dt>
-                  <dd className={styles.mono}>{memoryText(row.mem, shown?.memoryLimit ?? null)}</dd>
-                </dl>
-              </section>
-            </div>
+            </>
           )
         }
       </Tabs>

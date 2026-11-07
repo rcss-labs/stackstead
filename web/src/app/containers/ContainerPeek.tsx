@@ -15,14 +15,13 @@ export interface ContainerPeekProps {
   row: ContainerRow;
   /** Id of the peek section; the row's toggle points at it with aria-controls. */
   id: string;
-  mobile: boolean;
   /** Why the actions are unavailable right now, or undefined when they are allowed. */
   reason: string | undefined;
   onRequest: (action: ContainerAction) => void;
 }
 
 /** The last few log lines of one container, streamed while mounted. A recreated container arrives under a new id, which remounts the enclosing keyed fragment and so opens a new stream. */
-export function ContainerPeek({ row, id, mobile, reason, onRequest }: ContainerPeekProps) {
+export function ContainerPeek({ row, id, reason, onRequest }: ContainerPeekProps) {
   const { href } = useServer();
   const { lines, status, ended, errors } = useLogStream({ kind: 'container', id: row.id }, { tail: PEEK_LINES, follow: true });
   const state = consoleStatus({ status, ended, paused: false, sourceKind: 'container', containerState: row.state });
@@ -50,7 +49,7 @@ export function ContainerPeek({ row, id, mobile, reason, onRequest }: ContainerP
                 state.label
               )}
             </span>
-            {!mobile && <span className={styles.dockerStatus}>{row.status}</span>}
+            <span className={styles.dockerStatus}>{row.status}</span>
             <span className={styles.spacer} />
             <span className={styles.actions}>
               <ContainerActions row={row} size="md" reason={reason} onRequest={onRequest} />

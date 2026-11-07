@@ -50,8 +50,21 @@ describe('Containers screen', () => {
   it('shows a spinner then the heading with total and running counts', async () => {
     mount({ body: [row('a'), row('b', { state: 'exited', exitCode: 0 }), row('c')] });
     expect(await screen.findByText('Loading containers')).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: '2 containers running' })).toBeTruthy();
+    expect(screen.getByText('2 running · 1 stopped · 3 not in a stack')).toBeTruthy();
+  });
+
+  it('leads with the problem count when a container has problems', async () => {
+    mount({ body: [row('a'), row('b', { state: 'exited', exitCode: 1 })] });
+    expect(await screen.findByRole('heading', { level: 1, name: '1 container with problems' })).toBeTruthy();
+    expect(screen.getByText('1 running · 1 stopped · 2 not in a stack')).toBeTruthy();
+  });
+
+  it('shows no lead sentence while the list fails to load', async () => {
+    mount({ status: 503, body: { error: 'Docker is unreachable' } });
+    expect(await screen.findByText('Docker is unreachable')).toBeTruthy();
     expect(screen.getByRole('heading', { level: 1, name: 'Containers' })).toBeTruthy();
-    await screen.findByText('3 · 2 running');
+    expect(screen.queryByText(/running|problem/)).toBeNull();
   });
 
   it('links running rows to their terminal and leaves stopped rows without one', async () => {
@@ -190,13 +203,29 @@ describe('Containers screen', () => {
     expect(screen.queryByText(/peek logs/)).toBeNull();
   });
 
-  it('the mobile row shows the status under the name', async () => {
+  it('the mobile row shows the stack and image under the name, and the state as a word', async () => {
     stubWidth(true);
-    mount({ body: [row('api', { health: 'unhealthy', status: 'Up 2 minutes (unhealthy)' })] });
+    mount({ body: [row('api', { managed: 'stack', stack: 'shop', image: 'redis:7' }), row('worker', { state: 'exited', exitCode: 1 })] });
     await screen.findByRole('link', { name: 'api' });
-    const r = bodyRows()[0];
-    expect(within(r).getByText('Up 2 minutes (unhealthy)')).toBeTruthy();
-    expect(r.querySelector('[data-col="image"]')!.hasAttribute('data-desktop')).toBe(true);
+    // Problems sort first, so the exited worker is the first row.
+    const api = bodyRows().find((r) => r.getAttribute('data-container') === 'api')!;
+    const worker = bodyRows().find((r) => r.getAttribute('data-container') === 'worker')!;
+    expect(within(api).getByText('shop · redis:7')).toBeTruthy();
+    // Desktop cells stay in the DOM and are hidden by CSS, so the state word can appear twice.
+    expect(within(api).getAllByText('running').length).toBeGreaterThan(0);
+    expect(within(worker).getByText('Unmanaged · nginx:1')).toBeTruthy();
+    expect(within(worker).getAllByText('exited').length).toBeGreaterThan(0);
+    expect(within(worker).getByText('Problem')).toBeTruthy();
+    expect(api.querySelector('[data-col="image"]')!.hasAttribute('data-desktop')).toBe(true);
+  });
+
+  it('on mobile a row tap opens the container page and offers no peek toggle', async () => {
+    stubWidth(true);
+    mount({ body: [row('api')] });
+    await screen.findByRole('link', { name: 'api' });
+    expect(screen.queryByRole('button', { name: 'Peek logs for api' })).toBeNull();
+    await userEvent.setup().click(bodyRows()[0]);
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toBe('/containers/api'));
   });
 
   it('encodes the container name in the row link', async () => {

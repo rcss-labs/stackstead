@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router';
 import { filterContainers, chipCounts, sortContainers, type ContainerChip } from '$lib/containers/list';
 import { ICONS } from '$lib/shell/icons';
 import { Banner } from '../components/Banner';
@@ -8,6 +9,7 @@ import { EmptyState } from '../components/EmptyState';
 import { PanelLabel } from '../components/PanelLabel';
 import { Spinner } from '../components/Spinner';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useServer } from '../servers/ServerContext';
 import { ContainerConfirmDialog } from './ContainerActions';
 import { ContainerPeek } from './ContainerPeek';
 import { ContainerRow } from './ContainerRow';
@@ -24,6 +26,11 @@ const CHIPS: { id: ContainerChip; label: string }[] = [
   { id: 'unmanaged', label: 'Unmanaged' },
 ];
 
+function leadSentence(counts: ReturnType<typeof chipCounts>): string {
+  if (counts.problems > 0) return `${counts.problems} ${counts.problems === 1 ? 'container' : 'containers'} with problems`;
+  return `${counts.running} ${counts.running === 1 ? 'container' : 'containers'} running`;
+}
+
 export function ContainersScreen() {
   const [chip, setChip] = useState<ContainerChip>('all');
   const [query, setQuery] = useState('');
@@ -34,6 +41,8 @@ export function ContainersScreen() {
   const [openPeek, setOpenPeek] = useState<string | undefined>();
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const mobile = useIsMobile();
+  const navigate = useNavigate();
+  const { href } = useServer();
 
   const list = useContainerList();
   const actions = useContainerAction((_row, fresh) => {
@@ -58,14 +67,21 @@ export function ContainersScreen() {
   useEffect(() => {
     if (fallbackIndex !== focused) setFallbackIndex(focused);
   }, [fallbackIndex, focused]);
-  const peekIsVisible = openPeek === undefined || visible.some((c) => c.name === openPeek);
+  // Phones have no peek: a tap opens the container page, so any open peek is closed.
+  const peekIsVisible = !mobile && (openPeek === undefined || visible.some((c) => c.name === openPeek));
   useEffect(() => {
     if (!peekIsVisible) setOpenPeek(undefined);
   }, [peekIsVisible]);
 
   function togglePeek(index: number) {
     focusRow(index);
-    setOpenPeek((cur) => (cur === visible[index]?.name ? undefined : visible[index]?.name));
+    const target = visible[index];
+    if (!target) return;
+    if (mobile) {
+      navigate(href(`/containers/${encodeURIComponent(target.name)}`));
+      return;
+    }
+    setOpenPeek((cur) => (cur === target.name ? undefined : target.name));
   }
 
   useContainerKeys({
@@ -92,12 +108,14 @@ export function ContainersScreen() {
   return (
     <section className={styles.page}>
       <header className={styles.head}>
-        <h1 id="containers-heading">Containers</h1>
-        {rows && (
-          <span className={styles.counts}>
-            {counts.all} · {counts.running} running
-          </span>
-        )}
+        <div className={styles.titles}>
+          <h1 id="containers-heading">{rows ? leadSentence(counts) : 'Containers'}</h1>
+          {rows && (
+            <p className={styles.sub}>
+              {counts.running} running · {counts.stopped} stopped · {counts.unmanaged} not in a stack
+            </p>
+          )}
+        </div>
         {!mobile && (
           <span className={styles.hints}>
             <kbd>j</kbd> <kbd>k</kbd> move · <kbd>↵</kbd> peek logs · <kbd>r</kbd> restart
@@ -169,7 +187,7 @@ export function ContainersScreen() {
                       row={c}
                       index={i}
                       focused={i === focused}
-                      open={openPeek === c.name}
+                      open={!mobile && openPeek === c.name}
                       peekId={`peek-${c.id}`}
                       mobile={mobile}
                       onFocus={focusRow}
@@ -179,11 +197,10 @@ export function ContainersScreen() {
                         else rowRefs.current.delete(c.id);
                       }}
                     />
-                    {openPeek === c.name && (
+                    {!mobile && openPeek === c.name && (
                       <ContainerPeek
                         row={c}
                         id={`peek-${c.id}`}
-                        mobile={mobile}
                         reason={actions.reasonFor(c)}
                         onRequest={(action) => actions.request(c, action)}
                       />
