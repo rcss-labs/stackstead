@@ -97,6 +97,14 @@ describe('AddServicePanel', () => {
     await waitFor(() => expect(onAdded).toHaveBeenCalledWith(expect.objectContaining({ hash: 'h2' }), true, 'cache'));
   });
 
+  it('edit flow shows the current step', async () => {
+    render(<AddServicePanel stack={stack} onAdded={noop} onCancel={noop} onReload={async () => stack} />);
+    const step = () => document.querySelector('[aria-current="step"]')?.textContent;
+    expect(step()).toBe('1 Edit');
+    await fill();
+    expect(step()).toBe('2 Review changes');
+  });
+
   it('review states the changed line count above the diff', async () => {
     render(<AddServicePanel stack={stack} onAdded={noop} onCancel={noop} onReload={async () => stack} />);
     await fill();

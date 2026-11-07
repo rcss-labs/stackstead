@@ -87,6 +87,8 @@ async function changeImage(value: string) {
   if (value) await user().type(image, value);
 }
 
+const currentStep = () => document.querySelector('[aria-current="step"]')?.textContent;
+
 describe('ServiceEditor', () => {
   it('prefills the image tag when switching to Write a Dockerfile', async () => {
     mount({ stack: stack('h1', { ...svc, name: 'web' }), service: { ...svc, name: 'web' } });
@@ -162,6 +164,18 @@ describe('ServiceEditor', () => {
     expect(await screen.findByRole('button', { name: 'Apply' })).toBeTruthy();
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Saved' })));
     expect(get(toasts).some((t) => t.message === 'Saved app. Apply to run the change.')).toBe(true);
+  });
+
+  it('edit flow shows the current step', async () => {
+    mount();
+    expect(currentStep()).toBe('1 Edit');
+    await changeImage('nginx:2');
+    await user().click(screen.getByRole('button', { name: 'Preview changes' }));
+    await screen.findByRole('button', { name: 'Save' });
+    expect(currentStep()).toBe('2 Review changes');
+    await user().click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByRole('button', { name: 'Apply' });
+    expect(currentStep()).toBe('3 Apply');
   });
 
   it('review states the changed line count above the diff', async () => {

@@ -134,6 +134,19 @@ describe('ComposeEditor', () => {
     await waitFor(() => expect(get(toasts).some((t) => t.message.includes('.bak file next to it'))).toBe(true));
   });
 
+  it('edit flow shows the current step', async () => {
+    const step = () => document.querySelector('[aria-current="step"]')?.textContent;
+    const { ta } = await loaded({ onApply: () => {} });
+    expect(step()).toBe('1 Edit');
+    edit(ta, 'a: 2\n');
+    await click('Preview changes');
+    await screen.findByTestId('diff-view');
+    expect(step()).toBe('2 Review changes');
+    await click('Save');
+    await screen.findByRole('button', { name: 'Apply' });
+    expect(step()).toBe('3 Apply');
+  });
+
   it('review states the changed line count above the diff', async () => {
     const { ta } = await loaded({ composePath: '/srv/stacks/web/compose.yaml' });
     edit(ta, 'a: 2\nb: 3\n');

@@ -12,6 +12,7 @@ import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { useStore } from '../hooks/useStore';
 import { DiffView } from '../stacks/DiffView';
+import { EditSteps } from '../stacks/EditSteps';
 import { FileBrowser } from '../stacks/FileBrowser';
 import { NetworkPicker } from '../stacks/NetworkPicker';
 import { ReviewSummary } from '../stacks/ReviewSummary';
@@ -271,6 +272,7 @@ export function ServiceEditor({ stack, service, onSaved, onApplied, onRawEditor,
 
   return (
     <div className={styles.editor} ref={root}>
+      <EditSteps current={phase === 'saved' || operationId ? 3 : reviewing ? 2 : 1} />
       <div className="visually-hidden" role="status" aria-live="polite">
         {announcement}
       </div>

@@ -9,6 +9,7 @@ import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { useStore } from '../hooks/useStore';
 import { DiffView } from '../stacks/DiffView';
+import { EditSteps } from '../stacks/EditSteps';
 import { FileBrowser } from '../stacks/FileBrowser';
 import { NetworkPicker } from '../stacks/NetworkPicker';
 import { ReviewSummary } from '../stacks/ReviewSummary';
@@ -162,6 +163,7 @@ export function AddServicePanel({ stack, onAdded, onCancel, onReload, onDirtyCha
       <h2 id={headingId} className="visually-hidden">
         Add service
       </h2>
+      <EditSteps current={reviewing ? 2 : 1} />
       {notice && (
         <Banner kind="danger" title="Could not complete the request">
           <span className={styles.msg}>{notice.message}</span>

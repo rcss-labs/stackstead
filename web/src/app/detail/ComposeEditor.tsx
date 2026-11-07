@@ -6,6 +6,7 @@ import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { useStore } from '../hooks/useStore';
 import { DiffView } from '../stacks/DiffView';
+import { EditSteps } from '../stacks/EditSteps';
 import { ReviewSummary } from '../stacks/ReviewSummary';
 import { YamlEditor, type YamlEditorHandle } from '../stacks/YamlEditor';
 import styles from './ComposeEditor.module.css';
@@ -144,6 +145,7 @@ export function ComposeEditor({ stackName, parseError, composePath, onSaved, onA
 
       {st.phase !== 'loading' && st.phase !== 'loadFailed' && (
         <div className={styles.card}>
+          <EditSteps current={st.phase === 'saved' ? 3 : previewing ? 2 : 1} />
           <div className={styles.toolbar}>
             <span className={styles.file}>{fileName}</span>
             {isDirty && <span className={styles.modified}>· modified</span>}
