@@ -3,11 +3,8 @@ import type { Action, StackSummary } from '$lib/api/types';
 import { ICONS } from '$lib/shell/icons';
 import { BUSY_REASON } from '$lib/stacks/lifecycle';
 import { toasts } from '$lib/stores/toasts';
-import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { ConfirmDialog } from '../components/ConfirmDialog';
-import { Dialog } from '../components/Dialog';
-import { useIsMobile } from '../hooks/useIsMobile';
 import styles from './StackActions.module.css';
 
 export interface StackActionsProps {
@@ -34,17 +31,12 @@ const HAMMER = 'M14 6l4 4M3 21l9-9M13 3l8 8-3 3-8-8z';
 const TRASH = 'M4 7h16M10 11v6M14 11v6M6 7l1 12h10l1-12M9 7V4h6v3';
 
 async function copyText(text: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-    toasts.push({ kind: 'success', message: 'Path copied' });
-  } catch {
-    toasts.push({ kind: 'warning', message: 'Could not copy the path; select it in the header instead' });
-  }
+  const ok = await navigator.clipboard.writeText(text).then(() => true, () => false);
+  toasts.push(ok ? { kind: 'success', message: 'Path copied' } : { kind: 'warning', message: 'Could not copy the path' });
 }
 
 export function StackActions({ stack, lifecycleDisabledReason, busy = false, onAct, onRemove, onViewCompose }: StackActionsProps) {
   const volumesId = useId();
-  const mobile = useIsMobile();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [withVolumes, setWithVolumes] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -54,13 +46,13 @@ export function StackActions({ stack, lifecycleDisabledReason, busy = false, onA
   const reason = lifecycleDisabledReason || (busy ? BUSY_REASON : undefined);
 
   useEffect(() => {
-    if (!menuOpen || mobile) return;
+    if (!menuOpen) return;
     const away = (event: PointerEvent) => {
       if (!root.current?.contains(event.target as Node)) setMenuOpen(false);
     };
     document.addEventListener('pointerdown', away);
     return () => document.removeEventListener('pointerdown', away);
-  }, [menuOpen, mobile]);
+  }, [menuOpen]);
 
   function openConfirm() {
     setWithVolumes(false);
@@ -76,18 +68,10 @@ export function StackActions({ stack, lifecycleDisabledReason, busy = false, onA
   }
 
   function onKeyDown(event: KeyboardEvent) {
-    if (!menuOpen || mobile) return;
-    if (event.key === 'Escape') {
+    if (menuOpen && event.key === 'Escape') {
       event.stopPropagation();
       closeMenu(true);
-      return;
     }
-    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-    const items = Array.from(root.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
-    const at = items.indexOf(document.activeElement as HTMLElement);
-    const next = event.key === 'ArrowDown' ? Math.min(items.length - 1, at + 1) : Math.max(0, at - 1);
-    event.preventDefault();
-    items[next]?.focus();
   }
 
   const item = (key: string, text: string, d: string, run: () => void, opts: { reason?: string; danger?: boolean } = {}) => (
@@ -146,20 +130,13 @@ export function StackActions({ stack, lifecycleDisabledReason, busy = false, onA
           >
             {icon(ICONS.more)}
           </button>
-          {menuOpen && !mobile && (
+          {menuOpen && (
             <div role="menu" aria-label="More actions" className={styles.menu}>
               {items}
             </div>
           )}
         </span>
       </div>
-      {mobile && (
-        <Dialog open={menuOpen} title="Actions" onClose={() => closeMenu(true)} closeOnBackdrop>
-          <div role="menu" aria-label="More actions" className={styles.sheet}>
-            {items}
-          </div>
-        </Dialog>
-      )}
       <ConfirmDialog
         open={confirmOpen}
         title={`Remove ${stack.name}?`}
@@ -174,11 +151,7 @@ export function StackActions({ stack, lifecycleDisabledReason, busy = false, onA
           <input id={volumesId} type="checkbox" checked={withVolumes} onChange={(e) => setWithVolumes(e.target.checked)} />
           Also remove volumes
         </label>
-        {withVolumes && (
-          <Banner kind="warning" title="Deleted volumes cannot be recovered">
-            Data in this stack&apos;s volumes is lost. Take a backup first if you may need it.
-          </Banner>
-        )}
+        {withVolumes && <p className={styles.warn}>Deleted volumes cannot be recovered.</p>}
         <p className={styles.note}>Files on disk are never deleted.</p>
       </ConfirmDialog>
     </>

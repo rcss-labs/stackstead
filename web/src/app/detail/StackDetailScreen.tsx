@@ -216,21 +216,14 @@ export function StackDetailScreen({ name }: { name: string }) {
       const status = err instanceof ApiError ? err.status : 0;
       setRestore({
         pending: false,
-        error:
-          status === 409
-            ? 'The file changed since it was loaded. Nothing was restored; reload the page and try again.'
-            : status === 404
-              ? 'There is no .bak file to restore any more.'
-              : err instanceof Error
-                ? err.message
-                : 'Could not restore the file.',
+        error: status === 409 ? 'The file changed since it was loaded. Nothing was restored; reload the page and try again.' : String(err),
       });
       return;
     }
     setRestore(undefined);
     setComposeDirty(false);
     setRestoreEpoch((n) => n + 1); // the raw editor reads the restored file afresh
-    toasts.push({ kind: 'success', message: `Restored ${composeName} from its .bak. Checking that it parses.` });
+    toasts.push({ kind: 'success', message: `Restored ${composeName} from its .bak` });
     await ctl.load();
   }
 
@@ -592,7 +585,7 @@ export function StackDetailScreen({ name }: { name: string }) {
       <ConfirmDialog
         open={restore !== undefined}
         title={`Restore ${composeName}.bak?`}
-        message={`The file that fails to parse is replaced by ${composeName}.bak. The current file is kept as ${composeName}.broken next to it.`}
+        message={`${composeName}.bak replaces the current file, which is kept as ${composeName}.broken.`}
         confirmLabel="Restore file"
         pending={restore?.pending}
         onConfirm={() => void confirmRestore()}

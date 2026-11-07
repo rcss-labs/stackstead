@@ -39,6 +39,9 @@ export function ConfigTab({ service, compose, error, onRetry, onEditYaml, servic
     );
   }
   const block = serviceBlock(compose.content, service.name);
+  // Undefined means the text uses something a line scan cannot follow; the row is left out rather than guessed.
+  const depends = dependsOn(compose.content, service.name);
+  const needed = neededBy(compose.content, service.name, services);
   const list = (names: string[], none: string) => (names.length > 0 ? names.join(', ') : none);
   const { networks, networkMode } = service.config;
   const networkText = networks?.length ? networks.map((n) => n.name).join(', ') : networkMode ? `network_mode: ${networkMode}` : 'Default';
@@ -51,10 +54,18 @@ export function ConfigTab({ service, compose, error, onRetry, onEditYaml, servic
         <dl className={styles.kv}>
           <dt>Networks</dt>
           <dd>{networkText}</dd>
-          <dt>Depends on</dt>
-          <dd>{list(dependsOn(compose.content, service.name), 'Nothing')}</dd>
-          <dt>Needed by</dt>
-          <dd>{list(neededBy(compose.content, service.name, services), 'Nothing')}</dd>
+          {depends !== undefined && (
+            <>
+              <dt>Depends on</dt>
+              <dd>{list(depends, 'Nothing')}</dd>
+            </>
+          )}
+          {needed !== undefined && (
+            <>
+              <dt>Needed by</dt>
+              <dd>{list(needed, 'Nothing')}</dd>
+            </>
+          )}
         </dl>
       </section>
       <div>

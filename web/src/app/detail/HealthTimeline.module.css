@@ -106,6 +106,18 @@
 .card [data-tone='danger'] { --tone: var(--danger); }
 .card [data-tone='down'] { --tone: var(--border-strong); }
 
+.bar span[data-tone='down'] { opacity: 0.6; }
+
+/* Failing is hatched as well as red, so it reads without colour. */
+.bar span[data-tone='danger'],
+.swatch[data-tone='danger'] {
+  background: repeating-linear-gradient(135deg, var(--danger) 0 2px, var(--danger-soft) 2px 4px);
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+
+.name:hover { color: var(--text); }
+.name[data-selected='true'] .service { font-weight: 600; }
+
 .bar span[data-tone='nodata'] {
   background: transparent;
   outline: 1px solid var(--border-strong);
@@ -127,8 +139,10 @@
   }
 
   .name {
-    min-height: 40px;
+    min-height: 44px;
   }
+
+  .bar { align-self: center; }
 }
 
 .visuallyHidden {

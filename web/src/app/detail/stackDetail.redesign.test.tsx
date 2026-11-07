@@ -105,6 +105,18 @@ function stubMobile(matches: boolean) {
 }
 
 describe('header actions', () => {
+  it('the header draws one cell per service and counts the failing one', async () => {
+    h.stackRes = {
+      body: stackDetail({
+        status: 'partial',
+        services: [appService(), dbService({ containers: [{ id: 'd', name: 'web-db-1', service: 'db', state: 'exited', status: 'Exited (1) 1 minute ago', health: 'none' }] })],
+      }),
+    };
+    mount('/stacks/web');
+    await screen.findByRole('heading', { level: 1, name: 'web' });
+    expect(screen.getByRole('img', { name: '1 of 2 services healthy, 1 failing' })).toBeTruthy();
+  });
+
   it('Remove stack in the More menu asks, and with volumes asks for the stack name', async () => {
     mount('/stacks/web');
     await screen.findByRole('heading', { level: 1, name: 'web' });

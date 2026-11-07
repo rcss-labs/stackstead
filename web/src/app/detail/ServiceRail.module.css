@@ -38,7 +38,8 @@
 .service:hover,
 .item:hover { background: var(--hover); }
 .service[data-selected='true'],
-.item[data-selected='true'] { background: var(--hover); }
+.item[data-selected='true'] { background: var(--accent-soft); }
+.item[data-selected='true'] svg { color: var(--accent); }
 
 .nameBlock {
   display: flex;
@@ -144,7 +145,8 @@
   align-items: center;
   gap: 7px;
   height: 36px;
-  margin-block: 2px;
+  min-height: 44px; /* touch target */
+  margin-block: 0;
   padding: 0 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-pill);

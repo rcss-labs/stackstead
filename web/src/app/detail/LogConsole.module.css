@@ -190,3 +190,9 @@
 .console[data-fill] .body { height: max(360px, 62dvh); }
 .toggle[data-static] { cursor: default; padding-inline: 8px; }
 .toggle[data-static]:hover { background: transparent; }
+
+@media (max-width: 759px) {
+  .toggle,
+  .clear { min-height: 44px; min-width: 44px; }
+  .pill { height: 44px; }
+}

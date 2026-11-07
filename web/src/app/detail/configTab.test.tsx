@@ -101,6 +101,16 @@ describe('ConfigTab', () => {
       expect(row('Networks')).toBe('Default');
     });
 
+    it('shows no Depends on or Needed by row it cannot read reliably, rather than a wrong one', () => {
+      const aliased: RawCompose = { hash: 'h', content: 'services:\n  app:\n    depends_on: *shared\n  db:\n    image: p\n' };
+      setup({ compose: aliased, service: appService({ name: 'db' }), services: ['app', 'db'] });
+      expect(screen.queryByText('Needed by')).toBeNull();
+      expect(screen.getByText('Networks')).toBeTruthy();
+      cleanup();
+      setup({ compose: aliased, service: appService({ name: 'app' }), services: ['app', 'db'] });
+      expect(screen.queryByText('Depends on')).toBeNull();
+    });
+
     it('is omitted until the file has loaded', () => {
       setup({ compose: undefined, services: names });
       expect(screen.queryByText('Needed by')).toBeNull();
