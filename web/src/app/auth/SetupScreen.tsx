@@ -10,6 +10,7 @@ import { Segmented } from '../components/Segmented';
 import { useStore } from '../hooks/useStore';
 import { AuthCard, AuthError, AuthHint } from './AuthCard';
 import { RestoreFromBackup } from './RestoreFromBackup';
+import { SETUP_TOKEN_HINT } from './setupCopy';
 
 const SETUP_CHOICES = [
   { value: 'admin', label: 'Create admin' },
@@ -133,7 +134,7 @@ export function SetupScreen() {
         <Field label="Confirm password" id="setup-confirm" error={confirmError}>
           {({ readOnly: _, ...c }) => <input {...c} ref={confirmInput} type="password" autoComplete="new-password" required onChange={syncDerived} />}
         </Field>
-        <Field label="Setup token (optional)" id="setup-token" hint="Needed unless you open this page from the machine itself.">
+        <Field label="Setup token (optional)" id="setup-token" hint={SETUP_TOKEN_HINT}>
           {({ readOnly: _, ...c }) => (
             <input {...c} ref={tokenInput} type="text" autoComplete="off" spellCheck={false} autoCapitalize="off" />
           )}

@@ -6,8 +6,8 @@ import { useServer } from '../servers/ServerContext';
 export default function NotFound() {
   const { href } = useServer();
   return (
-    <EmptyState title="Page not found" description="That page does not exist.">
-      <Link to={href('/')}>Back to stacks</Link>
+    <EmptyState title="Page not found" description="That page does not exist. The link may be out of date, or it may point to another server.">
+      <Link to={href('/')}>Go to Overview</Link>
     </EmptyState>
   );
 }

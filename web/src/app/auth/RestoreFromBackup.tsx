@@ -11,6 +11,7 @@ import { Field } from '../components/Field';
 import { Tabs } from '../components/Tabs';
 import { AuthError, AuthHint } from './AuthCard';
 import styles from './RestoreFromBackup.module.css';
+import { SETUP_TOKEN_HINT } from './setupCopy';
 
 type SourceTab = 's3' | 'path' | 'upload';
 const SOURCE_TABS = [
@@ -505,7 +506,7 @@ export function RestoreFromBackup({ pollMs = 2000, deadlineMs = 5 * 60_000 }: { 
           <input {...c} type="password" value={passphrase} autoComplete="new-password" spellCheck={false} onChange={(e) => setPassphrase(e.target.value)} />
         )}
       </Field>
-      <Field label="Setup token (optional)" id="restore-token" hint="Needed unless you open this page from the machine itself.">
+      <Field label="Setup token (optional)" id="restore-token" hint={SETUP_TOKEN_HINT}>
         {({ readOnly: _, ...c }) => (
           <input
             {...c}
