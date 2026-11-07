@@ -2,9 +2,8 @@ import { ICONS } from '$lib/shell/icons';
 import { splitServerPath } from '$lib/router';
 import { effectiveTheme, setTheme } from '$lib/stores/appearance';
 import { connectedPeers, peers, selfName } from '$lib/servers/peers';
-import { live } from '$lib/stores/live';
 import { useStore } from '../hooks/useStore';
-import { localScope } from '../servers/ServerContext';
+import { localScope, useServer } from '../servers/ServerContext';
 import { PanelLabel } from '../components/PanelLabel';
 import { HostBlock } from './HostBlock';
 import { NavItem } from './NavItem';
@@ -28,7 +27,7 @@ const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform
 
 export function Sidebar({ username, onLogout, current, stackCount, attention, onOpenPalette, onNavigate }: SidebarProps) {
   const dark = useStore(effectiveTheme) === 'dark';
-  const status = useStore(live);
+  const status = useStore(useServer().live);
   const peerList = connectedPeers(useStore(peers).items);
   const ownName = useStore(selfName);
   const initials = (username ?? '').slice(0, 2).toUpperCase();

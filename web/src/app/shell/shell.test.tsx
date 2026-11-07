@@ -7,11 +7,14 @@ import type { HostSnapshot, Operation, PeerView, ServerSelf, Status } from '$lib
 import { startPeers } from '$lib/servers/peers';
 import { installFakeFetch, installFakeStream } from '../../vitest-setup';
 import RemoteServer from '../servers/RemoteServer';
+import { localScope, ServerContext } from '../servers/ServerContext';
+import { readable } from '$lib/store';
 import { setTheme } from '$lib/stores/appearance';
 import { startHost } from '$lib/stores/host';
 import { startLive, stopLive } from '$lib/stores/live';
 import { HostBlock } from './HostBlock';
 import { MobileTopBar } from './MobileTopBar';
+import { ServerMenu } from './ServerMenu';
 import { Shell } from './Shell';
 import { Sidebar } from './Sidebar';
 import { TabBar } from './TabBar';
@@ -158,6 +161,38 @@ describe('Sidebar', () => {
     expect(screen.getByTestId('where').textContent).toBe('/settings');
     expect(reloaded).toBe(false);
     window.removeEventListener('beforeunload', onBefore);
+  });
+
+  it('shows the Docker and compose versions of the server being viewed', () => {
+    const viewedLive = readable({ connection: 'open', events: 'connected', metricsDegraded: false, docker: 'ok', compose: '2.20.0', dockerVersion: '26.1.4' } as const);
+    renderIn(
+      <ServerContext.Provider value={{ ...localScope, local: false, live: viewedLive }}>
+        <Sidebar {...sidebarProps} username="ana" current="/s/edge-01" />
+      </ServerContext.Provider>,
+    );
+    expect(screen.getByText('Docker 26.1.4 · compose 2.20.0')).toBeTruthy();
+  });
+
+  it('the server menu stays open while Tab moves through its items and closes when focus leaves it', async () => {
+    const peer = { id: 'p1', name: 'edge-01', slug: 'edge-01', url: '', version: '', status: 'reachable', stackCount: 1, lastSeenAt: null, lastError: '', compatible: true, plaintext: false } as PeerView;
+    renderIn(
+      <>
+        <ServerMenu current="/" localName="homelab" localTagged localStackCount={1} peers={[peer]} />
+        <button type="button">after the menu</button>
+      </>,
+    );
+    const user = userEvent.setup();
+    const opener = screen.getByRole('button', { name: /Switch server/ });
+    await user.click(opener);
+    const items = within(screen.getByRole('group', { name: 'Servers' })).getAllByRole('button');
+    for (const item of items) {
+      await user.tab();
+      expect(document.activeElement).toBe(item);
+      expect(opener.getAttribute('aria-expanded')).toBe('true');
+    }
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'after the menu' }));
+    expect(opener.getAttribute('aria-expanded')).toBe('false');
   });
 
   it('theme toggle label flips and calls setTheme', async () => {
