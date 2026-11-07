@@ -691,6 +691,41 @@ describe('server navigation', () => {
     expect(screen.getByRole('link', { name: 'Settings' }).getAttribute('href')).toBe('/settings');
   });
 
+  describe('scope banner', () => {
+    const shellProps = { onLogout: () => {}, runningOps: [], attention: false, onOpenPalette: () => {} };
+    const shell = () => (
+      <Shell {...shellProps} username="ana">
+        <main>
+          <h1>Page</h1>
+        </main>
+      </Shell>
+    );
+
+    it('a connected server screen says which server it is and that actions run there, with a link back', async () => {
+      await withPeers([peer({ name: 'NAS', slug: 'nas' })]);
+      renderIn(shell(), '/s/nas/containers');
+      const banner = await screen.findByRole('status');
+      expect(within(banner).getByText('Viewing NAS')).toBeTruthy();
+      expect(within(banner).getByText('Actions run on that server.')).toBeTruthy();
+      expect(within(banner).getByRole('link', { name: 'Back to this server' }).getAttribute('href')).toBe('/');
+    });
+
+    it('is absent on this server, so local screens do not shift', async () => {
+      await withPeers([peer({ name: 'NAS', slug: 'nas' })]);
+      renderIn(shell(), '/containers');
+      await screen.findByRole('heading', { name: 'Page' });
+      expect(screen.queryByText(/^Viewing /)).toBeNull();
+      expect(screen.queryByRole('link', { name: 'Back to this server' })).toBeNull();
+    });
+
+    it('is absent on Settings, which stays local', async () => {
+      await withPeers([peer({ name: 'NAS', slug: 'nas' })]);
+      renderIn(shell(), '/settings/system');
+      await screen.findByRole('heading', { name: 'Page' });
+      expect(screen.queryByText(/^Viewing /)).toBeNull();
+    });
+  });
+
   it('an unreachable peer is marked in the switcher, and the total counts reachable servers only', async () => {
     const user = userEvent.setup();
     await withPeers([peer({ status: 'unreachable', stackCount: 0 })]);

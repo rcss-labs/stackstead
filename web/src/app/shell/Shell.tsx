@@ -1,9 +1,11 @@
 import { Suspense, lazy } from 'react';
 import type { ReactNode } from 'react';
-import { useLocation } from 'react-router';
+import { Link, useLocation } from 'react-router';
 import type { Operation } from '$lib/api/types';
 import { splitServerPath } from '$lib/router';
+import { peers } from '$lib/servers/peers';
 import { stacks } from '$lib/stores/stacks';
+import { Banner } from '../components/Banner';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useStore } from '../hooks/useStore';
@@ -61,6 +63,7 @@ export function Shell({ username, onLogout, runningOps, attention, onOpenPalette
   const { slug } = splitServerPath(pathname);
   const scope = slug === null ? localScope : viewed?.slug === slug ? viewed : noScope;
   const viewedOps = useStore(scope.runningOps);
+  const { items: peerList } = useStore(peers);
 
   // One tree for both layouts, with children at fixed positions, so the routed page keeps its identity (and state) when the viewport crosses 760px.
   const { title, mono } = pageTitle(pathname);
@@ -90,6 +93,14 @@ export function Shell({ username, onLogout, runningOps, attention, onOpenPalette
             <Chrome standIn={styles.topBarSlot}>
               <TopBar path={pathname} runningOps={topBarOps} />
             </Chrome>
+          )}
+          {slug !== null && (
+            // Each connection is root-equivalent, so every screen under /s/ says whose it is. Settings is local and never gets this.
+            <div className={styles.scope}>
+              <Banner kind="info" title={`Viewing ${peerList.find((p) => p.slug === slug)?.name ?? slug}`}>
+                Actions run on that server. <Link to="/">Back to this server</Link>
+              </Banner>
+            </div>
           )}
           {banners}
           <div className={styles.content}>{children}</div>
