@@ -27,6 +27,13 @@ async function setupWith(routes: Parameters<typeof installFakeFetch>[0]) {
 }
 
 describe('Setup', () => {
+  it('setup explains the token', async () => {
+    fake = await needsSetup();
+    mountAuth('/setup');
+    expect(screen.getByText(/journalctl -u stackstead \| grep setup_token/)).toBeTruthy();
+    expect(screen.getByText(/~\/Library\/Logs\/Stackstead\/stackstead\.log/)).toBeTruthy();
+  });
+
   it('shows the length rule and token hint', async () => {
     fake = await needsSetup();
     mountAuth('/setup');

@@ -68,6 +68,18 @@
   text-align: center;
 }
 
+.recovery {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.recovery code {
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
 .error {
   margin: 0;
   color: var(--danger);
@@ -97,6 +109,6 @@
 
   .card input,
   .card button[type='submit'] {
-    height: 40px;
+    height: 44px;
   }
 }

@@ -24,6 +24,13 @@ const okLogin = () =>
   });
 
 describe('Login', () => {
+  it('login shows host and recovery command', () => {
+    fake = installFakeFetch({});
+    mountAuth('/login');
+    expect(screen.getByText(window.location.host)).toBeTruthy();
+    expect(screen.getByText('sudo -u stackstead stackstead admin set-password --config /etc/stackstead/config.yaml')).toBeTruthy();
+  });
+
   it('shows the host, the localhost note and the brand heading', () => {
     fake = installFakeFetch({});
     mountAuth('/login');
