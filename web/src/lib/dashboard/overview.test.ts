@@ -138,6 +138,10 @@ describe('headline', () => {
     expect(headline([stack('a', { status: 'unknown' })], [], up).title).toBe('Stack status is unavailable');
   });
 
+  it('any unknown stack means health is not confirmed, even beside running ones', () => {
+    expect(headline([stack('a'), stack('b', { status: 'unknown' })], [], up).title).toBe('Health is not confirmed');
+  });
+
   it('the sub-line counts stacks and containers', () => {
     const host = { containers: { total: 26, running: 21, exited: 5, bad: 0 } } as HostSnapshot;
     expect(headline([bad('a'), stack('b')], [], up, host).sub).toBe('1 of 2 stacks fully running · 21 of 26 containers running');

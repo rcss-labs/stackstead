@@ -67,7 +67,15 @@ describe('New stack port check', () => {
     await user.type(screen.getByLabelText('Port 1'), '8123:8123');
     expect(await screen.findByText('Port 8123 is used by home-assistant')).toBeTruthy();
     // 8124 is taken too, so the suggestion skips to the next free port.
-    expect(screen.getByText('8125 is free')).toBeTruthy();
+    expect(screen.getByText('8125 not used by a running container')).toBeTruthy();
+  });
+
+  it('a clashing range gets a suggestion as wide as the range', async () => {
+    const user = await mount({ 'GET /api/containers': { body: [HOME_ASSISTANT, row('zb', { stack: 'zigbee', ports: ['0.0.0.0:8125->8125/tcp'] })] } });
+    await addPort(user);
+    await user.type(screen.getByLabelText('Port 1'), '8123-8124:8123-8124');
+    expect(await screen.findByText('Port 8123 is used by home-assistant')).toBeTruthy();
+    expect(screen.getByText('8126-8127 not used by a running container')).toBeTruthy();
   });
 
   it('a port conflict is advisory: the request is still sent and the input is not invalid', async () => {
