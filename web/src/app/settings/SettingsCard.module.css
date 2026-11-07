@@ -1,5 +1,11 @@
 .card {
   min-width: 0;
+  display: grid;
+  /* Explain on the left, controls on the right; the card always fills the pane. */
+  grid-template-columns: minmax(200px, 1fr) minmax(0, 2fr);
+  grid-template-rows: auto 1fr;
+  column-gap: 28px;
+  padding: 16px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -8,28 +14,33 @@
 .card:hover { border-color: var(--hi); }
 
 .header {
+  grid-column: 1;
+  grid-row: 1;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
 }
 .title { margin: 0; font-size: 14px; font-weight: 600; }
 .spacer { flex: 1; }
 
 .body {
+  grid-column: 2;
+  grid-row: 1 / span 2;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 14px 16px;
+  min-width: 0;
   font-size: 12.5px;
 }
 .body p { margin: 0; }
 
 .footer {
-  padding: 8px 16px;
-  border-top: 1px solid var(--border);
-  color: var(--faint);
+  grid-column: 1;
+  grid-row: 2;
+  align-self: start;
+  margin-top: 6px;
+  color: var(--muted);
   font-size: 12px;
 }
 
@@ -63,5 +74,10 @@
 .code { font-family: var(--mono); }
 
 @media (max-width: 759px) {
+  .card { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; padding: 14px; }
+  .header, .body, .footer { grid-column: 1; grid-row: auto; }
+  .header { order: 1; }
+  .footer { order: 2; margin: 6px 0 12px; }
+  .body { order: 3; }
   .body button { min-height: 40px; }
 }
