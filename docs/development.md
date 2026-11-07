@@ -19,7 +19,7 @@ not built, and logs a warning.
 
 | Command | Needs | What it does |
 | --- | --- | --- |
-| `make ui` | Node >= 22 | build the React UI into `web/dist` and enforce the bundle budgets (entry JS <= 120 kB gzipped, total JS <= 400 kB gzipped, fonts <= 200 kB; `bundle.test.ts` pins the entry tighter, at 106 kB) |
+| `make ui` | Node >= 22 | build the React UI into `web/dist` and enforce the bundle budgets (entry JS <= 120 kB gzipped, total JS <= 550 KiB gzipped, fonts <= 200 kB; `bundle.test.ts` pins the entry tighter, at 110 KiB) |
 | `make build` | Node >= 22, Go | UI, then the static binary in `bin/` |
 | `make test` | Go only | Go tests with the race detector; no Node |
 | `make check` | Node, Go | `go vet`, gofmt, UI type-check (`tsc --noEmit`) and unit tests, Go tests |
