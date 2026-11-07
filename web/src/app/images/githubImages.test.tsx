@@ -40,7 +40,7 @@ describe('GitHub images', () => {
     mountImages('/images');
     await userEvent.click(await screen.findByRole('button', { name: 'New image' }));
     await userEvent.type(screen.getByLabelText('Name'), 'Gh');
-    await userEvent.selectOptions(screen.getByLabelText('Source'), 'github');
+    await userEvent.click(screen.getByRole('button', { name: 'GitHub repository' }));
     await userEvent.type(screen.getByLabelText('Repository'), 'acme/app');
     await userEvent.type(screen.getByLabelText('Path'), 'svc');
     await userEvent.click(screen.getByRole('button', { name: 'Create' }));

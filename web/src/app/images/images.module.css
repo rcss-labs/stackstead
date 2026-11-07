@@ -8,6 +8,8 @@
 .ref { font-family: var(--mono); overflow-wrap: anywhere; }
 
 .card { min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.danger { border-color: var(--danger, var(--border)); }
+.dangerTitle { margin: 0; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; color: var(--danger, var(--text)); }
 .pad { display: flex; flex-direction: column; gap: var(--space-3); padding: 14px 16px; font-size: 12.5px; }
 .pad p { margin: 0; }
 .muted { color: var(--muted); }
@@ -16,6 +18,15 @@
 .form { display: flex; flex-direction: column; gap: var(--space-3); }
 .checkbox { display: flex; align-items: center; gap: var(--space-2); font-size: 12.5px; }
 .actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+.imageCard { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; padding: 14px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); font-size: 12.5px; }
+.cardName { font-family: var(--mono); font-weight: 600; color: var(--text); text-decoration: none; overflow-wrap: anywhere; }
+.cardName:hover { text-decoration: underline; }
+.cardMeta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); color: var(--muted); }
+.facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px var(--space-3); margin: 0; align-items: center; }
+.facts dt { color: var(--faint); }
+.facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 
 .table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .table th { padding: 8px 12px; text-align: left; font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); border-bottom: 1px solid var(--border); }

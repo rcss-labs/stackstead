@@ -125,8 +125,11 @@ export function ImageSettingsTab({ image, onChanged }: { image: LibraryImageDeta
 
       <PushTargetsCard image={image} onChanged={onChanged} />
 
-      <div className={styles.card}>
+      <section className={`${styles.card} ${styles.danger}`} aria-labelledby={`${uid}-danger`}>
         <div className={styles.pad}>
+          <h3 id={`${uid}-danger`} className={styles.dangerTitle}>
+            Danger zone
+          </h3>
           <strong>Delete image</strong>
           <p className={styles.muted}>Removes the image, its files and every built version. Stacks using a version block the delete.</p>
           {inUse && <InUseBanner title="Image in use" inUse={inUse} localId={image.owner.id} />}
@@ -136,7 +139,7 @@ export function ImageSettingsTab({ image, onChanged }: { image: LibraryImageDeta
             </Button>
           </div>
         </div>
-      </div>
+      </section>
 
       <ConfirmDialog
         open={confirmDelete}

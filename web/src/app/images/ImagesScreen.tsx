@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import type { Library } from '$lib/api/imageTypes';
+import { formatBytes } from '$lib/format';
 import { groupByOwner, imageHref, ownerIsViewed } from '$lib/images/library';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
@@ -85,34 +86,33 @@ export function ImagesScreen() {
         </div>
       )}
       {library && images.length > 0 && (
-        <div className={`${styles.card} ${styles.scroll}`}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Source</th>
-                <th>Owner</th>
-                <th>Latest tag</th>
-                <th>Last build</th>
-                <th>Push targets</th>
-              </tr>
-            </thead>
-            <tbody>
-              {images.map((image) => (
-                <tr key={`${image.owner.id}/${image.slug}`}>
-                  <td>
-                    <Link to={imageHref(image, scope)}>{image.name}</Link>
-                  </td>
-                  <td>{image.source}</td>
-                  <td>{ownerIsViewed(image, scope.id) ? image.owner.name : <Tag tone="info">{image.owner.name}</Tag>}</td>
-                  <td className={styles.mono}>{image.latestVersion?.tag ?? '—'}</td>
-                  <td>{image.lastBuild ? <VersionStatus status={image.lastBuild.status} /> : '—'}</td>
-                  <td>{image.pushTargets.length}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ul className={styles.grid} aria-label="Images">
+          {images.map((image) => (
+            <li key={`${image.owner.id}/${image.slug}`} className={styles.imageCard}>
+              <Link to={imageHref(image, scope)} className={styles.cardName}>
+                {image.name}
+              </Link>
+              <div className={styles.cardMeta}>
+                <span>{image.source}</span>
+                {ownerIsViewed(image, scope.id) ? <span>{image.owner.name}</span> : <Tag tone="info">{image.owner.name}</Tag>}
+              </div>
+              <dl className={styles.facts}>
+                <dt>Latest tag</dt>
+                <dd className={styles.mono}>{image.latestVersion?.tag ?? '—'}</dd>
+                <dt>Last build</dt>
+                <dd>{image.lastBuild ? <VersionStatus status={image.lastBuild.status} /> : '—'}</dd>
+                <dt>Push targets</dt>
+                <dd>{image.pushTargets.length}</dd>
+                {image.latestVersion && image.latestVersion.size > 0 && (
+                  <>
+                    <dt>Size</dt>
+                    <dd>{formatBytes(image.latestVersion.size)}</dd>
+                  </>
+                )}
+              </dl>
+            </li>
+          ))}
+        </ul>
       )}
 
       {creating && (

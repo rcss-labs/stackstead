@@ -18,6 +18,9 @@ const argsText = (args: Record<string, string>) =>
     .map(([k, v]) => `${k}=${v}`)
     .join(', ') || '—';
 
+/** A failed version's row action is its build log; every other row opens its detail. */
+const openLabel = (v: LibraryVersion) => (v.status === 'failed' ? 'View log' : 'Open');
+
 const sourceText = (v: LibraryVersion) => (v.commit ? v.commit.slice(0, 7) : `r${v.revision}`);
 
 export function VersionsTab({ image, onChanged }: { image: LibraryImageDetail; onChanged(): void }) {
@@ -144,8 +147,8 @@ export function VersionsTab({ image, onChanged }: { image: LibraryImageDetail; o
                             Push
                           </Button>
                         ))}
-                      <Button variant="ghost" size="xs" aria-label={`Open ${v.tag} (${v.status}, started ${v.startedAt})`} aria-expanded={isOpen} onClick={() => setOpen(isOpen ? undefined : v.id)}>
-                        Open
+                      <Button variant="ghost" size="xs" aria-label={`${openLabel(v)} ${v.tag} (${v.status}, started ${v.startedAt})`} aria-expanded={isOpen} onClick={() => setOpen(isOpen ? undefined : v.id)}>
+                        {openLabel(v)}
                       </Button>
                       <Button variant="ghost" size="xs" aria-label={`Delete ${v.tag} (${v.status}, started ${v.startedAt})`} onClick={() => setDeleting(v)}>
                         Delete

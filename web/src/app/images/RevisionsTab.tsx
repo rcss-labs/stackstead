@@ -5,6 +5,7 @@ import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { EmptyState } from '../components/EmptyState';
 import { RelativeTime } from '../components/RelativeTime';
+import { Tag } from '../components/Tag';
 import { useServer } from '../servers/ServerContext';
 import { DiffView } from '../stacks/DiffView';
 import styles from './images.module.css';
@@ -78,6 +79,7 @@ export function RevisionsTab({ image, onChanged }: { image: LibraryImageDetail; 
                 <button type="button" className={styles.revision} aria-current={r.number === selected} aria-label={`Revision ${r.number}: ${r.summary}`} onClick={() => setSelected(r.number)}>
                   <span className={styles.revNumber}>r{r.number}</span>
                   <span>{r.summary}</span>
+                  {r.number === image.revision && <Tag tone="muted">Current</Tag>}
                   <span className={styles.revTime}>
                     <RelativeTime iso={r.createdAt} />
                   </span>

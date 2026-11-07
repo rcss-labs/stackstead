@@ -4,6 +4,7 @@ import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { Dialog } from '../components/Dialog';
 import { Field } from '../components/Field';
+import { Segmented } from '../components/Segmented';
 import { useServer } from '../servers/ServerContext';
 import styles from './images.module.css';
 
@@ -40,14 +41,15 @@ export function NewImageDialog({ onCreated, onClose }: { onCreated(image: Librar
         <Field label="Name" id={`${uid}-name`} hint="The slug in every reference is derived from the name and never changes.">
           {(control) => <input {...control} value={name} maxLength={64} onChange={(e) => setName(e.target.value)} />}
         </Field>
-        <Field label="Source" id={`${uid}-source`}>
-          {({ readOnly: _readOnly, ...control }) => (
-            <select {...control} value={source} onChange={(e) => setSource(e.target.value as 'upload' | 'github')}>
-              <option value="upload">Upload files</option>
-              <option value="github">GitHub repository</option>
-            </select>
-          )}
-        </Field>
+        <Segmented
+          label="Source"
+          options={[
+            { value: 'upload', label: 'Upload files' },
+            { value: 'github', label: 'GitHub repository' },
+          ]}
+          value={source}
+          onChange={(v) => setSource(v as 'upload' | 'github')}
+        />
         {source === 'github' && (
           <>
             <Field label="Repository" id={`${uid}-repo`} hint="owner/name" mono>
