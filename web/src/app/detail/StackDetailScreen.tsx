@@ -339,6 +339,7 @@ export function StackDetailScreen({ name }: { name: string }) {
             })
           }
         />
+        {(loadError || parseError) && <div className={styles.banners}>
         {loadError && (
           <Banner kind="warning" title="Showing the last loaded state">
             {loadError}
@@ -359,6 +360,7 @@ export function StackDetailScreen({ name }: { name: string }) {
             )}
           </Banner>
         )}
+        </div>}
         {/* Under a parse error there are no services to chart, so the card would be an empty frame. */}
         {!parseError && (
           <HealthTimeline

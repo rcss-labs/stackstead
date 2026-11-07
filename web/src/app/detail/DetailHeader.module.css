@@ -3,12 +3,14 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 10px 14px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
 }
 
 .name {
   margin: 0;
   font-family: var(--mono);
-  font-size: 24px;
+  font-size: 19px;
   font-weight: 600;
   letter-spacing: -0.01em;
   overflow-wrap: anywhere;
@@ -53,7 +55,8 @@
 }
 
 @media (max-width: 759px) {
-  .name { font-size: 20px; }
+  .header { padding: 12px 14px; }
+  .name { font-size: 19px; }
   .meta { display: none; }
   .actions { flex-basis: 100%; }
 }
