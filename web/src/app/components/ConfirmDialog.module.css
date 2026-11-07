@@ -6,4 +6,8 @@
   justify-content: flex-end;
 }
 
-.message { overflow-wrap: anywhere; }
+.message { overflow-wrap: anywhere; color: var(--muted); }
+
+@media (max-width: 759px) {
+  .actions > * { flex: 1; }
+}

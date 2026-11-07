@@ -15,3 +15,11 @@ export function Mixed() {
 export function Large() {
   return <ServiceCells count={12} good={9} bad={1} starting={2} title="9 running, 2 starting, 1 failed" />;
 }
+
+export function Failing() {
+  return (
+    <span style={item}>
+      <ServiceCells count={5} good={3} bad={2} starting={0} title="3 running, 2 failed" /> failing cells are hatched
+    </span>
+  );
+}

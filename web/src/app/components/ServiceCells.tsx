@@ -18,10 +18,11 @@ export function ServiceCells({ count, good, bad, starting, title }: ServiceCells
     if (i < good + starting + bad) return 'danger';
     return 'off';
   });
+  const label = `${good} of ${count} services healthy${bad > 0 ? `, ${bad} failing` : ''}`;
   return (
-    <span className={styles.cells} aria-hidden="true" title={title}>
+    <span className={styles.cells} role="img" aria-label={label} title={title}>
       {tones.map((tone, i) => (
-        <span key={i} className={styles.cell} data-tone={tone} />
+        <span key={i} className={styles.cell} data-tone={tone} data-failing={tone === 'danger' ? 'true' : undefined} />
       ))}
     </span>
   );

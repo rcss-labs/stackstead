@@ -13,3 +13,18 @@ export function DangerConfirm() {
     />
   );
 }
+
+export function TypedConfirm() {
+  return (
+    <ConfirmDialog
+      open
+      danger
+      title="Remove stack and volumes?"
+      message="This deletes the stack's volumes and their data. It cannot be undone."
+      confirmLabel="Remove stack"
+      typedConfirm="monitoring"
+      onConfirm={() => {}}
+      onCancel={() => {}}
+    />
+  );
+}
