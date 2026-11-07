@@ -246,8 +246,8 @@ progress. Full reference: [docs/cli.md](docs/cli.md).
 - **Accessible.** The UI works with a keyboard and screen readers, follows
   your light or dark theme (with a theme toggle) and reduced-motion setting,
   offers a compact or comfortable density, and fits a phone screen.
-- **Third-party.** The UI ships IBM Plex Sans and Geist Mono, both under the
-  SIL OFL-1.1, served at `/licenses/IBMPlexSans-OFL.txt` and
+- **Third-party.** The UI ships Geist and Geist Mono, both under the
+  SIL OFL-1.1, served at `/licenses/Geist-OFL.txt` and
   `/licenses/GeistMono-OFL.txt`.
 
 ## Documentation

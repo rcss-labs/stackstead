@@ -13,8 +13,22 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 13px/1.45 var(--sans);
+  font: 13.5px/1.45 var(--sans);
   font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 14.5px body on phones; 16px form controls stop iOS Safari zooming on focus. */
+@media (max-width: 759px) {
+  body {
+    font-size: 14.5px;
+  }
+
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
 }
 
 h1 {
