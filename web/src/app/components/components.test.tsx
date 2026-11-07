@@ -181,10 +181,27 @@ describe('StatusBadge', () => {
     expect(screen.getByText('removing').getAttribute('data-tone')).toBe('muted');
   });
 
-  it('renders no decorative glyph', () => {
-    const { container } = render(<StatusBadge status="running" />);
-    expect(container.querySelector('[aria-hidden]')).toBeNull();
-    expect(container.textContent).toBe('running');
+  it('shows a shape and the word for each status', () => {
+    const statuses = ['running', 'healthy', 'partial', 'restarting', 'unhealthy', 'failed', 'stopped', 'exited', 'starting'];
+    const shapes = new Map<string, string>();
+    for (const status of statuses) {
+      const { container, unmount } = render(<StatusBadge status={status} />);
+      const shape = container.querySelector('svg[data-shape]');
+      expect(shape, status).not.toBeNull();
+      expect(shape!.getAttribute('aria-hidden')).toBe('true');
+      expect(container.textContent).toBe(status);
+      shapes.set(status, shape!.getAttribute('data-shape')!);
+      unmount();
+    }
+    // Colour is never the only cue: ok, in-between, failing and off states differ in shape.
+    expect(new Set([shapes.get('running'), shapes.get('partial'), shapes.get('failed'), shapes.get('stopped')]).size).toBe(4);
+    expect(shapes.get('exited')).toBe(shapes.get('stopped'));
+  });
+
+  it('gives an unknown state the off shape and its raw word', () => {
+    const { container } = render(<StatusBadge status="removing" />);
+    expect(container.querySelector('svg[data-shape]')!.getAttribute('data-shape')).toBe('off');
+    expect(container.textContent).toBe('removing');
   });
 });
 
@@ -368,6 +385,15 @@ describe('Sparkline', () => {
     expect(container.querySelector('path')!.getAttribute('d')).toBe('M0,17L60,17');
   });
 
+  it('draws an emphasised endpoint at the end of the line', () => {
+    const { container } = render(<Sparkline values={[1, 3, 2]} tone="info" />);
+    const path = container.querySelector('path')!.getAttribute('d')!;
+    const endpoint = container.querySelector('line[data-endpoint]')!;
+    const last = path.match(/([\d.]+),([\d.]+)$/)!;
+    expect([endpoint.getAttribute('x1'), endpoint.getAttribute('y1')]).toEqual([last[1], last[2]]);
+    expect([endpoint.getAttribute('x2'), endpoint.getAttribute('y2')]).toEqual([last[1], last[2]]);
+  });
+
   it('draws a path from the samples', () => {
     const { container } = render(<Sparkline values={[1, 3, 2]} tone="info" />);
     expect(container.querySelector('path')!.getAttribute('d')).toMatch(/^M/);
@@ -375,10 +401,24 @@ describe('Sparkline', () => {
 });
 
 describe('ServiceCells', () => {
-  it('renders count cells with the title, hidden from AT', () => {
+  it('marks failing cells distinctly and labels the count', () => {
     const { container } = render(<ServiceCells count={4} good={2} bad={1} starting={0} title="2 of 4 up" />);
     const root = container.firstElementChild!;
-    expect(root.getAttribute('aria-hidden')).toBe('true');
+    expect(root.getAttribute('role')).toBe('img');
+    expect(root.getAttribute('aria-label')).toBe('2 of 4 services healthy, 1 failing');
+    const failing = Array.from(root.children).filter((c) => c.hasAttribute('data-failing'));
+    expect(failing).toHaveLength(1);
+    expect(failing[0].getAttribute('data-tone')).toBe('danger');
+  });
+
+  it('omits the failing count when nothing fails', () => {
+    const { container } = render(<ServiceCells count={3} good={3} bad={0} starting={0} title="all up" />);
+    expect(container.firstElementChild!.getAttribute('aria-label')).toBe('3 of 3 services healthy');
+  });
+
+  it('renders count cells with the title', () => {
+    const { container } = render(<ServiceCells count={4} good={2} bad={1} starting={0} title="2 of 4 up" />);
+    const root = container.firstElementChild!;
     expect(root.getAttribute('title')).toBe('2 of 4 up');
     expect(root.children).toHaveLength(4);
     expect(Array.from(root.children).map((c) => c.getAttribute('data-tone'))).toEqual(['success', 'success', 'danger', 'off']);

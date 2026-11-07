@@ -3,23 +3,26 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  height: 30px;
-  padding: 0 12px;
+  height: 32px;
+  padding: 0 11px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   background: var(--surface);
+  box-shadow: var(--shadow);
   color: var(--text);
   font: inherit;
   font-size: 13px;
+  font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, filter 0.15s;
 }
 
-.btn[data-size='sm'] { height: 26px; padding: 0 10px; font-size: 12px; }
-.btn[data-size='xs'] { height: 24px; padding: 0 8px; font-size: 12px; }
-.btn[data-icon='true'] { width: 30px; padding: 0; }
-.btn[data-icon='true'][data-size='sm'] { width: 26px; }
-.btn[data-icon='true'][data-size='xs'] { width: 24px; }
+.btn[data-size='sm'] { height: 28px; padding: 0 10px; font-size: 12.5px; }
+.btn[data-size='xs'] { height: 26px; padding: 0 8px; font-size: 12.5px; border-radius: var(--radius-xs); }
+.btn[data-icon='true'] { width: 32px; padding: 0; }
+.btn[data-icon='true'][data-size='sm'] { width: 28px; }
+.btn[data-icon='true'][data-size='xs'] { width: 26px; }
 
 .btn:hover { background: var(--hover); }
 .btn:active:not(:disabled):not([aria-disabled='true']) { transform: translateY(1px); }
@@ -31,15 +34,17 @@
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-ink);
-  font-weight: 600;
+  box-shadow: none;
 }
 .btn[data-variant='primary']:hover { background: var(--accent); filter: brightness(1.08); }
 
-.btn[data-variant='danger'] { background: transparent; border-color: var(--border); color: var(--danger); }
-.btn[data-variant='danger']:hover,
-.btn[data-variant='danger'][data-confirm='true'] { background: var(--danger-soft); }
+.btn[data-variant='danger'] { background: var(--surface); border-color: var(--border-strong); color: var(--danger); }
+.btn[data-variant='danger']:hover { background: var(--danger-soft); }
+/* Confirmation dialogs fill the destructive action so it cannot be missed. */
+.btn[data-variant='danger'][data-confirm='true'] { background: var(--danger); border-color: var(--danger); color: var(--bg); box-shadow: none; }
+.btn[data-variant='danger'][data-confirm='true']:hover { background: var(--danger); filter: brightness(1.1); }
 
-.btn[data-variant='ghost'] { background: transparent; border-color: var(--border); color: var(--muted); }
+.btn[data-variant='ghost'] { background: transparent; border-color: transparent; box-shadow: none; color: var(--muted); }
 .btn[data-variant='ghost']:hover { background: var(--hover); color: var(--text); }
 
 .btn:disabled,
@@ -59,11 +64,12 @@
   to { transform: rotate(360deg); }
 }
 
+/* Touch targets are at least 44px on narrow screens, whatever the size. */
 @media (max-width: 759px) {
-  .btn { height: 40px; }
+  .btn,
   .btn[data-size='sm'],
-  .btn[data-size='xs'] { height: 40px; }
-  .btn[data-icon='true'] { width: 40px; }
+  .btn[data-size='xs'] { height: 44px; padding: 0 14px; font-size: 14.5px; border-radius: var(--radius-md); }
+  .btn[data-icon='true'],
   .btn[data-icon='true'][data-size='sm'],
-  .btn[data-icon='true'][data-size='xs'] { width: 40px; }
+  .btn[data-icon='true'][data-size='xs'] { width: 44px; padding: 0; }
 }

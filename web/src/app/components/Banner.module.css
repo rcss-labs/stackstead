@@ -1,10 +1,9 @@
 .banner {
   display: flex;
-  gap: var(--space-3);
+  gap: 9px;
   align-items: flex-start;
   padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--tone);
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: var(--tone-soft);
   font-size: 12.5px;
@@ -15,7 +14,6 @@
 .banner[data-kind='danger'] { --tone: var(--danger); --tone-soft: var(--danger-soft); }
 
 .banner strong {
-  font-size: 13px;
   font-weight: 600;
   color: var(--text);
 }
@@ -38,4 +36,8 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
   padding: var(--space-1) var(--space-2);
+}
+
+@media (max-width: 759px) {
+  .close { min-height: 44px; min-width: 44px; padding: 0 var(--space-3); }
 }

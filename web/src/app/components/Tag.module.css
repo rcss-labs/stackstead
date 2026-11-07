@@ -1,10 +1,14 @@
 .tag {
-  display: inline-flex;
-  align-items: center;
-  height: 18px;
-  padding: 0 6px;
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  padding: 0 5px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 18px;
   white-space: nowrap;
   background: var(--tone-soft);
   color: var(--tone);
@@ -12,8 +16,8 @@
 
 .tag[data-mono='true'] { font-family: var(--mono); }
 
-.tag[data-tone='muted'] { --tone: var(--muted); --tone-soft: var(--muted-soft); }
-.tag[data-tone='info'] { --tone: var(--info); --tone-soft: var(--info-soft); }
-.tag[data-tone='warning'] { --tone: var(--warning); --tone-soft: var(--warning-soft); }
-.tag[data-tone='danger'] { --tone: var(--danger); --tone-soft: var(--danger-soft); }
-.tag[data-tone='success'] { --tone: var(--success); --tone-soft: var(--success-soft); }
+.tag[data-tone='muted'] { --tone: var(--text); --tone-soft: var(--raised); }
+.tag[data-tone='info'] { --tone: var(--info); --tone-soft: var(--info-soft); border-color: transparent; }
+.tag[data-tone='warning'] { --tone: var(--warning); --tone-soft: var(--warning-soft); border-color: transparent; }
+.tag[data-tone='danger'] { --tone: var(--danger); --tone-soft: var(--danger-soft); border-color: transparent; }
+.tag[data-tone='success'] { --tone: var(--success); --tone-soft: var(--success-soft); border-color: transparent; }

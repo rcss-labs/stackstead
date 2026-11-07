@@ -6,13 +6,14 @@
   padding: var(--space-4);
   background: var(--overlay);
   z-index: 200;
+  animation: fade 0.15s ease-out;
 }
 
 .dialog {
-  width: min(32rem, 100%);
+  width: min(32.5rem, 100%);
   max-height: 100%;
   overflow: auto;
-  padding: 20px;
+  padding: 16px;
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border-strong);
@@ -20,11 +21,11 @@
   box-shadow: var(--shadow-pop);
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  animation: pop 0.16s ease-out;
+  gap: var(--space-3);
+  animation: pop 0.18s ease-out;
 }
 
-.dialog[data-width='lg'] { width: min(620px, 100%); }
+.dialog[data-width='lg'] { width: min(860px, 100%); }
 
 .backdrop[data-placement='top'] .dialog { border-radius: 14px; }
 
@@ -33,19 +34,81 @@
   padding-top: 12vh;
 }
 
-@media (max-width: 759px) {
-  .backdrop[data-placement='top'] .dialog { border-radius: 14px; }
+.dialog h2 { font-size: 15px; font-weight: 600; }
 
-.backdrop[data-placement='top'] { padding-top: 64px; }
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
-.dialog h2 { font-size: 14px; font-weight: 600; }
+.head h2 { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+
+.close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin: -8px -8px -8px 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.close:hover { background: var(--hover); color: var(--text); }
+
+.grab { display: none; }
+
+@media (max-width: 759px) {
+  .backdrop[data-placement='top'] { padding-top: 64px; }
+
+  /* Bottom sheet: pinned to the bottom edge, rounded on top only, with a grab handle. */
+  .backdrop:not([data-placement='top']) {
+    place-items: end stretch;
+    padding: 0;
+  }
+
+  .dialog[data-sheet='true'],
+  .dialog[data-sheet='true'][data-width='lg'] {
+    width: 100%;
+    max-height: 92%;
+    border-radius: 16px 16px 0 0;
+    border-width: 1px 0 0;
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+    animation: sheet 0.22s ease-out;
+  }
+
+  .grab {
+    display: block;
+    flex: none;
+    width: 36px;
+    height: 4px;
+    margin: -8px auto 0;
+    border-radius: 2px;
+    background: var(--border-strong);
+  }
+}
+
+@keyframes fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
 
 @keyframes pop {
   from { opacity: 0; transform: scale(0.97); }
   to { opacity: 1; transform: none; }
 }
 
+@keyframes sheet {
+  from { transform: translateY(24px); opacity: 0.6; }
+  to { transform: none; opacity: 1; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .dialog { animation: none; }
+  .backdrop,
+  .dialog { animation: none !important; }
 }

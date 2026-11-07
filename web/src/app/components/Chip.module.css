@@ -3,30 +3,36 @@
   align-items: center;
   gap: 6px;
   height: 28px;
-  padding: 0 12px;
+  padding: 0 10px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  background: transparent;
+  border-radius: 14px;
+  background: var(--surface);
   color: var(--muted);
-  font-size: 12px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
 }
 
-.chip:hover { background: var(--hover); color: var(--text); }
-.chip[data-tone='danger'] { color: var(--danger); }
+.chip:hover { border-color: var(--border-strong); }
+/* Pressed chips invert to the text colour, so a selected filter is obvious without relying on hue. */
 .chip[aria-pressed='true'] {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--text);
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
 }
 
 .count {
   font-family: var(--mono);
-  font-size: 11px;
-  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--faint);
 }
 
+.chip[aria-pressed='true'] .count { color: inherit; opacity: 0.75; }
+.chip[data-tone='danger']:not([aria-pressed='true']) .count { color: var(--danger); font-weight: 600; }
+
 @media (max-width: 759px) {
-  .chip { height: 36px; }
+  .chip { height: 44px; padding: 0 14px; border-radius: 22px; font-size: 13.5px; }
 }
