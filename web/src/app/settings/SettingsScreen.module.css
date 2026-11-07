@@ -23,10 +23,9 @@
   transition: background 0.15s;
 }
 .sections a:hover { background: var(--hover); }
+.sections a[aria-current='page'] { background: var(--hover); color: var(--text); font-weight: 600; }
 
 .cards { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-/* Keep a card's title below the sticky top bar (56px) plus a gap when a section link scrolls to it. */
-.cards > div { scroll-margin-top: 72px; }
 
 .status {
   display: grid;
@@ -67,7 +66,9 @@
 @media (max-width: 759px) {
   .page { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .side { position: static; }
-  .sections { display: none; }
+  /* One section is shown at a time, so the links stay: a scrolling row of 44px targets. */
+  .sections { flex-direction: row; gap: 4px; overflow-x: auto; }
+  .sections a { display: inline-flex; align-items: center; min-height: 44px; white-space: nowrap; }
   .title { font-size: 20px; margin-bottom: 0; }
   .status { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   /* Two classes outrank Field's `.field input` (32px). */

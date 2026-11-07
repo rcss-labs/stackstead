@@ -1,5 +1,4 @@
-import { useLayoutEffect, type MouseEvent } from 'react';
-import { Link, useLocation } from 'react-router';
+import { Link, Navigate, NavLink, useLocation, useParams } from 'react-router';
 import { logout, session } from '$lib/api/session';
 import { density, setDensity, setTheme, theme, type ThemeChoice } from '$lib/stores/appearance';
 import { createBackupsApi } from '$lib/api/backups';
@@ -17,23 +16,27 @@ import { PasswordForm } from './PasswordForm';
 import { RegistriesCard } from './RegistriesCard';
 import { SettingsCard } from './SettingsCard';
 import styles from './SettingsScreen.module.css';
+import { DiagnosticsCard } from './DiagnosticsCard';
 import { SystemStatusCard } from './SystemStatusCard';
 import { UpdateCard } from './UpdateCard';
 
 const backupsApi = createBackupsApi('');
 
-export const SECTIONS: readonly { id: string; label: string }[] = [
-  { id: 'settings-system', label: 'System' },
-  { id: 'settings-updates', label: 'Updates' },
-  { id: 'settings-prometheus', label: 'Prometheus' },
-  { id: 'settings-servers', label: 'Connected servers' },
-  { id: 'settings-registries', label: 'Registries' },
-  { id: 'settings-github', label: 'GitHub' },
-  { id: 'settings-images', label: 'Images' },
-  { id: 'settings-backups', label: 'Backups' },
-  { id: 'settings-appearance', label: 'Appearance' },
-  { id: 'settings-account', label: 'Account' },
-];
+export const SECTIONS = [
+  { id: 'system', label: 'System' },
+  { id: 'updates', label: 'Updates' },
+  { id: 'prometheus', label: 'Prometheus' },
+  { id: 'servers', label: 'Connected servers' },
+  { id: 'registries', label: 'Registries' },
+  { id: 'github', label: 'GitHub' },
+  { id: 'images', label: 'Images' },
+  { id: 'backups', label: 'Backups' },
+  { id: 'appearance', label: 'Appearance' },
+  { id: 'account', label: 'Account' },
+] as const;
+
+type SectionId = (typeof SECTIONS)[number]['id'];
+const isSectionId = (value: string | undefined): value is SectionId => SECTIONS.some((section) => section.id === value);
 
 const THEME_OPTIONS = [
   { value: 'dark', label: 'Dark' },
@@ -45,48 +48,14 @@ const DENSITY_OPTIONS = [
   { value: 'comfortable', label: 'Comfortable' },
 ];
 
-/**
- * Scrolls to a section card and moves focus to its heading. `behavior: 'auto'` follows the page's own
- * scroll-behavior (instant under reduced motion); scroll-margin-top on the target keeps the heading
- * below the sticky bar.
- */
-function scrollToSection(sectionId: string): boolean {
-  const target = document.getElementById(sectionId);
-  if (!target) return false;
-  target.scrollIntoView({ behavior: 'auto' });
-  target.querySelector<HTMLElement>('h2')?.focus({ preventScroll: true });
-  return true;
-}
-
-/**
- * Section links scroll to a card and move focus to its heading. The default fragment navigation would
- * blur the heading again (the target div is not focusable), so scroll, focus and the hash are done here.
- */
-function goToSection(event: MouseEvent<HTMLAnchorElement>, sectionId: string) {
-  // Modified and non-primary clicks open the section in a new tab or window; leave those to the browser.
-  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-  if (!scrollToSection(sectionId)) return;
-  event.preventDefault();
-  window.history.replaceState(window.history.state, '', `#${sectionId}`);
-}
-
 export function SettingsScreen() {
-  const { username } = useStore(session);
-  const themeValue = useStore(theme);
-  const densityValue = useStore(density);
-  const { hash } = useLocation();
+  const { section } = useParams();
+  const { search, hash } = useLocation();
 
-  // The cards mount after the browser's own fragment scroll has run, so a /settings#section link
-  // (bookmark or in-app navigation) is honoured here once the target exists.
-  useLayoutEffect(() => {
-    const sectionId = hash.slice(1);
-    if (SECTIONS.some((section) => section.id === sectionId)) scrollToSection(sectionId);
-  }, [hash]);
-
-  async function doLogout() {
-    const { ok } = await logout();
-    if (!ok) toasts.push({ kind: 'warning', message: 'Logout may not have completed on the server.' });
-  }
+  // Links from the single-page layout looked like /settings#settings-registries.
+  const legacy = hash.startsWith('#settings-') ? hash.slice('#settings-'.length) : undefined;
+  if (isSectionId(legacy) && legacy !== section) return <Navigate replace to={{ pathname: `/settings/${legacy}`, search }} />;
+  if (!isSectionId(section)) return <Navigate replace to={{ pathname: '/settings/system', search }} />;
 
   return (
     <section className={styles.page} aria-labelledby="settings-heading">
@@ -95,80 +64,93 @@ export function SettingsScreen() {
           Settings
         </h1>
         <nav className={styles.sections} aria-label="Settings sections">
-          {SECTIONS.map((section) => (
-            <a key={section.id} href={`#${section.id}`} onClick={(event) => goToSection(event, section.id)}>
-              {section.label}
-            </a>
+          {SECTIONS.map((item) => (
+            <NavLink key={item.id} to={`/settings/${item.id}`}>
+              {item.label}
+            </NavLink>
           ))}
         </nav>
       </div>
       <div className={styles.cards}>
-        <div id="settings-system">
+        <SectionBody section={section} />
+      </div>
+    </section>
+  );
+}
+
+function SectionBody({ section }: { section: SectionId }) {
+  const { username } = useStore(session);
+  const themeValue = useStore(theme);
+  const densityValue = useStore(density);
+
+  async function doLogout() {
+    const { ok } = await logout();
+    if (!ok) toasts.push({ kind: 'warning', message: 'Logout may not have completed on the server.' });
+  }
+
+  switch (section) {
+    case 'system':
+      return (
+        <>
           <SystemStatusCard />
-        </div>
-        <div id="settings-updates">
-          <UpdateCard />
-        </div>
-        <div id="settings-prometheus">
-          <MetricsTokenCard />
-        </div>
-        <div id="settings-servers">
-          <ConnectedServersCard />
-        </div>
-        <div id="settings-registries">
-          <RegistriesCard />
-        </div>
-        <div id="settings-github">
-          <GitHubCard />
-        </div>
-        <div id="settings-images">
-          <ImageDefaultsCard />
-        </div>
-        <div id="settings-backups">
+          <DiagnosticsCard />
+        </>
+      );
+    case 'updates':
+      return <UpdateCard />;
+    case 'prometheus':
+      return <MetricsTokenCard />;
+    case 'servers':
+      return <ConnectedServersCard />;
+    case 'registries':
+      return <RegistriesCard />;
+    case 'github':
+      return <GitHubCard />;
+    case 'images':
+      return <ImageDefaultsCard />;
+    case 'backups':
+      return (
+        <>
           <BackupScheduleCard api={backupsApi} />
           <p>
             <Link to="/backups">Open backups</Link>
           </p>
-        </div>
-        <div id="settings-appearance">
-          <SettingsCard id="appearance-h" title="Appearance">
-            <div className={styles.appearance}>
-              <div className={styles.block}>
-                <PanelLabel as="span">Theme</PanelLabel>
-                <Segmented
-                  label="Theme"
-                  options={THEME_OPTIONS}
-                  value={themeValue}
-                  onChange={(value) => setTheme(value as ThemeChoice)}
-                />
-              </div>
-              <div className={styles.block}>
-                <PanelLabel as="span">Density</PanelLabel>
-                <Segmented
-                  label="Density"
-                  options={DENSITY_OPTIONS}
-                  value={densityValue}
-                  onChange={(value) => setDensity(value as 'compact' | 'comfortable')}
-                />
-              </div>
+        </>
+      );
+    case 'appearance':
+      return (
+        <SettingsCard id="appearance-h" title="Appearance">
+          <div className={styles.appearance}>
+            <div className={styles.block}>
+              <PanelLabel as="span">Theme</PanelLabel>
+              <Segmented label="Theme" options={THEME_OPTIONS} value={themeValue} onChange={(value) => setTheme(value as ThemeChoice)} />
             </div>
-          </SettingsCard>
-        </div>
-        <div id="settings-account">
-          <SettingsCard id="account-h" title="Account" footer="Remote access and hardening: docs/security.md.">
-            <p>
-              Signed in as <strong>{username ?? 'unknown'}</strong>. Changing the password signs out other sessions.
-            </p>
-            <PasswordForm
-              actions={
-                <Button variant="secondary" onClick={() => void doLogout()}>
-                  Log out
-                </Button>
-              }
-            />
-          </SettingsCard>
-        </div>
-      </div>
-    </section>
-  );
+            <div className={styles.block}>
+              <PanelLabel as="span">Density</PanelLabel>
+              <Segmented
+                label="Density"
+                options={DENSITY_OPTIONS}
+                value={densityValue}
+                onChange={(value) => setDensity(value as 'compact' | 'comfortable')}
+              />
+            </div>
+          </div>
+        </SettingsCard>
+      );
+    case 'account':
+      return (
+        <SettingsCard id="account-h" title="Account" footer="Remote access and hardening: docs/security.md.">
+          <p>
+            Signed in as <strong>{username ?? 'unknown'}</strong>. Changing the password signs out other sessions.
+          </p>
+          <PasswordForm
+            actions={
+              <Button variant="secondary" onClick={() => void doLogout()}>
+                Log out
+              </Button>
+            }
+          />
+        </SettingsCard>
+      );
+  }
 }
