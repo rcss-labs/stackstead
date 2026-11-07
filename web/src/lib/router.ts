@@ -56,3 +56,14 @@ export function splitServerPath(path: string): { slug: string | null; inner: str
   }
   return { slug, inner: m[2] || '/' };
 }
+
+/**
+ * The connected server a page belongs to: the one in a /s/{slug} path, or on the phone's More page the one it was
+ * opened from (?server=), since More is this app's own page and has no /s/ form. Null means this server.
+ */
+export function viewedSlug(pathname: string, search = ''): string | null {
+  const { slug } = splitServerPath(pathname);
+  if (slug !== null || pathname !== '/more') return slug;
+  const fromQuery = new URLSearchParams(search).get('server');
+  return fromQuery === '' ? null : fromQuery;
+}

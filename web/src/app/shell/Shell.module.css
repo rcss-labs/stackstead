@@ -18,6 +18,14 @@
   box-shadow: var(--shadow);
 }
 
+.mobile .column {
+  margin: 0;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 .mobile {
   display: flex;
   background: var(--bg);

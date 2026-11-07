@@ -81,6 +81,12 @@ describe('/more', () => {
     expect(screen.getByRole('link', { name: 'Settings' }).getAttribute('href')).toBe('/settings');
   });
 
+  it('redirects to the viewed server on desktop width', async () => {
+    stubViewport(false);
+    renderRoutes('/more?server=mini-02', ['/more']);
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/s/mini-02'));
+  });
+
   it('offers All servers and Connected servers once a server is connected', async () => {
     stubViewport(true);
     const peer: PeerView = {

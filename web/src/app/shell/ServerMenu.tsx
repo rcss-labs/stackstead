@@ -34,7 +34,7 @@ const icon = (name: keyof typeof ICONS, size = 14) => (
   </svg>
 );
 
-/** The server switcher: this server, connected servers, All servers and Connect a server, in one menu. */
+/** The server switcher: this server, connected servers, All servers and Connect a server, in one disclosure panel (plain buttons, no menu roles). */
 export function ServerMenu({ current, localName, localTagged, localStackCount, peers, onNavigate }: ServerMenuProps) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -64,18 +64,11 @@ export function ServerMenu({ current, localName, localTagged, localStackCount, p
       event.stopPropagation();
       setOpen(false);
       button.current?.focus();
-      return;
     }
-    if (!open || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return;
-    const items = Array.from(root.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
-    const at = items.indexOf(document.activeElement as HTMLElement);
-    const next = event.key === 'ArrowDown' ? Math.min(items.length - 1, at + 1) : Math.max(0, at - 1);
-    event.preventDefault();
-    items[next]?.focus();
   };
 
   const item = (key: string, href: string, selected: boolean, body: React.ReactNode) => (
-    <button key={key} type="button" role="menuitem" className={styles.item} aria-current={selected ? 'true' : undefined} onClick={() => choose(href)}>
+    <button key={key} type="button" className={styles.item} aria-current={selected ? 'true' : undefined} onClick={() => choose(href)}>
       {body}
     </button>
   );
@@ -86,7 +79,6 @@ export function ServerMenu({ current, localName, localTagged, localStackCount, p
         ref={button}
         type="button"
         className={styles.button}
-        aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`Switch server, ${shownName}`}
         onClick={() => setOpen(!open)}
@@ -99,7 +91,7 @@ export function ServerMenu({ current, localName, localTagged, localStackCount, p
         {icon('down')}
       </button>
       {open && (
-        <div role="menu" aria-label="Servers" className={styles.menu}>
+        <div role="group" aria-label="Servers" className={styles.menu}>
           {item(
             'local',
             '/',

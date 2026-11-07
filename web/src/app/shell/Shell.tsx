@@ -2,7 +2,7 @@ import { Suspense, lazy } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useLocation } from 'react-router';
 import type { Operation } from '$lib/api/types';
-import { splitServerPath } from '$lib/router';
+import { viewedSlug } from '$lib/router';
 import { peers } from '$lib/servers/peers';
 import { stacks } from '$lib/stores/stacks';
 import { Banner } from '../components/Banner';
@@ -55,12 +55,12 @@ export interface ShellProps {
 }
 
 export function Shell({ username, onLogout, runningOps, attention, onOpenPalette, onNavigate, banners, children }: ShellProps) {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const mobile = useIsMobile();
   const { items } = useStore(stacks);
   // The top bar and host block describe the server being viewed, through the scope its screens already use.
   const viewed = useStore(viewedScope);
-  const { slug } = splitServerPath(pathname);
+  const slug = viewedSlug(pathname, search);
   const scope = slug === null ? localScope : viewed?.slug === slug ? viewed : noScope;
   const viewedOps = useStore(scope.runningOps);
   const { items: peerList } = useStore(peers);
@@ -107,7 +107,7 @@ export function Shell({ username, onLogout, runningOps, attention, onOpenPalette
         </div>
         {mobile ? (
           <Chrome standIn={styles.tabBarSlot}>
-            <TabBar current={pathname} attention={attention} onOpenPalette={onOpenPalette} />
+            <TabBar current={pathname} search={search} attention={attention} onOpenPalette={onOpenPalette} />
           </Chrome>
         ) : null}
       </div>

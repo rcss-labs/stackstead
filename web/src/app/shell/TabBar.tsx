@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { splitServerPath } from '$lib/router';
+import { viewedSlug } from '$lib/router';
 import { ICONS } from '$lib/shell/icons';
 import { Led } from '../components/Led';
 import { activeTab, tabBarNav } from './navItems';
@@ -7,13 +7,15 @@ import styles from './TabBar.module.css';
 
 export interface TabBarProps {
   current: string;
+  /** Query string of the page; More carries the viewed server in it. */
+  search?: string;
   attention: boolean;
   /** The Search tab opens the palette; it is a button, not a page. */
   onOpenPalette: () => void;
 }
 
-export function TabBar({ current, attention: localAttention, onOpenPalette }: TabBarProps) {
-  const { slug } = splitServerPath(current);
+export function TabBar({ current, search, attention: localAttention, onOpenPalette }: TabBarProps) {
+  const slug = viewedSlug(current, search);
   // The attention light describes this server's stacks, so it stays off while a connected server is open.
   const attention = localAttention && slug === null;
   const active = activeTab(current);
