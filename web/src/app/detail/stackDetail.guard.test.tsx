@@ -231,7 +231,7 @@ describe('compose editor on the stack page', () => {
     await waitFor(() => expect(textbox().value).toBe('services: {}\n'));
     edit('services: {}\n# edit\n');
     await waitFor(() => expect(get(unsavedChanges)).toBe(true));
-    await user().click(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Containers' }));
+    await user().click(within(await screen.findByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Containers' }));
     const dlg = await dialog();
     expect(window.location.pathname).toBe('/stacks/web');
     await user().click(within(dlg).getByRole('button', { name: 'Cancel' }));

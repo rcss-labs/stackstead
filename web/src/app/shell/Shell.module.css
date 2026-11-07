@@ -29,3 +29,40 @@
   flex: 1;
   min-width: 0;
 }
+
+/* Stand-ins that hold each chrome piece's space while its chunk loads, so the page does not shift when it arrives. */
+.sidebarSlot {
+  width: var(--sidebar-w);
+  flex: none;
+  box-sizing: border-box;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  background: var(--chassis);
+}
+
+.topBarSlot {
+  height: var(--topbar-h);
+  flex: none;
+  box-sizing: border-box;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.mobileBarSlot {
+  height: var(--mobile-bar-h);
+  flex: none;
+  box-sizing: border-box;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+/* A tab is 48px, plus the bar's 6px and 10px padding and 1px border. */
+.tabBarSlot {
+  position: sticky;
+  bottom: 0;
+  height: 65px;
+  box-sizing: border-box;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}

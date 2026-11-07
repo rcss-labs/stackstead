@@ -1,18 +1,43 @@
+import { Suspense, lazy } from 'react';
 import type { ReactNode } from 'react';
 import { useLocation } from 'react-router';
 import type { Operation } from '$lib/api/types';
 import { splitServerPath } from '$lib/router';
 import { stacks } from '$lib/stores/stacks';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useStore } from '../hooks/useStore';
 import { ServerContext, localScope } from '../servers/ServerContext';
 import { noScope, viewedScope } from '../servers/viewedServer';
-import { MobileTopBar } from './MobileTopBar';
-import { Sidebar } from './Sidebar';
-import { TabBar } from './TabBar';
-import { TopBar } from './TopBar';
 import { pageBack, pageTitle } from './nav';
 import styles from './Shell.module.css';
+
+// Each layout's chrome is its own chunk, so the entry carries neither. The one the viewport needs starts loading as this module
+// evaluates, alongside the session check, and the stand-ins below hold its space until it arrives.
+const loadDesktopChrome = () => import('./desktopChrome');
+const loadMobileChrome = () => import('./mobileChrome');
+const Sidebar = lazy(() => loadDesktopChrome().then((m) => ({ default: m.Sidebar })));
+const TopBar = lazy(() => loadDesktopChrome().then((m) => ({ default: m.TopBar })));
+const MobileTopBar = lazy(() => loadMobileChrome().then((m) => ({ default: m.MobileTopBar })));
+const TabBar = lazy(() => loadMobileChrome().then((m) => ({ default: m.TabBar })));
+if (typeof globalThis.matchMedia === 'function') {
+  void (globalThis.matchMedia('(max-width: 759px)').matches ? loadMobileChrome() : loadDesktopChrome()).catch(() => {});
+}
+
+/** A chrome piece whose chunk could not be fetched (an upgrade changed the asset hashes under an open tab) leaves a way to reload. */
+function Chrome({ standIn, children }: { standIn: string; children: ReactNode }) {
+  return (
+    <ErrorBoundary
+      fallback={
+        <button type="button" className={standIn} onClick={() => window.location.reload()}>
+          Reload
+        </button>
+      }
+    >
+      <Suspense fallback={<div className={standIn} />}>{children}</Suspense>
+    </ErrorBoundary>
+  );
+}
 
 export interface ShellProps {
   username?: string;
@@ -44,24 +69,36 @@ export function Shell({ username, onLogout, runningOps, attention, onOpenPalette
     <ServerContext.Provider value={scope}>
       <div className={mobile ? styles.mobile : styles.desktop}>
         {mobile ? (
-          <MobileTopBar title={title} mono={mono} attention={attention} back={pageBack(pathname)} onNavigate={onNavigate} />
+          <Chrome standIn={styles.mobileBarSlot}>
+            <MobileTopBar title={title} mono={mono} attention={attention} back={pageBack(pathname)} onNavigate={onNavigate} />
+          </Chrome>
         ) : (
-          <Sidebar
-            username={username}
-            onLogout={onLogout}
-            current={pathname}
-            stackCount={items.length}
-            attention={attention}
-            onOpenPalette={onOpenPalette}
-            onNavigate={onNavigate}
-          />
+          <Chrome standIn={styles.sidebarSlot}>
+            <Sidebar
+              username={username}
+              onLogout={onLogout}
+              current={pathname}
+              stackCount={items.length}
+              attention={attention}
+              onOpenPalette={onOpenPalette}
+              onNavigate={onNavigate}
+            />
+          </Chrome>
         )}
         <div className={styles.column}>
-          {mobile ? null : <TopBar path={pathname} runningOps={topBarOps} />}
+          {mobile ? null : (
+            <Chrome standIn={styles.topBarSlot}>
+              <TopBar path={pathname} runningOps={topBarOps} />
+            </Chrome>
+          )}
           {banners}
           <div className={styles.content}>{children}</div>
         </div>
-        {mobile ? <TabBar current={pathname} attention={attention} onOpenPalette={onOpenPalette} /> : null}
+        {mobile ? (
+          <Chrome standIn={styles.tabBarSlot}>
+            <TabBar current={pathname} attention={attention} onOpenPalette={onOpenPalette} />
+          </Chrome>
+        ) : null}
       </div>
     </ServerContext.Provider>
   );
