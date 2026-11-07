@@ -21,7 +21,14 @@ export function serviceCause(service: ServiceDetail): ServiceCause | null {
   const memory = service.config.limits.memory;
   for (const container of service.containers) {
     if (container.state === 'restarting') {
-      return { title: 'Restarting repeatedly', detail: 'It keeps stopping. Check the logs for the error.', raiseLimit: false };
+      const killed = exitCode(container) === 137;
+      return {
+        title: 'Restarting repeatedly',
+        detail: killed && memory
+          ? `It keeps being killed, often for exceeding its memory limit (${memory}). Raise the limit, or check the logs.`
+          : 'It keeps stopping. Check the logs for the error.',
+        raiseLimit: killed && !!memory,
+      };
     }
     if (container.state === 'exited') {
       const code = exitCode(container);

@@ -73,3 +73,23 @@ describe('neededBy', () => {
     expect(neededBy(odd, 'db', ['app', 'worker', 'db'])).toBeUndefined();
   });
 });
+
+describe('dependsOn: forms it cannot follow answer undefined, never a guess', () => {
+  it('a << merge key', () => {
+    expect(dependsOn(['services:', '  app:', '    <<: *base', '    depends_on: [db]', '  db:', '    image: x', ''].join('\n'), 'app')).toBeUndefined();
+    expect(deps('<<: *base', 'depends_on: [db]')).toBeUndefined();
+  });
+
+  it('a flow-style or aliased service', () => {
+    const flow = 'services:\n  app: {image: x, depends_on: [db]}\n  db:\n    image: y\n';
+    expect(dependsOn(flow, 'app')).toBeUndefined();
+    expect(neededBy(flow, 'db', ['app', 'db'])).toBeUndefined();
+    const alias = 'services:\n  app: *tmpl\n  db:\n    image: y\n';
+    expect(dependsOn(alias, 'app')).toBeUndefined();
+    expect(neededBy(alias, 'db', ['app', 'db'])).toBeUndefined();
+  });
+
+  it('trims a map key written with a space before the colon', () => {
+    expect(deps('depends_on:', '  db :', '    condition: service_started')).toEqual(['db']);
+  });
+});

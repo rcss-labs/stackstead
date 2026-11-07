@@ -37,6 +37,9 @@ export function dependsOn(compose: string, service: string): string[] | undefine
   const block = serviceBlock(compose, service);
   if (block === undefined) return undefined;
   const lines = dedent(block).split('\n').slice(1); // drop the `<service>:` line
+  // A value after the service key (`app: {…}`, `app: *tmpl`) is a flow mapping or alias, which this scan cannot read.
+  const afterKey = stripComment(block.slice(block.indexOf(':') + 1).split('\n')[0]!);
+  if (afterKey !== '') return undefined;
   const first = lines.find((l) => !blank(l));
   if (first === undefined) return [];
   if (first.includes('\t')) return undefined;
@@ -78,7 +81,7 @@ export function dependsOn(compose: string, service: string): string[] | undefine
   for (const l of items) {
     const match = /^(["']?)([^"':]+)\1\s*:(\s|$)/.exec(l.trim());
     if (!match) return undefined;
-    names.push(match[2]!);
+    names.push(match[2]!.trim());
   }
   return names;
 }

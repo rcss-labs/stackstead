@@ -173,4 +173,35 @@ describe('StackActions', () => {
     setup();
     expect(screen.getByRole('button', { name: 'Up' }).getAttribute('data-variant')).toBe('secondary');
   });
+
+  it('cancelling Remove stack returns focus to More', async () => {
+    const { user } = setup();
+    const menu = await openMore(user);
+    await user.click(within(menu).getByRole('button', { name: 'Remove stack' }));
+    const dialog = await screen.findByRole('alertdialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'More actions' }));
+  });
+
+  it('Escape closes with focus elsewhere', async () => {
+    const { user } = setup();
+    await openMore(user);
+    (document.activeElement as HTMLElement | null)?.blur();
+    document.body.focus();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('group', { name: 'More actions' })).toBeNull();
+  });
+
+  it('closes when focus leaves the menu', async () => {
+    const { user } = setup();
+    await openMore(user);
+    await user.tab();
+    await user.tab();
+    await user.tab();
+    await user.tab();
+    await user.tab();
+    await user.tab();
+    await user.tab();
+    expect(screen.queryByRole('group', { name: 'More actions' })).toBeNull();
+  });
 });
