@@ -31,15 +31,19 @@ describe('paletteEntries', () => {
     const groups = list.map((e) => e.group);
     expect([...new Set(groups)]).toEqual(['Go to', 'Stacks', 'Actions']);
     expect(list.filter((e) => e.group === 'Go to').map((e) => e.label)).toEqual([
-      'Stacks',
+      'Overview',
       'Containers',
+      'Activity',
+      'Images',
       'Networks',
       'Storage',
-      'Images',
       'Backups',
+      'Ports',
       'Settings',
     ]);
     expect(list.find((e) => e.group === 'Go to')?.hint).toBe('Page');
+    expect(list.find((e) => e.id === 'go:/activity')?.command).toEqual({ kind: 'navigate', to: '/activity' });
+    expect(list.find((e) => e.id === 'go:/ports')?.command).toEqual({ kind: 'navigate', to: '/ports' });
     expect(list.filter((e) => e.group === 'Actions').map((e) => e.label)).toEqual(['New stack', 'Import stack', 'Clean up storage', 'Toggle theme']);
     expect(list.find((e) => e.label === 'Import stack')?.command).toEqual({ kind: 'navigate', to: '/stacks/import' });
     expect(list.filter((e) => e.label === 'New stack')).toHaveLength(1);

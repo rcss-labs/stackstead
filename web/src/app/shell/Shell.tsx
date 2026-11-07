@@ -11,7 +11,7 @@ import { MobileTopBar } from './MobileTopBar';
 import { Sidebar } from './Sidebar';
 import { TabBar } from './TabBar';
 import { TopBar } from './TopBar';
-import { pageTitle } from './nav';
+import { pageBack, pageTitle } from './nav';
 import styles from './Shell.module.css';
 
 export interface ShellProps {
@@ -44,7 +44,7 @@ export function Shell({ username, onLogout, runningOps, attention, onOpenPalette
     <ServerContext.Provider value={scope}>
       <div className={mobile ? styles.mobile : styles.desktop}>
         {mobile ? (
-          <MobileTopBar title={title} mono={mono} attention={attention} onOpenPalette={onOpenPalette} onNavigate={onNavigate} />
+          <MobileTopBar title={title} mono={mono} attention={attention} back={pageBack(pathname)} onNavigate={onNavigate} />
         ) : (
           <Sidebar
             username={username}
@@ -61,7 +61,7 @@ export function Shell({ username, onLogout, runningOps, attention, onOpenPalette
           {banners}
           <div className={styles.content}>{children}</div>
         </div>
-        {mobile ? <TabBar current={pathname} attention={attention} /> : null}
+        {mobile ? <TabBar current={pathname} attention={attention} onOpenPalette={onOpenPalette} /> : null}
       </div>
     </ServerContext.Provider>
   );

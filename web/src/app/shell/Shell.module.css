@@ -1,17 +1,26 @@
 .desktop {
   display: flex;
   min-height: 100vh;
+  background: var(--chassis);
 }
 
+/* The page is an inset sheet on the chassis. It is not clipped, so sticky headers inside it keep working. */
 .column {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
+  margin: 8px 8px 8px 0;
+  min-height: calc(100vh - 16px);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
 }
 
 .mobile {
   display: flex;
+  background: var(--bg);
   flex-direction: column;
   min-height: 100vh;
 }
