@@ -165,6 +165,39 @@ describe('ContainerDetail', () => {
     expect(box.textContent).toMatch(/Memory\s*—/);
   });
 
+  it('suggests a probable out-of-memory cause with a Raise limit link for a stack service that exited 137 under a limit', async () => {
+    listRes = { body: [row({ state: 'exited', exitCode: 137, managed: 'stack', stack: 'shop', service: 'redis' })] };
+    detailRes = { body: detail({ state: 'exited', exitCode: 137, managed: 'stack', stack: 'shop', service: 'redis', memoryLimit: 104857600 }) };
+    mountAt('/containers/redis');
+    expect(await screen.findByText('Probably out of memory')).toBeTruthy();
+    expect(screen.getByText(/exit code 137/i).textContent).toContain('100.0 MiB');
+    expect(screen.getByRole('link', { name: 'Raise limit' }).getAttribute('href')).toBe('/stacks/shop?service=redis&edit=1');
+  });
+
+  it('shows no memory banner when the container exited 0', async () => {
+    listRes = { body: [row({ state: 'exited', exitCode: 0, managed: 'stack', stack: 'shop', service: 'redis' })] };
+    detailRes = { body: detail({ state: 'exited', exitCode: 0, managed: 'stack', stack: 'shop', service: 'redis', memoryLimit: 104857600 }) };
+    mountAt('/containers/redis');
+    await screen.findByText('unless-stopped');
+    expect(screen.queryByText('Probably out of memory')).toBeNull();
+  });
+
+  it('shows no memory banner when the container has no memory limit', async () => {
+    listRes = { body: [row({ state: 'exited', exitCode: 137, managed: 'stack', stack: 'shop', service: 'redis' })] };
+    detailRes = { body: detail({ state: 'exited', exitCode: 137, managed: 'stack', stack: 'shop', service: 'redis', memoryLimit: null }) };
+    mountAt('/containers/redis');
+    await screen.findByText('unless-stopped');
+    expect(screen.queryByText('Probably out of memory')).toBeNull();
+  });
+
+  it('shows no memory banner when the container is not in a stack', async () => {
+    listRes = { body: [row({ state: 'exited', exitCode: 137 })] };
+    detailRes = { body: detail({ state: 'exited', exitCode: 137, memoryLimit: 104857600 }) };
+    mountAt('/containers/redis');
+    await screen.findByText('unless-stopped');
+    expect(screen.queryByText('Probably out of memory')).toBeNull();
+  });
+
   it('switches tabs through ?tab= and mounts logs only while active', async () => {
     mountAt('/containers/redis');
     await screen.findByText('unless-stopped');
