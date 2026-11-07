@@ -200,6 +200,13 @@ describe('Storage screen', () => {
     expect(within(screen.getByRole('group', { name: 'Storage kinds' })).getByRole('button', { name: /^Images/ }).getAttribute('aria-pressed')).toBe('true');
   });
 
+  it('headline leads with reclaimable total', async () => {
+    fake.restore();
+    fake = installFakeFetch(routes({ 'GET /api/storage': { body: sizedOverview } }));
+    mountAt('/storage');
+    await screen.findByRole('heading', { name: '2.0 GiB can be reclaimed', level: 1 });
+  });
+
   it('shows protected stopped volumes with stack note and no Delete; unused cleanup is enabled', async () => {
     mountAt('/storage?tab=volumes');
     const row = (await screen.findByRole('link', { name: 'media_db' })).closest('[role="row"]') as HTMLElement;

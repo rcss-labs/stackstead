@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import type { Api } from '$lib/api/client';
 import type { ActionEntry, StorageBuildCache, StorageImages, StorageOverview, StoragePlanRequest, StorageVolumes } from '$lib/api/types';
+import { formatBytes } from '$lib/format';
 import { filterImages, filterVolumes, imageChips, imageCounts, imageReclaimRange, pageView, sizeText, volumeChips, volumeCounts, type ImageChip, type VolumeChip } from '$lib/storage/storage';
 import { countText, kindFromQuery, reclaimableText, sortBySize, usageSummary, usedText, type StorageKind } from '$lib/storage/usage';
 import { Banner } from '../components/Banner';
@@ -176,6 +177,9 @@ export function StorageScreen() {
   // A failed list has no candidates, so "(0 · …)" would be a false count.
   const danglingLabel = imagesFailed ? 'Clean up dangling images' : `Clean up dangling images (${candidates.length} · ${imageReclaimRange(candidates)})`;
   const unknown = data?.overview?.declarationsUnknown ?? [];
+  // The headline leads with what can be reclaimed; without a positive reading it stays the plain title.
+  const summary = data?.overview ? usageSummary(data.overview) : undefined;
+  const headline = summary?.reclaimableKnown && summary.reclaimable > 0 ? `${formatBytes(summary.reclaimable)} can be reclaimed` : 'Storage';
   // One region for the whole screen: it stays mounted across kind changes so the new selection is announced as a text change.
   const status: Record<StorageKind, string> = {
     layers: sortedStatus(data?.overview?.topContainers.length ?? 0, 'container layer'),
@@ -191,7 +195,7 @@ export function StorageScreen() {
       <header className={styles.head}>
         <div className={styles.headText}>
           <h1 id="storage-heading" className={styles.title}>
-            Storage
+            {headline}
           </h1>
           {data?.overview && <Lead overview={data.overview} />}
         </div>

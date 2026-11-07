@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router';
 import { ApiError, type Api } from '$lib/api/client';
 import type { StoragePlanRequest, StorageVolumeDetail } from '$lib/api/types';
 import { deleteDisabledReason, sizeText } from '$lib/storage/storage';
+import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { RelativeTime } from '../components/RelativeTime';
 import { Spinner } from '../components/Spinner';
@@ -13,6 +14,7 @@ import { CleanupDialog } from './CleanupDialog';
 import { ConsumersCard, DeclarationsCard, LabelsDetails } from './DetailSections';
 import styles from './DetailScreen.module.css';
 import { useStorageRefresh } from './useStorageRefresh';
+import { useVolumeCoverage } from './useVolumeCoverage';
 
 // A 404 means the volume is gone (null); any other failure surfaces as the screen error.
 async function loadVolume(api: Api, name: string): Promise<StorageVolumeDetail | null> {
@@ -28,6 +30,7 @@ export function StorageVolumeScreen({ name }: { name: string }) {
   const navigate = useNavigate();
   const { api, live, href } = useServer();
   const { data: item, error } = useStorageRefresh(() => loadVolume(api, name), () => false);
+  const coverage = useVolumeCoverage(name);
   const liveState = useStore(live);
   const dockerDown = liveState.docker === 'unavailable' || liveState.events === 'disconnected';
   const reason = item ? deleteDisabledReason(item, dockerDown) : undefined;
@@ -74,6 +77,8 @@ export function StorageVolumeScreen({ name }: { name: string }) {
               </Link>
             </p>
           )}
+          {reason && item.containers.length > 0 && <p className={styles.muted}>{reason}</p>}
+          {coverage === 'uncovered' && <Banner kind="warning" title="Not in a recent backup">No recent backup run includes this volume.</Banner>}
           <dl className={`${styles.card} ${styles.dl}`}>
             <dt>Driver</dt>
             <dd>{item.driver}</dd>
