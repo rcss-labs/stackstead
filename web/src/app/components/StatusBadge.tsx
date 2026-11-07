@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import styles from './StatusBadge.module.css';
 
-type Tone = 'success' | 'warning' | 'muted' | 'danger';
+type Tone = 'success' | 'warning' | 'muted' | 'danger' | 'info';
 type Shape = 'ok' | 'partial' | 'alert' | 'failed' | 'off' | 'pending' | 'paused';
 
 // Every status carries a shape as well as a colour, so it reads in greyscale and for colour-blind users.
@@ -26,8 +26,8 @@ const looks: Record<string, { tone: Tone; label: string; shape: Shape }> = {
   healthy: { tone: 'success', label: 'healthy', shape: 'ok' },
   partial: { tone: 'warning', label: 'partial', shape: 'partial' },
   timed_out: { tone: 'warning', label: 'timed out', shape: 'partial' },
-  starting: { tone: 'warning', label: 'starting', shape: 'pending' },
-  restarting: { tone: 'warning', label: 'restarting', shape: 'alert' },
+  starting: { tone: 'info', label: 'starting', shape: 'pending' },
+  restarting: { tone: 'danger', label: 'restarting', shape: 'alert' },
   paused: { tone: 'warning', label: 'paused', shape: 'paused' },
   stopped: { tone: 'muted', label: 'stopped', shape: 'off' },
   cancelled: { tone: 'muted', label: 'cancelled', shape: 'off' },

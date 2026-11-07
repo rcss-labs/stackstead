@@ -9,7 +9,7 @@
   font-size: 12.5px;
 }
 
-.banner[data-kind='info'] { --tone: var(--info); --tone-soft: var(--info-soft); }
+.banner[data-kind='info'] { --tone: var(--accent); --tone-soft: var(--accent-soft); }
 .banner[data-kind='warning'] { --tone: var(--warning); --tone-soft: var(--warning-soft); }
 .banner[data-kind='danger'] { --tone: var(--danger); --tone-soft: var(--danger-soft); }
 
@@ -18,7 +18,7 @@
   color: var(--text);
 }
 
-.icon { color: var(--tone); }
+.icon { flex: none; margin-top: 1px; color: var(--tone); }
 
 .body {
   flex: 1;

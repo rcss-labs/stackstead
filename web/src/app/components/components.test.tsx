@@ -34,6 +34,14 @@ describe('Banner', () => {
     expect(screen.getByRole('status').textContent).toContain('FYI');
   });
 
+  it.each(['info', 'warning', 'danger'] as const)('draws the %s icon as an aria-hidden svg, not a text glyph', (kind) => {
+    const { container } = render(<Banner kind={kind} title="T" />);
+    const icon = container.querySelector('svg');
+    expect(icon).not.toBeNull();
+    expect(icon!.getAttribute('aria-hidden')).toBe('true');
+    expect(container.textContent).toBe('T');
+  });
+
   it('can be dismissed', async () => {
     render(
       <Banner kind="warning" title="Heads up" dismissible>
@@ -161,8 +169,8 @@ describe('StatusBadge', () => {
     ['healthy', 'healthy', 'success'],
     ['partial', 'partial', 'warning'],
     ['timed_out', 'timed out', 'warning'],
-    ['starting', 'starting', 'warning'],
-    ['restarting', 'restarting', 'warning'],
+    ['starting', 'starting', 'info'],
+    ['restarting', 'restarting', 'danger'],
     ['stopped', 'stopped', 'muted'],
     ['cancelled', 'cancelled', 'muted'],
     ['unknown', 'unknown', 'muted'],
