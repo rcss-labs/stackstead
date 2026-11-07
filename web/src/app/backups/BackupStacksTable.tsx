@@ -5,13 +5,16 @@ import { formatBytes } from '$lib/format';
 import { toasts } from '$lib/stores/toasts';
 import { Banner } from '../components/Banner';
 import { EmptyState } from '../components/EmptyState';
+import { RelativeTime } from '../components/RelativeTime';
 import { Spinner } from '../components/Spinner';
+import { Tag } from '../components/Tag';
+import { stackCoverage, type RunsState } from './status';
 import styles from './backups.module.css';
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** What each stack contributes to a backup; every toggle saves at once. */
-export function BackupStacksTable({ api }: { api: BackupsApi }) {
+/** What each stack contributes to a backup and what the last run confirms; every toggle saves at once. */
+export function BackupStacksTable({ api, runs = { kind: 'loading' } }: { api: BackupsApi; runs?: RunsState }) {
   const [rows, setRows] = useState<BackupStack[]>();
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState<Set<string>>(new Set());
@@ -67,13 +70,16 @@ export function BackupStacksTable({ api }: { api: BackupsApi }) {
         <thead>
           <tr>
             <th scope="col">Stack</th>
+            <th scope="col">Coverage</th>
             <th scope="col">Volumes</th>
             <th scope="col">Images</th>
             <th scope="col">Stop while backing up</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
+          {rows.map((row) => {
+            const coverage = stackCoverage(row, runs);
+            return (
             <Fragment key={row.stack}>
               <tr>
                 <td>
@@ -86,6 +92,20 @@ export function BackupStacksTable({ api }: { api: BackupsApi }) {
                   >
                     {open.has(row.stack) ? '▾' : '▸'} {row.stack}
                   </button>
+                </td>
+                <td>
+                  <Tag tone={coverage.tone} mono={false}>
+                    {coverage.label}
+                  </Tag>
+                  <div className={styles.muted}>
+                    {coverage.detail}
+                    {coverage.lastIso && (
+                      <>
+                        {' · last '}
+                        <RelativeTime iso={coverage.lastIso} />
+                      </>
+                    )}
+                  </div>
                 </td>
                 <td>
                   <input type="checkbox" aria-label={`Volumes ${row.stack}`} checked={row.volumes} disabled={pending.has(row.stack)} onChange={(e) => void toggle(row, { volumes: e.target.checked })} />
@@ -106,7 +126,7 @@ export function BackupStacksTable({ api }: { api: BackupsApi }) {
               </tr>
               {open.has(row.stack) && (
                 <tr className={styles.detail}>
-                  <td colSpan={4}>
+                  <td colSpan={5}>
                     {row.mounts.length === 0 ? (
                       <span className={styles.muted}>No mounts.</span>
                     ) : (
@@ -125,7 +145,8 @@ export function BackupStacksTable({ api }: { api: BackupsApi }) {
                 </tr>
               )}
             </Fragment>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>

@@ -169,6 +169,8 @@ describe('single-stack restore', () => {
     await screen.findByRole('combobox', { name: 'Stack' });
     expect(screen.queryByLabelText('Restore as new name')).toBeNull();
     await preview(user);
+    // The name field belongs to the Choose step: Back reaches it with the choices kept.
+    await user.click(await screen.findByRole('button', { name: 'Back' }));
     const field = await screen.findByLabelText('Restore as new name');
     fireEvent.change(field, { target: { value: 'web2' } });
     await preview(user);
@@ -211,6 +213,8 @@ describe('single-stack restore', () => {
     await screen.findByRole('combobox', { name: 'Stack' });
     await preview(user);
     await screen.findByRole('button', { name: 'Restore stack…' });
+    // Choices live on the Choose step; going back drops the plan that was built from them.
+    await user.click(screen.getByRole('button', { name: 'Back' }));
     await user.click(screen.getByRole('checkbox', { name: 'Images' }));
     expect(screen.queryByRole('button', { name: 'Restore stack…' })).toBeNull();
   });
