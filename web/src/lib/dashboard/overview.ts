@@ -4,38 +4,9 @@ import type { LiveState } from '../stores/live';
 import { EXCLUDED_ALERT_KINDS } from './issues';
 import { attentionCount, attentionStacks, filterStacks, stackNeedsAttention } from '../stacks/summary';
 
-export type PanelTone = 'danger' | 'success' | 'muted';
-
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const allUnknown = (items: StackSummary[]) => items.length > 0 && items.every((s) => s.status === 'unknown');
 const runningCount = (items: StackSummary[]) => items.filter((s) => s.status === 'running' && !stackNeedsAttention(s)).length;
-
-export function panelLabel(items: StackSummary[]): { text: string; tone: PanelTone; pulse: boolean } {
-  if (items.length === 0) return { text: 'no stacks', tone: 'muted', pulse: false };
-  if (allUnknown(items)) return { text: 'status unknown', tone: 'muted', pulse: false };
-  const attention = attentionCount(items);
-  if (attention > 0) return { text: `degraded · ${plural(attention, 'stack')}`, tone: 'danger', pulse: true };
-  const running = runningCount(items);
-  if (running === items.length) return { text: `all running · ${plural(items.length, 'stack')}`, tone: 'success', pulse: false };
-  return { text: `healthy · ${running} of ${items.length} running`, tone: 'success', pulse: false };
-}
-
-export function statusSentence(items: StackSummary[]): string {
-  if (items.length === 0) return 'No stacks yet';
-  if (allUnknown(items)) return 'Stack status is unavailable';
-  const attention = attentionStacks(items);
-  if (attention.length === 1) return `${attention[0].name} needs attention`;
-  if (attention.length === 2) return `${attention[0].name} and ${attention[1].name} need attention`;
-  if (attention.length > 2) return `${attention[0].name} and ${attention.length - 1} more need attention`;
-  return runningCount(items) === items.length ? 'All stacks are running' : 'Nothing needs attention';
-}
-
-/** The sub-line pieces the panel can compute; the component appends "last event <relative>". */
-export function statusFragments(items: StackSummary[], host: HostSnapshot | undefined): string[] {
-  const fragments = [`${runningCount(items)} of ${plural(items.length, 'stack')} fully running`];
-  if (host?.containers) fragments.push(`${host.containers.running} of ${host.containers.total} containers up`);
-  return fragments;
-}
 
 export type TowerBlock = 'up' | 'unhealthy' | 'failed' | 'down' | 'off';
 

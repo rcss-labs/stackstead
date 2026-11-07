@@ -5,10 +5,7 @@ import {
   fleetHeadline,
   groupStacks,
   headline,
-  panelLabel,
   rowPrimaryAction,
-  statusFragments,
-  statusSentence,
   towerBlocks,
   towerLabelTone,
   towerTitle,
@@ -29,55 +26,6 @@ const stack = (name: string, over: Partial<StackSummary> = {}): StackSummary => 
   ...over,
 });
 const bad = (name: string) => stack(name, { status: 'partial' });
-
-describe('panelLabel', () => {
-  it('no stacks, all unknown, degraded singular and plural, all running, healthy with stopped', () => {
-    expect(panelLabel([])).toEqual({ text: 'no stacks', tone: 'muted', pulse: false });
-    expect(panelLabel([stack('a', { status: 'unknown' }), stack('b', { status: 'unknown' })])).toEqual({
-      text: 'status unknown',
-      tone: 'muted',
-      pulse: false,
-    });
-    expect(panelLabel([bad('a'), stack('b')])).toEqual({ text: 'degraded · 1 stack', tone: 'danger', pulse: true });
-    expect(panelLabel([bad('a'), bad('b')]).text).toBe('degraded · 2 stacks');
-    expect(panelLabel([stack('a'), stack('b')])).toEqual({ text: 'all running · 2 stacks', tone: 'success', pulse: false });
-    expect(panelLabel([stack('a'), stack('b', { status: 'stopped' }), stack('c', { status: 'stopped' })])).toEqual({
-      text: 'healthy · 1 of 3 running',
-      tone: 'success',
-      pulse: false,
-    });
-  });
-});
-
-describe('statusSentence', () => {
-  it('for 0, 1, 2 and 3+ attention stacks, all running, some stopped, all unknown', () => {
-    expect(statusSentence([])).toBe('No stacks yet');
-    expect(statusSentence([stack('a', { status: 'unknown' })])).toBe('Stack status is unavailable');
-    expect(statusSentence([bad('b'), stack('a')])).toBe('b needs attention');
-    expect(statusSentence([bad('b'), bad('a')])).toBe('a and b need attention');
-    expect(statusSentence([bad('c'), bad('a'), bad('b')])).toBe('a and 2 more need attention');
-    expect(statusSentence([bad('d'), bad('c'), bad('a'), bad('b')])).toBe('a and 3 more need attention');
-    expect(statusSentence([stack('a'), stack('b')])).toBe('All stacks are running');
-    expect(statusSentence([stack('a'), stack('b', { status: 'stopped' })])).toBe('Nothing needs attention');
-  });
-});
-
-describe('statusFragments', () => {
-  it('omit the containers fragment without a host snapshot and use singular for one stack', () => {
-    expect(statusFragments([stack('a')], undefined)).toEqual(['1 of 1 stack fully running']);
-    const host = { containers: { total: 19, running: 17, exited: 2, bad: 0 } } as HostSnapshot;
-    expect(statusFragments([stack('a'), bad('b')], host)).toEqual(['1 of 2 stacks fully running', '17 of 19 containers up']);
-    expect(statusFragments([stack('a')], { containers: null } as HostSnapshot)).toEqual(['1 of 1 stack fully running']);
-  });
-});
-
-describe('statusFragments fully running', () => {
-  it('does not count a running stack with an unhealthy service', () => {
-    const unhealthy = stack('b', { health: { ...zero, unhealthy: 1 } });
-    const items = [stack('a'), unhealthy, bad('c'), stack('d', { status: 'stopped' })];
-    expect(statusFragments(items, undefined)).toEqual(['1 of 4 stacks fully running']);
-  });
-});
 
 describe('towerBlocks', () => {
   it('running stack 3/3 healthy → three up', () => {

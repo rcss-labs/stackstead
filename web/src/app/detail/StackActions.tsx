@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { Action, StackSummary } from '$lib/api/types';
+import { FILE_PATH } from '$lib/shell/paths';
 import { ICONS } from '$lib/shell/icons';
 import { BUSY_REASON } from '$lib/stacks/lifecycle';
 import { toasts } from '$lib/stores/toasts';
@@ -95,7 +96,7 @@ export function StackActions({ stack, lifecycleDisabledReason, busy = false, onA
   );
   const items: ReactNode[] = [
     item('build', 'Build images', HAMMER, () => onAct('build'), { reason }),
-    ...(onViewCompose ? [item('compose', 'View compose file', ICONS.file, onViewCompose)] : []),
+    ...(onViewCompose ? [item('compose', 'View compose file', FILE_PATH, onViewCompose)] : []),
     item('copy', 'Copy path', ICONS.copy, () => void copyText(stack.path)),
     <hr key="rule" className={styles.rule} />,
     item('down', 'Down', ICONS.stop, () => onAct('down'), { reason }),
