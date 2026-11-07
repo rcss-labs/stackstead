@@ -1,6 +1,6 @@
 # Stackstead conventions (read first)
 
-Stackstead is a dense, quiet admin UI for Docker stacks: 13px IBM Plex Sans body, Geist Mono for identifiers, light surfaces, one green accent. Components are in `window.Stackstead`.
+Stackstead is a dense, quiet admin UI for Docker stacks: 13.5px Geist body, Geist Mono for identifiers, light surfaces, one green accent. Components are in `window.Stackstead`.
 
 ## Setup
 

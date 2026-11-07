@@ -4,7 +4,7 @@
 - `buildCmd` (`node .design-sync/build-pkg.mjs`) generates `.ds-pkg/` (gitignored): a barrel `index.ts`, `tsc` declarations in `types/`, and `global.css` (tokens.css + base.css concatenated). Run it before every converter/driver run, because it's the only thing that picks up component source changes.
 - Converter invocation: `--node-modules ./node_modules --entry ./.ds-pkg/index.ts --out ./ds-bundle`. `--entry` is required: without it the converter looks for `node_modules/stackstead-ui` and crashes with ENOENT.
 - Tokens ship inside `_ds_bundle.css` via `cssEntry`, not `tokens/`. `tokensGlob` only reads from a tokens npm package, and `cssEntry` must sit under the package dir (`.ds-pkg/`), so tokens.css is concatenated into `global.css`.
-- Fonts: `extraFonts` points at `src/app/styles/fonts.css`. IBM Plex Sans and Geist Mono woff2 ship in `fonts/`.
+- Fonts: `extraFonts` points at `src/app/styles/fonts.css`. Geist and Geist Mono woff2 ship in `fonts/`.
 - Component CSS modules go through esbuild's `local-css` (hashed class names) and land in `_ds_bundle.css`.
 - Groups come from `docsMap` stubs in `.design-sync/groups/*.md` (frontmatter `category` only). A new component needs a `docsMap` entry, or it lands in `general`.
 - `ErrorBoundary` is excluded (`componentSrcMap: null`) because it renders nothing visual.
