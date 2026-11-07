@@ -51,7 +51,7 @@ export function ConfirmDialog({
       {typedConfirm !== undefined && (
         <Field label={`Type ${typedConfirm} to confirm`} id={`${uid}-typed`} mono>
           {(control) => (
-            <input {...control} value={typed} autoComplete="off" spellCheck={false} onChange={(event) => setTyped(event.target.value)} />
+            <input {...control} value={typed} autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} onChange={(event) => setTyped(event.target.value)} />
           )}
         </Field>
       )}

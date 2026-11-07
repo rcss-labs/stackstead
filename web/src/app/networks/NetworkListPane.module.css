@@ -56,3 +56,8 @@
 }
 
 .none { padding: var(--space-5) var(--space-3); text-align: center; font-size: 12.5px; color: var(--muted); }
+
+/* Phone touch targets are at least 44px; 16px text stops iOS zooming into the field. */
+@media (max-width: 759px) {
+  .search { height: 44px; font-size: 16px; }
+}

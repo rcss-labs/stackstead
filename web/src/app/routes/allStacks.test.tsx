@@ -134,6 +134,11 @@ describe('All stacks', () => {
     expect(screen.getByRole('link', { name: 'web' })).toBeTruthy();
   });
 
+  it('has an h1 while loading, so route focus does not wait', () => {
+    mount(fleet());
+    expect(screen.getByRole('heading', { level: 1, name: 'All servers' })).toBeTruthy();
+  });
+
   it('unreachable server shows a banner and omits its stacks', async () => {
     mount(fleet({ servers: [local, mini, down], stacks: [fleetStack('a0', 'web'), fleetStack('c2', 'stale')] }));
     expect(await screen.findByText("Can't reach nas")).toBeTruthy();
@@ -143,7 +148,7 @@ describe('All stacks', () => {
 
   it("fleet shows a tile per server and hides an unreachable server's rows", async () => {
     mount(fleet({ servers: [local, mini, down], stacks: [fleetStack('a0', 'web'), fleetStack('b1', 'pihole'), fleetStack('c2', 'stale')] }));
-    expect((await screen.findByRole('heading', { level: 1 })).textContent).toBe('2 of 3 servers are reachable');
+    expect((await screen.findByRole('heading', { level: 1, name: /reachable/ })).textContent).toBe('2 of 3 servers are reachable');
     const tiles = within(screen.getByRole('list', { name: 'Servers' })).getAllByRole('listitem');
     expect(tiles).toHaveLength(3);
     const tile = (name: string) => tiles.find((t) => within(t).queryByText(name))!;
@@ -160,7 +165,7 @@ describe('All stacks', () => {
 
   it('the fleet headline says every server is reachable only when each one is', async () => {
     mount(fleet());
-    expect((await screen.findByRole('heading', { level: 1 })).textContent).toBe('All 2 servers are reachable');
+    expect((await screen.findByRole('heading', { level: 1, name: /reachable/ })).textContent).toBe('All 2 servers are reachable');
   });
 
   it('incompatible server shows the version banner', async () => {

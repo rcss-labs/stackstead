@@ -19,6 +19,8 @@ export interface NetworkDetailProps {
   onConnect: () => void;
   onRemove: () => void;
   onDetach: (container: NetworkContainer) => void;
+  /** h1 on a phone's detail screen, which has no page header. */
+  titleAs?: 'h1' | 'h2';
 }
 
 const yesNo = (value: boolean) => (value ? 'yes' : 'no');
@@ -36,7 +38,7 @@ function facts(n: Network): [string, string][] {
   ];
 }
 
-export function NetworkDetail({ network, highlighted, busy, onToggle, onInspect, onConnect, onRemove, onDetach }: NetworkDetailProps) {
+export function NetworkDetail({ network, highlighted, busy, onToggle, onInspect, onConnect, onRemove, onDetach, titleAs: Title = 'h2' }: NetworkDetailProps) {
   const { containers } = network;
   const fixed = connectDisabledReason(network);
   const detachReason = fixed && `Containers can't leave the ${network.name} network at runtime`;
@@ -45,9 +47,9 @@ export function NetworkDetail({ network, highlighted, busy, onToggle, onInspect,
       <header className={styles.header}>
         <div className={styles.identity}>
           <div className={styles.titleLine}>
-            <h2 id="network-detail-heading" tabIndex={-1}>
+            <Title id="network-detail-heading" tabIndex={-1}>
               {network.name}
-            </h2>
+            </Title>
             <Tag>{network.driver}</Tag>
             {network.internal && <Tag tone="warning">internal</Tag>}
           </div>

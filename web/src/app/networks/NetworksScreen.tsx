@@ -131,7 +131,7 @@ export function NetworksScreen({ selected }: NetworksScreenProps) {
   } else if (!current) {
     detail = (
       <div className={styles.state}>
-        <EmptyState title="Network not found" description={`No network named ${selected} exists on this server.`} />
+        <EmptyState as={mobile ? 'h1' : 'h2'} title="Network not found" description={`No network named ${selected} exists on this server.`} />
       </div>
     );
   } else {
@@ -144,6 +144,7 @@ export function NetworksScreen({ selected }: NetworksScreenProps) {
         onInspect={() => setInspecting(true)}
         onConnect={() => setConnecting(current)}
         onRemove={() => setPending({ kind: 'remove', network: current })}
+        titleAs={mobile ? 'h1' : 'h2'}
         onDetach={(container) => setPending({ kind: 'detach', network: current, container })}
       />
     );

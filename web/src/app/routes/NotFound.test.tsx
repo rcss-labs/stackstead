@@ -11,6 +11,15 @@ afterEach(() => {
 });
 
 describe('Page not found', () => {
+  it('names the page with an h1, which route focus waits for', () => {
+    render(
+      <MemoryRouter>
+        <NotFound />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('heading', { level: 1, name: 'Page not found' })).toBeTruthy();
+  });
+
   it('not-found offers Overview and search', () => {
     render(
       <MemoryRouter>
