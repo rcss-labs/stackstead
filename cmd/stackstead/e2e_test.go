@@ -406,10 +406,10 @@ func TestE2ESmoke(t *testing.T) {
 			want  color.RGBA
 			w, h  int
 		}{
-			{"dark", color.RGBA{0x0f, 0x12, 0x16, 0xff}, 375, 812},
-			{"dark", color.RGBA{0x0f, 0x12, 0x16, 0xff}, 1280, 800},
-			{"light", color.RGBA{0xf3, 0xf5, 0xf7, 0xff}, 375, 812},
-			{"light", color.RGBA{0xf3, 0xf5, 0xf7, 0xff}, 1280, 800},
+			{"dark", color.RGBA{0x0f, 0x14, 0x1e, 0xff}, 375, 812},
+			{"dark", color.RGBA{0x0f, 0x14, 0x1e, 0xff}, 1280, 800},
+			{"light", color.RGBA{0xfb, 0xfc, 0xfe, 0xff}, 375, 812},
+			{"light", color.RGBA{0xfb, 0xfc, 0xfe, 0xff}, 1280, 800},
 		} {
 			name := fmt.Sprintf("%s-%dx%d", tc.theme, tc.w, tc.h)
 			t.Run(name, func(t *testing.T) {
