@@ -69,6 +69,7 @@
 .switcher {
   flex: none;
   max-width: 38vw;
+  text-overflow: ellipsis;
   height: 44px;
   padding: 0 6px;
   border: 1px solid var(--border-strong);

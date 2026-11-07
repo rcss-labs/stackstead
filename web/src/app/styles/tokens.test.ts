@@ -106,6 +106,18 @@ describe('design tokens', () => {
     });
   });
 
+  describe.each([
+    ['light', light],
+    ['dark', dark],
+  ] as const)('console tokens read on the dark console (%s)', (_name, t) => {
+    const c = (k: string) => parseColor(t[k]).rgb;
+    for (const fg of ['--term-fg', '--term-dim', '--term-accent', '--term-ok', '--term-warn', '--term-err', '--term-s1', '--term-s2', '--term-s3', '--term-s4']) {
+      for (const bg of ['--term', '--term-hover', '--term-hi'])
+        it(`${fg} on ${bg} >= 4.5`, () => expect(ratio(c(fg), c(bg))).toBeGreaterThanOrEqual(4.5));
+    }
+    it('the console stays dark whichever theme is on', () => expect(L(c('--term'))).toBeLessThan(0.02));
+  });
+
   it('chart series 1-4 match the validated palette', () => {
     const series = (t: Record<string, string>) => [1, 2, 3, 4].map((n) => t[`--series-${n}`].toLowerCase());
     expect(series(light)).toEqual(['#2f62e0', '#c9721a', '#008fa6', '#8a4fd0']);

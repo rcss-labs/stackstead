@@ -1,6 +1,6 @@
 .console {
+  composes: term from '../styles/term.module.css';
   position: relative;
-  background: var(--chassis);
   border-top: 1px solid var(--border);
 }
 

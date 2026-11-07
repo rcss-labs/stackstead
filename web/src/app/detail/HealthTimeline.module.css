@@ -1,9 +1,6 @@
 .card {
-  background: var(--surface);
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  box-shadow: var(--hi);
-  padding: 12px 14px;
+  padding: 10px 16px 8px;
+  border-bottom: 1px solid var(--border);
 }
 
 .header {
@@ -134,8 +131,12 @@
 }
 
 @media (max-width: 759px) {
+  .card { padding-inline: 14px; }
+
+  /* Each lane is already a 44px target; a gap on top would push the services a screen away. */
   .grid {
     grid-template-columns: 96px minmax(0, 1fr);
+    row-gap: 0;
   }
 
   .name {

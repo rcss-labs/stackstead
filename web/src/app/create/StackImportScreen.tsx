@@ -80,8 +80,11 @@ export function StackImportScreen() {
 
   return (
     <section className={styles.page}>
-      <h1>Import stack</h1>
-      <p className={styles.lead}>Register a compose file where it already lives. Nothing is moved or changed until you edit it.</p>
+      <div className={styles.explain}>
+        <h1>Import stack</h1>
+        <p className={styles.lead}>Register a compose file where it already lives. Nothing is moved or changed until you edit it.</p>
+      </div>
+      <div className={styles.controls}>
       {unavailable && (
         <Banner kind="danger" title="Docker/compose unavailable: the stack was not imported">
           {unavailable}
@@ -124,6 +127,7 @@ export function StackImportScreen() {
           </Button>
         </footer>
       </form>
+      </div>
       <FileBrowser
         open={browsing}
         mode="file"

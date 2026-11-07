@@ -85,7 +85,7 @@
 
 .row {
   display: grid;
-  grid-template-columns: 64px 110px minmax(0, 1fr);
+  grid-template-columns: 64px 150px minmax(0, 1fr);
   gap: 10px;
   padding: 0 6px;
   margin: 0 -6px;
@@ -159,3 +159,6 @@
   .error button { min-height: 40px; }
   .clear { min-width: 40px; }
 }
+
+/* The stream tag keeps its word and stays within a log line, so a stderr row is as tall as the others. */
+.service > :not(.serviceName) { flex: none; font-size: 10.5px; line-height: 15px; }

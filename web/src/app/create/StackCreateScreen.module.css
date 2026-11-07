@@ -26,7 +26,7 @@
 
 .card {
   background: var(--surface);
-  border: 1px solid var(--hi);
+  border: 1px solid var(--border);
   border-radius: 12px;
 }
 .stackName { padding: 14px; max-width: 360px; box-sizing: content-box; }

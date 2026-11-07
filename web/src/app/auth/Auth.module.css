@@ -77,7 +77,6 @@
 
 .recovery code {
   overflow-wrap: anywhere;
-  word-break: break-all;
 }
 
 .error {

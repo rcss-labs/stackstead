@@ -1,0 +1,35 @@
+/*
+ * The dark console: log dock, log previews and terminals. It re-points the ordinary tokens, so everything inside,
+ * chips, segmented controls and marks included, reads on the dark ground without a dark variant of each control.
+ */
+.term {
+  color-scheme: dark;
+  background: var(--term);
+  color: var(--term-fg);
+  --bg: var(--term);
+  --muted-soft: var(--term-hover);
+  --chassis: var(--term-hover);
+  --surface: var(--term-hover);
+  --raised: var(--term-hi);
+  --hover: var(--term-hover);
+  --text: var(--term-fg);
+  --muted: var(--term-dim);
+  --faint: var(--term-dim);
+  --border: var(--term-line);
+  --border-strong: var(--term-line);
+  --border-input: var(--term-dim);
+  --accent: var(--term-accent);
+  --accent-ink: var(--term);
+  --accent-soft: var(--term-hi);
+  --success: var(--term-ok);
+  --success-soft: var(--term-hi);
+  --warning: var(--term-warn);
+  --warning-soft: var(--term-hi);
+  --danger: var(--term-err);
+  --danger-soft: var(--term-hi);
+  --info: var(--term-accent);
+  --series-1: var(--term-s1);
+  --series-2: var(--term-s2);
+  --series-3: var(--term-s3);
+  --series-4: var(--term-s4);
+}

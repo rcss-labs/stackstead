@@ -40,19 +40,19 @@ a.cell:hover { background: var(--hover); }
   margin-top: 3px;
 }
 
+/* The reading is never shortened; the sparkline gives way instead. */
 .value {
-  min-width: 0;
+  flex: none;
   font-family: var(--mono);
   font-size: 18px;
   font-weight: 500;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .spark {
   flex: 0 1 54px;
-  min-width: 24px;
+  min-width: 0;
+  overflow: hidden;
   line-height: 0;
 }
 
@@ -73,4 +73,6 @@ a.cell:hover { background: var(--hover); }
 
 @media (max-width: 759px) {
   .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cell { padding-inline: 12px; }
+  .value { font-size: 16px; }
 }

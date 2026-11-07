@@ -59,7 +59,7 @@ export function ImagesScreen() {
         </Button>
       </header>
 
-      <p className={styles.meta}>
+      <p className={styles.lead}>
         Images you build and version here. For everything on disk, see <Link to={href('/storage')}>Storage</Link>.
       </p>
       {error && (

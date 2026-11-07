@@ -1,5 +1,5 @@
 .peekRow {
-  border-bottom: 1px solid var(--hi);
+  border-bottom: 1px solid var(--border);
 }
 
 .cell {
@@ -7,11 +7,11 @@
 }
 
 .peek {
+  composes: term from '../styles/term.module.css';
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 10px 14px 12px;
-  background: var(--chassis);
   animation: fadeUp 0.18s ease-out;
 }
 
