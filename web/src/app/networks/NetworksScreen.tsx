@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import type { Network, NetworkContainer } from '$lib/api/types';
 import { containerKey, networkSummary, sortNetworks, summaryParts, type NetworkFilter } from '$lib/networks/networks';
@@ -10,6 +10,8 @@ import { CopyButton } from '../components/CopyButton';
 import { Dialog } from '../components/Dialog';
 import { EmptyState } from '../components/EmptyState';
 import { Spinner } from '../components/Spinner';
+import { Tabs } from '../components/Tabs';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { useServer } from '../servers/ServerContext';
 import { ConnectContainerDialog } from './ConnectContainerDialog';
 import { CreateNetworkDialog } from './CreateNetworkDialog';
@@ -48,6 +50,27 @@ export function NetworksScreen({ selected }: NetworksScreenProps) {
   const current = selected === undefined ? undefined : networks.find((n) => n.name === selected);
   const highlighted = current && highlight?.network === current.name ? highlight.key : null;
 
+  // On a phone the list and a network's detail are separate screens; the shell's top bar goes back to the list.
+  const mobile = useIsMobile();
+  const showList = !mobile || selected === undefined;
+  const showDetail = !mobile || selected !== undefined;
+  const showHeader = showList;
+  // Set by a removal that navigates away from the detail; consumed once the heading is on screen.
+  const focusHeading = useRef(false);
+  useEffect(() => {
+    if (!focusHeading.current || !showHeader) return;
+    focusHeading.current = false;
+    document.getElementById('networks-heading')?.focus();
+  }, [showHeader, selected]);
+
+  const tabs = [
+    { id: 'networks', label: 'Networks', badge: rows ? networks.length : undefined },
+    { id: 'ports', label: 'Ports' },
+  ];
+  function selectTab(id: string) {
+    if (id === 'ports') void navigate(href('/ports'));
+  }
+
   function select(network: Network) {
     setHighlight(undefined);
     void navigate(href(`/networks/${encodeURIComponent(network.name)}`));
@@ -67,8 +90,9 @@ export function NetworksScreen({ selected }: NetworksScreenProps) {
       if (action.kind === 'remove') {
         await api.deleteNetwork(action.network.id);
         toasts.push({ kind: 'success', message: `Network \`${action.network.name}\` removed` });
+        // The heading is not rendered on a phone's detail screen, so focus waits for the list to show.
+        focusHeading.current = true;
         void navigate(href('/networks'));
-        document.getElementById('networks-heading')?.focus();
       } else if (action.kind === 'detach') {
         await api.disconnectNetwork(action.network.id, action.container.name);
         toasts.push({ kind: 'success', message: `Detached \`${action.container.name}\` from \`${action.network.name}\`` });
@@ -125,45 +149,62 @@ export function NetworksScreen({ selected }: NetworksScreenProps) {
     );
   }
 
+  const content =
+    error && !rows ? (
+      <div className={styles.state}>
+        <Banner kind="danger" title="Could not load networks">
+          {error}
+        </Banner>
+        <p>
+          <Button variant="secondary" onClick={refresh}>
+            Retry
+          </Button>
+        </p>
+      </div>
+    ) : !rows ? (
+      <div className={styles.state}>
+        <Spinner label="Loading networks" />
+      </div>
+    ) : (
+      <div className={styles.body}>
+        {showList && (
+          <div className={styles.listPane}>
+            <NetworkListPane networks={networks} selected={current?.name} filter={filter} query={query} onFilter={setFilter} onQuery={setQuery} onSelect={select} />
+          </div>
+        )}
+        {showDetail && <div aria-live="polite">{detail}</div>}
+      </div>
+    );
+
   return (
     <>
-      <section className={styles.page} aria-labelledby="networks-heading">
-        <header className={styles.head}>
-          <div className={styles.headText}>
-            <h1 id="networks-heading" tabIndex={-1}>
-              Networks
-            </h1>
-            {rows && <p className={styles.lead}>{parts.join(' · ')}</p>}
-          </div>
-          <div className={styles.headActions}>
-            <Button variant="secondary" size="sm" disabledReason={working ? 'Another change is in progress' : undefined} onClick={() => setPending({ kind: 'prune' })}>
-              Prune unused
-            </Button>
-            <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
-              Create network
-            </Button>
-          </div>
-        </header>
-        {error && !rows ? (
-          <div className={styles.state}>
-            <Banner kind="danger" title="Could not load networks">
-              {error}
-            </Banner>
-            <p>
-              <Button variant="secondary" onClick={refresh}>
-                Retry
+      <section className={styles.page} aria-labelledby={showHeader ? 'networks-heading' : undefined} aria-label={showHeader ? undefined : 'Network detail'}>
+        {showHeader && (
+          <header className={styles.head}>
+            <div className={styles.headText}>
+              <h1 id="networks-heading" tabIndex={-1}>
+                Networks
+              </h1>
+              {rows && <p className={styles.lead}>{parts.join(' · ')}</p>}
+            </div>
+            <div className={styles.headActions}>
+              <Button variant="secondary" size="sm" disabledReason={working ? 'Another change is in progress' : undefined} onClick={() => setPending({ kind: 'prune' })}>
+                Prune unused
               </Button>
-            </p>
-          </div>
-        ) : !rows ? (
-          <div className={styles.state}>
-            <Spinner label="Loading networks" />
+              <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+                Create network
+              </Button>
+            </div>
+          </header>
+        )}
+        {showHeader ? (
+          <div className={styles.frame}>
+            <Tabs tabs={tabs} selected="networks" ariaLabel="Network sections" onSelect={selectTab}>
+              {() => content}
+            </Tabs>
           </div>
         ) : (
-          <div className={styles.body}>
-            <NetworkListPane networks={networks} selected={current?.name} filter={filter} query={query} onFilter={setFilter} onQuery={setQuery} onSelect={select} />
-            <div aria-live="polite">{detail}</div>
-          </div>
+          content
         )}
       </section>
       <CreateNetworkDialog

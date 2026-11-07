@@ -125,3 +125,11 @@ it.each([201, 400])('ignores canceled request completion and preserves a newer b
   await waitFor(() => expect(onCreated).toHaveBeenCalledWith({ name: 'new' }));
   expect(onClose).toHaveBeenCalledTimes(2);
 });
+
+it('driver options carry plain explanations', () => {
+  setup();
+  const explained = (driver: string) => document.getElementById(screen.getByRole('radio', { name: driver }).getAttribute('aria-describedby') ?? '')?.textContent;
+  expect(explained('Bridge')).toBe('Containers talk to each other, behind the host.');
+  expect(explained('Macvlan')).toBe('Containers get their own address on your LAN.');
+  expect(explained('IPvlan')).toBe('Like Macvlan, for switches that limit MAC addresses.');
+});

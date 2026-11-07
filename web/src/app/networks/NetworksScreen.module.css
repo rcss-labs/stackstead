@@ -21,12 +21,27 @@
 .lead { margin-top: 2px; font-size: 12px; color: var(--muted); }
 .headActions { display: flex; gap: var(--space-2); }
 
+.frame {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.frame > [role='tabpanel'] {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+}
+
 .body {
   display: grid;
   grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  flex: 1;
   min-height: 0;
 }
 .body > * { min-height: 0; overflow: auto; }
+.listPane { display: flex; flex-direction: column; min-height: 0; }
 
 .state { padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-3); }
 
@@ -48,7 +63,8 @@
   .head { padding: var(--space-4) 14px; }
   .headActions { width: 100%; }
   .headActions > button { flex: 1; }
+  .frame, .frame > [role='tabpanel'] { display: block; }
   .body { display: block; }
   .body > * { overflow: visible; }
-  .body > :first-child { max-height: 50dvh; overflow: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+  .listPane { max-height: 50dvh; overflow: auto; border-bottom: 1px solid var(--border); }
 }

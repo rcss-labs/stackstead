@@ -42,10 +42,10 @@ const emptyForm: Form = {
   selected: '',
 };
 
-const DRIVERS: [NetworkDriver, string][] = [
-  ['bridge', 'Bridge'],
-  ['macvlan', 'Macvlan'],
-  ['ipvlan', 'IPvlan'],
+const DRIVERS: [NetworkDriver, string, string][] = [
+  ['bridge', 'Bridge', 'Containers talk to each other, behind the host.'],
+  ['macvlan', 'Macvlan', 'Containers get their own address on your LAN.'],
+  ['ipvlan', 'IPvlan', 'Like Macvlan, for switches that limit MAC addresses.'],
 ];
 const KNOWN_FIELDS = ['name', 'driver', 'parent', 'subnet', 'gateway', 'ipRange', 'ipvlanMode', 'internal'];
 const DHCP_NOTE = "The Docker host itself cannot reach containers on this network. Pick addresses outside your router's DHCP pool, or set an IP range outside it.";
@@ -183,11 +183,23 @@ export function CreateNetworkDialog({ open, onClose, onCreated }: CreateNetworkD
         <fieldset id="net-driver" role="radiogroup" aria-label="Driver" aria-describedby={errors.driver ? 'net-driver-error' : undefined} className={styles.drivers}>
           <legend>Driver</legend>
           <div className={styles.options}>
-            {DRIVERS.map(([value, label]) => (
-              <label key={value}>
-                <input type="radio" name="net-driver" value={value} checked={form.driver === value} onChange={() => changeDriver(value)} />
-                {label}
-              </label>
+            {DRIVERS.map(([value, label, hint]) => (
+              <div key={value} className={styles.option}>
+                <label>
+                  <input
+                    type="radio"
+                    name="net-driver"
+                    value={value}
+                    checked={form.driver === value}
+                    aria-describedby={`net-driver-${value}-hint`}
+                    onChange={() => changeDriver(value)}
+                  />
+                  {label}
+                </label>
+                <span id={`net-driver-${value}-hint`} className={styles.hint}>
+                  {hint}
+                </span>
+              </div>
             ))}
           </div>
           {errors.driver && (
