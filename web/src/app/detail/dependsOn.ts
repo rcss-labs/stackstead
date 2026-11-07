@@ -34,6 +34,12 @@ function flowEntries(inner: string): string[] | undefined {
  * or `extends` that may supply the key, multi-line flow collections, and a service block it cannot isolate.
  */
 export function dependsOn(compose: string, service: string): string[] | undefined {
+  const names = readDependsOn(compose, service);
+  // A `<<` entry merges in keys this scan cannot see, so the list would be incomplete.
+  return names?.some((n) => n === '<<') ? undefined : names;
+}
+
+function readDependsOn(compose: string, service: string): string[] | undefined {
   const block = serviceBlock(compose, service);
   if (block === undefined) return undefined;
   const lines = dedent(block).split('\n').slice(1); // drop the `<service>:` line

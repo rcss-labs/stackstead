@@ -93,3 +93,16 @@ describe('dependsOn: forms it cannot follow answer undefined, never a guess', ()
     expect(deps('depends_on:', '  db :', '    condition: service_started')).toEqual(['db']);
   });
 });
+
+describe('dependsOn: a << entry inside depends_on', () => {
+  it('in the map form', () => {
+    expect(deps('image: x', 'depends_on:', '  <<: *deps', '  db:', '    condition: service_healthy')).toBeUndefined();
+    expect(deps('depends_on:', '  db:', '    condition: service_healthy', '  <<: *deps')).toBeUndefined();
+    expect(deps('depends_on:', '  "<<": *deps', '  db:', '    condition: service_started')).toBeUndefined();
+  });
+
+  it('in the list form and the inline map', () => {
+    expect(deps('depends_on:', '  - <<: *deps', '  - db')).toBeUndefined();
+    expect(deps('depends_on: {<<: *deps, db: {condition: service_started}}')).toBeUndefined();
+  });
+});
