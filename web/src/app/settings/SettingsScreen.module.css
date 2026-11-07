@@ -25,7 +25,9 @@
 .sections a:hover { background: var(--hover); }
 .sections a[aria-current='page'] { background: var(--hover); color: var(--text); font-weight: 600; }
 
-.cards { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.cards { min-width: 0; }
+.group { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.group[hidden] { display: none; }
 
 .status {
   display: grid;
