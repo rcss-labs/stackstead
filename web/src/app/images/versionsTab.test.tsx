@@ -63,6 +63,13 @@ describe('Versions tab', () => {
     expect(await screen.findByText(/log unreadable/)).toBeTruthy();
   });
 
+  it('failed version opens its log', async () => {
+    install({ [`GET ${IMG}/versions/v-2`]: { body: { ...v2, log: 'boom', usedBy: [], unreachable: [] } } });
+    mountImages('/images/web?tab=versions');
+    await userEvent.click(await screen.findByRole('button', { name: /^View log 2 / }));
+    expect((await screen.findByRole('log', { name: 'Build log for 2' })).textContent).toBe('boom');
+  });
+
   it('keeps versions that share a tag apart: open and delete act on one row by id', async () => {
     const failedA = version({ id: 'v-a', tag: '1', status: 'failed', revision: 1 });
     const failedB = version({ id: 'v-b', tag: '1', status: 'failed', revision: 2 });
@@ -73,7 +80,7 @@ describe('Versions tab', () => {
       [`DELETE ${IMG}/versions/v-a`]: { status: 204 },
     });
     mountImages('/images/web?tab=versions');
-    const opens = await screen.findAllByRole('button', { name: /^Open 1 / });
+    const opens = await screen.findAllByRole('button', { name: /^(Open|View log) 1 / });
     expect(opens).toHaveLength(3);
     await userEvent.click(opens[1]);
     expect((await screen.findByRole('log')).textContent).toBe('log of b');
